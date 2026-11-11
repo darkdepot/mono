@@ -2493,3 +2493,78 @@ test('MONO-372 the owner line ends at the closing quote; a full stop after it is
  f.record.body=f.record.body.replace(`«${f.expected.reply}»`,`«${f.expected.reply}».`);f.events[5]=f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body});f.events[6]=f.result('write',f.record);f.page('comments','comments',[f.record]);
  const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/verbatim owner reply missing or substituted outside fences/);
 });
+
+// MONO-379: refusals of a correct stage found by the second live Claude chain.
+const linearForms={
+ 'list continuation':{written:'- Пустой источник показан прочерком.\nПравило действует только на источник.\n\nДальше проверки.',stored:'* Пустой источник показан прочерком.\n  Правило действует только на источник.\n\nДальше проверки.'},
+ 'list continuation, other text':{written:'- Пустой источник показан прочерком.\nПравило действует только на источник.',stored:'* Пустой источник показан прочерком.\n  Правило действует на все колонки.',red:true},
+ 'indent after an empty line':{written:'- Пустой источник показан прочерком.\n\nПравило действует только на источник.',stored:'* Пустой источник показан прочерком.\n\n  Правило действует только на источник.',red:true},
+ 'indent without a list':{written:'Источник показан прочерком.\nПравило действует только на источник.',stored:'Источник показан прочерком.\n  Правило действует только на источник.',red:true},
+ 'table delimiter':{written:'| Имя | Источник |\n| --- | :---: |\n| a | b |',stored:'| Имя | Источник |\n| -- | :-: |\n| a | b |'},
+ 'table delimiter, other alignment':{written:'| Имя | Источник |\n| --- | --- |\n| a | b |',stored:'| Имя | Источник |\n| -- | :-- |\n| a | b |',red:true},
+ 'table cell text':{written:'| Имя | Источник |\n| --- | --- |\n| a | b |',stored:'| Имя | Источник |\n| -- | -- |\n| a | c |',red:true},
+ 'dash row under a header of another width':{written:'| Заголовок |\n| - | - |',stored:'| Заголовок |\n| -- | -- |',red:true},
+ 'dash cells are not a delimiter':{written:'| Имя | Источник |\n| --- | --- |\n| - | - |',stored:'| Имя | Источник |\n| -- | -- |\n| -- | -- |',red:true},
+ 'code span edge spaces':{written:'Значение `  rc-02 ` с пробелами.',stored:'Значение ` rc-02` с пробелами.'},
+ 'code span, two spaces at both edges':{written:'Значение `  x  ` с пробелами.',stored:'Значение ` x ` с пробелами.'},
+ 'code span with an inner backtick':{written:'Значение ``  a`b  `` с пробелами.',stored:'Значение `` a`b `` с пробелами.'},
+ 'code span, both edge spaces lost':{written:'Значение `  x  ` с пробелами.',stored:'Значение `x` с пробелами.',red:true},
+ 'code span, other text':{written:'Значение `  rc-02 ` с пробелами.',stored:'Значение ` rc-03` с пробелами.',red:true},
+ 'code span, one edge space':{written:'Значение ` rc-02` с пробелом.',stored:'Значение `rc-02` с пробелом.',red:true}
+};
+for(const [name,{written,stored,red}] of Object.entries(linearForms))test(`MONO-379 Linear issue description forms: ${name}`,t=>{
+ const f=fixture(t);
+ f.record.body=written;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:stored}]);
+ f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,red?'failed':'passed',JSON.stringify(result));
+});
+
+function issuePatchFixture(t,mode){
+ const f=fixture(t),written='Проверить колонку.\n\n| Имя | Источник |\n| --- | --- |\n| check | `  rc-02 ` |',stored='Проверить колонку.\n\n| Имя | Источник |\n| -- | -- |\n| check | ` rc-02` |';
+ const edit=mode==='unsupported'?{op:'append',text:'Ещё строка.'}:{op:'replace',old_string:mode==='missing-anchor'?'нет такой строки':mode==='ambiguous-anchor'?'|':'` rc-02`',new_string:'`"  rc-02 "`'};
+ const patched=stored.replace('` rc-02`','`"  rc-02 "`'),issue={id:'MON-1',uuid:'task',projectId,title:'Stage',description:stored,status:'Todo',labels:[]},final={...issue,description:mode==='other-result'?patched.replace('check','other'):patched};
+ const call=(id,input)=>({type:'assistant',message:{content:[{type:'tool_use',id,name:'mcp__monotest__save_issue',input}]}}),result=(id,value)=>({type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:JSON.stringify(value)}]}});
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[]);f.page('issues','issues',[{id:'task'}]);f.save('issues/task/issue.json',final);f.page('issues/task/comments','comments',[]);
+ f.events.splice(0,f.events.length,...(mode==='no-prior-write'?[]:[call('create',{title:'Stage',project:projectId,description:written}),result('create',issue)]),call('patch',{id:'MON-1',patch:[edit]}),result('patch',final));
+ f.check();return verifyTextRecords(f.request);
+}
+test('MONO-379 an issue description patch is applied to the description the previous write returned',t=>{
+ const result=issuePatchFixture(t,'valid');assert.equal(result.status,'passed',JSON.stringify(result));
+});
+for(const [mode,status,reason] of [['other-result','failed',/mismatch for task\.description/],['missing-anchor','failed',/issue patch old_string must match exactly once/],['ambiguous-anchor','failed',/issue patch old_string must match exactly once/],['no-prior-write','unverified',/issue patch lacks full prior description/],['unsupported','unverified',/unsupported issue patch/]])test(`MONO-379 an issue description patch stays strict (${mode})`,t=>{
+ const result=issuePatchFixture(t,mode);assert.equal(result.status,status,JSON.stringify(result));assert.match(result.reason,reason);
+});
+
+for(const mode of ['child-read','child-catalog-read','other-status'])test(`MONO-379 a child agent's issue read does not break status resolution (${mode})`,t=>{
+ const f=fixture(t),team='00000000-0000-4000-8000-000000000002',statuses=[{id:'00000000-0000-4000-8000-000000000010',name:'Backlog',type:'backlog'},{id:'00000000-0000-4000-8000-000000000011',name:'Todo',type:'unstarted'}];
+ const issue={id:'MON-1',uuid:'task',projectId,teamId:team,title:'Stage',description:'Body',status:mode==='other-status'?'Todo':'Backlog',labels:[]},catalog=mode==='child-catalog-read';
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[]);f.page('issues','issues',[{id:'task'}]);f.save('issues/task/issue.json',issue);f.page('issues/task/comments','comments',[]);f.save(`statuses/${team}.json`,statuses);
+ f.events.splice(0,f.events.length,
+  {type:'assistant',message:{content:[{type:'tool_use',id:'check-agent',name:'Agent',input:{description:'Проверка задачи',prompt:'Прочитай задачу.'}}]}},
+  {type:'assistant',parent_tool_use_id:'check-agent',message:{content:[{type:'tool_use',id:'child-read',name:catalog?'mcp__monotest__list_issue_statuses':'mcp__monotest__get_issue',input:catalog?{team:'Mono Test'}:{id:'MON-1'}}]}},
+  {type:'user',parent_tool_use_id:'check-agent',message:{content:[{type:'tool_result',tool_use_id:'child-read',content:JSON.stringify(catalog?statuses:issue)}]}},
+  {type:'user',message:{content:[{type:'tool_result',tool_use_id:'check-agent',content:'Задача прочитана.'}]}},
+  {type:'assistant',message:{content:[{type:'tool_use',id:'status',name:'mcp__monotest__save_issue',input:{id:'task',...(catalog?{team:'Mono Test'}:{}),state:'backlog'}}]}},
+  {type:'user',message:{content:[{type:'tool_result',tool_use_id:'status',content:JSON.stringify(issue)}]}});
+ f.check();const result=verifyTextRecords(f.request);
+ assert.equal(result.status,mode==='other-status'?'failed':'passed',JSON.stringify(result));
+ if(mode==='other-status')assert.match(result.reason,/mismatch for task\.status/);
+});
+
+// Question anchors name a meaning, not one word: the live questions of both hosts must fit, a question that
+// drops the object or the next stage must not.
+const liveQuestions={
+ 'idea/approve':{fits:['Утверждаешь это описание и начинаем исследование сразу?','Утверждаете это описание и начинаем Research?'],lacks:['Утверждаешь это описание?','Начинаем исследование сразу?']},
+ 'tech-evaluation/approve':{fits:['Утверждаешь страницу с обоими отступлениями, и начинаем Handoff сразу после записи?','Утверждаешь решение в таком виде и начинаем Handoff?'],lacks:['Утверждаешь страницу с обоими отступлениями?','Начинаем Handoff сразу после записи?']},
+ 'discovery/approve':{fits:['Утверждаешь этот PRD и начинаем Design?','Утверждаешь эти требования и начинаем дизайн?'],lacks:['Утверждаешь этот PRD?']},
+ 'design/approve':{fits:['Утверждаешь показанный макет?','Утверждаешь эти экраны?'],lacks:['Утверждаешь?']},
+ 'handoff/approve':{fits:['Начинаем работу по этой записи?','Даёшь старт?'],lacks:['Согласен?']}
+};
+for(const [key,{fits,lacks}] of Object.entries(liveQuestions))test(`MONO-379 question anchors of ${key} fit the live wording and still need every part`,async()=>{
+ const {checkAnchors}=await import('./skills-owner.mjs'),scenario=JSON.parse(fs.readFileSync(`evals/scenarios/${key}/scenario.json`,'utf8'));
+ for(const host of ['claude','codex']){
+  const policy=scenario.hosts[host].expectedReplies.at(-1).question;
+  for(const question of fits)assert.doesNotThrow(()=>checkAnchors(policy,question,'question'),`${host}: ${question}`);
+  for(const question of lacks)assert.throws(()=>checkAnchors(policy,question,'question'),/question lacks scenario anchors/,`${host}: ${question}`);
+ }
+});

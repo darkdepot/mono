@@ -799,7 +799,8 @@ Ship и реализация бриф не ведут.
 документа, ровно одного совпадения `anchor` и совпадения результата с обратным
 чтением; отсутствующий или неоднозначный якорь отвергается.
 `replace_range` заменяет текст от единственного `from` до единственного после него
-`to`; сам `to` остаётся на месте.
+`to`; сам `to` остаётся на месте. Патч описания задачи (`save_issue`) применяется
+теми же правилами к описанию, которое вернула предыдущая запись этой задачи.
 Ссылка согласия в строке брифа — полный Linear URL записи с `#comment-<uuid>`,
 не голый id. При сверке Handoff итог явно называет этап пропущенного решения.
 
@@ -2016,8 +2017,10 @@ Codex approvals use delivered native rollout answers; its `{thread,prompt}` sent
 journal is not a Claude event stream. Live3 regression excerpts include that journal
 and the scripted dump's own rollout, matching the suite's record-check inputs.
 Stored Markdown comparison accepts Linear's link wrappers, list markers,
-self-links on bare file-like tokens, backslashes before prose square brackets and
-spacing at heading/list boundaries while retaining paragraph breaks and code.
+self-links on bare file-like tokens, backslashes before prose square brackets,
+spacing at heading/list boundaries, the indent of a list item's continuation line,
+the dash count of a table delimiter row and CommonMark's edge-space trimming of a
+code span, while retaining paragraph breaks and code text.
 Package starts require Handoff's native start/delegate button; other approvals
 still require an approval answer.
 Version bindings use the gate's existing record parser and a native read before

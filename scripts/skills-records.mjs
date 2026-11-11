@@ -73,18 +73,26 @@ function prose(value) {
   .replace(/\[((?:[^\[\]\\\n]|\\.|\[[^\[\]\n]*\])*)\](\((?:<[^<>\n]+>|(?:[^\s<>()]|\([^\s<>()]*\))+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?\))|(\\*)([\[\]])/g,
    (all,label,tail,slashes,mark)=>tail?`[${label.replace(/(\\*)([\[\]])/g,escapedBracket)}]${tail}`:escapedBracket(all,slashes,mark));
 }
-function inlineProse(line,opened) {
- let result='',start=0,delimiter=opened;
+// Code stays literal. `parsed` applies CommonMark's own rule to a written text, as Linear does on save: a span whose
+// content begins and ends with a space loses one at each end (`  x ` is stored as ` x`). Only a span on one line.
+function inlineProse(line,opened,parsed=false) {
+ let result='',start=0,delimiter=opened,from=null;
  for(const match of line.matchAll(/`+/g)) {
-  const part=line.slice(start,match.index);result+=delimiter===null?prose(part):part;
+  const part=line.slice(start,match.index);
+  result+=delimiter===null?prose(part):part;
+  if(parsed&&from!==null&&delimiter===match[0].length){
+   const code=result.slice(from);
+   if(code.startsWith(' ')&&code.endsWith(' ')&&code.trim())result=result.slice(0,from)+code.slice(1,-1);
+  }
   result+=match[0];start=match.index+match[0].length;
-  if(delimiter===null)delimiter=match[0].length;else if(delimiter===match[0].length)delimiter=null;
+  if(delimiter===null){delimiter=match[0].length;from=result.length;}else if(delimiter===match[0].length){delimiter=null;from=null;}
  }
  const tail=line.slice(start);return result+(delimiter===null?prose(tail):tail);
 }
-function markdown(value){
+function markdown(value,parsed=false){
  if(typeof value!=='string')return value;
- let fence=null,inline=null,heading=false;const result=[];
+ const cells=line=>line.trim().slice(1,-1).split(/(?<!\\)\|/);
+ let fence=null,inline=null,heading=false,item=false,row=0,columns=0;const result=[];
  for(const line of value.split('\n')){
   const marker=inline===null?line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/):null;
   const block=Boolean(fence||marker||(inline===null&&/^(?: {4}|\t)/.test(line))),literal=block||inline!==null;
@@ -102,8 +110,16 @@ function markdown(value){
   }
   // Inline code is opaque too; destinations with whitespace or parenthesis
   // syntax stay literal rather than risk changing the link's parse.
-  const list=literal?line:line.replace(/^([ ]{0,3})- /,'$1* ');
-  result.push(block?list:inlineProse(list,inline));
+  let list=literal?line:line.replace(/^([ ]{0,3})- /,'$1* ');
+  // A paragraph line directly under a list item continues that item; Linear stores it indented under the item.
+  if(!literal&&item&&/^ {1,3}\S/.test(list)&&!/^ {1,3}(?:[-*+] |\d{1,3}[.)] |#{1,6} |>)/.test(list))list=list.trimStart();
+  // The row under a table header with as many cells is the delimiter: Linear stores `| --- |` as `| -- |`; dash
+  // count and padding carry no meaning.
+  row=!literal&&/^ {0,3}\|.*\| *$/.test(line)?row+1:0;
+  if(row===1)columns=cells(line).length;
+  if(row===2&&/^ {0,3}\|(?: *:?-+:? *\|)+ *$/.test(list)&&cells(list).length===columns)list='| '+cells(list).map(cell=>cell.trim().replace(/-+/,'---')).join(' | ')+' |';
+  item=!literal&&line.trim()!==''&&(item||/^ {0,3}(?:[-*+] |\d{1,3}[.)] )/.test(line));
+  result.push(block?list:inlineProse(list,inline,parsed));
   heading=!literal&&/^#{1,6} /.test(line);
   if(!block)for(const tick of line.matchAll(/`+/g)){
    if(inline===null)inline=tick[0].length;
@@ -114,6 +130,33 @@ function markdown(value){
  return result.join('\n');
 }
 const elided=value=>typeof value==='string'&&/… \(truncated, use `get_(?:document|issue|project)` for full description\)$/.test(value);
+// Linear's patch ops on a stored text. Every anchor must match as the connector requires; the result is then compared
+// with the native read-back and the dump like a full write.
+function applyPatch(kind,id,content,patch){
+ for(const edit of patch){
+  if(edit?.op==='insert_before'||edit?.op==='insert_after'){
+   if(typeof edit.anchor!=='string'||!edit.anchor||typeof edit.text!=='string')missing(`unsupported ${kind} patch for ${id}`);
+   const start=content.indexOf(edit.anchor);
+   if(start<0||content.indexOf(edit.anchor,start+1)>=0)throw new Error(`${kind} patch anchor must match exactly once for ${id}: ${start<0?'missing':'ambiguous'}`);
+   const offset=start+(edit.op==='insert_after'?edit.anchor.length:0);
+   content=content.slice(0,offset)+edit.text+content.slice(offset);
+   continue;
+  }
+  if(edit?.op==='replace_range'){
+   // Linear's range edit: `from` matches exactly once and starts the replaced text; `to` matches exactly once after it and stays.
+   if(typeof edit.from!=='string'||!edit.from||typeof edit.to!=='string'||!edit.to||typeof edit.new_string!=='string')missing(`unsupported ${kind} patch for ${id}`);
+   const start=content.indexOf(edit.from),end=start<0?-1:content.indexOf(edit.to,start+edit.from.length);
+   if(start<0||content.indexOf(edit.from,start+1)>=0||end<0||content.indexOf(edit.to,end+1)>=0)throw new Error(`${kind} patch range must match exactly once for ${id}`);
+   content=content.slice(0,start)+edit.new_string+content.slice(end);
+   continue;
+  }
+  if(edit?.op!=='replace'||typeof edit.old_string!=='string'||!edit.old_string||typeof edit.new_string!=='string')missing(`unsupported ${kind} patch for ${id}`);
+  const start=content.indexOf(edit.old_string);
+  if(start<0||edit.replace_all!==true&&content.indexOf(edit.old_string,start+1)>=0)throw new Error(`${kind} patch old_string must match ${edit.replace_all===true?'at least':'exactly'} once for ${id}`);
+  content=edit.replace_all===true?content.split(edit.old_string).join(edit.new_string):content.slice(0,start)+edit.new_string+content.slice(start+edit.old_string.length);
+ }
+ return content;
+}
 function compareField(field,wanted,actual,id){
  let same;
  if(field==='status'||field==='labels'){
@@ -126,7 +169,7 @@ function compareField(field,wanted,actual,id){
    matched.add(index);return true;
   })&&matched.size===observed.length;
   if(!same&&unresolved)missing(`id/name resolution unavailable for ${id}.${field}`);
- }else same=isDeepStrictEqual(wanted,actual)||(['description','content','body'].includes(field)&&markdown(wanted)===markdown(actual));
+ }else same=isDeepStrictEqual(wanted,actual)||(['description','content','body'].includes(field)&&[markdown(wanted),markdown(wanted,true)].includes(markdown(actual)));
  if(!same)throw new Error(`read-back/write result mismatch for ${id}.${field}`);
 }
 
@@ -812,7 +855,8 @@ export function verifyRecords(request){
    }
    for(const call of write.data.calls.filter(c=>c.name===`mcp__monotest__${tool}`&&c.line<write.line)){
     if(!write.input.team||call.input.team!==write.input.team)continue;
-    const read=resultFor(write.data.host,call,write.data.rows);
+    // A catalog read without a native result, such as a child agent's, adds no aliases.
+    let read;try{read=resultFor(write.data.host,call,write.data.rows);}catch(error){if(error instanceof MissingEvidence)continue;throw error;}
     if(read.resultLine>=write.line)continue;
     const rows=Array.isArray(read.value)?read.value:read.value.labels;
     if(Array.isArray(rows))aliases.push(...rows);
@@ -825,7 +869,8 @@ export function verifyRecords(request){
    };
    // Updates without a team can use this record's native state history.
    for(const call of write.data.calls.filter(c=>field==='status'&&c.name==='mcp__monotest__get_issue')){
-    const read=resultFor(write.data.host,call,write.data.rows);
+    // These reads only add optional aliases too.
+    let read;try{read=resultFor(write.data.host,call,write.data.rows);}catch(error){if(error instanceof MissingEvidence)continue;throw error;}
     if(idOf(read.value)===idOf(write.value))aliases.push(...(read.value.stateHistory??[]).map(row=>row.state));
    }
    const resolve=v=>typeof v==='string'?aliases.find(row=>row.id===v)??named(v):v;
@@ -867,29 +912,14 @@ export function verifyRecords(request){
       content=latest.value.content;
      }
      if(typeof content!=='string'||elided(content))missing(`document patch lacks full prior content for ${id}`);
-     for(const edit of input.patch){
-      if(edit?.op==='insert_before'||edit?.op==='insert_after'){
-       if(typeof edit.anchor!=='string'||!edit.anchor||typeof edit.text!=='string')missing(`unsupported document patch for ${id}`);
-       const start=content.indexOf(edit.anchor);
-       if(start<0||content.indexOf(edit.anchor,start+1)>=0)throw new Error(`document patch anchor must match exactly once for ${id}: ${start<0?'missing':'ambiguous'}`);
-       const offset=start+(edit.op==='insert_after'?edit.anchor.length:0);
-       content=content.slice(0,offset)+edit.text+content.slice(offset);
-       continue;
-      }
-      if(edit?.op==='replace_range'){
-       // Linear's range edit: `from` matches exactly once and starts the replaced text; `to` matches exactly once after it and stays.
-       if(typeof edit.from!=='string'||!edit.from||typeof edit.to!=='string'||!edit.to||typeof edit.new_string!=='string')missing(`unsupported document patch for ${id}`);
-       const start=content.indexOf(edit.from),end=start<0?-1:content.indexOf(edit.to,start+edit.from.length);
-       if(start<0||content.indexOf(edit.from,start+1)>=0||end<0||content.indexOf(edit.to,end+1)>=0)throw new Error(`document patch range must match exactly once for ${id}`);
-       content=content.slice(0,start)+edit.new_string+content.slice(end);
-       continue;
-      }
-      if(edit?.op!=='replace'||typeof edit.old_string!=='string'||!edit.old_string||typeof edit.new_string!=='string')missing(`unsupported document patch for ${id}`);
-      const start=content.indexOf(edit.old_string);
-      if(start<0||edit.replace_all!==true&&content.indexOf(edit.old_string,start+1)>=0)throw new Error(`document patch old_string must match ${edit.replace_all===true?'at least':'exactly'} once for ${id}`);
-      content=edit.replace_all===true?content.split(edit.old_string).join(edit.new_string):content.slice(0,start)+edit.new_string+content.slice(start+edit.old_string.length);
-     }
+     content=applyPatch('document',id,content,input.patch);
      input.content=content;
+    }
+    if(write.name==='mcp__monotest__save_issue'&&Object.hasOwn(input,'patch')){
+     // An issue patch edits the description this issue's previous write natively returned.
+     if(Object.hasOwn(input,'description')||!Array.isArray(input.patch)||!input.patch.length)missing(`invalid issue patch for ${id}`);
+     if(typeof finalFields.description!=='string'||elided(finalFields.description))missing(`issue patch lacks full prior description for ${id}`);
+     input.description=applyPatch('issue',id,finalFields.description,input.patch);delete input.patch;
     }
     if(Object.hasOwn(input,'state')){if(Object.hasOwn(input,'status'))compareField('status',input.state,input.status,id);input.status=input.state;}
     for(const field of fields){
