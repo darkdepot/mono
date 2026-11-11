@@ -1,83 +1,76 @@
 ---
 name: ship
-description: Use for accepted pre-ship drift, PR creation, documentation and review through green; earlier repair belongs to handoff.
+description: >-
+  Выход PR из черновика до зелёного итога после сбора Preflight: замечания бота,
+  CI и владельца, описание для людей, принятый дрейф перед PR, сертификат для Deploy.
+  Ранний ремонт пакета в mono:handoff, вливание в mono:deploy.
 ---
 
 # Mono Ship
 
-Find shared files here or at the pack root.
+Ведёшь PR от черновика до зелёного; `<корень>` = `../..`.
+[Посадка](<корень>/references/landing.md).
 
-[Landing](references/landing.md).
+Не вливаешь, не выкладываешь, не закрываешь задачу. Код и гигиена идут в
+implement/preflight. Нужна утверждённая задача Linear: находки, документы и
+задачи GitHub её не заменяют.
 
-Own PR/docs/review through green, never merge/deploy/closeout. Route code/hygiene to implement/preflight. Require approved Linear Issue; discovery/docs/GitHub Issues cannot substitute.
+Прочитай сразу:
+- `<корень>/references/ship-feedback-loop.md`;
+- `<корень>/templates/ship-output.md`.
+Прочитай, когда:
+- `AGENTS.md`: на входе;
+- `<корень>/references/worker-contract.md`: диспатч, отчёт, очередь;
+- `<корень>/references/readiness-gates.md`: допуск и риск;
+- `<корень>/references/contracts/prd.md`: дрейф против PRD;
+- `<корень>/references/contracts/tech-spec.md`: дрейф против Tech Spec;
+- `<корень>/references/human-friendly-output.md`: итог;
+- `<корень>/templates/pr-body.md`: описание PR;
+- `<корень>/references/issue-only-lane.md`: `lifecycle_state_entity=issue`;
+- `<корень>/skills/preflight/SKILL.md`: сертификат preflight пропал, устарел или не `ready`;
+- `<корень>/templates/ship-status-ux.md`: статус человеку в разговоре.
 
-Read first:
+## Порядок
 
-Read now:
+1. Личность диспатча до работы; снимок и очередь по контракту исполнителя.
+   Проектной задаче нужны утверждённая связанная задача, проект, PRD и Tech Spec
+   или запись пакета, иначе handoff; issue-only: оракул, отпечаток, свежий
+   preflight. Нет утверждения или контекст закрыт: ворот и PR нет.
+2. Последний сертификат preflight: нет или устарел → preflight; drift-candidate →
+   формальное ревью и check. Сверь объём, риск и дифф с артефактами.
+3. `mono:review pre-ship` по допуску; нерешённое или блокирующее → needs-human.
+4. Принятый дрейф в Linear до выхода из черновика, записи подтверждены.
+5. `mono:check pre-ship`: только готовность, без ремонта.
+6. Черновик открыл preflight. Описание: `scripts/ship-pr.mjs body` после каждого
+   круга, перед `ready` и перед зелёным. Каждое из `remarks`: исправлено в чистом
+   круге или решено без кода `check --pr` (он же проверяет описание; назван в
+   botRemarks evidence). Затем `ready`; бот молчит: один `mention`. In Review и
+   чип PR в очередь после выхода из черновика.
+7. Documentation workflow после выхода из черновика; нет процесса: недоступен с причиной.
+8. Позднее замечание или упавший CI: решено без кода через `check` или неопасное
+   стало наследником; нужна правка: `undo`, стоп «не сошлось». Комментарий
+   владельца без метки Ship: один вопрос. Продукт, UX, деньги, объём → needs-human.
+9. Живой `gate.mjs ship` проходит; полный зелёный сертификат, очередь подтверждена.
+   Под диспатчем прямых записей в Linear нет.
 
-1. `AGENTS.md`
-2. `references/contracts/prd.md`
-3. `references/contracts/tech-spec.md`
-4. `references/worker-contract.md`
-5. `references/readiness-gates.md`
-6. `references/ship-feedback-loop.md`
-7. `references/human-friendly-output.md`
-8. `templates/ship-output.md`
+После восстановления состояние PR читай из gh. blocked, needs-human, timed-out:
+выходной комментарий с точным вопросом.
 
-Read when:
+## Ручной запуск
 
-- `references/issue-only-lane.md` — when `lifecycle_state_entity=issue`, or the parentless ship gate routes a candidate.
-- `skills/preflight/SKILL.md` — when the recovered preflight certificate is missing, superseded or not `ready`.
-- `templates/ship-status-ux.md` — when composing interactive status for a user.
+Без диспатча, в сессии владельца: ветка с готовой задачей Linear и подписанной
+квитанцией ревью clean или clean-with-successors на текущей версии из сбора
+задачи. Сбор не делаешь: `collect:false` берёт последний запрос сбора задачи к
+этой квитанции. Нет задачи или квитанции: отказ с причиной. Правка нужна: стоп.
+Linear пишешь сам. Нет права отвечать в обсуждениях: стоп «нет права публиковать ответы».
 
-Run exact dispatch identity before work/resume. Apply worker snapshot/queue rules.
-Under mono:deliver return phase results, confirm full queues and use gate.mjs ship;
-never dispatch another stage. Preserve the following order.
+## Итог
 
-## Workflow
-
-1. Apply worker Context seam/parentless gate. Project-first needs approved linked
-   Issue/current Project/PRD/Spec-or-record, otherwise handoff. Valid issue-only uses oracle/
-   fingerprint/current preflight, no Project docs. Absent/stale/broken approval or
-   fail-closed context stops formal gates/PR; use deterministic no-promotion fallback.
-2. Recover latest mono-preflight certificate. Missing/superseded → preflight;
-   drift-candidate → formal review/check. Compare scope/risk/diff with artifacts.
-3. Run/report required mono:review pre-ship under readiness policy and worker
-   contract; unresolved decisions/artifacts/blocking findings → needs-human.
-4. Apply/request accepted pre-ship Linear sync before PR creation; record user
-   acceptance. Confirm its writes under the sequencer. Earlier Project-first
-   repair belongs to handoff; issue-only renewal to issue intake.
-5. Run/report mono:check pre-ship, readiness-only, no repairs.
-6. Preflight opened the draft. Write the description per templates/pr-body.md
-   (`ship-pr.mjs body`; again after each round, before ready and green). Settle every `remarks` item:
-   fixed in the clean round, or without code by `check --pr` (read-only pass, also
-   judges the description; named in botRemarks evidence). Then `ready`; `mention`
-   once if bot is silent. Queue In Review and PR chip after leaving draft.
-7. Run Documentation workflow after PR/before stabilization (configured, e.g.
-   `gstack document-release`). Record head effect; pushes restart on new head.
-   Missing workflow means intentionally unavailable with reason; always report outcome.
-8. A late remark or CI failure after ready: settled without code by `check`, or
-   a non-dangerous one confirmed as successor; one needing a fix: `undo`, park
-   not-converged. Owner's unmarked PR comment: one question. Product/UX/business/
-   scope/risk questions → needs-human.
-9. Obtain live gate.mjs ship pass; publish full green certificate and confirm its
-   queue before terminal green. Under dispatch no direct Linear writes.
-
-Delegate available required workflows. If unavailable, record an equivalent
-gh/docs/feedback substitution under unchanged gates. Route code/hygiene and
-head-change proof back to implement/preflight.
-
-On any recovery read PR existence/head/CI/threads/merge from gh, not memory.
-Use feedback-loop UX and templates/ship-status-ux.md interactively; retain the
-same boundary in AFK reports. Record tiny advisory skips; risk review is lane-independent.
-
-Green certificate shape:
-
-For Linear prepend the Russian outcome/next lead; preserve the machine block:
+Над сертификатом 1-3 строки языком продукта: что готово, попытка, круги ревью
+из трёх, ожидание из предела. «PR готов к вливанию. Попытка 1, круги 2 из 3,
+ожидание 12 мин из 120.» Блок прежней формы:
 
 ```text
-<1-2 Russian sentences: outcome and next>
-
 mono-ship green certificate
 Ship: green
 Issue(s): <keys>
@@ -94,8 +87,3 @@ Checked: <states inspected>
 Not checked: <manual/browser/mobile/prod/deploy surfaces not inspected>
 Next: mono:deploy
 ```
-
-Apply worker Certificate recovery, Tiny Output Profile and Linear Exit Comments
-for blocked/needs-human/timed-out; give exact unresolved question. Final: verdict,
-PR/Issue/head, docs effect, review/CI/threads, certificate recorded/pending,
-inspected/uninspected boundary and next owner.

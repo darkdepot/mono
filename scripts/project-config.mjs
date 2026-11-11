@@ -80,6 +80,12 @@ function titleize(value) {
     .join(" ");
 }
 
+// Ship and review feedback run inside mono:ship; these names keep older configs valid.
+const BUILT_IN_SHIP_ALIASES = {
+  ship: ["mono", "gstack ship"],
+  reviewFeedback: ["mono", "compound-engineering:ce-resolve-pr-feedback"],
+};
+
 function normalizeOptionalWorkflow(value) {
   if (!value) return null;
   const trimmed = value.trim();
@@ -223,6 +229,8 @@ function validateConfig(config, failures) {
       const value = config.workflows[field];
       if (value !== null && (typeof value !== "string" || value.trim().length === 0)) {
         failures.push(`Project config workflows.${field} must be a string or null`);
+      } else if (field in BUILT_IN_SHIP_ALIASES && value !== null && !BUILT_IN_SHIP_ALIASES[field].includes(value.trim())) {
+        failures.push(`Project config workflows.${field} "${value}" is not supported: Ship is built in; use null, "mono" or ${BUILT_IN_SHIP_ALIASES[field].filter((name) => name !== "mono").map((name) => `"${name}"`).join(", ")}`);
       }
     }
     if ("qa" in config.workflows) {
