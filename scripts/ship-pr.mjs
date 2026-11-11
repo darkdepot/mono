@@ -36,8 +36,9 @@ export function scanBlob(file, content) {
 export function unpushedSecrets(worktree, remote) {
   const commits = git(worktree, 'rev-list', 'HEAD', '--not', `--remotes=${remote}`).split('\n').filter(Boolean);
   return commits.flatMap(commit => {
-    const files = git(worktree, '-c', 'core.quotePath=false', 'diff-tree', '--root', '-m', '--no-commit-id', '-r', '-z', '--name-only', '--diff-filter=AMCRT', commit)
-      .split('\0').filter(Boolean);
+    // Raw NUL-separated output: a path may start or end with whitespace.
+    const files = execFileSync('git', ['-c', 'core.quotePath=false', 'diff-tree', '--root', '-m', '--no-commit-id', '-r', '-z', '--name-only', '--diff-filter=AMCRT', commit],
+      { cwd: worktree, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).split('\0').filter(Boolean);
     return [...new Set(files)].flatMap(file => {
       const size = Number(git(worktree, 'cat-file', '-s', `${commit}:${file}`));
       if (size > MAX_BLOB) return [{ file, line: 0, kind: 'file too large to scan', commit }];
@@ -49,7 +50,14 @@ export function unpushedSecrets(worktree, remote) {
 const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim();
 const ghJson = (...args) => JSON.parse(gh(...args) || 'null');
 // Where GitHub push protection is on, GitHub is the check; elsewhere (or unreadable) Ship scans first.
+// GitHub protection counts only when the remote really pushes to that repository.
+export function pushesTo(url, repo) {
+  const match = /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(String(url ?? '').trim());
+  return !!match && `${match[1]}/${match[2]}`.toLowerCase() === String(repo).toLowerCase();
+}
 export function checkSecrets({ worktree, repo, remote, protection = null }) {
+  let pushUrl = null; try { pushUrl = git(worktree, 'remote', 'get-url', '--push', remote); } catch {}
+  if (!pushesTo(pushUrl, repo)) protection = 'not this repository';
   let status = protection;
   if (status === null) { try { status = gh('api', `repos/${repo}`, '--jq', '.security_and_analysis.secret_scanning_push_protection.status'); } catch { status = 'unknown'; } }
   if (status === 'enabled') return { scanned: false, protection: 'enabled', found: [] };
@@ -100,8 +108,14 @@ export function collectRemarks({ snapshot, reviewComments = [], issueComments = 
     // A resolved thread stays a remark: resolving it on GitHub is not evidence that it was settled.
     if (!first) continue;
     const rest = byNode.get(first.id);
-    const source = BOT(first.author?.login) ? 'bot' : owner({ user: { login: first.author?.login }, body: first.body, created_at: first.publishedAt }) ? 'owner' : null;
-    if (!source) continue;
+    // Every unmarked owner comment in any thread is an instruction of its own, never part of a bot remark.
+    for (const comment of thread.comments) if (owner({ user: { login: comment.author?.login }, body: comment.body, created_at: comment.publishedAt })) {
+      const at = byNode.get(comment.id) ?? rest;
+      remarks.push({ id: remarkId(comment.id), source: 'owner', file: at?.path ?? '(pr)', line: at?.line ?? at?.original_line ?? 1, title: firstLine(comment.body),
+        body: clip(comment.body, 4000), urgent: false, head });
+    }
+    if (!BOT(first.author?.login)) continue;
+    const source = 'bot';
     const body = thread.comments.filter(comment => !marked(comment.body)).map(comment => comment.body).join('\n\n');
     remarks.push({ id: remarkId(thread.id), source, file: rest?.path ?? '(pr)', line: rest?.line ?? rest?.original_line ?? 1, title: firstLine(first.body),
       body: clip(body, 4000), urgent: source === 'bot' && URGENT.test(first.body), head: /^[a-f0-9]{40}$/.test(rest?.commit_id ?? '') ? rest.commit_id : head,

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { SHIP_MARKER, scanBlob, unpushedSecrets, checkSecrets, draftBody, collectRemarks, readyBlockers, mentionNeeded, requestRemark, u6File } from './ship-pr.mjs';
+import { SHIP_MARKER, scanBlob, unpushedSecrets, checkSecrets, pushesTo, draftBody, collectRemarks, readyBlockers, mentionNeeded, requestRemark, u6File } from './ship-pr.mjs';
 import { prRemarkFindings, remarkDigest } from './code-review.mjs';
 
 const head = 'a'.repeat(40), older = 'b'.repeat(40);
@@ -31,13 +31,25 @@ test('secrets: only commits not on the remote are scanned, with file and line', 
   commit('key.pem', `${privateKey}\n`);
   assert.throws(() => checkSecrets({ worktree: work, repo: 'o/r', remote: 'origin', protection: 'disabled' }), /secret before push: private key in key\.pem:1/);
   assert.throws(() => checkSecrets({ worktree: work, repo: 'o/r', remote: 'origin', protection: 'unknown' }), /secret before push/, 'unreadable protection status scans too');
+  assert.throws(() => checkSecrets({ worktree: work, repo: 'o/r', remote: 'origin', protection: 'enabled' }), /secret before push/, 'protection of another repository does not count');
+  git(work, 'remote', 'set-url', '--push', 'origin', 'git@github.com:o/r.git');
   assert.deepEqual(checkSecrets({ worktree: work, repo: 'o/r', remote: 'origin', protection: 'enabled' }), { scanned: false, protection: 'enabled', found: [] }, 'GitHub push protection is the check');
+  assert.throws(() => checkSecrets({ worktree: work, repo: 'o/upstream', remote: 'origin', protection: 'enabled' }), /secret before push/, 'a fork remote is scanned');
 });
 test('secrets: whole files are read, binary-looking ones and diff attributes included; ordinary text passes', t => {
   assert.deepEqual(scanBlob('x.js', 'const ok = "sk-short";\n'), []);
   const { work, commit } = repo(t);
   commit('.gitattributes', 'creds.txt -diff\n'); commit('creds.txt', `token=${awsKey}\n`); commit('blob.bin', `\0\0binary${privateKey}\n`);
   assert.deepEqual(unpushedSecrets(work, 'origin').map(item => [item.file, item.kind]).sort(), [['blob.bin', 'private key'], ['creds.txt', 'AWS access key']]);
+});
+test('push destination matches the repository whose protection is read', () => {
+  for (const url of ['https://github.com/o/r.git', 'git@github.com:o/r.git', 'https://github.com/O/R', 'ssh://git@github.com/o/r.git']) assert.equal(pushesTo(url, 'o/r'), true, url);
+  for (const url of ['https://github.com/o/r-fork.git', 'git@github.com:other/r.git', '/tmp/remote.git', null]) assert.equal(pushesTo(url, 'o/r'), false, String(url));
+});
+test('secrets: a path starting with a space is read as is', t => {
+  const { work, commit } = repo(t);
+  commit(' spaced.txt', `${awsKey}\n`);
+  assert.deepEqual(unpushedSecrets(work, 'origin').map(item => item.file), [' spaced.txt']);
 });
 test('secrets: a symlink replaced by a regular file is scanned', t => {
   const { work, commit } = repo(t);
@@ -73,7 +85,7 @@ test('remarks: bot threads, bot comments, failed CI on the head and owner instru
   assert.deepEqual(remarks.map(remark => [remark.source, remark.id, remark.file, remark.line, remark.urgent, remark.head === older]), [
     ['bot', 'T1', 'scripts/gate.mjs', 150, true, true],
     ['bot', 'T2', '(pr)', 1, false, false],
-    ['owner', 'T3', '(pr)', 1, false, false],
+    ['owner', 'C4', '(pr)', 1, false, false],
     ['bot', 'B1', '(pr)', 1, false, false],
     ['owner', 'I2', '(pr)', 1, false, false],
     ['ci', 'ci:validate', '(pr)', 1, false, false],
@@ -82,6 +94,9 @@ test('remarks: bot threads, bot comments, failed CI on the head and owner instru
   assert.doesNotMatch(remarks[0].body, /Fixed in abc/, 'Ship\'s own reply is not part of the remark');
   assert.equal(remarks[0].title, '**Gate lets stale work through**');
   assert.doesNotThrow(() => prRemarkFindings(remarks.map(requestRemark)), 'every remark is a valid collection request remark');
+  const reply = { id: 'T5', isResolved: false, comments: [{ id: 'C6', body: 'Bot remark', author: { login: 'greptile-apps[bot]' } }, { id: 'C7', body: 'Also add a test', author: { login: 'owner' }, publishedAt: '2026-11-11T13:00:00Z' }] };
+  assert.deepEqual(collectRemarks({ snapshot: snapshot({ threads: [reply] }), issueComments: issueComments.slice(0, 1) }).map(remark => [remark.source, remark.id]), [['owner', 'C7'], ['bot', 'T5']],
+    'an owner reply inside a bot thread is an instruction of its own');
   assert.deepEqual(collectRemarks({ snapshot: snapshot({ threads: threads.slice(2) }), issueComments: issueComments.slice(1) }), [],
     'without a marked Ship publication the owner\'s comments are not instructions');
   assert.deepEqual(collectRemarks({ snapshot: snapshot(), issueComments: issueComments.slice(1), pr: { body: `${SHIP_MARKER}\nDraft`, created_at: '2026-11-11T09:00:00Z' } }).map(remark => remark.id), ['I2'],

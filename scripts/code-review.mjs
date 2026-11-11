@@ -572,7 +572,9 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     for (const finding of [...open, ...found]) {
       const prior = byKey.get(finding.key), saved = merged.get(finding.key);
       const dangerMaximum = maximumDanger(...[saved, prior].filter(Boolean).map(savedDanger), savedDanger(finding));
-      byKey.set(finding.key, { ...finding, reviewerDanger: Object.hasOwn(finding, 'reviewerDanger') ? finding.reviewerDanger : finding.danger ?? null,
+      // A PR remark keeps its source when the reviewer reports it again (owner instructions stay blocking).
+      const source = finding.source ?? prior?.source ?? saved?.source;
+      byKey.set(finding.key, { ...finding, ...(source ? { source } : {}), reviewerDanger: Object.hasOwn(finding, 'reviewerDanger') ? finding.reviewerDanger : finding.danger ?? null,
         dangerMaximum, danger: dangerMaximum !== false });
     }
     const findings = [...byKey.values()];
@@ -675,7 +677,7 @@ export async function runRemarkCheck(input, { runRole = executeRole } = {}) {
   let exported;
   try {
     exported = exportReviewTree(worktree, head, binary);
-    const context = { head, base, diff: changed.parts.map(part => part.diff).join(''), binaryFiles: [...binary], remarks };
+    const context = { worktree: exported.root, head, base, diff: changed.parts.map(part => part.diff).join(''), binaryFiles: [...binary], remarks };
     const result = await runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt: promptFor(packRoot, 'remark-check', context) });
     return { head, base, engine: route.engine, model: route.model, remarks: remarks.map(remark => ({ id: remark.id, digest: remarkDigest(remark), decision: remark.decision })),
       verdicts: parseRemarkCheck(result.response, remarks), elapsedMs: result.elapsedMs ?? null, usage: result.usage ?? null };

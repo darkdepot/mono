@@ -110,6 +110,8 @@ test('PR remarks enter the round as open findings; a fix closes only when the ch
  assert.match(runner.calls.at(-1).prompt,/value\(-2\) still returns -2/,'a changed remark reaches the round with its new text');
  const owner=await runReviewRound({...f.request,remarks:[remark({source:'owner'})]},responder({verdicts:[verdict({origin:'pre-existing'})]}));
  assert.equal(owner.outcome,'not-converged','an owner instruction stays blocking even when the checker calls it pre-existing');
+ const repeated=await runReviewRound({...f.request,remarks:[remark({source:'owner'})]},responder({findings:[{class:'pr-remark',file:'input.mjs',anchor:'owner PRRT_1',line:1,title:'still open',trigger:'t',evidence:'e'}],verdicts:[verdict({origin:'pre-existing'})]}));
+ assert.deepEqual([repeated.outcome,repeated.findings[0].source],['not-converged','owner'],'the reviewer repeating an owner instruction keeps its source');
  for(const bad of [{...remark(),id:'bad id'},{...remark(),source:'chat'},{...remark(),file:'../x'},{...remark(),head:'x'},{...remark(),extra:1}])assert.throws(()=>prRemarkFindings([bad]));
  assert.throws(()=>prRemarkFindings([remark(),remark()]),/repeated/);
 });
