@@ -357,9 +357,12 @@ function collectReviewReceipts(evidenceRoot, issue) {
   for (const cost of [...rounds.values(), ...notReviewed.values()].flat()) {
     calls += 1;
     const measured = receiptUsage(cost?.usage);
-    if (!measured) continue;
-    addUsage(total, measured);
-    measuredCalls += 1;
+    // A Codex role call also runs a boundary probe; its tokens are part of the call.
+    const probe = cost?.boundary?.probeUsage ?? null;
+    const measuredProbe = probe === null ? null : receiptUsage(probe);
+    if (measured) addUsage(total, measured);
+    if (measuredProbe) addUsage(total, measuredProbe);
+    if (measured && (probe === null || measuredProbe)) measuredCalls += 1;
   }
   return {
     passes: rounds.size,

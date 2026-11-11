@@ -137,6 +137,16 @@ test('review cost comes from signed gate receipts and counts every round once', 
   assert.doesNotMatch(line, /проходов авто-ревью|unavailable:/);
 });
 
+test('a role call counts its boundary probe, and an unreadable probe leaves the call unmeasured', () => {
+  const usage = { input_tokens: 1000, cached_input_tokens: 400, output_tokens: 50, reasoning_output_tokens: 10 };
+  const probed = { ...cost('reviewer', 'codex', usage), boundary: { probeUsage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 5, reasoning_output_tokens: 1 } } };
+  const broken = { ...cost('reviewer', 'codex', usage), boundary: { probeUsage: { input_tokens: 'many' } } };
+  const { result } = measureWithReceipts([pins => receipt('r1', pins('MONO-999'), '1', { outcome: 'clean', spent: true, round: 1,
+    record: { schemaVersion: 1, contractDigest: 'c'.repeat(64), rounds: [round(1, '1', [probed, broken])] } })]);
+  assert.deepEqual(result.autoreview.receipts, { receipts: 1, rounds: 1, not_reviewed: 0, calls: 2, measured_calls: 1 });
+  assert.equal(result.autoreview.usage.input_tokens, 2100);
+  assert.equal(result.autoreview.usage.output_tokens, 105);
+});
 test('receipts without usage are unavailable, and an Issue without receipts keeps the helper-log wording', () => {
   const silent = measureWithReceipts([pins => receipt('r1', pins('MONO-999'), '1', { outcome: 'clean', spent: true, round: 1,
     record: { contractDigest: 'c'.repeat(64), rounds: [round(1, '1', [cost('reviewer', 'codex', null)])] } })]);
