@@ -154,13 +154,14 @@ function applyPatch(kind,id,content,patch){
 }
 // A write and its read-back are compared by their words and numbers in order. Linear reformats a text on save
 // (spacing, list markers, escapes, link wrappers, issue chips), so formatting is not evidence; a changed, lost or
-// stale word is. A link counts as its label, destination and title; a link to its own label (README.md:7 stored as
-// [README.md:7](<http://README.md:7>)) counts once, and an issue chip counts as its label.
+// stale word is. A link counts as the words of its label and title and its exact destination, without the angle
+// wrapper and percent-encoding; a link to its own label (README.md:7 stored as [README.md:7](<http://README.md:7>))
+// counts once, and an issue chip counts as its label.
 const linkTarget=dest=>{dest=dest.replace(/^<|>$/g,'');try{return decodeURI(dest);}catch{return dest;}};
 const words=value=>value.normalize('NFC')
  .replace(/<issue\b[^<>]*\blabel="([^"]*)"[^<>]*\/\s*>|<issue\b[^<>]*>([^<>]*)<\/issue>/g,(all,label,inner)=>` ${label??inner} `)
  .replace(/\[((?:[^\[\]\\\n]|\\.|\[[^\[\]\n]*\])*)\]\((<[^<>\n]*>|(?:[^\s<>()]|\([^\s<>()]*\))*)((?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?)\)/g,
-  (all,label,dest,title)=>{const target=linkTarget(dest);return ` ${label} ${[label,`http://${label}`].includes(target)?'':target} ${title} `;})
+  (all,label,dest,title)=>{const target=linkTarget(dest);return ` ${label} ${[label,`http://${label}`].includes(target)?'':Buffer.from(target).toString('hex')} ${title} `;})
  .match(/[\p{L}\p{N}]+/gu)??[];
 function compareField(field,wanted,actual,id){
  let same;

@@ -1803,6 +1803,10 @@ for(const host of ['claude','codex'])test(`MONO-357 ${host}: an angle wrapper ar
   const result=check(`[source](${target})`,`[source](<${target}>)`);assert.equal(result.status,'passed',result.reason);
   const other=check(`[source](${target})`,`[source](<${target}.other>)`);assert.equal(other.status,'failed');assert.match(other.reason,/mismatch/);
  }
+ // A destination is compared exactly: punctuation alone makes another address.
+ for(const [written,stored] of [['https://example.test/a-b','https://example.test/a/b'],['cli/runs.mjs#source','cli/runs.mjs?source'],['README.md','README-md']]){
+  const result=check(`[source](${written})`,`[source](<${stored}>)`);assert.equal(result.status,'failed',`${written} was treated as ${stored}`);assert.match(result.reason,/mismatch/);
+ }
 });
 
 function patchFirstFixture(t,host){
