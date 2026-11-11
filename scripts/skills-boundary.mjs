@@ -41,7 +41,8 @@ export function workspaceReadCall(item, proof) {
 }
 // Before confirmation MCP actions must be recognizable reads. After it, all
 // monotest tools are available; this does not classify command contents.
-export const isWrite = name => name===stageDriverTool?false:name.startsWith('mcp__') ? !/^mcp__(?:monotest|paper)__(get|list|search|read|fetch)_/.test(name) : ['Write','Edit'].includes(name);
+// whoami only returns the user, workspace and connection, so it is a read too.
+export const isWrite = name => name===stageDriverTool||name==='mcp__monotest__whoami'?false:name.startsWith('mcp__') ? !/^mcp__(?:monotest|paper)__(get|list|search|read|fetch)_/.test(name) : ['Write','Edit'].includes(name);
 export function toolViolation(name, input, scenario, confirmed) {
   if(typeof name!=='string')return 'missing tool name';
   if(name===stageDriverTool&&!confirmed)return 'stage start before workspace confirmation';

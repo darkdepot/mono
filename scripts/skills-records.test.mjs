@@ -2568,3 +2568,15 @@ for(const [key,{fits,lacks}] of Object.entries(liveQuestions))test(`MONO-379 que
   for(const question of lacks)assert.throws(()=>checkAnchors(policy,question,'question'),/question lacks scenario anchors/,`${host}: ${question}`);
  }
 });
+
+// MONO-380: a stage may check its Linear access with whoami before the first record; that is a read.
+for(const host of ['claude','codex'])for(const mode of ['whoami','write-without-id'])test(`MONO-380 ${host}: whoami is a read, a write without a record id is still refused (${mode})`,async t=>{
+ const {isWrite}=await import('./skills-boundary.mjs'),f=textFixture(t,host,'defer');
+ assert.equal(isWrite('mcp__monotest__whoami'),false);assert.equal(isWrite('mcp__monotest__save_comment'),true);assert.equal(isWrite('mcp__paper__whoami'),true);
+ const name=mode==='whoami'?'mcp__monotest__whoami':'mcp__monotest__save_comment';
+ f.events.splice(3,0,f.call('access',name,mode==='whoami'?{source:'mono:discovery'}:{projectId,body:'Проверка доступа.'}),f.result('access',{user:{name:'Tester'},workspace:{name:'Mono Test'},connection:'ok'}));
+ for(const binding of f.request.approvalBindings)binding.currentLine+=2;
+ const result=f.check();
+ if(mode==='whoami')assert.equal(result.status,'passed',JSON.stringify(result));
+ else{assert.equal(result.status,'unverified',JSON.stringify(result));assert.match(result.reason,/write result lacks record id/);}
+});
