@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { SHIP_MARKER, scanBlob, unpushedSecrets, checkSecrets, pushesTo, checksLine, composeBody, authorPart, bodyProblems, descriptionBlockers, draftBody, collectRemarks, readyBlockers, mentionNeeded, requestRemark, u6File } from './ship-pr.mjs';
+import { SHIP_MARKER, scanBlob, unpushedSecrets, checkSecrets, pushesTo, checksLine, composeBody, authorPart, bodyProblems, descriptionBlockers, nextDescriptionFailures, draftBody, collectRemarks, readyBlockers, mentionNeeded, requestRemark, u6File } from './ship-pr.mjs';
 import { prRemarkFindings, remarkDigest } from './code-review.mjs';
 import { digest } from './runtime.mjs';
 
@@ -145,6 +145,10 @@ test('mention: once per head and only while the bot has not reported on it', () 
   assert.equal(mentionNeeded({ snapshot: snapshot({ reviews: [{ user: { login: 'greptile-apps[bot]' }, commit_id: head }] }) }), false);
   assert.equal(mentionNeeded({ snapshot: snapshot({ reviews: [{ user: { login: 'greptile-apps[bot]' }, commit_id: older }] }) }), true);
 });
+test('two untrue descriptions in a row stop Ship; a remarks-only pass in between does not reset the count', () => {
+  assert.deepEqual(['false-claims', 'not-supplied', 'false-claims'].reduce((counts, verdict) => [...counts, nextDescriptionFailures(counts.at(-1) ?? 0, verdict)], []), [1, 1, 2]);
+  assert.equal(nextDescriptionFailures(1, 'truthful'), 0);
+});
 test('the read-only pass result sits next to the attempt state file, per head', () => {
   assert.equal(u6File('/s/ship.json', head), `/s/ship.json.u6-${head}.json`);
 });
@@ -171,7 +175,13 @@ test('description: rewritten between Ship markers, the bot block kept, the form 
   assert.deepEqual(problems(`${author()}\n<details><summary>Техника</summary>\n${' слово'.repeat(500)}\n</details>\n${line}`), [], 'technique in details is not counted');
   assert.match(problems(author().replace(/\nЗадача:.*$/, '') + `\n${line}`).join(), /нет ссылки на задачу/);
   assert.match(problems(`${author(` ${older}`)}\n${line}`).join(), /хеш версии/);
-  assert.match(problems(author()).join(), /нет строки «Проверки»/);
+  assert.match(problems(author()).join(), /ровно одна строка «Проверки»/);
+  assert.match(problems(`${author()}\n${line}\nПроверки: 1 из 1 прошли; tests прошли`).join(), /ровно одна строка/);
+  assert.match(problems(`<!--\n${author()}\n-->\nShort.\n${line}`).join(), /нет раздела «Что изменилось»/, 'sections hidden in a comment do not count');
+  const nested = composeBody({ author: `${author()}\n${line}`, head }).replace('<!-- /mono:ship body -->', '<!-- /mono:ship body -->\nhidden claim\n<!-- /mono:ship body -->');
+  assert.match(bodyProblems({ body: nested, issue: 'MONO-324', head }).join(), /без части автора/, 'repeated markers leave no trusted author part');
+  assert.match(composeBody({ author: 'new', head, current: `${SHIP_MARKER}\nold draft\n\n## Greptile Summary\nBot` }), /## Greptile Summary\nBot/, 'a draft without the author block keeps the bot block');
+  assert.equal(authorPart(composeBody({ author: 'new', head, current: `${SHIP_MARKER}\n<!-- mono:ship body head=none -->\nunclosed` })).text, 'new', 'stray markers are dropped on rewrite');
   assert.match(problems(`${author()}\nПроверки: 3 из 3 прошли`).join(), /называет прошедшими 3, а прошло 1/);
   assert.match(bodyProblems({ body: composeBody({ author: `${author()}\n${line}`, head: older }), issue: 'MONO-324', head, checks: [] }).join(), /не переписано после последней версии/);
   assert.match(bodyProblems({ body: 'no markers', issue: 'MONO-324', head }).join(), /без части автора/);

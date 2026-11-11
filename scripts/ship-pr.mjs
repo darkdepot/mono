@@ -75,16 +75,19 @@ function push({ worktree, repo, remote, branch, protection }) {
 // The author's part of the description sits between its own markers and names the head it describes;
 // anything outside them (a bot's block) is kept when the description is rewritten.
 const BODY_START = /<!-- mono:ship body head=([a-f0-9]{40}|none) -->\n?/, BODY_END = '<!-- /mono:ship body -->';
+const BODY_MARKERS = /<!-- mono:ship body head=[^>]*-->\n?|<!-- \/mono:ship body -->\n?/g;
+// Exactly one pair of markers; nested, repeated or unclosed ones mean there is no author part to trust.
 export function authorPart(body) {
   const text = String(body ?? ''), start = BODY_START.exec(text);
-  if (!start) return null;
+  if (!start || (text.match(BODY_MARKERS) ?? []).length !== 2) return null;
   const end = text.indexOf(BODY_END, start.index + start[0].length);
   if (end < 0) return null;
   return { head: start[1] === 'none' ? null : start[1], text: text.slice(start.index + start[0].length, end).trim(),
     outside: (text.slice(0, start.index) + text.slice(end + BODY_END.length)).replace(SHIP_MARKER, '').trim() };
 }
 export function composeBody({ author, head, current = '' }) {
-  const rest = authorPart(current)?.outside ?? '';
+  // Without a valid author part everything but Ship's own markers is kept: a bot block must survive.
+  const rest = authorPart(current)?.outside ?? String(current).replace(BODY_MARKERS, '').replace(SHIP_MARKER, '').trim();
   return `${SHIP_MARKER}\n<!-- mono:ship body head=${head ?? 'none'} -->\n${author.trim()}\n${BODY_END}${rest ? `\n\n${rest}` : ''}\n`;
 }
 export function draftBody({ issue, issueUrl, title, head = null }) {
@@ -111,18 +114,19 @@ const section = (text, name) => { const match = new RegExp(`^##\\s+${name}\\s*$(
 export function bodyProblems({ body, issue, head, checks = [] }) {
   const part = authorPart(body);
   if (!part) return ['описание без части автора между метками Ship'];
+  // Only what a reader sees counts: sections and the link hidden in comments or details do not.
   const problems = [], seen = visible(part.text);
   if (part.head !== head) problems.push('описание не переписано после последней версии кода');
-  const changed = section(part.text, 'Что изменилось');
+  const changed = section(seen, 'Что изменилось');
   if (!changed || !/^\s*[-*] \S/m.test(changed)) problems.push('нет раздела «Что изменилось» со списком');
-  for (const name of ['Зачем', 'Как проверить']) if (!section(part.text, name)) problems.push(`нет раздела «${name}»`);
+  for (const name of ['Зачем', 'Как проверить']) if (!section(seen, name)) problems.push(`нет раздела «${name}»`);
   const words = seen.split(/\s+/).filter(Boolean).length;
   if (words > 400) problems.push(`видимая часть ${words} слов, больше 400`);
-  if (!new RegExp(`\\[${issue}\\]\\(https://`).test(part.text)) problems.push(`нет ссылки на задачу ${issue}`);
+  if (!new RegExp(`\\[${issue}\\]\\(https://`).test(seen)) problems.push(`нет ссылки на задачу ${issue}`);
   if (/\b[a-f0-9]{40}\b/.test(seen)) problems.push('хеш версии в видимой части');
-  const line = /^Проверки: (\d+) из (\d+) прошли/m.exec(seen);
+  const lines = [...seen.matchAll(/^Проверки:.*$/gm)].map(match => match[0]), line = /^Проверки: (\d+) из (\d+) прошли/.exec(lines[0] ?? '');
   const passed = checks.filter(check => check.head === head && CHECK_STATE(check) === 'passed').length;
-  if (!line) problems.push('нет строки «Проверки»');
+  if (lines.length !== 1 || !line) problems.push('нужна ровно одна строка «Проверки», её пишет Ship');
   else if (Number(line[1]) > passed) problems.push(`строка «Проверки» называет прошедшими ${line[1]}, а прошло ${passed}`);
   return problems;
 }
@@ -226,6 +230,8 @@ export function mentionNeeded({ snapshot, issueComments = [] }) {
   return !botOnHead && !mentioned;
 }
 export const u6File = (stateFile, head) => `${stateFile}.u6-${head}.json`;
+// Untrue claims in a row: a rewrite gets one more pass, the second stops Ship; a remarks-only pass keeps the count.
+export const nextDescriptionFailures = (before, verdict) => verdict === 'false-claims' ? before + 1 : verdict === 'truthful' ? 0 : before;
 
 const usage = `Usage: ship-pr.mjs <command> [flags]
   open    --worktree W --repo R --remote origin --branch B --base main --title T --issue KEY --issue-url URL   push and open the draft (once)
@@ -259,7 +265,7 @@ async function main(argv) {
     const pr = ghJson('api', `repos/${args.repo}/pulls/${args.pr}`), snapshot = readShipSnapshot(args.repo, Number(args.pr));
     requireThat(snapshot.head === args.head, `PR head moved: ${snapshot.head}`);
     // Ship writes the «Проверки» line itself from the head's checks; the author's text must not carry one.
-    const author = fs.readFileSync(args.file, 'utf8').replace(/^Проверки:.*$/m, '').trim();
+    const author = fs.readFileSync(args.file, 'utf8').replace(/^Проверки:.*$/gm, '').trim();
     const line = checksLine({ checks: snapshot.checks, head: args.head, deferred: (args.deferred ?? '').split(';').map(item => item.trim()).filter(Boolean) });
     const body = composeBody({ author: `${author}\n\n${line} · Задача: ${args.issue}`, head: args.head, current: pr.body ?? '' });
     const problems = bodyProblems({ body, issue: args.issue, head: args.head, checks: snapshot.checks });
@@ -277,7 +283,7 @@ async function main(argv) {
     const prior = fs.existsSync(file) ? readJson(file) : null;
     const result = await runRemarkCheck({ worktree, base: args.base, head: args.head, remarks, description, config: baseModelConfig(worktree, args.base) });
     // A rewrite after untrue claims gets one more pass; a second disagreement in a row stops Ship.
-    const descriptionFailures = result.description.verdict === 'false-claims' ? (prior?.description?.verdict === 'false-claims' ? (prior.descriptionFailures ?? 1) : 0) + 1 : 0;
+    const descriptionFailures = nextDescriptionFailures(prior?.descriptionFailures ?? 0, result.description.verdict);
     atomicJson(file, { ...result, descriptionFailures, recordedAt: new Date().toISOString() });
     const needs = result.verdicts.filter(verdict => verdict.verdict !== 'confirmed');
     console.log(JSON.stringify({ file, needsFix: needs, description: result.description }));
