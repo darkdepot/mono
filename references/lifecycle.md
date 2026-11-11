@@ -552,7 +552,7 @@ Required:
 - Lifecycle gate ownership and order unchanged.
 - Pre-delivery stages run in Claude Code stage agents with exact allowlists and
   helper hook, built/verified by orchestrator; a new session after definition edits.
-  Delegated stages never run in Codex. See `references/orchestration.md`.
+  Delegated stages never run in Codex. See `references/orchestration-stages.md`.
 - Launch task identifies the owner. Stage records/read-backs itself and returns
   its selected transition; orchestrator starts the next session, not the stage.
 - Single Linear writer only for implement/preflight/ship workers: orchestrator

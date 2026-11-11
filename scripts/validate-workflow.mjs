@@ -63,11 +63,11 @@ function validateReadBudget() {
       const budget = measureReadBudget(root, { skills: [stage], includeConditional: false });
       console.log(`${stage} mandatory read budget: ${budget.bytes} bytes`);
       if (budget.bytes > 20_480) fail(`${stage} mandatory reading corpus exceeds 20 KB`);
-      if (budget.files.some(entry => entry.path === "references/orchestration.md")) fail(`${stage} eagerly reads orchestration policy`);
+      if (budget.files.some(entry => /^references\/orchestration(?:-[a-z]+)?\.md$/.test(entry.path))) fail(`${stage} eagerly reads orchestration policy`);
     }
   } catch (error) { fail(`Read budget: ${error.message}`); }
   for (const skill of [...DELIVERY_SKILLS, "deploy"]) {
-    if (/orchestration\.md/.test(read(`skills/${skill}/SKILL.md`))) fail(`${skill}: phase names orchestrator reference`);
+    if (/orchestration(?:-[a-z]+)?\.md/.test(read(`skills/${skill}/SKILL.md`))) fail(`${skill}: phase names orchestrator reference`);
   }
 }
 
@@ -395,7 +395,7 @@ function pluginAgentFaults(text, name, stageTemplate = false) {
 const STAGE_VOICE_FILES = [
   "skills/research/references/run.md", "skills/discovery/references/helpers.md",
   "skills/tech-evaluation/references/helpers.md", "skills/handoff/references/review.md",
-  "references/orchestration.md",
+  "references/orchestration-stages.md",
 ];
 function stageVoiceFaults(text) {
   const faults = [];
@@ -5367,16 +5367,18 @@ function checkModelPolicy(base) {
   for (const field of ["risk", "source", "critical", "reclassified"]) {
     if (!new RegExp(`(?:^|;)\\s*${field}=<[^>]+>`).test(certificate)) errors.push(`${preflightFile}: certificate routing field missing: ${field}`);
   }
-  const orchestrationFile = "references/orchestration.md";
+  const orchestrationFile = "references/orchestration-stages.md";
+  const dispatchFile = "references/orchestration-dispatch.md";
   const orchestration = body(orchestrationFile);
+  const dispatchPolicy = body(dispatchFile);
   const secondVoice = modelSection(orchestration, "Second Voice");
   const codexVoice = modelSection(secondVoice, "Claude orchestrator");
   const claudeVoice = modelSection(secondVoice, "GPT orchestrator");
   binding(orchestrationFile + " Second Voice/Claude", codexVoice, ["second-voice"]);
   binding(orchestrationFile + " Second Voice/GPT", claudeVoice, ["second-voice-alt"]);
-  const workers = modelSection(orchestration, "Worker model selection");
-  binding(orchestrationFile + " spawn", workers, ["worker-default", "worker-complex"]);
-  binding(orchestrationFile + " Claude transport", modelSection(orchestration, "Claude worker transports"), ["worker-claude"]);
+  const workers = modelSection(dispatchPolicy, "Worker model selection");
+  binding(dispatchFile + " spawn", workers, ["worker-default", "worker-complex"]);
+  binding(dispatchFile + " Claude transport", modelSection(dispatchPolicy, "Claude worker transports"), ["worker-claude"]);
   for (const [section, executable, model, effort] of [
     [codexVoice, "codex exec", "second-voice-model", "second-voice-effort"],
     [claudeVoice, "claude -p", "second-voice-alt-model", "second-voice-alt-effort"],
@@ -5389,7 +5391,7 @@ function checkModelPolicy(base) {
     } catch (error) { errors.push(`${orchestrationFile}: ${error.message}`); }
   }
   // Worker and Second Voice efforts cannot be copied into their consumers.
-  for (const file of [orchestrationFile, "skills/orchestrate/SKILL.md", "templates/orchestrator-brief.md", "templates/orchestrator-report.md"]) {
+  for (const file of ["references/orchestration.md", orchestrationFile, dispatchFile, "references/orchestration-delivery.md", "skills/orchestrate/SKILL.md", "templates/orchestrator-brief.md", "templates/orchestrator-report.md"]) {
     const literalEffort = /(?:model_reasoning_effort\s*=\s*["']?|--effort\s+|(?:at|both sides at)\s+)(?:low|medium|high|xhigh)\b/i;
     if (literalEffort.test(body(file))) errors.push(`${file}: worker/Second Voice effort literal outside policy`);
   }
@@ -5612,7 +5614,7 @@ function validateModelPolicyFixtures() {
       if (!tiny) throw new Error("Fixture route tiny not found");
       return `${text}\n${tiny}\n`;
     }), "route rows outside Canonical Routes");
-    negative("Second Voice wrong branch", () => change("references/orchestration.md", (text) => text.replace(marker("second-voice"), marker("second-voice-alt"))), "Second Voice/Claude: role binding must be second-voice");
+    negative("Second Voice wrong branch", () => change("references/orchestration-stages.md", (text) => text.replace(marker("second-voice"), marker("second-voice-alt"))), "Second Voice/Claude: role binding must be second-voice");
     negative("registry provenance fields", () => change("templates/orchestrator-report.md", (text) => text.replace(/"effort_parameter"\s*:/, '"lost_effort_parameter":')), "missing model_launch provenance fields");
     negative("registry template model mismatch", () => change("templates/orchestrator-report.md", (text) => text.replace(/("model_parameter"\s*:)\s*"[^"]*"/, '$1 "runtime-alias"')), "codex-cli template provenance: codex launch pins differ");
     negative("registry template uncontrolled effort", () => change("templates/orchestrator-report.md", (text) => text.replace(/("effort_source"\s*:)\s*"[^"]*"/, '$1 "explicit"')), "fallback template provenance: fallback must record alias and uncontrolled effort");
@@ -5624,7 +5626,7 @@ function validateModelPolicyFixtures() {
     change(MODEL_POLICY_PATH, (text) => cell(cell(cell(text, "second-voice", 1, nextVoiceModel), "second-voice", 2, nextEffort), "autoreview", 1, nextReviewModel));
     check();
     const changedRoles = policyRoles(fs.readFileSync(file(MODEL_POLICY_PATH), "utf8"));
-    const orchestration = fs.readFileSync(file("references/orchestration.md"), "utf8");
+    const orchestration = fs.readFileSync(file("references/orchestration-stages.md"), "utf8");
     const voiceTemplate = modelCommand(modelSection(orchestration, "Claude orchestrator"), "codex exec");
     const voiceCommand = voiceTemplate.replaceAll("<second-voice-model>", changedRoles.get("second-voice").model)
       .replaceAll("<second-voice-effort>", changedRoles.get("second-voice").effort);
@@ -5669,9 +5671,9 @@ const STRING_PINS = [
   ["skills/qa/SKILL.md", "references/qa-skills.md"],
   ["skills/orchestrate/SKILL.md", "mono:qa"],
   ["skills/deploy/SKILL.md", "scripts/orchestrator/qa.mjs"],
-  ["references/orchestration.md", "qa/state.json"],
-  ["references/orchestration.md", "heldIssues"],
-  ["references/orchestration.md", "finalIssue"],
+  ["references/orchestration-delivery.md", "qa/state.json"],
+  ["references/orchestration-delivery.md", "heldIssues"],
+  ["references/orchestration-delivery.md", "finalIssue"],
   ["references/qa-recipes.md", "<!-- mono-qa product: Mono Agent Workflow -->"],
   ["skills/qa/SKILL.md", "mono:qa"],
   ["skills/qa/SKILL.md", "mono-qa certificate"],
@@ -5758,7 +5760,7 @@ const STRING_PINS = [
   ["skills/ship/SKILL.md","templates/ship-status-ux.md"],
   ["templates/ship-output.md","Статус ревью:"],
   ["templates/ship-status-ux.md","Review timeline:"],
-  ["references/orchestration.md","orchestration.workerAudience"],
+  ["references/orchestration-dispatch.md","orchestration.workerAudience"],
   ["skills/deploy/SKILL.md","Project update:"],
   ["templates/deploy-output.md","Project update:"],
   ["skills/deploy/SKILL.md","Тематический проект:"],
@@ -5827,7 +5829,7 @@ const STRING_PINS = [
   ["skills/preflight/SKILL.md","blocked"],
   ["skills/ship/SKILL.md","blocked"],
   ["references/orchestration.md","control.json"],
-  ["references/orchestration.md","verify-pack-state.mjs identity"],
+  ["references/orchestration-dispatch.md","verify-pack-state.mjs identity"],
   ["skills/orchestrate/SKILL.md","control.json"],
   ["skills/orchestrate/SKILL.md","active"],
   ["skills/orchestrate/SKILL.md","draining"],
@@ -5898,26 +5900,26 @@ const STRING_PINS = [
   ["references/review-rubric.md","blocked"],
   ["references/install.md",".agents/mono-workflow.config.json"],
   ["references/install.md","references/autoreview-routing.md"],
-  ["references/orchestration.md","claude-code-desktop"],
+  ["references/orchestration-dispatch.md","claude-code-desktop"],
   ["references/orchestration.md","deployApproval"],
-  ["references/orchestration.md","scope-drift-needs-handoff"],
-  ["references/orchestration.md","codex-cli"],
-  ["references/orchestration.md","codex exec resume"],
-  ["references/orchestration.md","--add-dir"],
+  ["references/orchestration-dispatch.md","scope-drift-needs-handoff"],
+  ["references/orchestration-dispatch.md","codex-cli"],
+  ["references/orchestration-dispatch.md","codex exec resume"],
+  ["references/orchestration-dispatch.md","--add-dir"],
   ["references/orchestration.md","workers.json"],
-  ["references/orchestration.md","sandbox_workspace_write.network_access"],
-  ["references/orchestration.md","git worktree add"],
+  ["references/orchestration-dispatch.md","sandbox_workspace_write.network_access"],
+  ["references/orchestration-dispatch.md","git worktree add"],
   ["references/install.md","references/autoreview-routing.md"],
   ["references/install.md","\"orchestration\""],
   ["scripts/verify.mjs","watch-workers.mjs"],
-  ["references/orchestration.md","thread.started"],
-  ["references/orchestration.md","< /dev/null"],
-  ["references/orchestration.md","watch-workers.mjs"],
-  ["references/orchestration.md","EVENT:"],
-  ["references/orchestration.md","model_reasoning_effort"],
+  ["references/orchestration-dispatch.md","thread.started"],
+  ["references/orchestration-stages.md","< /dev/null"],
+  ["references/orchestration-delivery.md","watch-workers.mjs"],
+  ["references/orchestration-delivery.md","EVENT:"],
+  ["references/orchestration-stages.md","model_reasoning_effort"],
   ["skills/orchestrate/SKILL.md","watch-workers.mjs"],
   ["skills/orchestrate/SKILL.md","scripts/watch-workers.mjs"],
-  ["references/orchestration.md","node '<pack-root>/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>"],
+  ["references/orchestration-delivery.md","node '<pack-root>/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>"],
   ["references/orchestration.md","recorded-late"],
   ["references/orchestration.md","CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"],
   ["references/orchestration.md","compaction-safe"],
@@ -5945,7 +5947,7 @@ const STRING_PINS = [
   ["HANDBOOK.md","owner-session"],
   ["templates/deploy-output.md","Live QA:"],
   ["references/worker-contract.md","pass | deferred | not-run"],
-  ["templates/orchestrator-dispatch.md","references/orchestration.md"],
+  ["templates/orchestrator-dispatch.md","references/orchestration-dispatch.md"],
   ["skills/implement/SKILL.md","references/worker-contract.md"],
   ["references/worker-contract.md","node '<pack-root>/scripts/verify-pack-state.mjs' identity"],
   ["references/worker-contract.md","--pack-root '<pack-root>'"],
@@ -6030,7 +6032,7 @@ const STRING_PINS = [
   ["references/review-rubric.md","`advisory-ready`"],
   ["references/review-rubric.md","`needs-fixes`"],
   ["references/review-rubric.md","`blocked`"],
-  ["references/orchestration.md","EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle>"],
+  ["references/orchestration-delivery.md","EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle>"],
   ["references/orchestration.md","`recorded-late`"],
   ["skills/design/references/approval.md", "mono-design: approved"],
   ["references/lifecycle.md", "design="],
@@ -6038,9 +6040,9 @@ const STRING_PINS = [
 const REQUIRED_HEADINGS = [
   ["references/qa-skills.md", "Драйверы"],
   ["references/qa-skills.md", "Рубрика разговора"],
-  ["references/orchestration.md", "Independent QA before merge"],
-  ["references/orchestration.md", "Current host inputs"],
-  ["references/orchestration.md", "Final project pass"],
+  ["references/orchestration-delivery.md", "Independent QA before merge"],
+  ["references/orchestration-delivery.md", "Current host inputs"],
+  ["references/orchestration-delivery.md", "Final project pass"],
   ["skills/qa/SKILL.md", "Вход"],
   ["skills/qa/SKILL.md", "Ожидания до первого действия"],
   ["skills/qa/SKILL.md", "Копия и данные"],
@@ -6097,8 +6099,8 @@ const REQUIRED_HEADINGS = [
   ["references/repair-machine.md","Class 2 effect fixture: snapshot-sync"],
   ["references/repair-machine.md","Class 2 effect fixture: stale-preflight-cert"],
   ["references/repair-machine.md","Class 2 effect fixture: stale-worker-stop"],
-  ["references/orchestration.md","Generated dispatch as audience adapter"],
-  ["references/orchestration.md","Pre-write package review"],
+  ["references/orchestration-dispatch.md","Generated dispatch as audience adapter"],
+  ["references/orchestration-stages.md","Pre-write package review"],
   ["templates/prd.md","Акторы"],
   ["templates/prd.md","Текущий процесс"],
   ["templates/prd.md","Требования"],
@@ -6173,17 +6175,17 @@ const REQUIRED_HEADINGS = [
   ["references/orchestration.md","Roles"],
   ["references/orchestration.md","Stage Ownership"],
   ["references/orchestration.md","Decision Authority"],
-  ["references/orchestration.md","Worker Transports"],
+  ["references/orchestration-dispatch.md","Worker Transports"],
   ["references/orchestration.md","Mailbox And Ledger"],
-  ["references/orchestration.md","Monitoring Protocol"],
+  ["references/orchestration-delivery.md","Monitoring Protocol"],
   ["references/orchestration.md","Decision Briefs"],
   ["references/orchestration.md","Resume"],
   ["references/questioning.md","Autonomy Defaults"],
   ["references/questioning.md","Orchestrated Mode"],
   ["references/lifecycle.md","Orchestration"],
-  ["references/orchestration.md","Director Discovery"],
-  ["references/orchestration.md","Second Voice"],
-  ["references/orchestration.md","Heartbeat"],
+  ["references/orchestration-stages.md","Director Discovery"],
+  ["references/orchestration-stages.md","Second Voice"],
+  ["references/orchestration-delivery.md","Heartbeat"],
   ["references/orchestration.md","Linear Write Verification"],
   ["references/orchestration.md","Context Budget"],
   ["templates/compact-instructions.md","НЕМЕДЛЕННОЕ СЛЕДУЮЩЕЕ ДЕЙСТВИЕ"],
@@ -6196,8 +6198,8 @@ const REQUIRED_HEADINGS = [
   ["templates/compact-instructions.md","ПРЕДПОЧТЕНИЯ ВЛАДЕЛЬЦА"],
   ["references/contracts/tech-spec.md","TS-015 — Observed backend contracts"],
   ["references/contracts/tech-spec.md","TS-016 — Unreachable backend fallback"],
-  ["references/orchestration.md","Orchestration Mode Precedence"],
-  ["references/orchestration.md","Pack identity gate invocation"],
+  ["references/orchestration-dispatch.md","Orchestration Mode Precedence"],
+  ["references/orchestration-dispatch.md","Pack identity gate invocation"],
   ["templates/orchestrator-dispatch.md","Gate Phase"],
   ["references/orchestration.md","Cost Telemetry"],
   ["templates/orchestrator-brief.md","Цена волны (Wave Cost Summary)"],
@@ -6215,7 +6217,7 @@ const REQUIRED_HEADINGS = [
   ["skills/ship/SKILL.md","Mono Ship"],
   ["templates/ship-status-ux.md","Ship status UX (interactive mode)"],
   ["references/readiness-gates.md","Review Gate Policy"],
-  ["references/orchestration.md","Unavailable route"],
+  ["references/orchestration-stages.md","Unavailable route"],
   ["templates/prd.md","PRD Template"],
   ["templates/tech-spec.md","Tech Spec Template"],
   ["templates/issue.md","Issue Template"],
@@ -6224,7 +6226,7 @@ const REQUIRED_HEADINGS = [
   ["references/review-rubric.md","Checks"],
   ["AGENTS.md","Source Of Truth"],
 
-  ["references/orchestration.md","Claude worker transports"],
+  ["references/orchestration-dispatch.md","Claude worker transports"],
   ["references/issue-only-lane.md","Marker ≠ Route-Record"],
   ["references/issue-only-lane.md","The Context Contract (the seam)"],
   ["references/issue-only-lane.md","The Resolver"],
@@ -6250,14 +6252,14 @@ const REQUIRED_HEADINGS = [
   ["references/autoreview-routing.md","Reviewer capability"],
   ["references/autoreview-routing.md","Same-model review"],
 
-  ["references/orchestration.md","Sandbox ladder"],
-  ["references/orchestration.md","Worker model selection"],
+  ["references/orchestration-dispatch.md","Sandbox ladder"],
+  ["references/orchestration-dispatch.md","Worker model selection"],
   ["references/install.md","Project Config Contract"],
   ["templates/orchestrator-brief.md","Эталоны первого продукта"],
   ["HANDBOOK.md","Skills"],
 
-  ["references/orchestration.md","Two-Phase Dispatch Handshake"],
-  ["references/orchestration.md","Registry gate-list lifecycle"],
+  ["references/orchestration-dispatch.md","Two-Phase Dispatch Handshake"],
+  ["references/orchestration-dispatch.md","Registry gate-list lifecycle"],
   ["skills/orchestrate/SKILL.md","Local compaction wiring"],
   ["references/lifecycle.md","Deploy"],
   ["references/install.md","Project Policy"],
@@ -6292,7 +6294,7 @@ const REQUIRED_HEADINGS = [
   ["references/lifecycle.md","Preflight"],
   ["AGENTS.md","Fixture Coupling"],
   ["HANDBOOK.md","Documentation Map"],
-  ["references/orchestration.md","Claude orchestrator"],
+  ["references/orchestration-stages.md","Claude orchestrator"],
   ["templates/ship-status-ux.md","Статус ревью при наличии PR"],
   ["templates/ship-status-ux.md","Review timeline"],
   ["templates/ship-status-ux.md","Verdict copy"],
@@ -6669,6 +6671,9 @@ const MACHINE_TOKENS = new Set([
   "references/issue-only-lane.md",
   "references/lifecycle.md",
   "references/orchestration.md",
+  "references/orchestration-stages.md",
+  "references/orchestration-dispatch.md",
+  "references/orchestration-delivery.md",
   "references/worker-contract.md",
   "references/questioning.md",
   "references/readiness-gates.md",
@@ -6856,7 +6861,8 @@ function validateDocumentSkeleton() {
   }
   for (const [file, tokens] of [
     ["templates/orchestrator-dispatch.md", ["handshake", "profile", "pinsVersion", "wait-ack"]],
-    ["references/orchestration.md", ["handshake", "profile", "procStart", "last_wait", "consumedAt", "ackWaitSec", "stallSec"]],
+    ["references/orchestration-dispatch.md", ["handshake", "profile", "procStart", "last_wait", "consumedAt", "ackWaitSec"]],
+    ["references/orchestration-delivery.md", ["procStart", "last_wait", "consumedAt", "ackWaitSec", "stallSec"]],
   ]) for (const token of tokens) assertIncludes(file, token);
   for (const [file, tokens] of [
     ["templates/issue.md", ["# Предприменение", "sha256 `", "```text"]],
@@ -6897,10 +6903,10 @@ function validateLandingSurface() {
     assertIncludes("references/landing.md", token);
   for (const token of ["landing-drain.mjs", "LANDED", "DRAIN-CLOSE", "--install-sha", "--evidence", "--attempt", "--pr"])
     assertIncludes("references/landing.md", token);
-  for (const [file, target] of [["skills/deploy/SKILL.md", "references/landing.md#merge-validation"], ["references/orchestration.md", "landing.md#merge-validation"]]) {
+  for (const [file, target] of [["skills/deploy/SKILL.md", "references/landing.md#merge-validation"], ["references/orchestration-delivery.md", "landing.md#merge-validation"]]) {
     if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one merge validation reference`);
   }
-  if (documentSection(read("references/orchestration.md"), "Deploy and closeout") === null) fail("orchestration: missing Deploy and closeout section");
+  if (documentSection(read("references/orchestration-delivery.md"), "Deploy and closeout") === null) fail("orchestration: missing Deploy and closeout section");
   if (documentSection(read("AGENTS.md"), "Change Discipline") === null) fail("AGENTS: missing Change Discipline section");
   assertIncludes("AGENTS.md", "changelog.d/<ISSUE-KEY>.md");
 }
@@ -7184,13 +7190,13 @@ function validateMachineShapes() {
     requireMachineToken("pass | deferred | not-run");
     if (status !== "pass | deferred | not-run") fail("verification item: closed status dictionary changed");
   }
-  const ack = example("references/orchestration.md", (value) => value.phase === "gate");
+  const ack = example("references/orchestration-dispatch.md", (value) => value.phase === "gate");
   fields(ack, ["issue", "phase", "gates", "status"], "gate ack");
   if (ack) {
     fields(ack.gates?.[0], ["gate", "status", "evidence"], "gate ack entry");
     if (ack.status !== "gates-passed | blocked" || ack.gates?.[0]?.status !== "pass | blocked") fail("gate ack: status dictionary changed");
   }
-  const consumption = example("references/orchestration.md", (value) => Object.hasOwn(value, "attempt") && Object.hasOwn(value, "outcome"));
+  const consumption = example("references/orchestration-dispatch.md", (value) => Object.hasOwn(value, "attempt") && Object.hasOwn(value, "outcome"));
   fields(consumption, ["issue", "attempt", "outcome"], "consumption record");
   if (consumption && (!Number.isInteger(consumption.attempt) || consumption.outcome !== "applied | rejected | blocked")) fail("consumption record: attempt or outcome dictionary changed");
 }

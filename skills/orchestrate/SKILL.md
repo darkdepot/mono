@@ -26,18 +26,21 @@ Read now — every run of this stage loads all of these:
 1. `AGENTS.md`
 2. `references/orchestration.md`
 3. `references/human-friendly-output.md`
-4. `templates/orchestrator-dispatch.md`
-5. `templates/orchestrator-brief.md`
-6. `templates/orchestrator-report.md`
 
 Read when — load the file only when its condition is true for this run:
 
+- `references/orchestration-stages.md` — before launching or answering a pre-delivery stage agent, and before any `by=orchestrator` record.
+- `references/orchestration-dispatch.md` — before any worker dispatch, spawn or resume, and while a registry entry still carries startup `gates` or an unconsumed gate ack.
+- `references/orchestration-delivery.md` — before the watcher starts, while `workers.json` holds an entry or a worker report, capsule or queued write is unreconciled, and before QA, merge or deploy of a shipped Issue.
+- `templates/orchestrator-dispatch.md` — when a worker dispatch is prepared.
+- `templates/orchestrator-brief.md` — before writing a status, wave report or decision brief.
+- `templates/orchestrator-report.md` — when a worker report, phase capsule or registry entry is read, validated or written.
 - `references/lifecycle.md` — when a Linear lifecycle move is sequenced or a queued lifecycle mutation is applied.
 - `references/readiness-gates.md` — when a risk class or a stage readiness gate has to be decided for a wave.
 - `references/questioning.md` — when this run escalates a decision to the owner.
 - `templates/project-update.md` — when this run publishes or edits a Linear project update, including the update it writes for a project sweep or for a project completed by hand.
 
-Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
+Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional. A condition describes state, not a one-time event: a file that left context after compaction is read again when its condition holds.
 
 When to use:
 
@@ -66,7 +69,7 @@ Inputs to gather:
 - Orchestrator state on disk under
   `~/.mono-agent-workflow/orchestrator/<product>/`: ledger, mailbox
   reports, the `workers.json` worker registry, and `control.json`.
-- Runtime transport binding per `references/orchestration.md` Worker
+- Runtime transport binding per `references/orchestration-dispatch.md` Worker
   Transports (config override first, then runtime detection).
 - Live worker sessions via the runtime session list when available.
 ### Local compaction wiring
@@ -126,7 +129,7 @@ Workflow states:
      `templates/orchestrator-brief.md` with its «Техника» table) before
      taking new actions.
 2. `intake-and-discovery`
-   - Follow Director Discovery and Stage agent permissions in `references/orchestration.md`.
+   - Follow Director Discovery and Stage agent permissions in `references/orchestration-stages.md`.
      Build `~/.claude/agents/` stage/scout definitions from `templates/stage-agent.md`
      and current host's exact tool names in fixed allowed categories. Copy
      `templates/stage-helper-hook.mjs` into `<orchestrator-root>/hooks/`; use its
@@ -154,7 +157,7 @@ Workflow states:
      Carry it to owner; require their Idea agreement in words, confirmed record and fresh check.
      Never approve that snapshot through your reply or work-start comment.
    - Before every `by=orchestrator` record run the foreground read-only different-
-     family countercheck in `references/orchestration.md`, including exact text,
+     family countercheck in `references/orchestration-stages.md`, including exact text,
      version and reason. Verdict/model/version outside fences in the same comment;
      changed text/reason needs recheck. Explain the objection in words without approval; repeated
      objection may be overridden with explicit reason; no answer after one retry
@@ -177,7 +180,7 @@ Workflow states:
      `node '<pack-root>/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>`
      via continuous runtime monitoring (`persistent: true` or equivalent) for
      the whole wave (Heartbeat in
-     `references/orchestration.md`); no worker spawns until it is running.
+     `references/orchestration-delivery.md`); no worker spawns until it is running.
      Substitute `<pack-root>` with the loaded pack root;
      never use the product/worktree current directory.
      The upstream pack source remains `scripts/watch-workers.mjs` for
@@ -204,7 +207,7 @@ Workflow states:
      durable registration before execution. Keep worktree, attempt log and
      context across phases. Respect dependencies/concurrency configuration.
    - For lifecycle-carrying startup follow Two-Phase Dispatch Handshake in
-     references/orchestration.md exactly: pre-move snapshot, validated ack,
+     references/orchestration-dispatch.md exactly: pre-move snapshot, validated ack,
      read-back of every move, verified writer, private record, ack rename,
      gates removal. Wait: consume live waiting writer without resume; resume:
      same-thread registered writer. Use `scripts/orchestrator/accept.mjs ack`
@@ -218,7 +221,8 @@ Workflow states:
      with empty registry. halt refuses spawn/resume without stopping workers.
      Keep attempts.json when an entry retires; never reset the cap.
 5. `monitor`
-   - Apply Monitoring Protocol before every event/poll. No-change wakeups
+   - Apply Monitoring Protocol in `references/orchestration-delivery.md` before
+     every event/poll. No-change wakeups
      (false alarm after inspection, already-consumed report, or no events) create
      no owner message or routine ledger entry. Record actual observation recovery
      and healing steps/results. An unconfirmed alarm is no owner blocker. Validate startup gates,
@@ -234,7 +238,7 @@ Workflow states:
      start `scripts/orchestrator/collector.mjs start --root DIR --issue KEY
      --attempt N` outside worker sandboxes for empty/collection-only queues; inspect
      `status` and its reports log, and `stop` at attempt end. Connector queues still
-     apply Delivery Write Barriers through installed
+     apply Delivery Write Barriers (same file) through installed
      `scripts/orchestrator/accept.mjs report`: open a reconciliation session,
      inspect expanded writes (reread first on retry), apply through the connector,
      submit --session/--observe read-backs and confirm the full queue with the
@@ -245,7 +249,7 @@ Workflow states:
      pins.v<n>.json after resume.mjs succeeds, under the collection admission lock.
      Refused resume leaves the current registry pins unchanged.
      Keep durable per-write results/reconciliation.
-     Grant workers reports/ only; publish confirmations/ outside their grants. Handle preflight-collect at the pinned evidenceRoot: a read-only review round, then sandboxed verification. The collector host needs both the Codex and Claude CLIs logged in by subscription, from different model families; a single-family setup gives `not-reviewed`. Approve nothing between rounds ([Review rounds](../../references/orchestration.md#review-rounds)); recheck collect:false before ship.
+     Grant workers reports/ only; publish confirmations/ outside their grants. Handle preflight-collect at the pinned evidenceRoot: a read-only review round, then sandboxed verification. The collector host needs both the Codex and Claude CLIs logged in by subscription, from different model families; a single-family setup gives `not-reviewed`. Approve nothing between rounds ([Review rounds](../../references/orchestration-delivery.md#review-rounds)); recheck collect:false before ship.
      Publish whole-queue confirmation; never send a stage-resume prompt to a
      worker waiting on a file. Preserve certificate-before-review,
      drift-before-PR, In-Review-after-PR ordering. On recovery read capsule and
@@ -275,7 +279,7 @@ Workflow states:
      brief. First-product exemplars carry proposed references and reasons.
 7. `deploy-and-closeout`
    - After every green ship, including a ship-fix return, apply Independent QA
-     before merge in `references/orchestration.md`. Connected products run
+     before merge in `references/orchestration-delivery.md`. Connected products run
      `mono:qa` on the host before `mono:deploy`; workers never certify themselves.
      A non-green result holds merge and installation. Bugs return as ship-fix;
      new head repeats ship and the entire expectation list without an attempt
@@ -344,7 +348,7 @@ Rules:
   the whole wave with continuously monitored stdout (`persistent: true` or
   equivalent). Periodic wakeups are only an explicitly recorded degradation,
   with cause/binding and actual recovery recorded in the ledger (Heartbeat in
-  `references/orchestration.md`).
+  `references/orchestration-delivery.md`).
 - Keep the ledger free of secrets and routine polling/no-change wakeup entries.
 - Keep user-facing output in the project config language (Russian by
   default); ledger and mailbox stay English except the fixed «Решил сам:»

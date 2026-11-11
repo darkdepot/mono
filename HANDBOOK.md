@@ -23,7 +23,7 @@ third round, leftovers both roles call harmless pass as successor candidates;
 anything else left after the third round parks `needs-decision` for the
 orchestrator to narrow the contract, split the Issue or change the approach. The collector host needs both the Codex and Claude CLIs logged in by
 subscription, from different model families; a single-family setup gives
-`not-reviewed`, and so does a logged-out CLI whose role has to run. See [review rounds](references/orchestration.md#review-rounds).
+`not-reviewed`, and so does a logged-out CLI whose role has to run. See [review rounds](references/orchestration-delivery.md#review-rounds).
 Every collection requires a pinned request and correlated admission; unpinned
 legacy requests cannot start collections. Receipts of the previous format are not accepted.
 
@@ -39,7 +39,7 @@ The collector-death regression waits through denied process probes within its
 existing deadline, fails on live or unverified groups, and reports scenario and
 cleanup failures separately. Negative controls leave a real descendant alive
 past the watchdog deadline to verify that the regression still detects leaks.
-See [collection recovery](references/orchestration.md#delivery-write-barriers).
+See [collection recovery](references/orchestration-delivery.md#delivery-write-barriers).
 
 ## Один владелец этапа
 
@@ -88,7 +88,7 @@ Linear, дизайн-Paper/Wonder и поисковых инструментов
 не должны оставаться доступны через авторизацию ChatGPT. Владелец получает итог каждого этапа с «Утвердил сам,
 потому что…» и решениями за него первыми. Новые правила вкуса и первые эталоны
 по-прежнему его; его слово открывает утверждение заново. Подробности:
-[общий разговор](references/owner-dialog.md), [политика](references/orchestration.md).
+[общий разговор](references/owner-dialog.md), [политика](references/orchestration-stages.md).
 
 ## Итог и разговор
 
@@ -313,7 +313,7 @@ Handoff ставит Ready после записи пакета, задач и P
 Полный набор head нужен при проверке проекта; ранней задаче достаточно своего
 сертификата, даже если у будущих задач ещё нет PR.
 
-Хостовые входы и команды: [Independent QA before merge](references/orchestration.md#independent-qa-before-merge).
+Хостовые входы и команды: [Independent QA before merge](references/orchestration-delivery.md#independent-qa-before-merge).
 Состояние `waiting|failed|passed|not-connected` одинаково для подготовки deploy,
 очереди и `delivery-state.mjs qa-status`. Подготовка использует прочитанный обратно
 ship-сертификат и не требует регистрации исполнителя; без рецепта не нужны и
@@ -323,7 +323,7 @@ ship-сертификат и не требует регистрации испо
 
 ## Workflow
 
-Short dispatch extracts PRD/Tech Spec definitions through the [U12 snapshot markup contract](references/orchestration.md#snapshot-markup-contract-u12): parse blocks, then select coverage; unknown IDs refuse, while duplicates or unclosed fences retain full documents.
+Short dispatch extracts PRD/Tech Spec definitions through the [U12 snapshot markup contract](references/orchestration-dispatch.md#snapshot-markup-contract-u12): parse blocks, then select coverage; unknown IDs refuse, while duplicates or unclosed fences retain full documents.
 
 A **wave** is the work dispatched for an Issue, including retries, review, and its eventual delivery or recorded stop. A green PR is ready for deploy; deploy supplies the merge, delivery verification, and Linear closeout.
 
@@ -518,7 +518,7 @@ Dispatch и receipt связывают результат проверки и с
 `outcome` (`ready`, `hold`, `not-required`) и непустую причину у последних двух.
 Лишние поля разрешены; проза и другие документы проекта не влияют на результат.
 Снимок содержит `research/document.json` (`id`, `url`, `title`, `projectId`) и
-`research/document.md`; сборка описана в [Orchestration](references/orchestration.md).
+`research/document.md`; сборка описана в [Orchestration](references/orchestration-dispatch.md#orchestrator-dispatch-command).
 Вывод одной строкой: `research-gate: pass|fail: <code> project=<id>`.
 Отказ не расходует попытку. Задача без проекта и пакет с `approval.createdAt`
 строго до `researchGate.since` проходят без каталога `research/`; имеющийся каталог
@@ -606,7 +606,7 @@ The saved idea and selected record are pinned through collection, signed receipt
 and ship, including canonical artifact contents. Amend/resume preserves the
 binding; a new record requires a new attempt. Attempts pinned to packs older than
 0.32.0 can finish without the idea field; every attempt keeps its original packRoot. Issue-only retains its existing envelope and seam.
-See [snapshot assembly](references/orchestration.md#orchestrator-dispatch-command).
+See [snapshot assembly](references/orchestration-dispatch.md#orchestrator-dispatch-command).
 `orchestrator/accept.mjs ack|report|amend` validates a move plan before
 connector writes, confirms report queues from fresh reconciliation sessions, and
 prints `writeDigests` for the expanded writes, including certificates. Amendments
@@ -633,8 +633,8 @@ Connector queues confirm after their reconciliation session opens; the collector
 confirms empty queues through the existing runtime barriers. Connector writes inherit evidence across reports only from verified whole-report confirmations in the same attempt; collection receipts remain bound to the exact report. Changed contents still fail. Workers omit confirmed writes from new queues and use a new collection identifier for every new report. `accept report` prints one response object, with retry instructions in `reread`; observation-time errors name the violated boundary.
 The pack `linear-adapter.mjs` only
 reads current-session observations; printing an apply instruction is never proof
-of a write. See [command inputs and snapshot composition](references/orchestration.md#orchestrator-dispatch-command)
-and [sessions/admissions](references/orchestration.md#delivery-write-barriers).
+of a write. See [command inputs and snapshot composition](references/orchestration-dispatch.md#orchestrator-dispatch-command)
+and [sessions/admissions](references/orchestration-delivery.md#delivery-write-barriers).
 New bound collection admissions derive the current version from pins.file and
 bind its full path/digest and effective fields; the phase report needs no version.
 A stale version refusal names the full expected file. Prior admissions recover
@@ -760,7 +760,7 @@ file: three at most, the same head reuses its round, `not-reviewed` spends
 nothing, an accepted amendment opens a fresh three and a changed base keeps the
 count. Refusals are signed too and reach the worker as a `gate preflight: fail:`
 line. The orchestrator approves nothing between rounds and after merge decides
-which candidates from the receipt's list become Issues (every `must-file` one does): [review rounds](references/orchestration.md#review-rounds),
+which candidates from the receipt's list become Issues (every `must-file` one does): [review rounds](references/orchestration-delivery.md#review-rounds),
 worker [round rule](references/review-admission.md).
 
 Collections retain validation and usage lines in bounded streaming output before signing. Receipts keep the raw usage of every review call: Claude input excludes both cache counters, whereas Codex input includes cached input and has no cache-write counter. A call without usage stays null and counts as unmeasured, never as zero. Collection datasets are archived as immutable `<KEY>-review-scope.v<N>.md` files with `.sha256` sidecars, and receipts bind version and digest. Old receipts remain valid without usage or archive metadata; those inputs remain unavailable for reproduction.
@@ -1176,8 +1176,8 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-13.** Assign new agent-created Project leads and Issue assignees to the acting owner while preserving existing assignments, so created work reaches the owner's lists — [Linear Artifact Rules](references/artifact-rules.md#linear-artifact-rules).
 - **K-14.** Treat project updates as informational closeout results whose absence or failure cannot block delivery or change its verdict, so reporting cannot stop shipment — [Skill Design Rules](AGENTS.md#skill-design-rules).
 - **K-15.** Turn a raw idea into a Project with a read-back owner approval record and a verified move to Discovery, before PRD, Tech Spec, Issues or code — [Idea exit](references/lifecycle.md#idea).
-- **K-16.** Review the package record and Issue slicing before the first write and bring the owner one summary with «Начать работу», so one decision does not become a stream of questions — [Pre-write package review](references/orchestration.md#pre-write-package-review).
-- **K-17.** Have an independent cross-vendor Second Voice review the package draft before its first Linear write, so author and reviewer do not share the same blind spots — [Second Voice](references/orchestration.md#second-voice).
+- **K-16.** Review the package record and Issue slicing before the first write and bring the owner one summary with «Начать работу», so one decision does not become a stream of questions — [Pre-write package review](references/orchestration-stages.md#pre-write-package-review).
+- **K-17.** Have an independent cross-vendor Second Voice review the package draft before its first Linear write, so author and reviewer do not share the same blind spots — [Second Voice](references/orchestration-stages.md#second-voice).
 - **K-18.** Decide repository-, Linear- and config-derived implementation details, document structure and risk classification autonomously, but ask about scope, slicing, risk acceptance and design, so routine questions do not consume owner time or seize owner authority — [Autonomy Defaults](references/questioning.md#autonomy-defaults).
 - **K-19.** Apply the project's deploy-approval policy (always, all except tiny, or never) to the exact code head, so yesterday's approval cannot authorize different code — [Project Config](HANDBOOK.md#project-config).
 - **K-20.** Grant issue-only delivery only when all nine conditions hold and the owner approves the exact Issue fingerprint, falling back to Project-first on doubt, so the shortcut cannot bypass its boundary — [Nine eligibility conditions](skills/issue/SKILL.md#when-issue-only-is-granted--the-nine-eligibility-conditions) and [Trust boundary](references/issue-only-lane.md#trust-boundary).
@@ -1279,7 +1279,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | Artifact form and execution quality | [Artifact rules](references/artifact-rules.md), [quality bar](references/artifact-quality.md), [execution quality](references/execution-quality.md), [repair](references/repair-machine.md) |
 | Risk, review and phase boundaries | [Readiness gates](references/readiness-gates.md), [review rubric](references/review-rubric.md), [lifecycle](references/lifecycle.md), [ship feedback loop](references/ship-feedback-loop.md) |
 | Decisions and owner-facing wording | [Questioning](references/questioning.md), [human output](references/human-friendly-output.md), [decision/status/wave brief](templates/orchestrator-brief.md) |
-| Runtime and worker recovery | [Orchestration](references/orchestration.md), [worker contract](references/worker-contract.md), [dispatch](templates/orchestrator-dispatch.md), [report](templates/orchestrator-report.md), [compaction](templates/compact-instructions.md) |
+| Runtime and worker recovery | [Orchestration](references/orchestration.md) with its parts for [stages](references/orchestration-stages.md), [dispatch](references/orchestration-dispatch.md) and [delivery](references/orchestration-delivery.md), [worker contract](references/worker-contract.md), [dispatch](templates/orchestrator-dispatch.md), [report](templates/orchestrator-report.md), [compaction](templates/compact-instructions.md) |
 | Linear artifact templates | [Project](templates/project.md), [PRD](templates/prd.md), [Tech Spec](templates/tech-spec.md), [Issue](templates/issue.md), [project updates](templates/project-update.md); templates define form, contracts define obligations |
 | Review, check and delivery output | [Review](templates/review-output.md), [check](templates/check-output.md), [ship](templates/ship-output.md), [interactive ship status](templates/ship-status-ux.md), [deploy](templates/deploy-output.md); examples are placeholders, not evidence |
 | Installation and policy | [Install](references/install.md), [versioning](references/install.md), [models](references/model-policy.md), [autoreview routing](references/autoreview-routing.md) |
@@ -1507,7 +1507,7 @@ Historical Codex sources omit owner rubric input only when a completed additiona
 trace has no assistant text, window calls or writes. Scenario response anchors
 use stems/alternatives; malformed questions and unauthorized records still fail.
 The AC1 guard reads all files under `skills/` and `templates/`, plus
-`references/owner-dialog.md` and `references/orchestration.md`, for retired window
+`references/owner-dialog.md` and `references/orchestration*.md`, for retired window
 labels and answer-list formatting. History and old fixtures are outside that scope.
 The suite saves the native trace, writes and fresh dump with their rubric digest.
 Review that saved evidence, then use the same request with `resume: true` to

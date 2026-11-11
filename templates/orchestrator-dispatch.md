@@ -2,7 +2,7 @@
 
 <!-- generator:start -->
 Generator instructions: fill every placeholder and emit one Issue delivery dispatch.
-Use Generated dispatch as audience adapter in `references/orchestration.md`:
+Use Generated dispatch as audience adapter in `references/orchestration-dispatch.md`:
 select configured `orchestration.workerAudience` (default `gpt-worker`), preserve
 its redundancy matrix and reading floor. Repeat rules only where that profile
 requires them; never soften/replace them. Both audiences get exact facts,
