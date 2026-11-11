@@ -240,11 +240,8 @@ test("stream retention preserves validation lines and usage beyond the diagnosti
     'autoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority\noverall: patch is correct (0.9)\n']) capture.write(part);
   const result = capture.finish();
   assert.ok(result.output.includes(header));
+  assert.ok(result.output.includes('claude usage: input_tokens=10 cache_read_input_tokens=20'));
   assert.ok(result.output.length < 2000);
-  assert.deepEqual(gate.parseReviewUsage(result.output, 'claude').usage, {engine:'claude',raw:{input_tokens:10,cache_read_input_tokens:20,cache_creation_input_tokens:30,output_tokens:4,cost_usd:0.1},normalized:{input:10,cacheRead:20,cacheWrite:30,output:4}});
-  assert.deepEqual(gate.parseReviewUsage('codex usage: input_tokens=100 cached_input_tokens=40 output_tokens=5 reasoning_output_tokens=2\n','codex').usage.normalized,{input:100,cacheRead:40,cacheWrite:null,output:5});
-  assert.equal(gate.parseReviewUsage('', 'claude').usage, null);
-  assert.ok(gate.parseReviewUsage('', 'claude').usageReason);
 });
 
 test("dataset archives reuse identical bytes and refuse an explicit version overwrite", async () => {
@@ -659,6 +656,10 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
           assert.equal(reread.status, expectedStatus, reread.stdout + reread.stderr);
           assert.deepEqual(fs.readFileSync(history), bytes, 'signed output survives a fresh gate process and ordinary log edits');
         }
+        // The cost report reads the round exactly as the gate signed it.
+        write(path.join(root, 'logs/MONO-999-mono-deliver-a1.jsonl'), JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }) + '\n');
+        const cost = spawnSync(process.execPath, ['scripts/wave-cost.mjs', 'MONO-999', '--root', root, '--evidence-root', evidence], { encoding: 'utf8' });
+        assert.deepEqual(JSON.parse(cost.stdout.split('\nЦена волны')[0]).autoreview.receipts, { receipts: 1, rounds: 1, not_reviewed: 0, calls: 1, measured_calls: 0 }, cost.stderr);
         return;
       }
       if (expectedStatus === 2) {

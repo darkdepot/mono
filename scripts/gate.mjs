@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-export { parseReviewUsage } from './review-usage.mjs';
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";

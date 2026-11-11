@@ -624,7 +624,7 @@ their original absolute `packRoot`; never replace or redirect that folder.
 A separate staged cache can coexist until activation. Restart each product's
 watcher from the new version before the first launch or resume. Missing, stale
 or dead watchers refuse with `watcher-required` without consuming an attempt.
-Decision journals, signed receipts and surface revision 4 remain compatible with
+Signed receipts and surface revision 4 remain compatible with
 0.30.1; that version ignores watcher pulses and collection retry files.
 See [rollback to 0.30.1](references/install.md#roll-back-to-0301) after attempts drain.
 
@@ -644,9 +644,7 @@ and the reviewer stops reporting it. Older defects, minor leftovers from the
 second round on (never about data, security or a gate bypass) and, after the
 third round, leftovers both roles call harmless pass as successor candidates;
 anything else left after the third round parks `needs-decision` for the
-orchestrator to narrow the contract, split the Issue or change the approach. There are no
-local-pass or collection caps, continue permits, class decisions or decline
-approvals. The collector host needs both the Codex and Claude CLIs logged in by
+orchestrator to narrow the contract, split the Issue or change the approach. The collector host needs both the Codex and Claude CLIs logged in by
 subscription, from different model families; a single-family setup gives
 `not-reviewed`, and so does a logged-out CLI whose role has to run. See [review rounds](references/orchestration.md#review-rounds).
 Every collection requires a pinned request and correlated admission; unpinned
@@ -1082,16 +1080,14 @@ new launches go to Codex. Installation requirements for each worker are in
 
 ## Cost
 
-A wave's cost is telemetry, not a gate. Wait mode avoids an exit/resume cycle; short uses one certifying collection and one combined start/ready comment. These are mechanisms, not a measured savings claim; worker reading inputs and corpus bytes must not grow. Read the **Cost** line in deploy closeout and the **Wave Cost** line in orchestrator status; project updates carry only a short product-level conclusion. The installed `wave-cost.mjs` calculates the figures from reports, logs and ledger:
+A wave's cost is telemetry, not a gate. Wait mode avoids an exit/resume cycle; short uses one certifying collection and one combined start/ready comment. These are mechanisms, not a measured savings claim; worker reading inputs and corpus bytes must not grow. Read the **Cost** line in deploy closeout and the **Wave Cost** line in orchestrator status; project updates carry only a short product-level conclusion. The installed `wave-cost.mjs` calculates the figures from reports, logs, review receipts and ledger:
 
 - Dispatch-to-green-PR and dispatch-to-merge elapsed time, independently selected from the `mono-deliver` report's top-level fields first, legacy `mono-ship` reports next, then ledger events. A green PR and a recorded merge are separate events: merge time never comes from delivery completion.
 - Review rounds from `mono-deliver.review_rounds` (including zero), falling back to legacy `mono-ship` forms. Invalid or missing values fall through; source fields identify the selected report or event. Only `green_at` proves green in a delivery report; legacy ship completion/report timestamps remain supported.
 - All measurable token use across worker turns and attempts (`turn.completed` for Codex, `result.usage` for Claude Code; cache creation and reads are included in normalized input), including parked and failed attempts, plus autoreviewer and orchestrator use where available; worker use is a diagnostic subtotal.
-- Review accounting from `<evidenceRoot>/reviews/<KEY>.json` when present: collection requests (including withheld requests), helper invocations by recorded cause, announced and validated internal passes, and reviewer tokens by engine/provider with measured coverage. A withheld request executes no helper. Without a review ledger, the legacy log scan and cost line are unchanged. Final reports are selected by stage and Issue; retired registry entries and intermediate phase reports are excluded.
+- Review cost from the signed `gate-review-v3` receipts in `<evidenceRoot>/history/` whose pins file belongs to the Issue (`--evidence-root`, by default the product's evidence folder): completed rounds, each counted once although later and reused receipts repeat it, runs that ended `not-reviewed`, and the tokens of every review call with measured coverage. Unsigned, forged and other Issues' receipts are skipped. An Issue without such receipts keeps the legacy scan of helper output in worker logs and its cost line. Final reports are selected by stage and Issue; retired registry entries and intermediate phase reports are excluded.
 - Actual pack bytes read, review rounds, model and effort.
 - Explicit unavailable components with reasons; never estimates presented as measurements.
-
-Build a review ledger with `review-ledger.mjs build --issue <KEY> --root <orchestrator-root> --evidence-root <evidenceRoot>`; `print` reads the same sources without writing. Use `--out <scratch-directory>` to save a reviewable copy, and `wave-cost.mjs --ledger <copy.json>` to price that copy. Ambiguous source links appear in `unresolvedCoverage`, without guessed merges or duplicate calls. Causes remain `unknown` without evidence; self-check requires observed content identity. `adjudicate --issue <KEY> --evidence-root <evidenceRoot> --record <json-file>` records an orchestrator's origin, evidence, decision links and progress without inferring classifications from filenames. Repeating an `eventId` replaces that event's adjudication in place; the latest record wins and other records keep their order.
 
 ### Reviewer comparison bench
 
@@ -1107,11 +1103,9 @@ nothing, an accepted amendment opens a fresh three and a changed base keeps the
 count. Refusals are signed too and reach the worker as a `gate preflight: fail:`
 line. The orchestrator approves nothing between rounds and after merge decides
 which candidates from the receipt's list become Issues (every `must-file` one does): [review rounds](references/orchestration.md#review-rounds),
-worker [round rule](references/review-admission.md). `decisions.mjs`,
-`review-ledger.mjs` and the dispatch pilot block stay in the pack but are off
-the delivery path.
+worker [round rule](references/review-admission.md).
 
-Collections retain validation and usage lines in bounded streaming output before signing. Reviewer input, cache reads, cache writes and output stay separate: Claude input excludes both cache counters, whereas Codex input includes cached input and has no cache-write counter. Raw samples remain available; missing usage is null with a reason. Collection datasets are archived as immutable `<KEY>-review-scope.v<N>.md` files with `.sha256` sidecars, and receipts bind version and digest. Old receipts remain valid without usage or archive metadata; those inputs remain unavailable for reproduction.
+Collections retain validation and usage lines in bounded streaming output before signing. Receipts keep the raw usage of every review call: Claude input excludes both cache counters, whereas Codex input includes cached input and has no cache-write counter. A call without usage stays null and counts as unmeasured, never as zero. Collection datasets are archived as immutable `<KEY>-review-scope.v<N>.md` files with `.sha256` sidecars, and receipts bind version and digest. Old receipts remain valid without usage or archive metadata; those inputs remain unavailable for reproduction.
 
 Count each attempt once: sum per-turn usage, or take the last event when a Codex log reports thread totals (its counters never decrease; `counting` shows which). Cached input is part of input, not another amount to add. An attempt without usage records is unavailable; an unfinished turn makes the attempt incomplete. A wave containing either has an incomplete total. Known completed-turn usage remains a partial subtotal, and absent attempt usage is null, never a measured zero. The static worker reading budget is a separate measure: one union of mandatory, conditional and nested readings, shared files counted once, bounded at **99,882 bytes** with bytes/4 shown as an approximation. README is outside the worker reading list. Explanatory rationale stays outside that list and adds no gates.
 
@@ -1634,7 +1628,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | Rationale outside worker reading | [Audience](references/rationale/audience.md), [review](references/rationale/review.md), [output](references/rationale/output.md), [delivery](references/rationale/delivery.md); explanation adds no obligations |
 | Worked examples and history | [Consumer dogfood](examples/consumer-dogfood.md), [profile regression](examples/profile-workbench-regression.md), [CHANGELOG](CHANGELOG.md) |
 
-Runtime scripts live in [scripts/](scripts/): `gate.mjs` checks evidence; `delivery-state.mjs` publishes/confirms queues; `runtime.mjs` provides role resolution, config validation, durable writes, locks and hashes; `orchestrator/spawn.mjs`, `resume.mjs` and `consume-gate-ack.mjs` use the shared launch implementation; `watch-workers.mjs` monitors registered work; `resolve-issue-context.mjs` resolves the issue-only seam; `verify-pack-state.mjs` verifies identity/quiescence; `decisions.mjs` records decisions and versions/materializes datasets; `review-ledger.mjs` builds and summarizes review-event ledgers and supplies adjudication hints; `wave-cost.mjs` measures cost; `read-budget.mjs` bounds reading. Invoke runtime scripts from the installed pack, with `--help` and pinned dispatch inputs. Install and update through the [GitHub marketplace](references/install.md#plugin-updates); maintain product config with `project-config.mjs` from the upstream checkout.
+Runtime scripts live in [scripts/](scripts/): `gate.mjs` checks evidence; `delivery-state.mjs` publishes/confirms queues; `runtime.mjs` provides role resolution, config validation, durable writes, locks and hashes; `orchestrator/spawn.mjs`, `resume.mjs` and `consume-gate-ack.mjs` use the shared launch implementation; `watch-workers.mjs` monitors registered work; `resolve-issue-context.mjs` resolves the issue-only seam; `verify-pack-state.mjs` verifies identity/quiescence; `wave-cost.mjs` measures cost; `read-budget.mjs` bounds reading. Invoke runtime scripts from the installed pack, with `--help` and pinned dispatch inputs. Install and update through the [GitHub marketplace](references/install.md#plugin-updates); maintain product config with `project-config.mjs` from the upstream checkout.
 
 ## Principles
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveRole, roleDefaults, requiredPairings } from "./runtime.mjs";
+import { resolveRole, roleDefaults, requiredPairings, canonical } from "./runtime.mjs";
 import { checkPlugin, resolveSkillPath } from "./validate-plugin.mjs";
 import { measureReadBudget, readingPaths, READ_BUDGET_MAX_BYTES, DELIVERY_SKILLS } from "./read-budget.mjs";
 import { RUSSIAN_STAGES, isRussianStage } from "./russian-stages.mjs";
@@ -51,23 +51,6 @@ function exists(relativePath) {
 function fail(message) {
   failures.push(message);
 }
-
-function reviewLedgerFixture() {
-  const reviewEvent = {
-    sources: [],
-    status: "unknown",
-    launchCause: "unknown",
-    usage: null,
-    announcedPasses: null,
-    confirmedPasses: null,
-  };
-  return { issue: "MONO-999", attempts: [{ attempt: 1, unresolvedCoverage: [], events: [
-    { ...reviewEvent, id: "collection", kind: "collection-request" },
-    { ...reviewEvent, id: "withheld", kind: "collection-request", status: "withheld" },
-    { ...reviewEvent, id: "helper", kind: "helper-invocation", announcedPasses: 2 },
-  ] }] };
-}
-
 
 function validateReadBudget() {
   try {
@@ -4896,13 +4879,25 @@ function validateWaveCostBehavior() {
       fail("wave-cost fully measured Russian summary must be one compact sentence of at most 320 characters");
     }
 
-    // Named behavior fixture: a review ledger replaces the legacy review counters.
-    const reviewLedgerFile = path.join(fixtureRoot, "review-ledger.json");
-    fs.writeFileSync(reviewLedgerFile, JSON.stringify(reviewLedgerFixture()));
-    const reviewLedgerOutput = parseWaveCostOutput(runNode(["scripts/wave-cost.mjs", "MONO-999", "--root", fixtureRoot, "--ledger", reviewLedgerFile]));
-    if (reviewLedgerOutput.json.autoreview.ledger.collections !== 2 || reviewLedgerOutput.json.autoreview.ledger.invocations !== 1 ||
-      !reviewLedgerOutput.line.includes("авто-ревью: сборов 2 (отклонено 1), вызовов 1") || !reviewLedgerOutput.line.includes("измерено 0 из 1")) {
-      fail("review-ledger cost fixture must separate requested collections, withheld demand, helper calls and measured usage coverage");
+    // Named behavior fixture: signed gate receipts replace the legacy helper-log review counters.
+    const evidence = path.join(fixtureRoot, "evidence"), receiptKey = randomBytes(32);
+    fs.mkdirSync(path.join(evidence, "history"), { recursive: true });
+    fs.writeFileSync(path.join(evidence, "receipt.key"), receiptKey);
+    const reviewRound = { number: 1, head: "a".repeat(40), base: "b".repeat(40), costs: [
+      { role: "reviewer", engine: "codex", usage: { input_tokens: 100, cached_input_tokens: 40, output_tokens: 5, reasoning_output_tokens: 2 } },
+      { role: "checker", engine: "claude", usage: { input_tokens: 10, cache_creation_input_tokens: 30, cache_read_input_tokens: 60, output_tokens: 5 } },
+    ] };
+    for (const [runId, issue, signingKey] of [["first", "MONO-999", receiptKey], ["reused", "MONO-999", receiptKey], ["other", "MONO-9999", receiptKey], ["forged", "MONO-999", randomBytes(32)]]) {
+      const receipt = { producer: "gate-review-v3", runId, pins: { file: path.join(fixtureRoot, "dispatch", `${issue}-a1`, "pins.json") },
+        review: { outcome: "clean", spent: runId !== "reused", record: { contractDigest: "c".repeat(64), rounds: [runId === "forged" ? { ...reviewRound, number: 2 } : reviewRound] } } };
+      fs.writeFileSync(path.join(evidence, "history", `${runId}.json`),
+        JSON.stringify({ receipt, signature: createHmac("sha256", signingKey).update(canonical(receipt)).digest("hex") }));
+    }
+    const receiptOutput = parseWaveCostOutput(runNode(["scripts/wave-cost.mjs", "MONO-999", "--root", fixtureRoot, "--evidence-root", evidence]));
+    if (receiptOutput.json.autoreview.receipts?.rounds !== 1 || receiptOutput.json.autoreview.receipts.calls !== 2 ||
+      receiptOutput.json.autoreview.usage.input_tokens !== 200 || receiptOutput.json.autoreview.usage.cached_input_tokens !== 100 ||
+      !receiptOutput.line.includes("авто-ревью: кругов 1, 210 токенов") || receiptOutput.line.includes("проходов авто-ревью")) {
+      fail("review receipt cost fixture must count each signed round of the Issue once and ignore forged or foreign receipts");
     }
 
     fs.appendFileSync(
@@ -5718,9 +5713,6 @@ const STRING_PINS = [
   ["templates/orchestrator-dispatch.md","{{confirmation_timeout}}"],
   ["templates/orchestrator-dispatch.md","{{constraints}}"],
   ["templates/orchestrator-dispatch.md","{{context_seam}}"],
-  ["templates/orchestrator-dispatch.md","{{dataset_digest}}"],
-  ["templates/orchestrator-dispatch.md","{{dataset_path}}"],
-  ["templates/orchestrator-dispatch.md","{{dataset_version}}"],
   ["templates/orchestrator-dispatch.md","{{decisions}}"],
   ["templates/orchestrator-dispatch.md","{{delivery_skill}}"],
   ["templates/orchestrator-dispatch.md","{{evidence_root}}"],
@@ -5749,7 +5741,6 @@ const STRING_PINS = [
   ["templates/orchestrator-dispatch.md","{{product}}"],
   ["templates/orchestrator-dispatch.md","{{profile}}"],
   ["templates/orchestrator-dispatch.md","{{project_brief}}"],
-  ["templates/orchestrator-dispatch.md","{{review_project}}"],
   ["templates/orchestrator-dispatch.md","{{runtime_scripts}}"],
   ["templates/orchestrator-dispatch.md","{{pack_root}}"],
   ["templates/orchestrator-dispatch.md","{{snapshot_note}}"],
@@ -6371,9 +6362,6 @@ const MACHINE_TOKENS = new Set([
   "{{confirmation_timeout}}",
   "{{constraints}}",
   "{{context_seam}}",
-  "{{dataset_digest}}",
-  "{{dataset_path}}",
-  "{{dataset_version}}",
   "{{decisions}}",
   "{{delivery_skill}}",
   "{{evidence_root}}",
@@ -6403,7 +6391,6 @@ const MACHINE_TOKENS = new Set([
   "{{product}}",
   "{{profile}}",
   "{{project_brief}}",
-  "{{review_project}}",
   "{{runtime_scripts}}",
   "{{pack_root}}",
   "{{snapshot_note}}",
@@ -6425,25 +6412,6 @@ const MACHINE_TOKENS = new Set([
   // MONO-93: command names, request/registry/config dictionary keys and values.
   "wait-ack", "handshake", "profile", "short", "full", "pinsVersion",
   "procStart", "last_wait", "consumedAt", "ackWaitSec", "stallSec",
-  "<!-- review-pilot:start -->",
-  "<!-- review-pilot:matrix -->",
-  "<!-- review-pilot:checkpoint -->",
-  "<!-- review-pilot:dispositions -->",
-  "<!-- review-pilot:reopening -->",
-  "<!-- review-pilot:local -->",
-  "<!-- review-pilot:dataset -->",
-  "<!-- review-pilot:end -->",
-  "findingKey",
-  "behaviour_matrices",
-  "checkpoint",
-  "progress_claim",
-  "review_dispositions",
-  "supersedes",
-  "--stream-engine-output",
-  "--dataset",
-  "datasetVersion:",
-  "datasetPath:",
-  "datasetDigest:",
 
   ...README_SECTIONS,
   "!inspection.hasThreadStarted",
@@ -6873,49 +6841,7 @@ function laneFieldFaults(text) {
   }
   return faults;
 }
-function pilotDispatchFaults(text) {
-  const start = "<!-- review-pilot:start -->", end = "<!-- review-pilot:end -->";
-  requireMachineToken(start); requireMachineToken(end);
-  if (text.split(start).length !== 2 || text.split(end).length !== 2 || text.indexOf(end) < text.indexOf(start)) return ["pilot block boundaries"];
-  const block = text.slice(text.indexOf(start) + start.length, text.indexOf(end));
-  const sections = [
-    ["matrix", ["findingKey", "behaviour_matrices"]],
-    ["checkpoint", ["checkpoint", "progress_claim"]],
-    ["dispositions", ["review_dispositions", "findingKey"]],
-    ["reopening", ["supersedes"]],
-    ["local", ["--stream-engine-output", "--dataset"]],
-    ["dataset", ["datasetVersion:", "datasetPath:", "datasetDigest:"]],
-  ];
-  const faults = [];
-  let previous = -1;
-  for (const [name, fields] of sections) {
-    const marker = `<!-- review-pilot:${name} -->`; requireMachineToken(marker);
-    const index = block.indexOf(marker);
-    if (index < 0 || block.split(marker).length !== 2 || index <= previous) { faults.push(`pilot section ${name}`); continue; }
-    previous = index;
-    const rest = block.slice(index + marker.length), next = rest.indexOf("<!-- review-pilot:");
-    const section = next < 0 ? rest : rest.slice(0, next);
-    if (!/^### .+/m.test(section)) faults.push(`pilot section heading ${name}`);
-    for (const field of fields) { requireMachineToken(field); if (!section.includes(field)) faults.push(`pilot field ${field}`); }
-  }
-  return faults;
-}
-function validatePilotDispatch() {
-  const text = read("templates/orchestrator-dispatch.md");
-  failures.push(...pilotDispatchFaults(text));
-  // Named negative fixtures prove missing sections/fields fail, while editorial
-  // changes to every heading remain unconstrained.
-  for (const marker of ["matrix", "checkpoint", "dispositions", "reopening", "local", "dataset"]) {
-    if (!pilotDispatchFaults(text.replace(`<!-- review-pilot:${marker} -->`, "")).length) fail(`pilot missing-section fixture ${marker}`);
-  }
-  for (const field of ["--stream-engine-output", "datasetDigest:"]) {
-    if (!pilotDispatchFaults(text.replaceAll(field, "")).length) fail(`pilot missing-field fixture ${field}`);
-  }
-  if (pilotDispatchFaults(text.replace(/^### .+$/gm, "### Reworded heading")).length) fail("pilot prose-independence fixture");
-}
 function validateDocumentSkeleton() {
-  validatePilotDispatch();
-
   // Agent rules remain prose/review; verify only changed section step skeletons.
   for (const [file, section, count] of [
     ["skills/implement/SKILL.md", "Работа", 3],

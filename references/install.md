@@ -728,7 +728,7 @@ Plugin Updates, предварительно защитив заменяемый
 пины 0.31.1; старые попытки и сертификаты на новый пакет не перенаправляются.
 
 0.31.0 is a breaking minor because a live watcher is now required for launch and
-resume; activate it using cross-product quiescence. Decision journals, signed
+resume; activate it using cross-product quiescence. Signed
 receipts and surface revision 4 remain compatible with 0.30.1. The new
 `watcher.json` and collection retry files are optional to 0.30.1 and are ignored
 there. Stage a new cache beside an open attempt only without replacing its
@@ -742,8 +742,8 @@ control, registry, configuration or evidence.
 The installing orchestrator owns rollback after every attempt using the outgoing
 pack has finished and stopped, including paused attempts. Pause launches and
 collections in affected products and keep them paused through verification.
-Preserve complete decision journals, signed receipts/history and receipt key,
-datasets, all dispatch pin versions, reports, confirmations and product history;
+Preserve the complete evidence root (signed receipts/history and receipt key,
+datasets), all dispatch pin versions, reports, confirmations and product history;
 record their hashes before and after rollback. Do not delete records to evade
 `before-update` and do not resume an outgoing-version attempt on 0.30.1.
 
@@ -763,87 +763,13 @@ codex plugin add mono@mono-marketplace
 For an existing Codex marketplace, remove its registration and register the tag
 as in Plugin Updates; protect the replaced cache with `before-update` first.
 Verify both actual version-cache trees against `v0.30.1`, including paths, types,
-modes, hashes and symlinks; both installed versions must read `0.30.1`. No journal
-projection is required for this rollback: retain all evidence, pins and history
-byte-for-byte, including the new files ignored by 0.30.1. Recheck their saved
-hashes. Restart each product's watcher from the verified 0.30.1 pack as a tracked
+modes, hashes and symlinks; both installed versions must read `0.30.1`. Retain all
+evidence, pins and history byte-for-byte, including the new files ignored by
+0.30.1. Recheck their saved hashes. Restart each product's watcher from the verified 0.30.1 pack as a tracked
 background process; verify that it stays running and monitor its normal event
 output. Version 0.30.1 does not write `watcher.json`, so no fresh pulse is required
 for rollback. Then release launch halts. New attempts use fresh 0.30.1 dispatch
 pins; never redirect archived attempts or reuse a newer certificate as proof.
-
-### Roll Back To 0.29.0
-
-The installing orchestrator owns rollback. Pause affected launches and collections,
-stop affected attempts safely, and retain their pending obligations. Do not resume
-a 0.30.x attempt under 0.29.0 or remove its records to bypass an installation gate.
-Keep the old sessions stopped until the cut-over is verified.
-
-Before changing anything, preserve an immutable copy of the **complete** decision
-journals, signed receipts/history and receipt key, datasets, dispatch pins (all
-versions), reports and confirmations. Record file hashes and verify them after
-the exercise. Keep the original evidence and pins unchanged; a compatibility
-view is a separate evidence root, not an edit to the original journal.
-
-Choose fresh absolute paths `full_evidence` (the preserved evidence copy) and
-`rollback_evidence` (the separate 0.29.0 root), and set `issue` to the affected key.
-For each Issue, project only the three supported entry types without reordering
-or rebuilding entries; this preserves `supersedes` and `forId` references:
-
-```bash
-node --input-type=module - "$full_evidence" "$rollback_evidence" "$issue" <<'JS'
-import fs from 'node:fs';
-import path from 'node:path';
-const [source, destination, issue] = process.argv.slice(2);
-if (!path.isAbsolute(source) || !path.isAbsolute(destination) || source === destination ||
-    !/^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(issue)) throw new Error('distinct absolute roots and Issue required');
-const journal = JSON.parse(fs.readFileSync(path.join(source, 'decisions', `${issue}.json`)));
-const entries = journal.entries.filter(e => ['decision', 'matrix', 'verification'].includes(e.type));
-fs.mkdirSync(path.join(destination, 'decisions'), { recursive: true });
-fs.writeFileSync(path.join(destination, 'decisions', `${issue}.json`),
-  JSON.stringify({ ...journal, entries }, null, 2) + '\n', { flag: 'wx' });
-JS
-```
-
-`decline`, `decline-revoke`, `class`, `class-decision`, `continue` and `successor`
-are deliberately absent. Do not translate them into old decisions or readiness.
-Accepted declines and cap allowances confer no readiness after rollback.
-
-Select GitHub tag `v0.29.0` in **both** tools. Use clean, separate tool profiles
-and cache directories so the stopped attempts' installed folders remain intact;
-do not overwrite the currently pinned pack. If reusing any installation folder,
-the existing `before-update` condition still applies and a refusal blocks it.
-In those clean profiles, with automatic updates disabled:
-
-```bash
-claude plugin marketplace add 'https://github.com/darkdepot/mono.git#v0.29.0'
-claude plugin install mono@mono-marketplace
-codex plugin marketplace add darkdepot/mono --ref v0.29.0
-codex plugin add mono@mono-marketplace
-```
-
-The Claude git-URL fragment selects the tag ([CLI reference](https://code.claude.com/docs/en/plugins/cli-reference#plugin-marketplace-add)).
-Verify both actual version-cache trees against the Git tree of `v0.29.0`, including
-modes/symlinks; each installed `VERSION` must be `0.29.0`. Set `old_pack` to a
-verified 0.29.0 cache and validate the separate journal with that version:
-
-```bash
-node "$old_pack/scripts/decisions.mjs" list --issue "$issue" --evidence-root "$rollback_evidence"
-node "$old_pack/scripts/decisions.mjs" render --issue "$issue" --evidence-root "$rollback_evidence"
-```
-
-Any invalid/dangling reference blocks rollback; do not silently drop or repair
-entries. Recheck the preserved full journal, receipts and pins against the saved
-hashes. Keep both the full archive and the readable compatibility view.
-
-Create new attempts using the 0.29.0 rules and verified pack identity. Refresh
-their dispatch pins, model/config base, dataset path/version/digest, worktree/base,
-evidence root and complete writable roots; never amend the archived pins. Run a
-full review of the committed code being sent under those pins. In a training root,
-prove that old gates reject a findings receipt despite its former accepted
-declines and accept a fresh full clean review when all other checks pass; retain
-commands/results with the rollback record. Only then resume affected work. Do not
-reuse a 0.30.x certificate, continuation, or accepted-with-declines result.
 
 ## Conversation QA migration
 
