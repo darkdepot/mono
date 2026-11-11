@@ -124,7 +124,7 @@ Expected behavior:
 1. `mono:implement` fetches fresh Linear Project, PRD, Tech Spec, Issue, approval, review, and check state.
 2. It starts from approved Issue(s), not raw discovery artifacts or local review plans.
 3. It chooses proof before editing, implements only the approved one-PR slice, and reports every acceptance criterion with done/confirmed, unverified or broken evidence. Only complete work without known breakage exits as `implemented-needs-preflight`; screen tasks explicitly report «экран в браузере не проверен».
-4. `mono:preflight` inspects branch/worktree/diff, selects the explicit Opus 5 route from `references/autoreview-routing.md`, runs targeted verification and mandatory `autoreview` until it reports clean, commits when safe/configured, and emits a preflight certificate with the final route.
+4. `mono:preflight` inspects branch/worktree/diff, classifies risk, runs targeted verification, commits, passes the collection's review round and verification, and emits a preflight certificate.
 5. `mono:ship` consumes the preflight certificate, owns formal `mono:review pre-ship`, owns `mono:check pre-ship`, delegates PR creation to the configured Ship workflow, runs repo docs before final green when configured, stabilizes review/CI, and emits a `mono-ship green certificate`.
 6. `mono:deploy` consumes the green certificate, verifies the current PR head SHA still matches, runs the configured Deploy workflow, runs/reports `mono:check post-ship`, closes Linear, and records durable learnings.
 

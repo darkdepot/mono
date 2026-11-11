@@ -4,7 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { evaluateShip, validatePreflight, advanceEvidence, botRemarkDigest } from "./gate.mjs";
+import { evaluateShip, validatePreflight, advanceEvidence, botRemarkDigest, reviewHistory, roundOutcome } from "./gate.mjs";
+import { REVIEW_PRODUCER, digest } from "./runtime.mjs";
+import { installReviewClis, setReview, reviewCalls, reviewFinding, reviewVerdict } from "./test-fixtures/review-clis.mjs";
 import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
 import { ideaBinding } from './orchestrator/command-state.mjs';
 import { checkIdea } from './idea-gate.mjs';
@@ -139,21 +141,93 @@ test("head changes reset evidence; new events reset quiet time; deadline survive
   assert.equal(state.lastEventAt, 3000); assert.equal(state.startedAt, 1000);
   s.reviews.push({ id: 1 }); assert.equal(advanceEvidence(state, s, 4000).lastEventAt, 4000);
 });
-test("preflight rejects absent, failed, incomplete, stale and wrong-route evidence", () => {
-  const route = { model: "policy-model", effort: "high" };
-  const receipt = { head, base: "b".repeat(40), route, verification: { exitCode: 0 },
-    review: { exitCode: 0, output: "autoreview target: branch | engine: claude | model: policy-model | thinking: high\nautoreview clean: no accepted/actionable findings reported\noverall: patch is correct (0.9)\n" },
-    loop: { iterations: 1, residualFindings: [], disposition: "clean" } };
-  assert.doesNotThrow(() => validatePreflight(receipt, head, receipt.base, route));
-  const advisory = structuredClone(receipt);
-  advisory.review.json = { overall_correctness: "patch is correct", findings: [], priority_filtered_findings: [{ priority: "P3", title: "advisory" }] };
-  assert.doesNotThrow(() => validatePreflight(advisory, head, receipt.base, route));
-  advisory.review.json.priority_filtered_findings[0].priority = "P2";
-  assert.throws(() => validatePreflight(advisory, head, receipt.base, route), /structured result/);
-  assert.throws(() => validatePreflight(null, head, receipt.base, route));
-  for (const mutate of [r => r.head = "c".repeat(40), r => r.review.exitCode = 1, r => r.review.output = "clean", r => r.route.effort = "medium", r => r.loop.residualFindings = ["finding"], r => delete r.loop]) {
-    const r = structuredClone(receipt); mutate(r); assert.throws(() => validatePreflight(r, head, receipt.base, route));
+const reviewed = (extra = {}) => ({ key: 'k1', weight: 'P2', file: 'a.mjs', line: 3, title: 'Leftover', status: 'confirmed', outcome: 'confirmed', danger: false, origin: 'introduced', outOfContract: false, riskRaised: false, ...extra });
+test("review outcome mapping: what leaves the rounds as a successor candidate", () => {
+  const record = (outcome, findings = []) => ({ outcome, findings });
+  const minor = (extra = {}) => reviewed({ weight: 'P3', danger: true, dangerCase: 'silent-result', ...extra });
+  for (const [name, input, last, expected] of [
+    ['clean stays clean', record('clean'), 3, 'clean'],
+    ['a clean round lists its older harmless defects', record('clean', [reviewed({ origin: 'pre-existing' })]), 1, 'clean-with-successors'],
+    ['open findings before the last round', record('not-converged', [reviewed()]), 2, 'not-converged'],
+    ['harmless leftovers on the last round', record('not-converged', [reviewed(), reviewed({ key: 'k2', status: 'closed' })]), 3, 'clean-with-successors'],
+    ['dangerous', record('not-converged', [reviewed({ danger: true })]), 3, 'not-converged'],
+    ['unresolved', record('not-converged', [reviewed({ outcome: 'unresolved', status: 'unresolved' })]), 3, 'not-converged'],
+    ['out of contract', record('not-converged', [reviewed({ outOfContract: true })]), 3, 'not-converged'],
+    ['risk raised on a closed finding', record('not-converged', [reviewed(), reviewed({ key: 'k2', status: 'closed', riskRaised: true })]), 3, 'not-converged'],
+    ['nothing left open', record('not-converged', [reviewed({ status: 'closed', outOfContract: true })]), 3, 'not-converged'],
+    ['not reviewed', record('not-reviewed', [reviewed()]), 3, 'not-reviewed'],
+    ['minor leftovers are fixed in round one', record('not-converged', [minor()]), 1, 'not-converged'],
+    ['minor leftovers pass from round two, dangerous or unresolved', record('not-converged', [minor({ outcome: 'unresolved', status: 'unresolved', dangerCase: 'unknown' })]), 2, 'clean-with-successors'],
+    ['a minor leftover about data never passes', record('not-converged', [minor({ dangerCase: 'data' })]), 3, 'not-converged'],
+    ['a minor leftover about a gate bypass never passes', record('not-converged', [minor({ dangerCase: 'gate-bypass' })]), 2, 'not-converged'],
+    ['a minor leftover does not carry a serious one', record('not-converged', [minor(), reviewed({ key: 'k2', danger: true })]), 2, 'not-converged'],
+    ['an older dangerous defect is a successor in any round', record('not-converged', [reviewed({ origin: 'pre-existing', danger: true, dangerCase: 'data' })]), 1, 'clean-with-successors'],
+    ['an older unresolved defect still blocks', record('not-converged', [reviewed({ origin: 'pre-existing', outcome: 'unresolved', status: 'unresolved' })]), 3, 'not-converged'],
+  ]) {
+    const result = roundOutcome(input, last);
+    assert.equal(result.outcome, expected, name);
+    assert.deepEqual(result.successors.map(item => item.key), expected === 'clean-with-successors' ? ['k1'] : [], name);
   }
+});
+test("review refusal and successor lines: an older dangerous defect must be filed, a long list stays readable by the collector", () => {
+  const older = roundOutcome({ outcome: 'not-converged', findings: [reviewed({ origin: 'pre-existing', danger: true, dangerCase: 'data' })] }, 1);
+  assert.deepEqual(older.successors.map(item => item.line), ['must-file P2 a.mjs:3 Leftover']);
+  assert.equal(roundOutcome({ outcome: 'clean', findings: [reviewed({ origin: 'pre-existing' })] }, 1).successors[0].line, 'P2 a.mjs:3 Leftover');
+  assert.equal(roundOutcome({ outcome: 'not-converged', findings: [reviewed({ origin: 'pre-existing', weight: 'P3', danger: true, dangerCase: 'silent-result' })] }, 1).successors[0].line, 'P3 a.mjs:3 Leftover', 'a minor older defect is a candidate');
+  const many = Array.from({ length: 200 }, (_, index) => reviewed({ key: `k${index}`, trigger: 't'.repeat(300), reason: 'r'.repeat(400) }));
+  const head = "a".repeat(40), base = "b".repeat(40);
+  const receipt = { producer: REVIEW_PRODUCER, head, base, consistency: { passed: true, error: null }, verification: { exitCode: null },
+    review: { outcome: 'not-converged', round: 1, successors: [], record: { findings: many } } };
+  assert.throws(() => validatePreflight(receipt, head, base), error => error.message.length < 48000 && /^review not-converged \(round 1 of 3\); fix and request the next round; 200 open: /.test(error.message) && / more in the next round$/.test(error.message));
+});
+test("review rounds are counted per pins file from signed history", () => {
+  const pins = { file: '/root/dispatch/MONO-1-a1/pins.json', digest: 'd' }, base = 'b'.repeat(40), contractDigest = 'c'.repeat(64);
+  const heads = ['1', '2', '3', '4'].map(digit => digit.repeat(40));
+  let clock = 0;
+  const receipt = (at, outcome, extra = {}) => ({ producer: REVIEW_PRODUCER, recordedAt: new Date(Date.UTC(2026, 10, 10, 0, clock++)).toISOString(), runId: `run-${clock}`, pins, head: at, base,
+    ...extra, review: { outcome, spent: !['not-reviewed', 'refused'].includes(outcome), contractDigest, record: { run: clock }, ...extra.review } });
+  const read = (receipts, at = heads[0], other = {}) => reviewHistory(receipts, { pins, head: at, base, contractDigest, ...other });
+  assert.deepEqual(read([]), { spent: 0, notReviewed: 0, reuse: null, record: null });
+  const three = [receipt(heads[0], 'not-converged'), receipt(heads[1], 'not-converged'), receipt(heads[2], 'clean-with-successors')];
+  assert.equal(read(three, heads[3]).spent, 3, 'a fourth head finds the limit spent');
+  assert.equal(read(three, heads[3]).reuse, null);
+  assert.equal(read(three, heads[2]).reuse, three[2], 'the same head reuses its stored round');
+  assert.deepEqual(read(three, heads[3]).record, three[2].review.record, 'the next round continues the latest record');
+  const reused = receipt(heads[0], 'not-converged', { review: { spent: false, reusedFrom: 'run-1' } });
+  assert.equal(read([three[0], reused]).spent, 1, 'a reused round spends nothing');
+  const failed = [receipt(heads[0], 'not-reviewed'), receipt(heads[1], 'not-reviewed'), receipt(heads[0], 'not-reviewed')];
+  assert.deepEqual([read(failed).spent, read(failed).notReviewed, read(failed, heads[1]).notReviewed], [0, 2, 1], 'not-reviewed spends nothing and counts in a row per head');
+  assert.equal(read([...failed, receipt(heads[0], 'clean')]).notReviewed, 0);
+  assert.equal(read([...failed, receipt(heads[0], 'refused')]).notReviewed, 2, 'a refusal is not a review attempt');
+  const amended = { file: '/root/dispatch/MONO-1-a1/pins.v1.json', digest: 'e' };
+  assert.deepEqual(reviewHistory(three, { pins: amended, head: heads[2], base, contractDigest }), { spent: 0, notReviewed: 0, reuse: null, record: null }, 'a new pins version opens a fresh three');
+  for (const changed of [{ base: 'e'.repeat(40) }, { contractDigest: 'f'.repeat(64) }])
+    assert.deepEqual(read(three.slice(0, 2), heads[1], changed), { spent: 2, notReviewed: 0, reuse: null, record: null }, 'a new base or contract starts a fresh record and keeps the count');
+  const foreign = [{ ...three[0], producer: 'gate-autoreview-v2' }, { ...three[1], pins: { file: '/root/dispatch/MONO-2-a1/pins.json', digest: 'd' } }, { producer: REVIEW_PRODUCER, pins }, null];
+  assert.equal(read(foreign).spent, 0, 'old receipts and other tasks are never counted');
+});
+test("preflight accepts only a v3 receipt with an accepted review, exact head/base and proven verification", () => {
+  const base = "b".repeat(40);
+  const receipt = (extra = {}) => ({ producer: REVIEW_PRODUCER, head, base, consistency: { passed: true, error: null },
+    verification: { exitCode: 0, sandbox: { mode: "workspace-write", probed: true } }, ...extra,
+    review: { outcome: 'clean', round: 1, successors: [], record: { findings: [reviewed()] }, ...extra.review } });
+  assert.match(validatePreflight(receipt(), head, base), /^review clean \(round 1 of 3\) and verification verified on head$/);
+  assert.match(validatePreflight(receipt({ review: { outcome: 'clean-with-successors', round: 3, successors: [{ key: 'k1', line: 'P2 a.mjs:3 Leftover' }] } }), head, base),
+    /^review clean-with-successors \(round 3 of 3\).*successor candidates: P2 a\.mjs:3 Leftover$/);
+  assert.throws(() => validatePreflight(null, head, base), /old receipt format/u);
+  for (const [extra, refusal] of [
+    [{ producer: 'gate-autoreview-v2' }, /old receipt format/],
+    [{ head: "c".repeat(40) }, /stale review receipt/], [{ base: "c".repeat(40) }, /stale review receipt/],
+    [{ review: { outcome: 'not-converged' } }, /^review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 a\.mjs:3 Leftover \(when: /],
+    [{ review: { outcome: 'not-converged', round: 3 } }, /^needs-decision: review not-converged after round 3 of 3; 1 open/],
+    [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed' } }, /^not-reviewed: role failed; no round spent, request this head once more$/],
+    [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed', repeated: true } }, /^blocked: not-reviewed twice in a row on this head: role failed$/],
+    [{ review: { outcome: 'refused', round: null, reason: 'needs-decision: review round limit reached' } }, /^needs-decision: review round limit reached$/],
+    [{ verification: { exitCode: 1, sandbox: { mode: "workspace-write", probed: true } } }, /^needs-decision: verification failed/],
+    [{ verification: { exitCode: null } }, /^needs-decision: verification failed/],
+    [{ verification: { exitCode: 0, sandbox: { mode: "workspace-write", probed: false } } }, /sandbox proof missing/],
+    [{ consistency: { passed: false, error: 'head or base changed during verification' } }, /consistency failed or missing: head or base changed/],
+  ]) assert.throws(() => validatePreflight(receipt(extra), head, base), { message: refusal });
 });
 
 test("stream retention preserves validation lines and usage beyond the diagnostic tail", async () => {
@@ -171,25 +245,6 @@ test("stream retention preserves validation lines and usage beyond the diagnosti
   assert.deepEqual(gate.parseReviewUsage('codex usage: input_tokens=100 cached_input_tokens=40 output_tokens=5 reasoning_output_tokens=2\n','codex').usage.normalized,{input:100,cacheRead:40,cacheWrite:null,output:5});
   assert.equal(gate.parseReviewUsage('', 'claude').usage, null);
   assert.ok(gate.parseReviewUsage('', 'claude').usageReason);
-});
-
-test("validation refuses duplicate or lost consumed lines while accepting legacy headers", () => {
-  const route = {model:'policy-model',effort:'high'};
-  const output = 'autoreview target: branch | engine: claude | model: policy-model | thinking: high\nautoreview clean: no accepted/actionable findings reported\noverall: patch is correct (0.9)\n';
-  const receipt = {head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,output},loop:{iterations:1,residualFindings:[],disposition:'clean'}};
-  assert.doesNotThrow(()=>validatePreflight(receipt,head,'base',route));
-  for (const bad of [output+'engine: other\n', output+'overall: patch is incorrect (0.8)\n', output.replace('model: policy-model','missing model'),output+output]) {
-    assert.throws(()=>validatePreflight({...receipt,review:{exitCode:0,output:bad}},head,'base',route));
-  }
-});
-
-test("only legacy and streaming fixed invocations are valid", async () => {
-  const { validReviewInvocation } = await import('./gate.mjs');
-  assert.equal(typeof validReviewInvocation,'function');
-  const fixed=['--mode','branch','--base','base','--engine','claude','--model','model','--thinking','high','--max-priority','P2'];
-  assert.equal(validReviewInvocation(fixed,fixed),true);
-  assert.equal(validReviewInvocation([...fixed,'--stream-engine-output'],fixed),true);
-  for(const extra of [['--stream-engine-output','--stream-engine-output'],['--foo'],['--max-priority','P3']]) assert.equal(validReviewInvocation([...fixed,...extra],fixed),false);
 });
 
 test("dataset archives reuse identical bytes and refuse an explicit version overwrite", async () => {
@@ -214,8 +269,6 @@ test('oversized diagnostic lines do not invalidate complete review evidence', as
   capture.write('diagnostic: '+ 'x'.repeat(2*1024*1024));capture.write('\n');
   capture.write('autoreview target: branch\nengine: claude\nmodel: policy-model\nthinking: high\nautoreview clean: no accepted/actionable findings reported\noverall: patch is correct (0.9)\n');
   const result=capture.finish();assert.equal(result.retentionError,null);assert.ok(result.diagnosticTail.length<=64);
-  const route={model:'policy-model',effort:'high'};
-  assert.doesNotThrow(()=>validatePreflight({head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,...result},loop:{iterations:1,residualFindings:[],disposition:'clean'}},head,'base',route));
   const consumed=captureOutput();consumed.write('model: '+'x'.repeat(2*1024*1024)+'\n');assert.ok(consumed.finish().retentionError);
 });
 
@@ -238,16 +291,6 @@ test('streamed commands receive EOF on stdin instead of hanging the collection',
   assert.equal(result.exitCode,0);
 });
 
-test('retention preserves duplicate legacy helper headers outside the diagnostic tail', async () => {
-  const {captureOutput}=await import('./gate.mjs');
-  const capture=captureOutput({tailBytes:64});
-  capture.write('autoreview target: branch | engine: claude | model: policy-model | thinking: high\n');
-  capture.write('autoreview target: branch | engine: conflicting | model: policy-model | thinking: high\n'+'noise\n'.repeat(100));
-  capture.write('autoreview clean: no accepted/actionable findings reported\noverall: patch is correct (0.9)\n');
-  const route={model:'policy-model',effort:'high'};
-  assert.throws(()=>validatePreflight({head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,...capture.finish()},loop:{iterations:1,residualFindings:[],disposition:'clean'}},head,'base',route));
-});
-
 test('streamed JSON quoting helper syntax does not become helper evidence', async () => {
   const {captureOutput}=await import('./gate.mjs');
   const capture=captureOutput({tailBytes:64});
@@ -256,10 +299,9 @@ test('streamed JSON quoting helper syntax does not become helper evidence', asyn
   capture.write(JSON.stringify({tool_result:header+'; review passes: 999'})+'\n');
   capture.write(JSON.stringify({tool_result:'x'.repeat(2*1024*1024)+' | engine: quoted'})+'\n');
   capture.write('bundle: 42 bytes; review passes: 1\nautoreview clean: no accepted/actionable findings reported\noverall: patch is correct (0.9)\n');
-  const result=capture.finish(),route={model:'policy-model',effort:'high'};
+  const result=capture.finish();
   assert.equal(result.retentionError,null);
   assert.equal((result.output.match(/review passes:/g)||[]).length,1);
-  assert.doesNotThrow(()=>validatePreflight({head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,...result},loop:{iterations:1,residualFindings:[],disposition:'clean'}},head,'base',route));
 });
 
 test("dataset archive recovers a missing digest only for identical source bytes", async () => {
@@ -280,8 +322,8 @@ test("dataset archive recovers a missing digest only for identical source bytes"
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('review environment is built from the route and engines retain two invocation forms', async () => {
-  const { reviewEnvironment, reviewInvocation } = await import('./gate.mjs');
+test('review environment is built from the route', async () => {
+  const { reviewEnvironment } = await import('./gate.mjs');
   assert.equal(typeof reviewEnvironment, 'function');
   const secret = String(Math.random());
   const ambient = { PATH: '/bin', HOME: '/fixture', REVIEW_CREDENTIAL: secret,
@@ -300,34 +342,8 @@ test('review environment is built from the route and engines retain two invocati
     assert.equal(env[target], secret); assert.equal(env[endpointKey], route.provider.endpoint);
     assert.equal(env.REVIEW_CREDENTIAL, undefined);
     for (const key of Object.keys(ambient).filter(key=>!['PATH','HOME',target,endpointKey].includes(key))) assert.equal(env[key],undefined,key);
-    const invocation = reviewInvocation(route, 'base');
-    assert.equal(invocation[invocation.indexOf('--engine')+1],engine);
-    const {validReviewInvocation}=await import('./gate.mjs');
-    assert.ok(validReviewInvocation(invocation, invocation)); assert.ok(validReviewInvocation([...invocation,'--stream-engine-output'],invocation));
-    assert.equal(validReviewInvocation([...invocation,'--fallback-model','other'],invocation),false);
     assert.throws(()=>reviewEnvironment(route,{}),/credential.*REVIEW_CREDENTIAL/i);
   }
-});
-
-test('receipt route fingerprints bind the resolved route; legacy remains claude/unknown', async () => {
-  const { normalizeReceiptRoute } = await import('./gate.mjs');
-  assert.equal(typeof normalizeReceiptRoute,'function');
-  const legacy = {model:'policy-model',effort:'high'};
-  assert.deepEqual(normalizeReceiptRoute(legacy),{...legacy,engine:'claude',provider:'unknown'});
-  const route={...legacy,engine:'kimi',effort:'on',provider:{id:'moonshot',endpoint:null},credentialEnv:null,fingerprint:'a'.repeat(64)};
-  const receipt={head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,output:'autoreview target: branch | engine: kimi | model: policy-model | thinking: on\nautoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority\noverall: patch is correct (0.9)\n'},loop:{iterations:1,residualFindings:[],disposition:'clean'}};
-  assert.doesNotThrow(()=>validatePreflight(receipt,head,'base',route));
-  assert.throws(()=>validatePreflight(receipt,head,'base',{...route,fingerprint:'b'.repeat(64)}),/route|fingerprint/);
-});
-
-test('declared provider credentials are redacted from reviewer evidence without rewriting numeric usage', async () => {
-  const { redactReviewCredentials } = await import('./gate.mjs');
-  assert.equal(typeof redactReviewCredentials, 'function');
-  const secret=String(Math.random());
-  const review={output:'diagnostic '+secret,diagnosticTail:Buffer.from(secret).toString('base64'),json:{usage:42,nested:[secret]}};
-  const clean=redactReviewCredentials(review,{credentialEnv:'REVIEW_CREDENTIAL'},{REVIEW_CREDENTIAL:secret});
-  assert.equal(clean.output,'diagnostic [REDACTED]');assert.equal(clean.diagnosticTail,'[REDACTED]');
-  assert.equal(clean.json.usage,42);assert.deepEqual(clean.json.nested,['[REDACTED]']);
 });
 
 test("named collection fixtures through the gate CLI", async t => {
@@ -335,7 +351,7 @@ test("named collection fixtures through the gate CLI", async t => {
   const { spawnSync } = await import("node:child_process");
   const { atomicJson, canonical, digest, resolvedLocation } = await import("./runtime.mjs");
   const { sha256File } = await import("./orchestrator/command-state.mjs");
-  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collection-idea|collector-temp|collection-declines|collection-helper|collection-class|collection-verify)-.*\.json$/u.test(name));
+  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collection-idea|collector-temp|collection-verify|collection-review)-.*\.json$/u.test(name));
   for (const name of files) await t.test(name, async () => {
     const fixture = JSON.parse(fs.readFileSync(path.join("scripts/fixtures", name), "utf8"));
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-u13-cli-"));
@@ -362,45 +378,13 @@ console.log(process.env.MONO_FIXTURE_DARWIN_TEMP);
       const head = git("rev-parse", "HEAD"), dataset = path.join(evidence, "datasets/fixture.md");
       write(dataset, "Approved U13 decisions.\n");
       for (const policy of ["model-policy.md", "autoreview-routing.md"]) write(path.join(skills, "references", policy), fs.readFileSync(path.join("references", policy), "utf8"));
-      const helper = path.join(skills, "autoreview/scripts/autoreview");
-      write(helper, `#!/usr/bin/env node
-const fs=require('node:fs'), a=process.argv.slice(2), val=k=>a[a.indexOf(k)+1];
-fs.writeFileSync(val('--json-output'),JSON.stringify({findings:[],overall_correctness:'patch is correct'}));
-fs.writeFileSync(val('--status-output'),JSON.stringify({schema_version:1,status:'scoped-clean',engine:'claude',exit_code:0,report_produced:true,timed_out:false}));
-console.log('autoreview target: branch | engine: claude | model: '+val('--model')+' | thinking: '+val('--thinking'));
-console.log('autoreview clean: no accepted/actionable findings reported');console.log('overall: patch is correct (0.9)');
-`); fs.chmodSync(helper, 0o700);
-      if (fixture.helperOutput || fixture.mode === "class-after-admission") {
-        const captured = path.resolve("scripts/fixtures/autoreview-current", fixture.helperOutput ?? "findings");
-        write(helper, `#!/usr/bin/env node
-const fs=require('node:fs'),path=require('node:path'),a=process.argv.slice(2),val=k=>a[a.indexOf(k)+1],dir=${JSON.stringify(captured)};
-for(const [flag,file] of [['--json-output','review.json'],['--status-output','status.json']])fs.copyFileSync(path.join(dir,file),val(flag));
-// Only policy header operands vary in scratch model-policy tests; JSON is verbatim.
-process.stdout.write(fs.readFileSync(path.join(dir,'stdout.txt'),'utf8').replace(/^model: .+$/m,'model: '+val('--model')).replace(/^thinking: .+$/m,'thinking: '+val('--thinking')));
-process.exit(JSON.parse(fs.readFileSync(path.join(dir,'status.json'))).exit_code);
-`); fs.chmodSync(helper, 0o700);
-      }
-      const descendant = path.resolve("scripts/fixtures/collector-review-descendant.cjs");
-      if (fixture.mode === "temp-descendant") write(helper, `#!${process.execPath}\nprocess.argv.splice(2,0,'review');require(${JSON.stringify(descendant)});\n`);
-      if (fixture.helperSymlink) {
-        const target = path.join(scratch, "helper-target", "autoreview");
-        write(target, fs.readFileSync(helper)); fs.chmodSync(target, 0o700);
-        fs.unlinkSync(helper); fs.symlinkSync(target, helper);
-      }
       let pack = null;
-      if (fixture.protected === "packRoot" || fixture.reviewOverlap === "packRoot") {
+      if (fixture.protected === "packRoot") {
         pack = path.join(scratch, "pack"); fs.mkdirSync(pack);
         fs.cpSync(path.join(skills, "references"), path.join(pack, "references"), { recursive: true });
       }
       const protectedPaths = { evidenceRoot: evidence, "orchestrator root": root, skillsRoot: skills,
-        packRoot: pack ?? skills, "autoreview helper real path": fs.realpathSync(helper) };
-      const workerRoot = path.join(scratch, "worker"); fs.mkdirSync(workerRoot);
-      if (fixture.reviewOverlap && fixture.reviewOverlap !== "verification temp") {
-        const target = fixture.reviewOverlap === "worktree" ? repo : fixture.reviewOverlap === "Darwin root" ? darwinTemp
-          : fixture.reviewOverlap === "worker root" ? workerRoot : protectedPaths[fixture.reviewOverlap];
-        const parent = path.join(env.HOME, ".mono-agent-workflow"); fs.mkdirSync(parent, { recursive: true });
-        fs.symlinkSync(target, path.join(parent, "review-tmp"));
-      }
+        packRoot: pack ?? skills };
       if (fixture.protected) {
         const target = protectedPaths[fixture.protected];
         env.MONO_FIXTURE_DARWIN_TEMP = fixture.relationship === "contains" ? path.dirname(target)
@@ -424,37 +408,23 @@ fs.writeFileSync=function(file,...args){
   if(!grants.some(root=>target===root||target.startsWith(root+path.sep))){const e=new Error('fixture write grant denial');e.code='EPERM';throw e;}
   return write.call(this,file,...args);
 };
-const kill=process.kill;
-process.kill=function(pid,signal){
-  const result=kill.call(this,pid,signal),active=path.join(process.cwd(),'.orchestrator/review-active.json');
-  if(signal===0&&process.env.MONO_FIXTURE_PHASE==='verification'&&fs.existsSync(active)&&JSON.parse(fs.readFileSync(active)).pid===pid){
-    fs.writeFileSync(path.join(process.cwd(),'.orchestrator/reviewer-signal-denied'),'EPERM');
-    const e=new Error('fixture cross-sandbox signal denial');e.code='EPERM';throw e;
-  }
-  return result;
-};
 `);
-      // Model the outside collector launcher; the actual gate still runs both
-      // write-denial probes, verification, helper, signing and history writes.
-      const launcher = path.join(bin, "codex");
-      write(launcher, `#!/usr/bin/env node
+      // Model the outside collector launcher; the actual gate still runs the review
+      // roles (fake CLIs), the write-denial probe, verification, signing and history writes.
+      installReviewClis(bin, { codexStub: `
 const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path'),a=process.argv.slice(2);
-if(a[0]!=='sandbox')process.exit(71);const command=a.slice(a.indexOf('--')+1),p=JSON.parse(command.at(-1));
+const command=a.slice(a.indexOf('--')+1),p=JSON.parse(command.at(-1));
 fs.appendFileSync(process.env.MONO_FIXTURE_SANDBOX_LOG,'sandbox\\n');
-if(${JSON.stringify(fixture.sandboxFailure)} && !p.args.includes('--json-output'))process.exit(73);
-if(p.args.includes('--json-output'))fs.appendFileSync(process.env.MONO_FIXTURE_SANDBOX_LOG,'review\\n');
+if(${JSON.stringify(fixture.sandboxFailure)})process.exit(73);
 const protectedRoot=path.dirname(p.probe);fs.chmodSync(protectedRoot,0o500);let r;
 const profile=a[a.indexOf('-c')+1],grants=[...profile.matchAll(/("(?:\\\\.|[^"\\\\])*")="write"/g)].map(m=>JSON.parse(m[1]));
-const env={...process.env,MONO_FIXTURE_GRANTS:JSON.stringify(grants),MONO_FIXTURE_PHASE:p.args.includes('--json-output')?'review':'verification',NODE_OPTIONS:'--require '+JSON.stringify(${JSON.stringify(boundary)})};
-if(${JSON.stringify(fixture.reviewOverlap)}==='verification temp'&&!p.args.includes('--json-output')){
-  const parent=path.join(process.env.HOME,'.mono-agent-workflow');fs.mkdirSync(parent,{recursive:true});fs.symlinkSync(process.env.TMPDIR,path.join(parent,'review-tmp'));
-}
+const env={...process.env,MONO_FIXTURE_GRANTS:JSON.stringify(grants),NODE_OPTIONS:'--require '+JSON.stringify(${JSON.stringify(boundary)})};
 try{r=cp.spawnSync(command[0],command.slice(1),{stdio:'inherit',env});}finally{fs.chmodSync(protectedRoot,0o700);}
-process.exit(r.status===null?1:r.status);
-`); fs.chmodSync(launcher, 0o700);
+process.exit(r.status===null?1:r.status);` });
       const pinsFile = path.join(root, "dispatch/MONO-999-a1/pins.json");
+      write(path.join(path.dirname(pinsFile), "snapshot/issue-MONO-999.md"), "# MONO-999\n\nFixture task contract.\n");
       const pins = { product: "fixture", root, worktree: repo, skillsRoot: skills, baseRef: "HEAD", evidenceRoot: evidence,
-        risk: "standard", critical: null, verification: { command: process.execPath, args: ["-e", "process.exit(0)"] }, workerWritableRoots: [repo, ...(fixture.reviewOverlap === "worker root" ? [workerRoot] : [])],
+        risk: "standard", critical: null, verification: { command: process.execPath, args: ["-e", "process.exit(0)"] }, workerWritableRoots: [repo],
         reviewDataset: dataset, reviewDatasetVersion: 1, reviewDatasetDigest: sha256File(dataset) };
       if (pack) pins.packRoot = pack;
       if (fixture.mode.startsWith("temp-")) pins.verification.args = ["-e", `
@@ -462,7 +432,10 @@ const assert=require('node:assert/strict'),path=require('node:path');
 assert.equal(process.env.TMPDIR,process.env.TMP);assert.equal(process.env.TMPDIR,process.env.TEMP);
 assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
 `];
-      if (fixture.mode === "temp-descendant") pins.verification.args = [descendant, "verification"];
+      if (fixture.mode === "review-rounds") {
+        git("branch", "review-base"); pins.baseRef = "review-base";
+        pins.verification.args = ["-e", `const fs=require('node:fs');fs.mkdirSync('.orchestrator',{recursive:true});fs.writeFileSync('.orchestrator/verify-saw',fs.readFileSync(${JSON.stringify(path.join(bin, "review.log"))},'utf8'))`];
+      }
       if (fixture.mode.startsWith('verify-')) pins.verification.args = ['-e', `
 const fs=require('node:fs'),p='.orchestrator/verify-count';fs.mkdirSync('.orchestrator',{recursive:true});
 const n=fs.existsSync(p)?Number(fs.readFileSync(p,'utf8'))+1:1;fs.writeFileSync(p,String(n));console.log('project verification '+n);
@@ -549,72 +522,73 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         }
         return;
       }
-      if (fixture.mode === "class-after-admission") {
-        const { recordDecision, findingIdentity } = await import('./decisions.mjs');
-        const { classFixture, classSeal } = await import('./class-fixtures.mjs');
-        const { repeatedClasses, buildReviewLedger } = await import('./review-ledger.mjs');
-        const { readJournal } = await import('./decisions.mjs');
-        const receipts = [];
-        for (const number of [1, 2]) receipts.push((await collect({ ...request, collectionId: `preflight-collect:${head}:${number}` }, 1)).receipt);
-        request = { ...request, collectionId: `preflight-collect:${head}:3` };
-        await assert.rejects(admit(request), /needs-decision: review cap/);
-        const counterFile = path.join(evidence, 'reviews/MONO-999-counters.json'), stop = JSON.parse(fs.readFileSync(counterFile)).stops.at(-1);
-        const now = new Date().toISOString();
-        await recordDecision({ evidenceRoot: evidence, issue: entry.issue, entry: classSeal({ type: 'continue', id: 'continue-3', supersedes: null,
-          stopId: stop.id, collectionId: request.collectionId, localPasses: 0, externalCollections: 1,
-          nextStep: 'Review the bounded admission correction', checkpoint: 'One external receipt', approvedBy: 'orchestrator', approvedAt: now, recordedAt: now }) });
-        const admission = await admit(request), reviewCalls = () => fs.readFileSync(sandboxLog, 'utf8').split('review\n').length - 1;
-        assert.equal(reviewCalls(), 2);
-        if (fixture.path === 'executed') {
-          const result = call({ ...request, collect: true }); assert.equal(result.status, 1, result.stdout);
-          receipts.push(JSON.parse(fs.readFileSync(receiptFile)).receipt); assert.equal(reviewCalls(), 3);
-        }
-        const x = classFixture({ sameKey: fixture.sameKey });
-        const classEntry = classSeal({ ...x.entry, findingIds: receipts.map(r => findingIdentity(r, 0).id) });
-        if (fixture.sameKey) {
-          await recordDecision({ evidenceRoot: evidence, issue: entry.issue, entry: x.journal.entries[0] });
-          atomicJson(path.join(evidence, 'reviews/MONO-999-adjudications.json'), receipts.map(r => ({
-            eventId: `1:helper-invocation:${r.collectionId}`, links: [x.journal.entries[0].id], progress: 'fixed' })));
-        } else await recordDecision({ evidenceRoot: evidence, issue: entry.issue, entry: classEntry });
-        const latest = receipts.at(-1), journalFile = path.join(evidence, 'decisions/MONO-999.json');
-        const stopAfterClass = repeatedClasses({ ledger: buildReviewLedger({ issue: entry.issue, sources: receipts.map(receipt => ({
-          type: 'history', ref: receipt.runId, attempt: 1, data: { receipt } })) }),
-          records: fixture.sameKey ? JSON.parse(fs.readFileSync(path.join(evidence, 'reviews/MONO-999-adjudications.json'))) : [],
-          journal: readJournal({ evidenceRoot: evidence, issue: entry.issue }) });
-        assert.equal(stopAfterClass.required, true, 'late classification creates a current stop');
-        const sealedReceipt = fs.readFileSync(receiptFile), historyFile = path.join(evidence, 'history', `${latest.runId}.json`);
-        if (fixture.path === 'executed') {
-          // A valid decline makes this findings receipt pass under the current gate rules.
-          const d = declineFixture().entry, finding = findingIdentity(latest, 0);
-          const approvedAt = new Date().toISOString();
-          await recordDecision({ evidenceRoot: evidence, issue: entry.issue, entry: classSeal({ ...d, head,
-            receipt: { collectionId: latest.collectionId, runId: latest.runId, digest: digest(latest) }, finding,
-            recordedAt: approvedAt, approvedAt }) });
-          assert.deepEqual(await admit(request), admission, 'completed admission remains idempotent');
-          const result = call(request); assert.equal(result.status, 0, result.stdout); assert.match(result.stdout, /accepted-with-declines/);
-          assert.deepEqual(fs.readFileSync(receiptFile), sealedReceipt); assert.deepEqual(fs.readFileSync(historyFile), sealedReceipt);
-          assert.equal(reviewCalls(), 3);
-          // Reconciliation still authenticates the receipt; a class never substitutes for receipt proof.
-          const envelope = JSON.parse(sealedReceipt); envelope.signature = '0'.repeat(64); atomicJson(receiptFile, envelope);
-          const denied = call(request); assert.equal(denied.status, 1); assert.match(denied.stdout, /hand-made or modified/);
-          assert.equal(reviewCalls(), 3);
-          return;
-        }
-        if (fixture.path === 'replay') await assert.rejects(admit(request), /needs-decision: repeated review class/);
-        else {
-          const denied = call({ ...request, collect: true }); assert.equal(denied.status, 1, denied.stdout);
-          assert.match(denied.stdout, /needs-decision: repeated review class/);
-        }
-        assert.equal(reviewCalls(), 2); assert.deepEqual(fs.readFileSync(receiptFile), sealedReceipt);
-        await recordDecision({ evidenceRoot: evidence, issue: entry.issue, entry: classSeal({ ...x.decision(),
-          receipt: { collectionId: latest.collectionId, runId: latest.runId, digest: digest(latest) },
-          approvedAt: new Date().toISOString(), recordedAt: new Date().toISOString() }) });
-        assert.deepEqual(await admit(request), admission, 'class decision preserves the existing cap reservation');
-        const allowed = call({ ...request, collect: true }); assert.equal(allowed.status, 1, allowed.stdout);
-        assert.doesNotMatch(allowed.stdout, /needs-decision/); assert.equal(reviewCalls(), 3);
-        const counters = JSON.parse(fs.readFileSync(counterFile));
-        assert.equal(counters.permits[stop.id].reservations.length, 1, 'continuation is consumed once');
-        assert.equal(fs.existsSync(journalFile), true);
+      if (fixture.mode === 'review-rounds') {
+        // One task through the whole path: findings, fix, ship read, the last round, the limit, an amendment and a role that cannot run.
+        const author = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid'], base = head;
+        const commit = text => { fs.appendFileSync(path.join(repo, 'input.mjs'), text); git('add', 'input.mjs'); git(...author, 'commit', '-m', text.trim()); return git('rev-parse', 'HEAD'); };
+        const at = (tip, n = 1, pinned = binding) => ({ ...request, head: tip, collectionId: `preflight-collect:${tip}:${n}`, pins: pinned });
+        const stored = tip => path.join(evidence, `${tip}.json`);
+        const round = async (value, status, line) => {
+          await admit(value);
+          for (const result of [call({ ...value, collect: true }), call(value)]) { assert.equal(result.status, status, result.stdout + result.stderr); assert.match(result.stdout, line); }
+          return JSON.parse(fs.readFileSync(stored(value.head), 'utf8')).receipt;
+        };
+        const leftover = text => [reviewFinding('input.mjs', { anchor: text, title: text })], closing = reviewVerdict({ outcome: 'rejected', closed: true });
+        setReview(bin, { findings: leftover('First leftover') });
+        const first = commit('export const one = 1;\n');
+        let receipt = await round(at(first), 1, /fail: review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 input\.mjs:1 First leftover/);
+        assert.deepEqual([receipt.producer, receipt.review.spent, receipt.verification.exitCode, receipt.base], [REVIEW_PRODUCER, true, null, base]);
+        const verifySaw = path.join(repo, '.orchestrator/verify-saw');
+        assert.deepEqual([reviewCalls(bin), fs.existsSync(verifySaw)], [['reviewer', 'checker'], false], 'no verification before an acceptable review');
+        receipt = await round(at(first, 2), 1, /review not-converged \(round 1 of 3\)/);
+        assert.equal(receipt.review.spent, false); assert.ok(receipt.review.reusedFrom); assert.equal(reviewCalls(bin).length, 2, 'the same head reuses its round');
+        setReview(bin, { findings: [], verdict: closing });
+        const second = commit('export const two = 2;\n');
+        receipt = await round(at(second), 0, /pass: review clean \(round 2 of 3\) and verification verified on head/);
+        assert.equal(fs.readFileSync(verifySaw, 'utf8'), 'reviewer\nchecker\nreviewer\nchecker\n', 'verification starts only after the review round has finished');
+        const gh = path.join(bin, 'gh');
+        write(gh, `#!/usr/bin/env node
+const a=process.argv.slice(2),empty={nodes:[],pageInfo:{hasNextPage:false}};
+const pr={headRefOid:${JSON.stringify(second)},baseRefOid:${JSON.stringify(base)},baseRefName:'delivery',state:'OPEN',mergeStateStatus:'CLEAN',mergeable:'MERGEABLE',reviewThreads:empty};
+console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:pr,object:{statusCheckRollup:{contexts:empty}}}}}:a.includes('user')?{login:'fixture'}:[]));
+`); fs.chmodSync(gh, 0o700);
+        const judgmentFile = path.join(scratch, 'judgment.json'), stateFile = path.join(scratch, 'ship.json'); atomicJson(judgmentFile, { ...judgment(), head: second });
+        const ship = () => { atomicJson(file, { preflight: at(second), repo: 'fixture/repo', number: 1, attempt: 1, stateFile, judgmentFile, watch: false });
+          return spawnSync(process.execPath, ['scripts/gate.mjs', 'ship', '--request', file], { env, encoding: 'utf8' }); };
+        let shipped = ship(); assert.match(shipped.stdout, /fail: checks not created on head/, shipped.stdout + shipped.stderr);
+        assert.equal(JSON.parse(fs.readFileSync(stateFile)).preflightReceipt.runId, receipt.runId, 'ship read the signed review receipt');
+        const sealed = fs.readFileSync(stored(second)), old = JSON.parse(sealed); old.receipt.producer = 'gate-autoreview-v2';
+        old.signature = crypto.createHmac("sha256", fs.readFileSync(path.join(evidence, "receipt.key"))).update(canonical(old.receipt)).digest("hex"); atomicJson(stored(second), old);
+        for (const refused of [ship(), call(at(second))]) { assert.equal(refused.status, 1); assert.match(refused.stdout, /old receipt format/); }
+        fs.writeFileSync(stored(second), sealed);
+        setReview(bin, { findings: leftover('Second leftover'), verdict: reviewVerdict() });
+        const third = commit('export const three = 3;\n');
+        receipt = await round(at(third), 0, /pass: review clean-with-successors \(round 3 of 3\).*successor candidates: P2 input\.mjs:1 Second leftover/);
+        assert.deepEqual(receipt.review.successors.map(item => item.line), ['P2 input.mjs:1 Second leftover']);
+        const fourth = commit('export const four = 4;\n'), calls = reviewCalls(bin).length, limit = /^gate preflight: fail: needs-decision: review round limit reached \(3 of 3 on this pins file\)/;
+        const unpublished = call(at(fourth)); assert.equal(unpublished.status, 1, 'refused before the worker publishes'); assert.match(unpublished.stdout, limit);
+        receipt = await round(at(fourth), 1, limit);
+        assert.equal(receipt.review.outcome, 'refused'); assert.equal(reviewCalls(bin).length, calls, 'a fourth round is never launched');
+        const amended = path.join(path.dirname(pinsFile), 'pins.v1.json'), resnapshot = path.join(path.dirname(pinsFile), 'snapshot.v1');
+        write(path.join(resnapshot, 'issue-MONO-999.md'), '# MONO-999\n\nNarrowed fixture contract.\n');
+        atomicJson(amended, { pinsVersion: 1, fullSnapshot: { directory: resnapshot } });
+        const resumeFile = path.join(path.dirname(pinsFile), 'resume.v1.md'); write(resumeFile, 'Narrow: only input.mjs.\n\n## Effective attempt pins\npinsVersion: 1\n');
+        write(path.join(path.dirname(pinsFile), 'resume.v0.md'), 'A prepared amendment that was never delivered.\n');
+        entry.completed_amendments = { 1: { pinsVersion: 1, resumeFile, change: { text: 'Narrow: only input.mjs.\n\n## issue-only note\nKept.' } } };
+        entry.pinsVersion = 1; register();
+        const next = { file: amended, digest: sha256File(amended) }, launchContract = receipt.review.contractDigest;
+        receipt = await round(at(fourth, 2, next), 1, /review not-converged \(round 1 of 3\)/);
+        assert.equal(receipt.review.record.rounds.length, 1, 'a new pins version opens a fresh three');
+        assert.notEqual(receipt.review.contractDigest, launchContract, 'a full-snapshot amendment supplies the reviewed contract');
+        assert.equal(receipt.review.contractDigest, digest('# MONO-999\n\nNarrowed fixture contract.\n\n\n## Orchestrator amendment 1\nNarrow: only input.mjs.\n\n## issue-only note\nKept.'), 'the reviewer reads the amendment text with the Issue');
+        setReview(bin, { loggedOut: 'codex' });
+        const fifth = commit('export const five = 5;\n');
+        receipt = await round(at(fifth, 1, next), 1, /fail: not-reviewed: .*no round spent, request this head once more/);
+        assert.deepEqual([receipt.review.spent, receipt.review.record], [false, null]);
+        await round(at(fifth, 2, next), 1, /fail: blocked: not-reviewed twice in a row on this head/);
+        const blocked = call(at(fifth, 3, next)); assert.equal(blocked.status, 1); assert.match(blocked.stdout, /fail: blocked: not-reviewed twice in a row/);
+        setReview(bin, { loggedOut: null, findings: [], verdict: closing });
+        await round(at(commit('export const six = 6;\n'), 1, next), 0, /pass: review clean \(round 2 of 3\)/);
         return;
       }
       let expectedField = null, expectedValue = null, expectedStatus = 2;
@@ -641,7 +615,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
       }
       if (fixture.mode.startsWith('verify-')) { expectedStatus = fixture.failRuns > 1 || fixture.sandboxFailure || fixture.changeHead ? 1 : 0; request.collect = true; }
       if (fixture.mode === "collect") { expectedStatus = 0; request.collect = true; }
-      if (fixture.mode.startsWith("temp-")) { expectedStatus = fixture.protected || fixture.reviewOverlap || fixture.mode === "temp-descendant" ? 1 : 0; request.collect = true; }
+      if (fixture.mode.startsWith("temp-")) { expectedStatus = fixture.protected ? 1 : 0; request.collect = true; }
       if (fixture.mode === "legacy") {
         delete pins.reviewDatasetDigest; atomicJson(pinsFile, pins); binding.digest = sha256File(pinsFile); register(); delete request.pins;
         const envelope = await collect({...request,pins:binding}); delete envelope.receipt.pins; delete envelope.receipt.idea; seal(envelope); expectedStatus = 0;
@@ -659,44 +633,6 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         entry.worktree = path.join(scratch, "another-worktree"); register(); delete request.pins;
         expectedField = "registry"; expectedValue = "one registered attempt for worktree";
       }
-      if (fixture.mode === "helper") {
-        const envelope = await collect(request, fixture.helperOutput === "clean" ? 0 : 1);
-        const captured = path.resolve("scripts/fixtures/autoreview-current", fixture.helperOutput);
-        assert.deepEqual(envelope.receipt.review.status, JSON.parse(fs.readFileSync(path.join(captured, "status.json"))));
-        assert.deepEqual(envelope.receipt.review.json, JSON.parse(fs.readFileSync(path.join(captured, "review.json"))));
-        assert.equal(envelope.receipt.helperDigest, digest(fs.readFileSync(helper, "utf8")));
-        expectedStatus = 0;
-        if (fixture.helperOutput === "findings") {
-          const denied = call(request);
-          assert.equal(denied.status, 1, denied.stdout);
-          assert.match(denied.stdout, /decline/);
-          const r = envelope.receipt, { recordDigest, ...content } = declineFixture().entry;
-          const receiptDigest = digest(r), findingDigest = digest(r.review.json.findings[0]);
-          const decline = { ...content, receipt: { collectionId: r.collectionId, runId: r.runId, digest: receiptDigest },
-            head: r.head, finding: { id: `${receiptDigest}:0:${findingDigest}`, index: 0, digest: findingDigest },
-            recordedAt: r.recordedAt, approvedAt: r.recordedAt };
-          decline.recordDigest = digest(decline);
-          atomicJson(path.join(evidence, 'decisions/MONO-999.json'), { issue: 'MONO-999', entries: [decline] });
-        }
-      }
-      if (fixture.mode === "declines") {
-        if (fixture.unpinned) {
-          delete request.pins;request.issue='MONO-999';delete pins.reviewDatasetDigest;
-          atomicJson(pinsFile,pins);binding.digest=sha256File(pinsFile);register();
-        }
-        const envelope=await collect(fixture.unpinned?{...request,pins:binding}:request),r=envelope.receipt,f=declineFixture();
-        if(fixture.unpinned){delete r.pins;delete r.idea;}
-        if(fixture.unpinned)fs.unlinkSync(registryFile);
-        r.review.json=f.receipt.review.json;r.review.status={...f.receipt.review.status,engine:r.route.engine??'claude'};
-        r.review.exitCode=1;r.review.output=`autoreview target: branch | engine: ${r.route.engine??'claude'} | model: ${r.route.model} | thinking: ${r.route.effort}\nautoreview findings: 1\noverall: patch is incorrect (0.9)\n`;
-        r.loop=f.receipt.loop;seal(envelope);
-        const findingDigest=digest(r.review.json.findings[0]),receiptDigest=digest(r),{recordDigest,...content}=f.entry;
-        const decline={...content,receipt:{collectionId:r.collectionId,runId:r.runId,digest:receiptDigest},head:r.head,
-          finding:{id:`${receiptDigest}:0:${findingDigest}`,index:0,digest:findingDigest},
-          recordedAt:r.recordedAt,approvedAt:r.recordedAt};
-        decline.recordDigest=digest(decline);
-        atomicJson(path.join(evidence,'decisions/MONO-999.json'),{issue:'MONO-999',entries:[decline]});expectedStatus=0;
-      }
       if (fixture.unregistered) fs.unlinkSync(registryFile);
       if(request.collect===true)await admit(request);
       const registryBefore = fs.existsSync(registryFile) ? fs.readFileSync(registryFile) : null, receiptBefore = fs.existsSync(receiptFile) ? fs.readFileSync(receiptFile) : null;
@@ -712,7 +648,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.equal(envelope.signature, crypto.createHmac('sha256', fs.readFileSync(path.join(evidence, 'receipt.key'))).update(canonical(receipt)).digest('hex'));
         const retried = !fixture.sandboxFailure && !fixture.changeHead;
         assert.equal(fs.existsSync(path.join(repo, '.orchestrator/verify-count')) ? Number(fs.readFileSync(path.join(repo, '.orchestrator/verify-count'))) : 0, fixture.sandboxFailure ? 0 : retried ? 2 : 1);
-        assert.equal(fs.readFileSync(sandboxLog, 'utf8').split('review\n').length - 1, expectedStatus ? 0 : 1);
+        assert.deepEqual(reviewCalls(bin), ['reviewer'], 'the review round runs once, before verification');
         if (retried) {
           assert.match(receipt.verification.output, /Verification run 1 \(exit 1\):[\s\S]*project verification 1[\s\S]*Verification run 2/);
           assert.equal(receipt.verification.exitCode, fixture.failRuns > 1 ? 1 : 0);
@@ -730,16 +666,6 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         if (receiptBefore) assert.deepEqual(fs.readFileSync(receiptFile), receiptBefore);
         else assert.equal(fs.existsSync(receiptFile), false);
       }
-      if (fixture.mode === "declines" || fixture.helperOutput === "findings") {
-        assert.match(result.stdout,/accepted-with-declines/);
-        assert.deepEqual(fs.readFileSync(receiptFile),receiptBefore,'declines never rewrite the sealed receipt');
-        const journalFile=path.join(evidence,'decisions/MONO-999.json'),j=JSON.parse(fs.readFileSync(journalFile)),e=j.entries[0],proof={citation:'New evidence'};
-        const revoke={type:'decline-revoke',id:'r-1',forId:e.id,declineDigest:e.recordDigest,reason:'new evidence',evidence:proof,
-          evidenceDigest:digest(proof),approvedBy:'orchestrator',approvedAt:new Date().toISOString(),recordedAt:new Date().toISOString()};
-        revoke.recordDigest=digest(revoke);j.entries.push(revoke);atomicJson(journalFile,j);
-        const revoked=call(request);assert.equal(revoked.status,1,revoked.stdout);assert.match(revoked.stdout,/decline/);
-        assert.deepEqual(fs.readFileSync(receiptFile),receiptBefore);
-      }
       if (fixture.mode === "receipt-pins") assert.match(result.stdout, /receipt pins differs from dispatch request/u);
       if (fixture.mode.startsWith('verify-')) { expectedStatus = fixture.failRuns > 1 || fixture.sandboxFailure || fixture.changeHead ? 1 : 0; request.collect = true; }
       if (fixture.mode === "collect") {
@@ -751,22 +677,14 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.ok(result.stdout.includes(`collection Darwin temporary write grant (${fixture.protected})`), result.stdout);
         assert.match(result.stdout, /no overlapping grants/u);
         assert.equal(fs.existsSync(sandboxLog), false, "overlap refuses before any sandbox invocation");
-        assert.equal(fs.existsSync(receiptFile), false);
-      }
-      if (fixture.reviewOverlap) {
-        assert.match(result.stdout, fixture.reviewOverlap === "verification temp"
-          ? /collection private review directory canonical resolution failed: ENOENT/u
-          : /collection private review directory.*no overlapping grants/u);
-        assert.equal(fs.readFileSync(sandboxLog, "utf8").split("sandbox").length - 1, 1, "only verification launches; review refuses its overlapping directory");
         const { receipt } = JSON.parse(fs.readFileSync(receiptFile, "utf8"));
-        assert.equal(receipt.verification.sandbox.probed, true);
-        assert.equal(receipt.review.exitCode, null);
+        assert.deepEqual([receipt.review.spent, receipt.verification.exitCode], [true, null], "the completed round is signed even when verification cannot launch");
       }
-      if (fixture.mode.startsWith("temp-") && !fixture.protected && !fixture.reviewOverlap) {
+      if (fixture.mode.startsWith("temp-") && !fixture.protected) {
         const { receipt } = JSON.parse(fs.readFileSync(receiptFile, "utf8"));
         const grantsDarwin = fixture.platform === "darwin" && !fixture.unavailable;
         assert.equal(fs.existsSync(getconfLog), fixture.platform === "darwin", "other platforms never query Darwin temp");
-        for (const phase of ["verification", "review"]) {
+        for (const phase of ["verification"]) {
           const { sandbox } = receipt[phase], profile = sandbox.args[sandbox.args.indexOf("-c") + 1];
           const actual = [...profile.matchAll(/("(?:\\.|[^"\\])*")="write"/gu)].map(match => JSON.parse(match[1]));
           const expected = [...new Set([fs.realpathSync(repo), resolvedLocation(sandbox.tempRoot), ...(grantsDarwin && phase === "verification" ? [fs.realpathSync(darwinTemp)] : [])])];
@@ -776,25 +694,12 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
           assert.equal(sandbox.probed, true);
           assert.equal(fs.existsSync(sandbox.tempRoot), false);
           if (fixture.privateInsideDarwin) assert.equal(resolvedLocation(sandbox.tempRoot).startsWith(fs.realpathSync(darwinTemp) + path.sep), phase === "verification");
-          if (fixture.platform === "darwin" && phase === "review") assert.ok(sandbox.tempRoot.startsWith(fs.realpathSync(env.HOME) + path.sep + ".mono-agent-workflow/review-tmp/"));
         }
         assert.equal(fs.readdirSync(evidence).some(name => name.startsWith(".write-boundary-")), false);
-        const verified = call({ ...request, collect: false }); assert.equal(verified.status, fixture.mode === "temp-descendant" ? 1 : 0, verified.stdout);
-        if (fixture.mode === "temp-descendant") {
-          const proof = JSON.parse(fs.readFileSync(path.join(repo, ".orchestrator/descendant-attempts.json")));
-          assert.equal(proof.parentAlive, false); assert.equal(proof.reviewAlive, true);
-          assert.equal(fs.readFileSync(path.join(repo, ".orchestrator/reviewer-signal-denied"), "utf8"), "EPERM", "portable proof models a denied signal probe of the live reviewer");
-          assert.deepEqual(proof.attempts.map(attempt => attempt.target), ["--json-output", "--status-output"].map(flag => receipt.review.args[receipt.review.args.indexOf(flag) + 1]));
-          assert.deepEqual(proof.attempts.map(attempt => attempt.result), ["EPERM", "EPERM"]);
-          assert.equal(receipt.review.json.overall_correctness, "patch is incorrect");
-          assert.equal(receipt.review.json.findings[0].priority, 1);
-          assert.equal(receipt.review.status.status, "findings"); assert.equal(receipt.review.exitCode, 1);
-        }
+        const verified = call({ ...request, collect: false }); assert.equal(verified.status, 0, verified.stdout);
       }
       if (fixture.mode === "history") assert.deepEqual(fs.readFileSync(receiptFile), receiptBefore, "history verification does not reconcile the mutable head");
     } finally {
-      const ready = path.join(scratch, "repo/.orchestrator/descendant-ready.json");
-      if (fs.existsSync(ready)) { try { process.kill(JSON.parse(fs.readFileSync(ready)).pid, "SIGTERM"); } catch {} }
       fs.rmSync(scratch, { recursive: true, force: true });
     }
   });
@@ -847,98 +752,6 @@ test("safeGitEnv removes inherited proxy parameters for non-fetch git even with 
   assert.equal(env.GIT_CONFIG_NOSYSTEM, "1");
   assert.equal(env.GIT_TERMINAL_PROMPT, "0");
 }));
-
-for (const basis of ['refutation','boundary']) test(`declines: valid ${basis} accepts without rewriting receipt`, async()=>{
-  const {declineFixture}=await import('./decline-fixtures.mjs');
-  const {receipt,journal}=declineFixture({basis}),before=JSON.stringify(receipt);
-  assert.match(validatePreflight(receipt,receipt.head,receipt.base,receipt.route,journal),/accepted-with-declines/);
-  assert.equal(JSON.stringify(receipt),before);
-});
-const declineFailures = {
-  'P1 boundary': (f)=>{Object.assign(f,declineFixtureForBoundaryP1());},
-  'finding without decline': f=>f.journal.entries=[],
-  'foreign receipt': f=>f.journal.entries[0].receipt.runId='other',
-  'different head': f=>f.journal.entries[0].head='d'.repeat(40),
-  'changed entry': f=>f.journal.entries[0].dangerous=true,
-  'missing_required_findings': f=>f.receipt.review.json.missing_required_findings=[{}],
-  'scope_rejected_findings': f=>f.receipt.review.json.scope_rejected_findings=[{}],
-  'attribution_rejected_findings': f=>f.receipt.review.json.attribution_rejected_findings=[{}],
-  'P2 priority filtered': f=>f.receipt.review.json.priority_filtered_findings=[{priority:'P2'}],
-  'incomplete status': f=>f.receipt.review.status.report_produced=false,
-  'timed out': f=>f.receipt.review.status.timed_out=true,
-  'contradictory exit': f=>f.receipt.review.status.exit_code=0,
-  'contradictory reason': f=>f.receipt.review.status.reason='engine_failed',
-  'invalid finding': f=>delete f.receipt.review.json.findings[0].body,
-};
-import {declineFixture, seal, sha} from './decline-fixtures.mjs';
-function declineFixtureForBoundaryP1(){return declineFixture({basis:'boundary',priority:'P1'});}
-const declineErrors = {
-  'P1 boundary': /requires refutation/, 'finding without decline': /exactly one valid unrevoked decline/,
-  'foreign receipt': /receipt\/head\/dataset mismatch/, 'different head': /receipt\/head\/dataset mismatch/,
-  'changed entry': /record digest mismatch/, 'missing_required_findings': /incomplete or priority-filtered/,
-  'scope_rejected_findings': /incomplete or priority-filtered/, 'attribution_rejected_findings': /incomplete or priority-filtered/,
-  'P2 priority filtered': /incomplete or priority-filtered/, 'incomplete status': /incomplete or contradictory/,
-  'timed out': /incomplete or contradictory/, 'contradictory exit': /incomplete or contradictory/,
-  'contradictory reason': /incomplete or contradictory/, 'invalid finding': /invalid nonempty findings/,
-};
-for(const [name,mutate] of Object.entries(declineFailures)) test(`declines: ${name} blocks`,()=>{
-  const f=declineFixture(),before=sha(f.receipt);mutate(f);
-  f.journal.entries=f.journal.entries.map(e=>{
-    if(e.type!=='decline'||name==='changed entry')return e;
-    const {recordDigest,...content}=e;
-    if(sha(f.receipt)!==before) {
-      const digest=sha(f.receipt),findingDigest=sha(f.receipt.review.json.findings[e.finding.index]);
-      content.receipt={...content.receipt,digest};
-      content.finding={id:`${digest}:${e.finding.index}:${findingDigest}`,index:e.finding.index,digest:findingDigest};
-    }
-    return seal(content);
-  });
-  assert.throws(()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),declineErrors[name]);
-});
-test('declines: revoked entry blocks at unchanged head',()=>{
-  const f=declineFixture(), evidence={citation:'New evidence proves the path reachable.'};
-  f.journal.entries.push(seal({type:'decline-revoke',id:'revoke-1',forId:f.entry.id,declineDigest:f.entry.recordDigest,evidence,evidenceDigest:sha(evidence),reason:'New evidence',approvedBy:'orchestrator',approvedAt:'2026-10-14T01:02:00Z',recordedAt:'2026-10-14T01:02:00Z'}));
-  assert.throws(()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),/decline/);
-});
-test('declines: same title at different positions needs two exact declines',()=>{
-  const f=declineFixture();f.receipt.review.json.findings.push({...f.receipt.review.json.findings[0],code_location:{file_path:'scripts/example.mjs',line:9}});
-  f.receipt.review.output=f.receipt.review.output.replace('findings: 1','findings: 2');f.receipt.loop.residualFindings=f.receipt.review.json.findings;
-  const digest=sha(f.receipt),entry={...f.entry,receipt:{...f.entry.receipt,digest},finding:{...f.entry.finding,id:`${digest}:0:${f.entry.finding.digest}`}};delete entry.recordDigest;
-  f.journal.entries=[seal(entry)];
-  assert.throws(()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),/decline/);
-  const secondDigest=sha(f.receipt.review.json.findings[1]);
-  f.journal.entries.push(seal({...entry,id:'decline-2',finding:{id:`${digest}:1:${secondDigest}`,index:1,digest:secondDigest}}));
-  assert.match(validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),/accepted-with-declines/);
-});
-test('review cap continuation never admits a live defect or changes decline admission',()=>{
-  const f=declineFixture(),continuation=seal({type:'continue',id:'continue-1',supersedes:null,stopId:'e'.repeat(64),
-    collectionId:f.receipt.collectionId,localPasses:1,externalCollections:1,nextStep:'Fix the defect',checkpoint:'External review',
-    approvedBy:'orchestrator',approvedAt:'2026-10-14T01:01:00Z',recordedAt:'2026-10-14T01:01:00Z'});
-  assert.throws(()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,{issue:'MONO-999',entries:[continuation]}),/decline/);
-  f.journal.entries.push(continuation);
-  assert.match(validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),/accepted-with-declines/);
-});
-
-test('declines: dangerous P2 accepts only refutation',()=>{
-  for(const basis of ['boundary','refutation']) {
-    const f=declineFixture({basis,dangerous:true});
-    const run=()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal);
-    if(basis==='boundary')assert.throws(run,/refutation/);else assert.match(run(),/accepted-with-declines/);
-  }
-});
-
-test('declines: stale dataset, replaced boundary, changed boundary content and ambiguous approval block',()=>{
-  for(const mutate of [
-    f=>f.journal.entries.at(-1).datasetVersion=2,
-    f=>f.journal.entries[0].boundary.remainingContract='Changed contract',
-    f=>f.journal.entries.push({...f.boundary,id:'d-002',supersedes:'d-001',recordedAt:'2026-10-14T01:02:00Z'}),
-    f=>f.journal.entries.push({...f.entry,id:'decline-2'}),
-  ]) {
-    const f=declineFixture({basis:'boundary'});mutate(f);
-    f.journal.entries=f.journal.entries.map(e=>{const {recordDigest,...content}=e;return e.type==='decline'?seal(content):e;});
-    assert.throws(()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal));
-  }
-});
 
 test('ship-bot-policy: worker fields cannot remove or replace trusted bot requirements', async () => {
   const { validateShipBotPolicy } = await import('./gate.mjs');
@@ -1007,39 +820,4 @@ test('ship-bot-policy: project configuration requires nonempty unique check name
   assert.deepEqual(shipBotChecks({ orchestration: { ship: { botChecks: ['Custom Review'] } } }), ['Custom Review']);
   for (const botChecks of [[], null, 'Greptile Review', [' '], ['Bot', 'Bot'], [' Bot']])
     assert.throws(() => shipBotChecks({ orchestration: { ship: { botChecks } } }), /botChecks/);
-});
-
-// Large diffs are reviewed in several passes; autoreview then labels the verdict "autoreview chunked".
-const chunkedClean='autoreview chunked scoped-clean: no accepted/actionable findings in the selected Git scope and priority';
-function chunkedCapture(verdicts){
-  const capture=captureOutputForChunks({tailBytes:64});
-  capture.write('autoreview target: branch\nengine: claude\nmodel: policy-model\nthinking: high\nbundle: 723735 bytes; review passes: 2\n');
-  capture.write('noise\n'.repeat(100)+verdicts.join('\n')+'\nReview passes returned. chunk 1/2: 0 finding(s), chunk 2/2: 0 finding(s).\n');
-  capture.write('overall: patch is correct (0.75)\nMerged explanation.\nchunk 1/2 overall: patch is correct (0.75)\nChunk one.\nchunk 2/2 overall: patch is correct (0.82)\nChunk two.\n');
-  return capture.finish();
-}
-import {captureOutput as captureOutputForChunks} from './gate.mjs';
-test('chunked scoped-clean review is retained and passes preflight',()=>{
-  const route={model:'policy-model',effort:'high'},result=chunkedCapture([chunkedClean]);
-  assert.ok(result.output.split('\n').includes(chunkedClean));
-  assert.equal((result.output.match(/overall:/g)||[]).length,1);
-  assert.doesNotThrow(()=>validatePreflight({head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,...result},loop:{iterations:1,residualFindings:[],disposition:'clean'}},head,'base',route));
-});
-test('chunked findings are not clean and route to the findings path',()=>{
-  const route={model:'policy-model',effort:'high'},result=chunkedCapture(['autoreview chunked findings: 1']);
-  assert.ok(result.output.includes('autoreview chunked findings: 1\n'));
-  assert.throws(()=>validatePreflight({head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,...result},loop:{iterations:1,residualFindings:[],disposition:'clean'}},head,'base',route),/clean result missing or ambiguous/);
-  const f=declineFixture();
-  f.receipt.review.output=f.receipt.review.output.replace('autoreview findings: 1','autoreview chunked findings: 1');
-  const digest=sha(f.receipt),{recordDigest,...content}=f.entry;
-  content.receipt={...content.receipt,digest};content.finding={...content.finding,id:`${digest}:0:${content.finding.digest}`};
-  f.journal.entries=[seal(content)];
-  assert.match(validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),/accepted-with-declines/);
-});
-test('two verdict lines stay ambiguous when one of them is chunked',()=>{
-  const route={model:'policy-model',effort:'high'};
-  for(const verdicts of [[chunkedClean,'autoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority'],[chunkedClean,chunkedClean],[chunkedClean,'autoreview chunked findings: 1']]){
-    const result=chunkedCapture(verdicts);
-    assert.throws(()=>validatePreflight({head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,...result},loop:{iterations:1,residualFindings:[],disposition:'clean'}},head,'base',route),/clean result missing or ambiguous/);
-  }
 });

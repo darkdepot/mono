@@ -9,9 +9,9 @@ requires them; never soften/replace them. Both audiences get exact facts,
 protected paths/hashes, verification lines and the resolved identity command.
 Before rendering Codex dispatch, run installed `orchestrator/spawn.mjs --pins {{spawn_request}}`;
 Claude transports use installed `runtime.mjs --role worker-claude --worktree {{worktree}} --base {{base}}`.
-Copy `modelRoutes` unchanged into launch and every preflight request. It
-resolves the selected worker and autoreview roles from immutable BASE config;
-the worker diff never selects its own reviewer.
+Copy `modelRoutes` unchanged into launch and every preflight request. Worker
+and review roles resolve from immutable BASE config; the worker diff never
+selects its own reviewer.
 
 For pre-application append a «Предприменённые изменения» block naming the
 verified orchestrator commit and its path/sha256 table before launch. The worker
@@ -170,11 +170,10 @@ the foreground. Use the full confirmation timeout under the launcher's raised
 Bash timeout ceiling. Never background it or replace it with sleep/polling; a
 refused command is reported through the existing stop protocol.
 
-Pre-PR autoreview uses only external collection on a committed head, including
-full/deep/risky work. Do not invoke the helper inside this worker. Fix collection
+The review round runs only in external collection on a committed head. Fix open
 findings, commit, publish the returned request and wait for its confirmation;
-only a passing `collect:false` gate permits readiness. Record both delivery
-differences in the ready certificate. Phase/terminal reports must identify this
+only a passing `collect:false` gate permits readiness. Record the delivery
+difference in the ready certificate. Phase/terminal reports must identify this
 registered Issue and attempt; a final model answer alone is not green or parked.
 
 Never print credential values. Claude Code's own owner-only session transcripts

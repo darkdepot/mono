@@ -5177,10 +5177,11 @@ const REVIEW_ROUTES = new Map([
   ["tiny", "low"], ["standard", "medium"], ["deep", "high"],
   ["risky", "high"], ["risky with critical escalation", "xhigh"],
 ]);
+const REVIEW_ROUND_ROLES = ["code-review", "code-review-checker"];
 const NORMATIVE_MODEL_SECTIONS = [
-  ["references/lifecycle.md", "Preflight"],
-  ["references/artifact-quality.md", "Preflight Certificate"],
-  ["references/install.md", "Project Policy"],
+  ["references/lifecycle.md", "Preflight", REVIEW_ROUND_ROLES],
+  ["references/artifact-quality.md", "Preflight Certificate", REVIEW_ROUND_ROLES],
+  ["references/install.md", "Project Policy", ["autoreview"]],
 ];
 
 function executableModelIds(text) {
@@ -5360,18 +5361,17 @@ function checkModelPolicy(base) {
     const allowedRows = file === "references/autoreview-routing.md" ? routeRows(modelSection(text, "Canonical Routes")) : [];
     if (routeRows(text).length !== allowedRows.length) errors.push(`${file}: route rows outside Canonical Routes`);
   }
-  for (const [file, section] of NORMATIVE_MODEL_SECTIONS) binding(file, modelSection(body(file), section), ["autoreview"]);
+  for (const [file, section, roles] of NORMATIVE_MODEL_SECTIONS) binding(file, modelSection(body(file), section), roles);
   const preflightFile = "skills/preflight/SKILL.md";
   binding("skills/code-review/SKILL.md", body("skills/code-review/SKILL.md"), ["code-review", "code-review-checker"]);
   const preflight = body(preflightFile);
-  const reviewStep = namedWorkflowStep(preflight, "autoreview") ?? "";
-  binding(preflightFile, reviewStep, ["autoreview"]);
+  const reviewStep = namedWorkflowStep(preflight, "review round") ?? "";
+  binding(preflightFile, reviewStep, REVIEW_ROUND_ROLES);
   binding("skills/orchestrate/SKILL.md", body("skills/orchestrate/SKILL.md"), ["orchestrator"]);
-  const certificate = preflight.split("Autoreview route:")[1]?.split("\n")[0] || "";
-  for (const field of ["risk", "source", "critical", "model", "effort", "reclassified"]) {
+  const certificate = preflight.split("Review route:")[1]?.split("\n")[0] || "";
+  for (const field of ["risk", "source", "critical", "reclassified"]) {
     if (!new RegExp(`(?:^|;)\\s*${field}=<[^>]+>`).test(certificate)) errors.push(`${preflightFile}: certificate routing field missing: ${field}`);
   }
-  if (!certificate.includes("model=<resolved model id>")) errors.push(`${preflightFile}: certificate must record resolved model id`);
   const orchestrationFile = "references/orchestration.md";
   const orchestration = body(orchestrationFile);
   const secondVoice = modelSection(orchestration, "Second Voice");
@@ -5579,7 +5579,7 @@ function validateModelPolicyFixtures() {
       change(MODEL_POLICY_PATH, (text) => cell(text, "worker-default", 1, fabricated("gpt", "b")));
       change("skills/preflight/SKILL.md", (text) => text + `\n${roles.get("worker-default").model}\n`);
     }, "skills/preflight/SKILL.md: executable model id outside policy");
-    negative("AE3 wrong existing role", () => change("skills/preflight/SKILL.md", (text) => text.replace(marker("autoreview"), marker("worker-default"))), "role binding must be autoreview");
+    negative("AE3 wrong existing role", () => change("skills/preflight/SKILL.md", (text) => text.replace(marker("code-review"), marker("worker-default"))), "role binding must be code-review, code-review-checker");
     negative("AE4 duplicate role", () => change(MODEL_POLICY_PATH, (text) => row(text, "worker-default", (line) => `${line}\n${line}`)), "duplicate role worker-default");
     negative("AE4 unknown role", () => change("README.md", (text) => text + `\n${link("unknown-reviewer")}\n`), "unknown role unknown-reviewer");
     negative("AE4 changed class effort", () => change("references/autoreview-routing.md", (text) => cell(text, "standard", 2, "high")), "route set must be exactly");
@@ -5587,8 +5587,8 @@ function validateModelPolicyFixtures() {
     negative("AE4 duplicate route", () => change("references/autoreview-routing.md", (text) => row(text, "tiny", (line) => `${line}\n${line}`)), "duplicate route tiny");
     negative("review equality condition", () => change("references/autoreview-routing.md", (text) => text.replace(/<worker-model>\s*=\s*<autoreview-model>/, "<worker-model> != <autoreview-model>")), "missing resolved model equality condition");
     negative("standard recalibration", () => change("references/autoreview-routing.md", (text) => text.replace(/(###\s+Effort recalibration[\s\S]*?)`high`/, "$1`low`")), "missing standard effort recalibration operands");
-    for (const [name] of NORMATIVE_MODEL_SECTIONS) {
-      negative(`normative reference ${name}`, () => change(name, (text) => text.replace(/\[role:autoreview\]\([^)]+\)/g, "reviewer")), `${name}: role binding must be autoreview`);
+    for (const [name, , expected] of NORMATIVE_MODEL_SECTIONS) {
+      negative(`normative reference ${name}`, () => change(name, (text) => text.replace(new RegExp(`\\[role:${expected[0]}\\]\\([^)]+\\)`, "g"), "reviewer")), `${name}: role binding must be ${expected.join(", ")}`);
     }
     change("scripts/fixtures/claude-pr-replies/attempt-1/launch/entry.json", text =>
       JSON.stringify({ ...JSON.parse(text), model: fabricated("claude", "archived") }));
@@ -5983,9 +5983,9 @@ const STRING_PINS = [
   ["skills/preflight/SKILL.md","Branch:"],
   ["skills/preflight/SKILL.md","Changed files:"],
   ["skills/preflight/SKILL.md","Local verification:"],
-  ["skills/preflight/SKILL.md","Autoreview:"],
-  ["skills/preflight/SKILL.md","Autoreview loop:"],
-  ["skills/preflight/SKILL.md","Autoreview declines:"],
+  ["skills/preflight/SKILL.md","Review:"],
+  ["skills/preflight/SKILL.md","Review successors:"],
+  ["skills/preflight/SKILL.md","Review route:"],
   ["skills/preflight/SKILL.md","Drift candidate:"],
   ["skills/preflight/SKILL.md","Not checked:"],
   ["skills/preflight/SKILL.md","Next:"],
@@ -6347,15 +6347,6 @@ const MACHINE_TOKENS = new Set([
   "node scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>",
   // MONO-175: closed Research gate refusal codes; shared success/date codes above.
   "research-missing", "research-bad-record", "research-other-project", "research-not-referenced",
-  // MONO-154: cap/chain dictionary and certificate label, no prose pins.
-  "continue", "successor", "cap-stop", "stopId", "originalIssue", "successorIssue",
-  "localPasses", "externalCollections", "local_passes", "Autoreview decisions:",
-  "result", "clean", "findings", "pending", "free", "localCap",
-  // MONO-153: journal/admission dictionary; no agent prose pins.
-  "class", "class-decision", "fix-class", "limit", "class-stop", "rule", "mechanism", "findingIds",
-  "classIds", "findingKeys", "nextStep", "checkpoint", "behaviorChange", "remainingVerification", "successor", "classStop",
-  "references/review-admission.md",
-  "Autoreview declines:",
   "session-selected", "Модель оркестратора:", "<модель запуска>", "не удалось определить",
   "git show",
   "references/landing.md#scheduling",
@@ -6495,8 +6486,9 @@ const MACHINE_TOKENS = new Set([
   "Allowed review verdicts:",
   "Approval",
   "Approval: superseded",
-  "Autoreview loop:",
-  "Autoreview:",
+  "Review:",
+  "Review successors:",
+  "Review route:",
   "Branch:",
   "Bug/perf proof:",
   "Bug/perf proof: <not applicable or original symptom/baseline + fix proof + regression proof/gap>",

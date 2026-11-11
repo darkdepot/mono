@@ -10,6 +10,7 @@ export const DANGER_CASES = ['data', 'security', 'gate-bypass', 'gate-stall', 's
 const text = value => typeof value === 'string' && value.trim().length > 0;
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const requireValue = (ok, message) => { if (!ok) throw new Error(message); };
+export const STRICT_DANGER = ['data', 'security', 'gate-bypass'];
 const maximumDanger = (...values) => values.includes(true) ? true : values.some(value => value !== false) ? null : false;
 const savedDanger = finding => Object.hasOwn(finding, 'dangerMaximum') ? finding.dangerMaximum : finding.danger ?? null;
 // Size bounds: one role answer, and what a failed attempt may keep in the record.
@@ -529,7 +530,7 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const missing = () => files.filter(file => !covered.has(file));
     if (missing().length) absorb(await call('code-review', { openFindings: open, pass: 'coverage', focusFiles: missing() }, parseReviewer));
     requireValue(missing().length === 0, 'incomplete changed-file coverage after focused pass');
-    const merged = new Map(record.findings.map(finding => [finding.key, finding])), byKey = new Map();
+    const merged = new Map(record.findings.map(finding => [finding.key, finding])), byKey = new Map(), reported = new Set(found.map(finding => finding.key));
     for (const finding of [...open, ...found]) {
       const prior = byKey.get(finding.key), saved = merged.get(finding.key);
       const dangerMaximum = maximumDanger(...[saved, prior].filter(Boolean).map(savedDanger), savedDanger(finding));
@@ -557,11 +558,18 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
       const dangerMaximum = maximumDanger(finding.dangerMaximum, verdict.danger), danger = dangerMaximum !== false;
       const evidence = headEvidence.find(item => item.file === finding.file);
       const deletionEvidence = evidence?.deletionEvidence;
-      const retained = (danger || unreviewedFiles.has(finding.file)) && verdict.outcome === 'rejected';
+      // A fix closes a dangerous finding only when both roles agree on a later head: the checker
+      // verified it gone and the reviewer, shown the open finding, no longer reports it.
+      // The fix may live in another file: the reviewer checks every open finding, so its silence is the agreement.
+      // Once closed that way it stays closed until the reviewer reports it again or the checker stops rejecting it.
+      const agreedFix = verdict.outcome === 'rejected' && verdict.closed === true && !!saved && saved.lastCheckedHead !== head &&
+        !reported.has(verdict.key) && !unreviewedFiles.has(finding.file);
+      const retained = (danger || unreviewedFiles.has(finding.file)) && verdict.outcome === 'rejected' && !agreedFix;
       return { ...verdict, outOfContract: !!saved?.outOfContract || verdict.outOfContract, riskRaised: !!saved?.riskRaised || verdict.riskRaised,
         ...(deletionEvidence ? { deletionEvidence } : {}), checkerDanger: verdict.danger, dangerMaximum, danger,
         origin: saved && savedDanger(saved) !== false ? saved.origin : verdict.origin,
-        dangerCase: danger ? verdict.dangerCase ?? saved?.dangerCase ?? 'unknown' : null,
+        // A data, security or gate-bypass case, once established, is not downgraded by a later uncertain verdict.
+        dangerCase: danger ? (STRICT_DANGER.includes(saved?.dangerCase) ? saved.dangerCase : verdict.dangerCase ?? saved?.dangerCase ?? 'unknown') : null,
         dangerReason: danger && verdict.danger === false ? 'Сохранена ранее отмеченная или неясная опасность. ' + verdict.dangerReason : verdict.dangerReason,
         ...(retained ? { outcome: 'unresolved', closed: false, rejectionUnproven: true, reason: (danger ? 'Отклонение опасной или неразмеченной находки оспаривается; находка остаётся открытой. ' : 'Содержимое файла не проверено; находка остаётся открытой. ') + verdict.reason } : {}) };
     });

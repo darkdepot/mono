@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { parseReviewUsage } from './review-usage.mjs';
 export { parseReviewUsage } from './review-usage.mjs';
 import fs from "node:fs";
 import path from "node:path";
@@ -7,12 +6,11 @@ import crypto from "node:crypto";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
-import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout } from "./runtime.mjs";
-import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File } from "./orchestrator/command-state.mjs";
+import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER } from "./runtime.mjs";
+import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, registryEntry } from "./orchestrator/command-state.mjs";
 
-import { acceptedDeclines, readJournal } from './decisions.mjs';
+import { runReviewRound, STRICT_DANGER } from './code-review.mjs';
 
-import { reviewEnvironment } from "./model-environment.mjs";
 export { reviewEnvironment } from "./model-environment.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -119,9 +117,6 @@ export function reviewRoute(skillsRoot, risk, critical, config = {}) {
   const { effortByRisk, ...route } = resolved;
   return { ...route, effort };
 }
-export function normalizeReceiptRoute(route) {
-  return route && route.engine === undefined ? { ...route, engine: 'claude', provider: 'unknown' } : route;
-}
 export function pinnedReviewRoute(request, base) {
   const pins = request.modelRoutes;
   const config = baseModelConfig(request.worktree, pins?.base ?? base);
@@ -132,89 +127,67 @@ export function pinnedReviewRoute(request, base) {
   } else requireThat(config.models === undefined, 'modelRoutes launch pins required for product model overrides');
   return reviewRoute(request.packRoot ?? request.skillsRoot, request.risk, request.critical, config);
 }
-export function reviewInvocation(route, base) {
-  return ['--mode', 'branch', '--base', base, '--engine', route.engine ?? 'claude', '--model', route.model, '--thinking', route.effort, '--max-priority', 'P2'];
+export const ROUND_LIMIT = 3;
+const ACCEPTED = ['clean', 'clean-with-successors'];
+const findingLine = finding => `${finding.weight} ${finding.file}:${finding.line} ${finding.title}`;
+// The worker fixes from this line alone: it may not be able to read the receipt.
+const clip = (text, limit) => { const flat = String(text ?? '').replace(/\s+/g, ' ').trim(); return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat; };
+const openLine = finding => `${findingLine(finding)} (when: ${clip(finding.trigger, 200) || 'n/a'}; why: ${clip(finding.reason, 300) || 'n/a'})`;
+const leftover = record => (record?.findings ?? []).filter(finding => !['closed', 'rejected'].includes(finding.status));
+// Rounds are counted per pins file from signed receipts; nothing else keeps a counter.
+// receipts: signature-verified history, any producer or issue. reuse: a completed round on this exact head.
+export function reviewHistory(receipts, { pins, head, base, contractDigest }) {
+  const mine = receipts.filter(receipt => receipt?.producer === REVIEW_PRODUCER && receipt.pins?.file === pins.file && receipt.review)
+    .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)));
+  const completed = mine.filter(receipt => receipt.review.spent === true);
+  const same = receipt => receipt.base === base && receipt.review.contractDigest === contractDigest;
+  const onHead = mine.filter(receipt => receipt.head === head && receipt.review.outcome !== 'refused');
+  let notReviewed = 0;
+  for (let index = onHead.length - 1; index >= 0 && onHead[index].review.outcome === 'not-reviewed'; index--) notReviewed++;
+  return { spent: completed.length, notReviewed, reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,
+    record: completed.findLast(same)?.review.record ?? null };
 }
-export function redactReviewCredentials(value, route, source = process.env) {
-  const secret = route.credentialEnv ? source[route.credentialEnv] : null;
-  if (typeof secret !== 'string' || !secret.length) return value;
-  const forms = [secret, Buffer.from(secret).toString('base64')];
-  const redact = entry => {
-    if (typeof entry === 'string') return forms.reduce((text, form) => text.split(form).join('[REDACTED]'), entry);
-    if (Array.isArray(entry)) return entry.map(redact);
-    if (entry && typeof entry === 'object') return Object.fromEntries(Object.entries(entry).map(([key, item]) => [key, redact(item)]));
-    return entry;
-  };
-  return redact(value);
+// What may leave the rounds as a successor candidate instead of blocking the PR:
+// - an older defect the task did not introduce (any round);
+// - a minor (P3) leftover once the first fixes are in (round 2 on), unless it is about data, security or a gate letting work through;
+// - on the last round also any leftover both roles call harmless.
+// Everything else open means "fix and ask again", and on the last round stays not-converged.
+export function roundOutcome(record, round) {
+  const open = leftover(record), settled = finding => finding.outcome !== 'unresolved';
+  const older = finding => finding.origin === 'pre-existing' && settled(finding);
+  const minor = finding => round > 1 && finding.weight === 'P3' && !STRICT_DANGER.includes(finding.dangerCase);
+  // An older dangerous defect is filed after merge, not left to choice, unless it is a minor one outside the strict cases.
+  const mustFile = finding => older(finding) && finding.danger !== false && (finding.weight !== 'P3' || STRICT_DANGER.includes(finding.dangerCase));
+  const harmless = finding => round >= ROUND_LIMIT && finding.danger === false && settled(finding);
+  const stands = !open.length || record.findings.some(finding => finding.outOfContract || finding.riskRaised) ||
+    !open.every(finding => older(finding) || minor(finding) || harmless(finding));
+  // A clean round may still carry older harmless defects: they are listed, never dropped.
+  if (!['not-converged', 'clean'].includes(record.outcome) || stands) return { outcome: record.outcome, successors: [] };
+  return { outcome: 'clean-with-successors', successors: open.map(finding => ({ key: finding.key, origin: finding.origin,
+    line: `${mustFile(finding) ? 'must-file ' : ''}${findingLine(finding)}` })) };
 }
-
-export function validatePreflight(receipt, head, base, route, journal = null) {
-  requireThat(receipt?.head === head && receipt.base === base, "missing or stale autoreview artifact/head/base");
-  requireThat(canonical(normalizeReceiptRoute(receipt.route)) === canonical(normalizeReceiptRoute(route)), "autoreview artifact has wrong policy route");
-  requireThat(receipt.verification?.exitCode === 0, "local verification failed or missing");
-  if (receipt.review?.exitCode === 1 && journal) return validateDeclinedReview(receipt, route, journal);
-  requireThat(receipt.review?.exitCode === 0, "autoreview failed or incomplete");
-  const output = receipt.review.output ?? "";
-  validateReviewLines(output, route);
-  requireThat(!receipt.review.retentionError, "autoreview output retention failed");
-  requireThat(receipt.loop?.iterations > 0 && receipt.loop.disposition === "clean" && Array.isArray(receipt.loop.residualFindings) && receipt.loop.residualFindings.length === 0, "autoreview loop incomplete or residual findings remain");
-  if (receipt.review.json) {
-    const report = receipt.review.json;
-    requireThat(report.overall_correctness === "patch is correct" && Array.isArray(report.findings) && report.findings.length === 0 &&
-      (report.priority_filtered_findings ?? []).every(finding => finding.priority === "P3") &&
-      ["missing_required_findings", "scope_rejected_findings", "attribution_rejected_findings"].every(key => !report[key]?.length), "autoreview structured result is not complete and clean");
-  }
-  return "local verification and tool autoreview verified on head";
+function reviewRefusal(review) {
+  if (review.outcome === 'refused') return review.reason;
+  if (review.outcome === 'not-reviewed') return review.repeated
+    ? `blocked: not-reviewed twice in a row on this head: ${review.reason}`
+    : `not-reviewed: ${review.reason}; no round spent, request this head once more`;
+  // The collector reads the last 64 KiB of gate output: keep the line inside it and say what was left out.
+  const all = leftover(review.record).map(openLine), round = `round ${review.round} of ${ROUND_LIMIT}`, open = [];
+  for (const line of all) { if (open.join('; ').length + line.length > 40000) break; open.push(line); }
+  const list = `${all.length} open: ${open.join('; ')}${open.length < all.length ? `; ${all.length - open.length} more in the next round` : ''}`;
+  return review.round === ROUND_LIMIT ? `needs-decision: review not-converged after ${round}; ${list}`
+    : `review not-converged (${round}); fix and request the next round; ${list}`;
 }
-
-function validateDeclinedReview(receipt, route, journal) {
-  const review=receipt.review,report=review.json,status=review.status;
-  requireThat(status?.schema_version===1&&status.status==='findings'&&status.exit_code===1&&status.engine===(route.engine??'claude')&&
-    status.report_produced===true&&status.timed_out===false&&status.reason==null&&!review.retentionError,'incomplete or contradictory findings result');
-  requireThat(report&&['patch is correct','patch is incorrect'].includes(report.overall_correctness)&&
-    typeof report.overall_explanation==='string'&&report.overall_explanation.trim()&&probability(report.overall_confidence)&&
-    (report.review_status===undefined||report.review_status==='findings')&&Array.isArray(report.findings)&&report.findings.length>0&&
-    report.findings.every(validFinding),'invalid nonempty findings report required');
-  requireThat(['missing_required_findings','scope_rejected_findings','attribution_rejected_findings'].every(key=>
-    report[key]===undefined||(Array.isArray(report[key])&&report[key].length===0))&&
-    (report.priority_filtered_findings===undefined||(Array.isArray(report.priority_filtered_findings)&&
-      report.priority_filtered_findings.every(f=>f?.priority==='P3'))),'incomplete or priority-filtered blocking findings');
-  requireThat(receipt.loop?.iterations>0&&receipt.loop.disposition==='failed'&&
-    canonical(receipt.loop.residualFindings)===canonical(report.findings),'contradictory findings loop');
-  validateReviewLines(review.output??'',route,report);
-  const declines=acceptedDeclines(receipt,journal);
-  return `accepted-with-declines: ${declines.map(d=>`${d.id} (${d.basis}; ${d.approvedBy})`).join(', ')}`;
-}
-const probability = n => typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=1;
-function validFinding(f) {
-  return f&&typeof f==='object'&&typeof f.title==='string'&&f.title.trim()&&f.title.length<=140&&
-    typeof f.body==='string'&&f.body.trim()&&f.body.length<=2000&&['P0','P1','P2','P3'].includes(f.priority)&&probability(f.confidence)&&
-    ['bug','security','regression','test_gap','maintainability'].includes(f.category)&&
-    typeof f.code_location?.file_path==='string'&&f.code_location.file_path.trim()&&Number.isSafeInteger(f.code_location.line)&&f.code_location.line>0;
-}
-
-// A review split into several passes labels its single merged verdict "autoreview chunked".
-const verdictPrefix = /^autoreview (?:chunked )?(?:clean|filtered|scoped-clean|findings|incorrect|incomplete):/;
-const verdictLines = new Set([
-  "autoreview clean: no accepted/actionable findings reported",
-  "autoreview filtered: no findings at the requested priority; not a correctness certificate",
-  "autoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority",
-]);
-function validateReviewLines(output, route, report = null) {
-  const lines = output.split("\n");
-  const fields = lines.filter(line => /^(?:autoreview target|engine|model|thinking):/.test(line)).flatMap(line => line.split(" | "));
-  for (const [key, expected] of Object.entries({ "autoreview target": "branch", engine: route.engine ?? "claude", model: route.model, thinking: route.effort })) {
-    const values = fields.filter(line => line.startsWith(`${key}:`));
-    requireThat(values.length === 1 && values[0] === `${key}: ${expected}`, "autoreview output route/scope incomplete or ambiguous");
-  }
-  const verdicts = lines.filter(line => verdictPrefix.test(line)).map(line => line.replace(/^autoreview chunked /, "autoreview "));
-  requireThat(verdicts.length === 1 &&
-    (report ? verdicts[0] === `autoreview findings: ${report.findings.length}` : verdictLines.has(verdicts[0])), "autoreview clean result missing or ambiguous");
-  const overall = lines.filter(line => line.startsWith("overall:"));
-  requireThat(overall.length === 1 && (report ? overall[0].startsWith(`overall: ${report.overall_correctness} (`) : /^overall: patch is correct \(/.test(overall[0])), "autoreview correctness result missing or ambiguous");
-}
-export function validReviewInvocation(actual, fixed) {
-  return canonical(actual) === canonical(fixed) || canonical(actual) === canonical([...fixed, "--stream-engine-output"]);
+export function validatePreflight(receipt, head, base) {
+  requireThat(receipt?.producer === REVIEW_PRODUCER && receipt.review, "missing review receipt or old receipt format; request a new collection");
+  requireThat(receipt.head === head && receipt.base === base, "missing or stale review receipt/head/base");
+  requireThat(ACCEPTED.includes(receipt.review.outcome), reviewRefusal(receipt.review));
+  requireThat(receipt.consistency?.passed === true && receipt.consistency.error === null, `collection consistency failed or missing: ${receipt.consistency?.error ?? "no record"}`);
+  requireThat(receipt.verification?.exitCode === 0, "needs-decision: verification failed on the reviewed head");
+  requireThat(receipt.verification.sandbox?.mode === "workspace-write" && receipt.verification.sandbox.probed === true, "verification sandbox proof missing");
+  const successors = receipt.review.successors ?? [];
+  return `review ${receipt.review.outcome} (round ${receipt.review.round} of ${ROUND_LIMIT}) and verification verified on head` +
+    (successors.length ? `; successor candidates: ${successors.map(item => item.line).join('; ')}` : '');
 }
 
 // Keep semantic lines separately from diagnostics; a saturated semantic budget
@@ -347,6 +320,21 @@ function evidenceKey(directory, create) {
   requireThat(key.length === 32, "invalid tool receipt key"); return key;
 }
 const sign = (key, value) => crypto.createHmac("sha256", key).update(canonical(value)).digest("hex");
+const ROUND_LIMIT_REACHED = `review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this pins file); narrow the contract, split or change approach`;
+const NOT_REVIEWED_TWICE = "not-reviewed twice in a row on this head; check that both review CLIs are logged in";
+// Other issues' and older receipts share this folder: only this pins file is read further;
+// unreadable or unsigned files are skipped, never counted.
+function signedHistory(evidenceRoot, pinsFile) {
+  const history = path.join(evidenceRoot, "history");
+  if (!fs.existsSync(history) || !fs.existsSync(path.join(evidenceRoot, "receipt.key"))) return [];
+  const key = evidenceKey(evidenceRoot, false);
+  return fs.readdirSync(history).filter(name => name.endsWith(".json")).flatMap(name => {
+    try {
+      const envelope = readJson(path.join(history, name));
+      return envelope.receipt?.pins?.file === pinsFile && envelope.signature === sign(key, envelope.receipt) ? [envelope.receipt] : [];
+    } catch { return []; }
+  });
+}
 
 function preflightEvidenceRoot(request) {
   const evidenceRoot = validateEvidenceGrants(request.evidenceRoot, [request.worktree, request.root, ...(request.workerWritableRoots ?? [])]);
@@ -459,7 +447,6 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   const evidenceRoot = preflightEvidenceRoot(request);
   validateEvidenceGrants(request.packRoot ?? request.skillsRoot, request.workerWritableRoots, 'packRoot');
   validateEvidenceGrants(request.skillsRoot, request.workerWritableRoots, 'autoreview skillsRoot');
-  validateEvidenceGrants(path.join(request.skillsRoot, 'autoreview/scripts/autoreview'), request.workerWritableRoots, 'autoreview helper real path');
   const repo = fs.realpathSync(request.worktree);
   cleanTree(repo);
   const head = git(repo, "rev-parse", "HEAD");
@@ -490,12 +477,29 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   const binding = { ...dataset, ...(idea ? { idea } : {}), ...(request.issue !== undefined ? { issue: request.issue } : {}), ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
     critical: request.critical, root: fs.realpathSync(request.root), worktree: repo, evidenceRoot,
     workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort() };
+  // The task contract is the dispatch snapshot of the Issue (snapshot.vN after a full-snapshot amendment).
+  // Read with this attempt's signed history only when a round may be requested or run.
+  let contract = null, contractDigest = null;
+  const priorRounds = () => {
+    if (!pins || !request.pins) return null;
+    const file = path.join(pins.fullSnapshot?.directory ?? path.join(path.dirname(request.pins.file), "snapshot"), `issue-${pinnedIssue}.md`);
+    if (!pinnedIssue || !fs.existsSync(file)) return null;
+    contract = fs.readFileSync(file, "utf8");
+    // Amendment texts narrow or correct the task: the reviewer must read them with the Issue.
+    // Only registered ones: a prepared amendment that was never delivered stays on disk and is not part of the task.
+    const attempt = Number(/-a([1-9][0-9]*)$/.exec(path.basename(path.dirname(request.pins.file)))[1]);
+    const registered = Object.values(registryEntry(path.dirname(path.dirname(path.dirname(request.pins.file))), pinnedIssue, attempt).completed_amendments ?? {});
+    for (const record of registered.filter(item => item.pinsVersion <= (pins.pinsVersion ?? 0)).sort((a, b) => a.pinsVersion - b.pinsVersion))
+      contract += `\n\n## Orchestrator amendment ${record.pinsVersion}\n${record.change?.text ?? fs.readFileSync(record.resumeFile, "utf8").split(/\n\n## (?:Effective attempt pins|issue-)/)[0]}`;
+    contractDigest = digest(contract);
+    return reviewHistory(signedHistory(evidenceRoot, request.pins.file), { pins: request.pins, head, base, contractDigest });
+  };
   let receipt, verifiedReceiptFile = receiptFile;
   if (request.collect === false) {
     const readSigned = file => {
       regularEvidence(file); regularEvidence(path.join(evidenceRoot, "receipt.key"));
       const envelope = readJson(file);
-      requireThat(envelope.signature === sign(evidenceKey(evidenceRoot, false), envelope.receipt), "hand-made or modified autoreview artifact");
+      requireThat(envelope.signature === sign(evidenceKey(evidenceRoot, false), envelope.receipt), "hand-made or modified review receipt");
       return envelope.receipt;
     };
     if (!pins) receipt = readSigned(receiptFile);
@@ -509,14 +513,18 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       else receipt = null;
     }
     if (!receipt) {
-      requireThat(allowPending, "missing or stale autoreview artifact/head/base");
+      requireThat(allowPending, "missing or stale review receipt/head/base");
+      // Refuse here, before the worker publishes a request that could only be refused.
+      const prior = priorRounds();
+      if (prior && !prior.reuse) {
+        requireThat(prior.notReviewed < 2, `blocked: ${NOT_REVIEWED_TWICE}`);
+        requireThat(prior.spent < ROUND_LIMIT, `needs-decision: ${ROUND_LIMIT_REACHED}`);
+      }
       return { publishRequest: { ...request, collect: false } };
     }
     if (!request.pins && receipt.pins) throw new Error(`collection request mismatch: pins; expected ${canonical(receipt.pins)}`);
     requireThat(canonical(receipt.idea ?? null) === canonical(idea), 'receipt idea differs from dispatch pins');
     for (const [key, value] of Object.entries(binding)) {
-      // Legacy receipts predate pins; below, validate them and require both bases to be override-free.
-      if (key === "modelRoutes" && receipt.route && receipt.route.engine === undefined && receipt.modelRoutes === undefined) continue;
       const actual = key === "reviewDataset" && receipt[key] ? { source: receipt[key].source, digest: receipt[key].digest, copy: receipt[key].copy } : receipt[key];
       requireThat(canonical(actual) === canonical(value), `receipt ${key} differs from dispatch request`);
     }
@@ -529,18 +537,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     }
     requireThat(canonical({ command: receipt.verification?.command, args: receipt.verification?.args }) === canonical(request.verification), "receipt verification differs from dispatch request");
   }
-  let route = pinnedReviewRoute(request, base);
-  if (receipt?.route && receipt.route.engine === undefined) {
-    requireThat(baseModelConfig(repo, base).models === undefined &&
-      (!request.modelRoutes || baseModelConfig(repo, request.modelRoutes.base).models === undefined), 'legacy receipt cannot certify model override pins');
-    route = { model: route.model, effort: route.effort };
-  }
-  const helper = fs.realpathSync(path.join(request.skillsRoot, "autoreview/scripts/autoreview"));
+  pinnedReviewRoute(request, base);
   validateEvidenceGrants(request.skillsRoot, [repo], "installed skillsRoot");
-  validateEvidenceGrants(helper, [repo], "autoreview helper real path");
-  const helperDigest = digest(fs.readFileSync(helper, "utf8"));
-  const invocation = reviewInvocation(route, base);
-  if (dataset.reviewDataset) invocation.push("--dataset", dataset.reviewDataset.copy);
   const unchanged = () => {
     if (idea) verifyIdeaArtifact(idea, pinnedIssue ?? request.issue);
     requireThat(canonical(reviewDatasetBinding(request, evidenceRoot)) === canonical(dataset), "review dataset changed during collection/verification");
@@ -550,76 +548,58 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   };
   if (request.collect === true) {
     const recordedAt = new Date().toISOString();
-    const protectedPaths = { "orchestrator root": request.root, skillsRoot: request.skillsRoot,
-      packRoot: request.packRoot ?? request.skillsRoot, "autoreview helper real path": helper };
+    const protectedPaths = { "orchestrator root": request.root, skillsRoot: request.skillsRoot, packRoot: request.packRoot ?? request.skillsRoot };
     const archive = dataset.reviewDataset ? await archiveReviewDataset(dataset.reviewDataset.source, evidenceRoot) : null;
     if (archive) requireThat(archive.digest === dataset.reviewDataset.digest, "review dataset changed before archive");
-    let verification = await runSandboxed(request.verification.command, request.verification.args, repo, evidenceRoot, { protectedPaths });
-    let review = { exitCode: null, output: "", json: null, status: null };
+    const prior = priorRounds();
+    requireThat(prior, "review contract missing in the pinned dispatch snapshot (issue-<KEY>.md)");
     const consistency = { passed: true, error: null };
     const checkConsistency = () => {
       try { unchanged(); } catch (error) { consistency.passed = false; consistency.error ??= error.message; }
     };
-    checkConsistency();
-    if (verification.exitCode !== 0 && verification.sandbox?.mode === 'workspace-write' && verification.sandbox.probed === true && consistency.passed) {
-      const first = verification;
-      verification = await runSandboxed(request.verification.command, request.verification.args, repo, evidenceRoot, { protectedPaths });
-      verification.output = `Verification run 1 (exit ${first.exitCode}):\n${first.output}\nVerification run 2 (exit ${verification.exitCode}):\n${verification.output}`;
-      // A successful rerun cannot attest an unprobed boundary.
-      verification.sandbox.probed = first.sandbox.probed && verification.sandbox.probed;
-      checkConsistency();
+    // Review first: a round is spent only by a completed round on a new head.
+    let review;
+    const refuse = reason => ({ outcome: 'refused', spent: false, round: null, reason, successors: [], record: null });
+    if (prior.reuse) review = { ...prior.reuse.review, ...roundOutcome(prior.reuse.review.record, prior.reuse.review.round), spent: false, reusedFrom: prior.reuse.runId };
+    else if (prior.notReviewed >= 2) review = refuse(`blocked: ${NOT_REVIEWED_TWICE}`);
+    else if (prior.spent >= ROUND_LIMIT) review = refuse(`needs-decision: ${ROUND_LIMIT_REACHED}`);
+    else {
+      const record = await runReviewRound({ worktree: repo, head, base, contract, risk: request.critical ? 'riskyCritical' : request.risk,
+        config: baseModelConfig(repo, request.modelRoutes?.base ?? base), packRoot: path.resolve(scriptDir, '..'), ...(prior.record ? { stageRecord: prior.record } : {}) });
+      const { costs, ...stageRecord } = record;
+      review = record.outcome === 'not-reviewed'
+        ? { outcome: 'not-reviewed', spent: false, round: null, repeated: prior.notReviewed > 0, reason: record.failures.at(-1)?.reason ?? `no readable text for ${record.unreviewedFiles.join(', ') || 'the review'}`,
+          successors: [], record: null, failures: record.failures.slice(-6), costs }
+        : { ...roundOutcome(record, prior.spent + 1), spent: true, round: prior.spent + 1, record: stageRecord };
     }
-    if (verification.exitCode === 0 && verification.sandbox?.probed === true && consistency.passed) {
-      const env = reviewEnvironment(route, safeGitEnv());
-      const copy = dataset.reviewDataset ? path.join(repo, dataset.reviewDataset.copy) : null;
-      const checkCopy = () => {
-        if (copy) requireThat(fileDigest(copy) === dataset.reviewDataset.digest, "review dataset copy digest differs from source");
-      };
+    review.contractDigest = contractDigest;
+    checkConsistency();
+    let verification = null;
+    if (ACCEPTED.includes(review.outcome) && consistency.passed) {
+      // A launch refusal is recorded, not thrown: the completed round must still be signed.
       try {
-        if (copy) {
-          fs.mkdirSync(path.dirname(copy), { recursive: true });
-          fs.copyFileSync(dataset.reviewDataset.source, copy);
+        verification = await runSandboxed(request.verification.command, request.verification.args, repo, evidenceRoot, { protectedPaths });
+        checkConsistency();
+        if (verification.exitCode !== 0 && verification.sandbox?.mode === 'workspace-write' && verification.sandbox.probed === true && consistency.passed) {
+          const first = verification;
+          verification = await runSandboxed(request.verification.command, request.verification.args, repo, evidenceRoot, { protectedPaths });
+          verification.output = `Verification run 1 (exit ${first.exitCode}):\n${first.output}\nVerification run 2 (exit ${verification.exitCode}):\n${verification.output}`;
+          // A successful rerun cannot attest an unprobed boundary.
+          verification.sandbox.probed = first.sandbox.probed && verification.sandbox.probed;
+          checkConsistency();
         }
-        checkCopy();
-        review = redactReviewCredentials(await runSandboxed(helper, [...invocation, "--stream-engine-output"], repo, evidenceRoot, {
-          env, reviewArtifacts: true, protectedPaths, verificationWritableRoots: sandboxWriteRoots(verification.sandbox),
-          workerWritableRoots: request.workerWritableRoots ?? []
-        }), route);
-        checkCopy();
-      } catch (error) {
-        consistency.passed = false; consistency.error ??= error.message;
-      } finally {
-        if (copy) { try { fs.unlinkSync(copy); } catch {} }
-      }
+      } catch (error) { consistency.passed = false; consistency.error ??= error.message; }
     }
-    requireThat(digest(fs.readFileSync(helper, "utf8")) === helperDigest, "autoreview helper changed during collection");
-    checkConsistency();
-    Object.assign(review, parseReviewUsage(review.output, route.engine ?? "claude"));
-    receipt = { producer: "gate-autoreview-v2", recordedAt, ...binding, runId: crypto.randomUUID(), head, base, route, helper, helperDigest, invocation: [...invocation, "--stream-engine-output"],
-      verification, review, consistency, loop: { iterations: review.exitCode === null ? 0 : 1, disposition: review.exitCode === 0 && consistency.passed ? "clean" : "failed", residualFindings: review.json?.findings ?? ["missing structured report"] } };
+    receipt = { producer: REVIEW_PRODUCER, recordedAt, ...binding, runId: crypto.randomUUID(), head, base, review,
+      verification: verification ?? { command: request.verification.command, args: request.verification.args, exitCode: null }, consistency };
     if (archive) receipt.reviewDataset = { ...receipt.reviewDataset, ...archive };
     if (fs.existsSync(path.join(evidenceRoot, "receipt.key"))) regularEvidence(path.join(evidenceRoot, "receipt.key"));
     const key = evidenceKey(evidenceRoot, true);
     atomicJson(path.join(evidenceRoot, "history", `${receipt.runId}.json`), { receipt, signature: sign(key, receipt) });
     atomicJson(receiptFile, { receipt, signature: sign(key, receipt) });
   }
-  requireThat(receipt.producer === "gate-autoreview-v2" && receipt.helper === helper && receipt.helperDigest === helperDigest &&
-    validReviewInvocation(receipt.invocation, invocation), "autoreview artifact provenance/command mismatch");
-  const reviewDirectoryRefusal = receipt.consistency?.error?.startsWith("collection private review directory") ? `: ${receipt.consistency.error}` : "";
-  requireThat(receipt.consistency?.passed === true && receipt.consistency.error === null, "collection consistency failed or missing" + reviewDirectoryRefusal);
-  requireThat(receipt.verification.exitCode === 0, "local verification failed or missing");
-  requireThat(receipt.verification.sandbox?.mode === "workspace-write" && receipt.verification.sandbox.probed === true, "verification sandbox proof missing");
-  requireThat(receipt.review.sandbox?.mode === "workspace-write" && receipt.review.sandbox.probed === true, "autoreview sandbox proof missing");
-  if (receipt.review.exitCode !== 1) {
-    requireThat(receipt.review.exitCode === 0, "autoreview failed or incomplete");
-    requireThat(receipt.review.json && receipt.review.status?.schema_version === 1 && receipt.review.status.exit_code === 0 &&
-      receipt.review.status.engine === (route.engine ?? "claude") && ["clean", "scoped-clean", "filtered"].includes(receipt.review.status.status) &&
-      receipt.review.status.report_produced === true && receipt.review.status.timed_out === false, "incomplete or non-clean helper output/status artifact");
-  }
+  const reason = validatePreflight(receipt, head, base);
   unchanged();
-  const issue = pinnedIssue ?? receipt.issue;
-  const journal = receipt.review.exitCode === 1 && issue ? readJournal({ evidenceRoot, issue }) : null;
-  const reason = validatePreflight(receipt, head, base, route, journal);
   return { reason, receipt: { path: verifiedReceiptFile, runId: receipt.runId, digest: digest(receipt) } };
 }
 
@@ -835,11 +815,11 @@ preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,ri
   Pending worker collection exits 2 with publishRequest; publish exactly that request. Pass exits 0; refusal exits 1.
   Use ~/.mono-agent-workflow/evidence/<product>/ outside EVERY worker-writable root,
   including worktree, orchestrator root and additional workerWritableRoots. Pin that list in dispatch.
-  Collection grants the worktree and one private temp directory per invocation. On macOS verification additionally grants the validated Darwin user temp root when available; review uses isolated private results under ~/.mono-agent-workflow/review-tmp, outside verification and worker write grants. workerWritableRoots never becomes collector grants.
-  Run verification AND the installed helper there with evidence-write denial probes, independent of command exit codes.
-  Optional reviewDataset: absolute source under evidenceRoot; bind receipt reviewDataset:{source,digest,copy}.
-  Copy to .orchestrator/review-dataset-<digest8>.md for repo-relative --dataset; check digest before/after helper and remove the copy.
-  Review uses policy flags/P2; filtered P3 findings are advisory; preserve failed receipts/history. Sandbox failure fails closed.
+  Verification grants the worktree and one private temp directory per invocation, on macOS also the validated Darwin user temp root when available. workerWritableRoots never becomes collector grants.
+  collect:true runs the read-only review round first (reviewer and checker from different model families, both CLIs logged in by subscription),
+  then verification with evidence-write denial probes only after clean or clean-with-successors; one signed gate-review-v3 receipt per collectionId.
+  At most three completed rounds per pins file, counted from signed history; the same head reuses its round; not-reviewed spends nothing.
+  Refusals are signed too: fix and request the next round, or park on a needs-decision:/blocked: line. Sandbox failure fails closed.
   The sandbox write boundary is the trust anchor; the key may be readable but receipts are not worker-writable.
 ship request: {preflight:<complete preflight collect:false request>, repo:"owner/repo", number:123, attempt:1, stateFile:"/absolute/file", judgmentFile:"/absolute/file", config:"/project/.agents/mono-workflow.config.json", watch:true, policy:{requiredChecks:[],nonBlockingChecks:[{name,reason}],botChecks:["Greptile Review"],botUnavailable:null}}
   Refresh remote-tracking baseRef; bind receipts to head/merge-base, not the moving base tip.

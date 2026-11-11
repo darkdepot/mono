@@ -204,7 +204,7 @@ test('C43: reopening a closed or rejected dangerous finding preserves its danger
   }
  });
 });
-test('C35/C44: pinned deletion is recorded but cannot close dangerous or unmarked findings',async t=>{
+test('C35/C44: pinned deletion is recorded and closes a dangerous or unmarked finding once the reviewer stops reporting it',async t=>{
  for(const fromBase of [true,false])for(const danger of [true,undefined])await t.test(String(fromBase)+'/'+String(danger),async t=>{
   const f=fixture(t),file=fromBase?'input.mjs':'added.mjs';
   if(!fromBase){fs.writeFileSync(path.join(f.worktree,file),'export const ordinary = 1;\n');f.git('add','.');f.git('commit','-qm','introduce affected file');}
@@ -216,9 +216,43 @@ test('C35/C44: pinned deletion is recorded but cannot close dangerous or unmarke
   const result=await runReviewRound({...f.request,head,stageRecord:first},{runRole:async request=>{
    const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:request.role==='code-review'?review([],context.files):{completed:true,verdicts:[verdict({outcome:'rejected',closed:true,reason:'The affected file was deleted.'})]}};
   }});
-  assert.equal(result.outcome,'not-converged',JSON.stringify(result.failures));assert.equal(result.findings[0].status,'unresolved');assert.equal(result.findings[0].closed,false);assert.equal(result.findings[0].danger,true);
+  assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.equal(result.findings[0].status,'closed');assert.equal(result.findings[0].closed,true);assert.equal(result.findings[0].danger,true);
   assert.deepEqual(result.findings[0].deletionEvidence,{before:fromBase?f.request.base:first.round.head,head});
+  fs.writeFileSync(path.join(f.worktree,'other.mjs'),'export const other = 1;\n');f.git('add','.');f.git('commit','-qm','later unrelated change');
+  const later=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:result},{runRole:async request=>{
+   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:request.role==='code-review'?review([],context.files):{completed:true,verdicts:[verdict({outcome:'rejected',closed:true,reason:'The affected file stays deleted.'})]}};
+  }});
+  assert.equal(later.outcome,'clean',JSON.stringify(later.failures));assert.equal(later.findings[0].status,'closed','an agreed fix stays closed after its file left the diff');
  });
+});
+test('an established data, security or gate-bypass case survives a later uncertain verdict',async t=>{
+ const f=fixture(t),finding={...sample,danger:true};
+ const roles=verdicts=>({runRole:async request=>{const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);
+  return {response:request.role==='code-review'?review([finding],context.files):{completed:true,verdicts}};}});
+ const first=await runReviewRound(f.request,roles([verdict({weight:'P3',danger:true,dangerCase:'data',dangerReason:'Retained records are overwritten.'})]));
+ assert.equal(first.findings[0].dangerCase,'data');
+ fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// later\n');f.git('add','.');f.git('commit','-qm','later');
+ const second=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:first},roles([verdict({weight:'P3',outcome:'unresolved',danger:null,dangerCase:'unknown',dangerReason:'Cannot exclude the earlier effect.'})]));
+ assert.equal(second.findings[0].dangerCase,'data','the strict case is not downgraded to unknown');assert.equal(second.findings[0].status,'unresolved');
+});
+test('a dangerous finding closes only by an agreed fix on a later head and then stays closed',async t=>{
+ const f=fixture(t),finding={...sample,danger:true},danger={danger:true,dangerCase:'silent-result',dangerReason:'Wrong values reach callers.'};
+ const roles=(findings,verdicts)=>({runRole:async request=>{const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);
+  return {response:request.role==='code-review'?review(findings,context.files):{completed:true,verdicts}};}});
+ const commit=text=>{fs.appendFileSync(path.join(f.worktree,'input.mjs'),text);f.git('add','.');f.git('commit','-qm',text.trim());return f.git('rev-parse','HEAD');};
+ const closing=[verdict({...danger,outcome:'rejected',closed:true,reason:'The new guard rejects the input.'})];
+ const first=await runReviewRound(f.request,roles([finding],[verdict(danger)]));
+ assert.equal(first.outcome,'not-converged');assert.equal(first.findings[0].danger,true);
+ let head=commit('// guard\n');
+ const disputed=await runReviewRound({...f.request,head,stageRecord:first},roles([finding],closing));
+ assert.equal(disputed.findings[0].status,'unresolved','the reviewer still reports it');assert.equal(disputed.outcome,'not-converged');
+ const second=await runReviewRound({...f.request,head,stageRecord:first},roles([],closing));
+ assert.equal(second.findings[0].status,'closed','checker verified the fix and the reviewer stopped reporting it');assert.equal(second.outcome,'clean');assert.equal(second.findings[0].danger,true);
+ head=commit('// later\n');
+ const third=await runReviewRound({...f.request,head,stageRecord:second},roles([],closing));
+ assert.equal(third.round.number,3);assert.equal(third.findings[0].status,'closed','it stays closed');assert.equal(third.outcome,'clean');
+ const reopened=await runReviewRound({...f.request,head,stageRecord:second},roles([finding],closing));
+ assert.equal(reopened.findings[0].status,'unresolved','a new report reopens it');assert.equal(reopened.outcome,'not-converged');
 });
 test('C58: present unavailable files cannot become deletion evidence or close an open finding',async t=>{
  for(const state of ['binary','directory'])await t.test(state,async t=>{

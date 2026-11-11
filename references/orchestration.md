@@ -1199,255 +1199,39 @@ new spawns/resumes, not running workers. Escalate only after the healing ladder
 Keep actual decisions/results in ledger; a no-change wakeup is neither. Delivery budget is guidance, not a gate.
 Material scope drift parks scope-drift-needs-handoff and goes to owner decision.
 
-## Review decline approval
+## Review rounds
 
-Declines are normal admission records, separate from the experimental pilot.
-Dispatch creates immutable review dataset v1 by default under evidenceRoot and
-pins its path/version/digest. It reuses matching v1 bytes; otherwise it selects
-the latest existing version, including histories without v1, without creating
-v1 beside later versions or rewriting archives or digests. Explicit
-datasets retain their path/version. A decline needs a version and a linked,
-approved decision in the journal; the default dataset grants no decline itself.
-The worker proposes in its phase report; only the orchestrator writes
-`decisions/<KEY>.json` using installed `decisions.mjs record`. For standalone
-requests without pins, supply `issue` at collection: the receipt signs that
-identity and selects its journal; worktree directory names carry no authority. Never grant the
-worker evidence-root writes, edit a receipt or change its archived dataset.
+A collection runs one read-only review round on the committed head (reviewer
+and checker from different model families), then sandboxed verification, and
+signs one `gate-review-v3` receipt. The collector host needs both the Codex and
+Claude CLIs logged in by subscription; a single-family setup gives
+`not-reviewed`, and so does a logged-out CLI whose role has to run (the checker
+runs only when the reviewer reports findings).
 
-1. Read the signed immutable receipt and exact full finding. Compute SHA-256 of
-   canonical receipt and finding (runtime canonical JSON sorts object keys),
-   preserving array order. `findingIdentity(receipt, index)` yields
-   `{id: "<receipt digest>:<index>:<finding digest>", index, digest}`. Use the
-   zero-based index; equal titles at different locations remain distinct.
-2. Verify refutation command/output or unreachable-path citation independently.
-   Judge dangerous consequences: unreviewed code admission, security/secrets,
-   data corruption, money, irreversible action. P0/P1 or dangerous needs
-   refutation; likelihood is never proof. A boundary must already have been
-   approved before the receipt and remain current with its promised behavior.
-3. Append a `decline` with id/type/recordedAt, receipt
-   `{collectionId, runId, digest}`, head, datasetVersion, finding identity,
-   dangerous boolean, approvedBy=`orchestrator`, approvedAt and recordDigest.
-   `basis` is `{type:"refutation", evidence:{command,output}|{citation}, digest}`
-   or `{type:"boundary", decisionId:"d-NNN", digest, scope}`. Evidence digest is
-   SHA-256 of its canonical object. Boundary digest hashes the full decision;
-   scope equals its boundary.scope. That current `decision` has decision=`limit`,
-   boundary `{scope,remainingContract}`, approval `{by:"orchestrator",at}` and
-   validity.head matching the receipt. Inspect those contents; date alone fails.
-   `decisionDigest(entry)` hashes all canonical fields except recordDigest;
-   store that digest only after approving the unchanged contents. Conflicting
-   active approvals for one finding block; revoke before replacing one.
-4. Re-run preflight collect:false against the same receipt. Its result can be
-   `accepted-with-declines`; preserve the original verdict/overall_correctness/
-   findings, and confirm the worker's ready comment lists each identity, basis
-   and approver. Ship re-reads the same journal through the shared gate.
-5. New evidence appends `decline-revoke`: id/type/recordedAt, forId,
-   declineDigest (the original recordDigest), reason, evidence and evidenceDigest,
-   approvedBy=`orchestrator`, approvedAt, recordDigest. Never edit prior records.
-   Revocation blocks the next admission even on unchanged code. New code needs
-   a new receipt and approvals. Rebuild the review ledger to expose decline
-   events and revocation flags; they add no reviewer executions.
+Between rounds do nothing: the worker fixes open findings and requests the next
+round itself. At most three completed rounds per pins file, counted from signed
+receipts; the same head reuses its round; `not-reviewed` spends nothing. There
+are no continue permits, class decisions or decline approvals.
 
-After approval, a next dataset version may carry only a short active-decline
-summary as context “do not raise without a new fact”. Never repin or version the
-current receipt's dataset to manufacture admission. Old clean receipts keep
-working; findings receipts lacking recordedAt cannot use declines.
+Parks:
+- needs-decision, `review not-converged after round 3` or `review round limit
+  reached`: narrow the contract, split the Issue or change the approach, then
+  `accept.mjs amend` (the new pins version opens a fresh three) or start a new
+  attempt.
+- needs-decision, `verification failed on the reviewed head`: decide whether the
+  code or the environment is wrong; a new request on the same head reuses the
+  round and reruns only verification.
+- blocked, `not-reviewed twice in a row`: restore both CLI logins, then amend to
+  resume.
 
-## Repeated review class
-
-Only the orchestrator appends `class` and `class-decision` through
-`decisions.mjs record`; evidence stays outside every worker grant. Never infer
-matching from titles or prose. Use explicit adjudication links for `findingKey`;
-use `findingIdentity(receipt,index)` for full canonical finding IDs.
-
-`class`: id, rule (violated invariant), mechanism, findingIds (nonempty exact IDs),
-supersedes (null initially), approvedBy=orchestrator, approvedAt, recordedAt,
-recordDigest=`decisionDigest(entry)`. A replacement preserves the rule; preserve
-history. Uncertain classification needs orchestrator judgment; a new unmatched
-class does not stop collection.
-
-`class-decision`: id, receipt {collectionId, runId, digest}, classIds, findingKeys
-(at least one), outcome=fix-class|limit, nextStep (one bounded step), checkpoint,
-supersedes, approvedBy=orchestrator, approvedAt, recordedAt, recordDigest. Approval
-must follow the latest receipt. Superseding preserves that receipt; only current
-entries and current referenced classes apply. `limit` additionally carries
-boundary {decisionId: d-NNN, digest: SHA-256 of full canonical boundary},
-behaviorChange (restriction/removal), remainingVerification {command, output} or
-{citation}, and successor (Linear Issue URL). The current approved limit boundary
-must match content and reviewed head. A boundary alone cannot excuse a live defect.
-
-Before another collection:
-1. Inspect the latest receipt and earlier receipt findings; record exact class
-   membership and key links. `review-ledger.mjs decide` returns `classStop`.
-2. Repeat without a current decision: park worker `needs-decision` before edits,
-   local review or new collection. Admission under launch.lock records `withheld`
-   and `class-stop`; no reviewer launches.
-3. Choose `fix-class`: one bounded correction of the whole error class/checkpoint;
-   or `limit`: restrict/remove behavior, verify the remaining approved contract,
-   link successor. Scope decisions stay within approved outcome/delegated bounds.
-   New residual risk or reduced promised outcome goes to owner before continuing;
-   already approved boundaries need no repeated approval.
-4. Deliver the decision/instructions to the parked worker; amend dispatch if it
-   adds a requirement. Append the decision. Collector automatically re-evaluates
-   the withheld request with unchanged reportDigest/pinsVersion when current
-   decision state changes. No manual restart/new request ID is needed. Admissions
-   remain immutable/idempotent; launch.lock serializes contenders.
-
-The fresh history receipts supply latest-round identity; journal/adjudications
-supply explicit classification. A class decision permits another review, never
-admits a defect or changes gate branches/model/effort/priority. Class-stop demand
-is retained after later admission and counts zero reviewer executions at stop.
-
-## Review limits
-
-Only the orchestrator records `continue` or `successor` through decisions.mjs.
-No worker writes evidence. `reviews/<original>-counters.json` stores chain-wide
-blocking signed receipt identities, local internal-pass events, stops and finite
-reservation lists; heads and attempts are not counter boundaries. Valid declines
-remove their exact blocking findings; revocation restores them. Filtered/rejected
-blocking findings remain blocking. Gates still require clean or accepted-with-declines.
-
-Workers report cumulative capsule.local_passes [{id,head,result}] with stable IDs for each
-actual local pass (result=clean|findings; omitted means findings), including failures; do not count the passes inside an external
-receipt as worker-local passes. Collector persists them under launch.lock before
-queue handling. A recorded local stop withholds collection until a later bound
-continue. A clean last pass at two ends the local loop normally and permits collection.
-After two local passes, park needs-decision before another pass,
-both before and after the first external review. Deliver current chain totals and
-approved remaining local allowance in the resume amendment; a worker never writes
-or infers the allowance. Persist local passes before granting continuation.
-
-After two receipts still containing blocking findings, command-state refuses the
-next external collection under launch.lock, records cap-stop and withheld demand,
-and returns needs-decision. Read its stop id from evidence. Continue fields:
-type=continue, id, supersedes (null initially), stopId, collectionId (the exact next
-preflight-collect:<head>:<n>), localPasses/externalCollections (nonnegative integer
-additional budgets), nextStep/checkpoint (bounded action and verification point),
-approvedBy=orchestrator, approvedAt/recordedAt, recordDigest=decisionDigest(entry).
-Approval follows the persisted stop. Local grants count from that stop's total;
-external grants count durable reservations for it. Include decisions/remaining
-allowances in Autoreview decisions:. No decision permits a gate to accept a defect.
-
-The first use binds the stop to its designated next collection. Each later use
-atomically reserves one of the same finite external budget. Request replay retains
-its reservation, including recovery between counter and admission writes. New heads,
-attempts and successors share the reservation list. Reusing or superseding a decision
-does not add budgets: replacement values are total allowances for that same stop,
-and consumed reservations remain consumed. Exhaustion requires a fresh bounded
-decision; park without one. Changes to current chain decisions re-evaluate an
-identical refused report/pins pair. Competing requests serialize; a lock refusal
-reserves nothing and may be retried with the original request identity.
-
-Every collect:true requires a pinned request and registered correlated admission
-before any helper runs; unpinned legacy requests are refused. The collector owns
-admission. Collect:false remains usable to obtain pending requests
-and reconcile history. Collection IDs bind the reviewed head. A completed signed
-history cannot be executed again with the same ID; reconcile it instead.
-Every outstanding admission (no signed receipt yet) reserves free capacity under
-launch.lock. Blocking receipts plus outstanding admissions fill the free allowance;
-replay consumes no additional slot. Completion releases a pending slot, but a
-blocking receipt replaces it in the count. The gate rechecks all pending reservations,
-including continuations, against free capacity;
-a stopped free reservation requires a bound continue before promotion. Decision or
-counter changes re-evaluate a withheld request, including completion of a clean
-pending collection.
-Attribute signed receipts by receipt.issue, otherwise the Issue key of the
-pins.file attempt directory. Ignore receipts with neither; there is no worktree
-fallback or persisted ownership table. Current receipts carry these identities,
-so head, attempt, successor and worktree changes preserve the chain count.
-Scope decision d-005 retains a fail-closed limitation: external-only receipt changes
-can invalidate a local continuation and create a new cap-stop requiring a decision.
-No collection or defect admission occurs; repair is deferred until after release.
-
-Create a successor only through an orchestrator decision: either the existing
-class-decision limit's successor URL, or continue.successorIssue. Before dispatch,
-record in the successor journal type=successor, id, originalIssue (the original,
-never an intermediate successor), decision {id,digest} identifying that original
-journal's authorizing entry, approvedBy=orchestrator, approvedAt/recordedAt and
-recordDigest. One immutable relation per successor; historical creation authority
-survives later decision replacement. The relation inherits all counters and grants;
-it does not excuse a defect, expand approved scope, or reset the chain.
-
-## Review decision pilot
-
-Enable the dispatch pilot block only for approved experimental Issues. Stage
-rules, statuses, certificates and final-head proof remain unchanged. The worker
-proposes; the orchestrator adjudicates and writes evidence. Do not install the
-pilot obligations as universal stage rules before the pilot disposition.
-
-Use installed `decisions.mjs` with `--issue KEY --evidence-root DIR`:
-`record --record FILE` appends to `decisions/<KEY>.json`; `list` reads history;
-`render` emits one deterministic current-decision section. Entry types are
-`decision`, `matrix`, and `verification` (the checkpoint belongs to the phase
-report). Decisions carry the orchestrator-assigned findingKey, problem,
-trigger, evidence, impact, origin, decision, validity {head, base, contracts,
-assumptions}, verification, supersedes, proposedBy and recordedAt. Matrices
-carry invariant, states [{state, expected}], verification and recordedAt;
-verification entries carry forId, method, result and recordedAt. A matrix waiver
-is a verification entry with waiver {findingKey, reason}; forId must name a
-decision on that findingKey. Only current entries apply, so superseding the
-decision also retires its waiver. Every entry
-has id/type. New evidence appends a new ID and a supersedes link to the current
-entry of the same type and invariant; old entries are retained, never edited.
-Pilot matrix waivers do not satisfy the review decline gate.
-
-`version --source FILE` replaces the managed section in the source dataset,
-retaining other sections, and creates immutable
-`datasets/<KEY>-review-scope.v<N>.md` plus `.sha256` only for changed bytes.
-An identical archived version is reused. If a crash left an archive without its
-digest, an identical retry restores only the missing sidecar under the shared
-archive lock; different bytes refuse recovery. Pin its version, path and digest
-before the next review; do not revise a source during collection/verification.
-`materialize --version N --worktree DIR --digest SHA256` checks that archive,
-writes a plain `.orchestrator/review-dataset-<d8>.md` outside the Git index,
-requires Git exclusion, verifies the written digest, and returns its path.
-Keep `.orchestrator/` in the main checkout's info/exclude. Workers receive the
-repo-relative path and digest and use it unchanged with --dataset for local
-passes, plus --stream-engine-output. New version: materialize and repin before
-review. The collector retains its separate copy protocol. At attempt end use
-`materialize` with the same pins and `--remove true` to remove each copy.
-
-Optional phase fields are proposals, not accepted decisions:
-- review_dispositions: decision entries plus eventId. A supersedes ID outside
-  this report is a journal reference whose existence the orchestrator checks.
-- behaviour_matrices: matrix entries plus decisionIds, referencing dispositions
-  in this report with the same findingKey. Include targeted verification results.
-- checkpoint: five nonempty answers named confirmedDefects, evidence,
-  failedFixes, nextExperiment, stopCondition.
-- progress_claim: {progress: fixed|evidence|new-cause|none, evidence, eventIds}.
-The validator checks types and local references; the orchestrator checks
-external references and meaning. Legacy reports and confirm semantics persist.
-
-An orchestrator decision that adds a requirement to the diff, such as
-documentation, a fixture or a boundary change, must reach the worker as a
-dispatch amendment before the next collection is approved.
-
-Before a collection request, read `review-ledger.mjs decide --issue KEY
---evidence-root DIR --attempt N`. It reads the saved ledger, adjudications and
-journal; only explicit adjudication links to decision IDs supply findingKey.
-It returns matrixFindingKeys for keys in two finding-bearing rounds of this
-attempt, and checkpointRequired for the last two adjudicated rounds with
-progress none. Parent collection/helper/internal-pass events count as one
-round; record order determines round order, with later records updating that
-round's progress. Unknown links remain visible; never infer a key from prose.
-Review missing coverage before acting on the hint. Adjudicate progress only
-with evidence, including null when unresolved.
-
-Pre-collect checklist:
-- The dispatch dataset version and digest equal `decisions.mjs version` for the
-  current journal and source dataset; identical bytes reuse the version.
-- No requirement remains undelivered to the worker.
-- The last collection's finding keys have been delivered to the worker.
-
-If the required matrix/test result or five answers are absent, do not call
-the collection adapter. Record `review-ledger.mjs withhold --issue KEY
---evidence-root DIR --record FILE` with {attempt, collectionId, reason,
-recordedBy}; rebuild the ledger to include this collection-request with status
-withheld. It counts demand and zero executions. Give a later actual request a
-new ID. Otherwise record the decision to proceed and run the unchanged gate.
-Publish the pilot protocol before its control/two pilot waves and report the
-outcome before proposing universal rules. Measure generated dispatch bytes and
-rendered dataset bytes as pilot overhead, separately from the unchanged worker
-corpus; report source and scratch-plugin read-budget measurements.
+`clean-with-successors` passes. Its candidates are older defects, minor P3
+leftovers from round 2 on (never data, security or gate bypass) and, on round 3,
+leftovers both roles call harmless. After merge file every `must-file` entry of
+the receipt's `review.successors` list (an older dangerous defect; a minor one
+only for data, security or gate bypass) and decide
+which of the rest become Issues; the gate line and ready certificate repeat the
+list. The collection window (`collectionTimeoutSec`) must cover a round, which
+takes up to 25 minutes on a large risky change, plus verification and one rerun.
 
 ## Delivery Write Barriers
 
@@ -1603,9 +1387,9 @@ Validate the single-item confirmation-request against dispatch product, pinned
 installed skillsRoot, risk/critical, verification command, worktree/head/base and
 evidenceRoot. On spawn, pin evidenceRoot and the complete workerWritableRoots in the request/registry. On resume, any extra grant requires an amended dispatch with the complete effective list; the runtime refuses evidence-root overlap and persists effective grants before launch. Build collection and worker verification requests from these current pins, never an earlier dispatch. Use ~/.mono-agent-workflow/evidence/<product>/ outside EVERY
 worker-writable root (including the orchestrator root and temporary grants).
-Only the orchestrator outside all worker sandboxes runs collect:true. Optionally pin reviewDataset to an orchestrator-owned absolute file under evidenceRoot; the gate binds receipt reviewDataset as {source,digest,copy}. Keep the source unchanged through collection and worker verification. Immediately before the helper, copy it to .orchestrator/review-dataset-<digest8>.md in the reviewed checkout and pass that repo-relative path via --dataset. Verify the copy digest against the source before and after the helper; remove the copy afterwards, best effort. Keep .orchestrator/ ignored; no worker runs during collection. The gate
-runs verification AND the installed autoreview helper inside codex sandbox with the worktree and one private temp directory writable per invocation. On macOS only verification also grants the realpath of `getconf DARWIN_USER_TEMP_DIR` when available: Apple tools write there independently of TMPDIR. Before sandbox launch reject overlap with evidenceRoot, orchestrator root, skillsRoot, packRoot and the resolved helper target. Unavailable Darwin temp leaves the existing verification grants; other platforms are unchanged. Keep TMPDIR/TMP/TEMP in each invocation's private directory. On macOS create review's directory with mode 0700 under ~/.mono-agent-workflow/review-tmp; validate its canonical location outside the Darwin root, all verification write grants, protected roots and workerWritableRoots before launch. Review receives no Darwin grant. Keep review.json, status.json and other consumed review artifacts in that directory and remove it afterwards. The shared worktree remains writable to verification descendants while review reads it: this exposure exists on main and is neither introduced nor closed here. Never use workerWritableRoots as collector grants; keep all orchestrator control state read-only. Exclude skillsRoot/evidenceRoot; a denial probe fails closed if that
-boundary is missing. Record the probe independently of the command exit code; a review with findings fails as a review failure. Keep the trusted autoreview helper outside that write scope, including its real symlink target. Pause the worker during collection. Repository-configured executable Git filters are unsupported by privileged gate/helper reads: the gate refuses before execution, including after verification. If a product requires such filters, obtain a trusted isolation policy instead of disabling this check. Reconcile
+Only the orchestrator outside all worker sandboxes runs collect:true. An optional reviewDataset pin stays bound in the receipt as {source,digest,copy} and archived; reviewers do not receive it. The gate first runs the read-only review round ([Review rounds](#review-rounds)) on an export of the pinned tree; only after `clean` or `clean-with-successors` it
+runs verification inside codex sandbox with the worktree and one private temp directory writable. On macOS verification also grants the realpath of `getconf DARWIN_USER_TEMP_DIR` when available: Apple tools write there independently of TMPDIR. Before sandbox launch reject overlap with evidenceRoot, orchestrator root, skillsRoot and packRoot; such a refusal is recorded in the signed receipt, so the completed round is kept. Unavailable Darwin temp leaves the existing verification grants; other platforms are unchanged. Keep TMPDIR/TMP/TEMP in the invocation's private directory. Never use workerWritableRoots as collector grants; keep all orchestrator control state read-only. Exclude skillsRoot/evidenceRoot; a denial probe fails closed if that
+boundary is missing. Record the probe independently of the command exit code. Pause the worker during collection. Repository-configured executable Git filters are unsupported by privileged gate reads: the gate refuses before execution. If a product requires such filters, obtain a trusted isolation policy instead of disabling this check. Reconcile
 an existing authenticated receipt matching request.collectionId and all pins before repeating collection; failed
 reviews are completed runs too, not missing actions. Return present evidence as
 {receipt: <evidenceRoot>/history/<runId>.json, receiptDigest: <SHA-256 of canonical envelope>, gate: <exact gate answer>}, including a fail. The runtime checks immutable history identity, digest, signature and collection ID before confirming or accepting confirmation; the mutable head receipt is never confirmation evidence. Fsync that result

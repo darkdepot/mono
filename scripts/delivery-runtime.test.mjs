@@ -9,6 +9,7 @@ import path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { spawnSync, execFileSync } from "node:child_process";
 import { test } from "node:test";
+import { installReviewClis, setReview, reviewCalls, reviewFinding } from "./test-fixtures/review-clis.mjs";
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, typeof value === "string" ? value : JSON.stringify(value)); };
@@ -43,6 +44,7 @@ const request=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),root=request.r
 fs.mkdirSync(request.evidenceRoot,{recursive:true});
 const identity=packLayout(request.skillsRoot).identity(),pinsFile=path.join(root,'dispatch',request.issue+'-a1','pins.json');
 request.idea=ideaAttemptFixture(path.join(path.dirname(pinsFile),'snapshot'),request.issue);
+fs.writeFileSync(path.join(path.dirname(pinsFile),'snapshot','issue-'+request.issue+'.md'),'# '+request.issue+'\\n\\nFixture task contract.\\n');
 atomicJson(pinsFile,{...request,base:request.head});
 const entry={issue:request.issue,attempt:1,stage:'mono-deliver',worktree:request.worktree,...identity,pins:{file:pinsFile,digest:sha256File(pinsFile)},pinsVersion:0};
 atomicJson(path.join(root,'workers.json'),{[entry.issue]:entry});
@@ -151,38 +153,20 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
 
     assert.equal(fs.existsSync(monitorMarker), false);
 
-    const helper = path.join(skills, "autoreview/scripts/autoreview");
-    write(helper, `#!/usr/bin/env node
-const fs=require('node:fs'); const a=process.argv.slice(2); const val=k=>a[a.indexOf(k)+1];
-if(a.includes('--dataset')&&require('node:path').isAbsolute(val('--dataset'))){console.error('--dataset must be a repo-relative path');process.exit(2);}
-const failed=process.env.MONO_FIXTURE_REVIEW_FINDINGS==='1';
-const report={findings:failed?[{priority:'P2',title:'fixture finding'}]:[],overall_correctness:failed?'patch is incorrect':'patch is correct'};
-report.fixture={dataset:a.includes('--dataset')?{path:val('--dataset'),content:fs.readFileSync(val('--dataset'),'utf8')}:null,
-  gitEnv:Object.fromEntries(['GIT_CONFIG_GLOBAL','GIT_CONFIG_SYSTEM','GIT_NO_REPLACE_OBJECTS','GIT_GRAFT_FILE','GIT_MONO_FIXTURE'].map(k=>[k,process.env[k]??null])),
-  home:process.env.HOME,path:process.env.PATH};
-fs.writeFileSync(val('--json-output'),JSON.stringify(report));
-fs.writeFileSync(val('--status-output'),JSON.stringify({schema_version:1,status:failed?'findings':'scoped-clean',engine:'claude',exit_code:failed?1:0,report_produced:true,timed_out:false}));
-console.log('autoreview target: branch | engine: claude | model: '+val('--model')+' | thinking: '+val('--thinking'));
-console.log(failed?'autoreview findings: accepted/actionable findings reported':'autoreview clean: no accepted/actionable findings reported');
-console.log('overall: '+report.overall_correctness+' (0.9)');
-if(a.includes('--stream-engine-output'))console.log('claude usage: input_tokens=10 cache_read_input_tokens=20 cache_creation_input_tokens=30 output_tokens=4');
-if(process.env.MONO_FIXTURE_ALTER_DATASET==='1')fs.appendFileSync(val('--dataset'),'changed after review');
-process.exit(failed?1:0);
-`); fs.chmodSync(helper, 0o700);
     // Model the outside orchestrator's sandbox launcher. Nested OS sandboxes
     // cannot be launched from this test worker; permission bits model the denial.
     // The real outside collector must pass its write-denial probe at deployment.
-    write(path.join(bin, "codex"), `#!/usr/bin/env node
+    installReviewClis(bin, { codexStub: `
 const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path');
-const a=process.argv.slice(2);if(a[0]!=='sandbox'||!a.includes('mono-collector'))process.exit(71);
+const a=process.argv.slice(2);if(!a.includes('mono-collector'))process.exit(71);
 const command=a.slice(a.indexOf('--')+1),p=JSON.parse(command.at(-1));
 const profile=a.find(v=>v.startsWith('permissions.mono-collector='));
 const grants=[...profile.matchAll(/("[^"]+")="write"/g)].map(m=>JSON.parse(m[1]));
 const protectedRoot=path.dirname(p.probe);if(grants.some(g=>protectedRoot===g||protectedRoot.startsWith(g+path.sep)))process.exit(72);
 const open=process.env.MONO_FIXTURE_OPEN_SANDBOX==='1';if(!open)fs.chmodSync(protectedRoot,0o500);let r;
 try{r=cp.spawnSync(command[0],command.slice(1),{stdio:'inherit'});}finally{if(!open)fs.chmodSync(protectedRoot,0o700);}
-process.exit(r.status===null?1:r.status);
-`); fs.chmodSync(path.join(bin, "codex"), 0o700);
+process.exit(r.status===null?1:r.status);` });
+    const blocking = [reviewFinding("tracked.txt")];
     fs.mkdirSync(mailbox, { recursive: true });
     const preflight = { product: "fixture", collectionId: `preflight-collect:${head}:1`, root: state, worktree: repo, head, skillsRoot: skills, risk: "risky", critical: null, baseRef: "HEAD", evidenceRoot: path.join(root, "evidence"), workerWritableRoots: [repo, mailbox], collect: false,
       verification: { command: process.execPath, args: ["-e", "const fs=require('node:fs'),os=require('node:os');fs.writeFileSync(fs.mkdtempSync(os.tmpdir()+'/fixture-')+'/temp','ok')"] } };
@@ -247,68 +231,40 @@ process.exit(r.status===null?1:r.status);
     function writeFileRequest(request) { write(gateRequest, request); }
     write(gateRequest, preflight); pass(preflightCall());
     const receiptFile = path.join(preflight.evidenceRoot, `${head}.json`), envelope = json(receiptFile);
-    assert.equal(envelope.receipt.review.sandbox.probed, true);
-    assert.deepEqual(envelope.receipt.review.usage.normalized, { input: 10, cacheRead: 20, cacheWrite: 30, output: 4 });
-    assert.equal(envelope.receipt.review.usageReason, null);
-    const usageTampered = structuredClone(envelope); usageTampered.receipt.review.usage.normalized.input = 11;
-    write(receiptFile, usageTampered); write(gateRequest, preflight);
-    assert.match(preflightCall().stdout, /hand-made or modified/, "usage is sealed before signing");
+    assert.deepEqual([envelope.receipt.producer, envelope.receipt.review.outcome, envelope.receipt.review.round, envelope.receipt.verification.sandbox.probed], ["gate-review-v3", "clean", 1, true]);
+    assert.deepEqual(reviewCalls(bin), ["reviewer", "reviewer"], "the gate ran the review round itself: a risky first round adds the ordinary pass");
+    const roundTampered = structuredClone(envelope); roundTampered.receipt.review.round = 2;
+    write(receiptFile, roundTampered); write(gateRequest, preflight);
+    assert.match(preflightCall().stdout, /hand-made or modified/, "the review result is sealed before signing");
     write(receiptFile, envelope); pass(preflightCall());
-    assert.equal(envelope.receipt.route.engine, 'claude');
-    assert.equal(envelope.receipt.route.provider.id, 'anthropic');
-    assert.match(envelope.receipt.route.fingerprint, /^[a-f0-9]{64}$/);
-    const legacy = structuredClone(envelope.receipt);
-    legacy.route = { model: legacy.route.model, effort: legacy.route.effort };
-    legacy.invocation = legacy.invocation.filter(arg => arg !== "--stream-engine-output");
-    delete legacy.review.usage; delete legacy.review.usageReason;
-    write(receiptFile, { receipt: legacy, signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(legacy)).digest("hex") });
-    pass(preflightCall());
     const defaultModelRoutes = resolveModelRoutes(repo, head, 'worker-default');
-    write(gateRequest, { ...preflight, modelRoutes: defaultModelRoutes });
-    pass(preflightCall());
+    write(gateRequest, { ...preflight, modelRoutes: defaultModelRoutes, collect: true }); pass(preflightCall());
+    assert.deepEqual(json(receiptFile).receipt.modelRoutes, defaultModelRoutes);
+    write(gateRequest, { ...preflight, modelRoutes: defaultModelRoutes }); pass(preflightCall());
     const wrongDefaultPins = structuredClone(defaultModelRoutes);
     wrongDefaultPins.roles.autoreview.fingerprint = '0'.repeat(64);
-    write(gateRequest, { ...preflight, modelRoutes: wrongDefaultPins });
+    write(gateRequest, { ...preflight, modelRoutes: wrongDefaultPins, collect: true });
     assert.match(preflightCall().stdout, /model route fingerprint mismatch/);
-    legacy.modelRoutes = defaultModelRoutes;
-    write(receiptFile, { receipt: legacy, signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(legacy)).digest("hex") });
-    write(gateRequest, { ...preflight, modelRoutes: defaultModelRoutes }); pass(preflightCall());
-    delete legacy.modelRoutes;
-    write(gateRequest, { ...preflight, collect: true }); pass(preflightCall());
-    const recollected = json(receiptFile).receipt;
-    assert.equal(recollected.route.engine, 'claude');
-    assert.equal(recollected.route.provider.id, 'anthropic');
-    assert.match(recollected.route.fingerprint, /^[a-f0-9]{64}$/);
-    write(gateRequest, preflight); pass(preflightCall());
-    legacy.invocation.push("--unsupported");
-    write(receiptFile, { receipt: legacy, signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(legacy)).digest("hex") });
-    assert.match(preflightCall().stdout, /provenance\/command mismatch/);
+    const old = { ...envelope.receipt, producer: "gate-autoreview-v2" };
+    write(receiptFile, { receipt: old, signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(old)).digest("hex") });
+    write(gateRequest, preflight); assert.match(preflightCall().stdout, /old receipt format/, "receipts of the previous producer are refused");
     write(receiptFile, envelope);
 
     assert.equal(fs.existsSync(envelope.receipt.verification.sandbox.tempRoot), false);
-    assert.equal(fs.existsSync(envelope.receipt.review.sandbox.tempRoot), false);
-    assert.equal(envelope.receipt.invocation[envelope.receipt.invocation.indexOf("--base") + 1], head);
+    assert.equal(envelope.receipt.base, head);
     const datasetFile = path.join(preflight.evidenceRoot, "datasets", "MONO-998-review-scope.md");
     const datasetText = "Orchestrator-owned fixture scope decisions.\n";
     write(path.join(repo, ".git/info/exclude"), ".orchestrator/\n");
     write(datasetFile, datasetText);
     const datasetRequest = { ...preflight, reviewDataset: datasetFile };
-    env.GIT_MONO_FIXTURE = "must not reach helper";
     write(gateRequest, { ...datasetRequest, collect: true }); pass(preflightCall());
-    delete env.GIT_MONO_FIXTURE;
     const datasetEnvelope = json(receiptFile), datasetReceipt = datasetEnvelope.receipt;
     assert.equal(validateCollectionConfirmation(collectionReport, firstConfirmation), true, "later collection does not change earlier confirmation identity");
     const datasetDigest = crypto.createHash("sha256").update(datasetText).digest("hex");
     const datasetCopy = `.orchestrator/review-dataset-${datasetDigest.slice(0, 8)}.md`;
     assert.deepEqual(datasetReceipt.reviewDataset, { source: datasetFile, digest: datasetDigest, copy: datasetCopy, version: 1, archive: path.join(fs.realpathSync(preflight.evidenceRoot), "datasets", "MONO-998-review-scope.v1.md") });
-    assert.deepEqual(datasetReceipt.invocation.slice(-3), ["--dataset", datasetCopy, "--stream-engine-output"]);
-    assert.deepEqual(datasetReceipt.review.json.fixture.dataset, { path: datasetCopy, content: datasetText });
-    assert.equal(fs.existsSync(path.join(repo, datasetCopy)), false, "collector removes the helper copy");
+    assert.equal(fs.existsSync(path.join(repo, datasetCopy)), false, "the dataset is bound, never copied into the worktree");
     assert.equal(fs.readFileSync(datasetFile, "utf8"), datasetText, "orchestrator source is unchanged");
-    assert.deepEqual(datasetReceipt.review.json.fixture.gitEnv, { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null",
-      GIT_NO_REPLACE_OBJECTS: "1", GIT_GRAFT_FILE: "/dev/null", GIT_MONO_FIXTURE: null });
-    assert.equal(datasetReceipt.review.json.fixture.home, env.HOME);
-    assert.equal(datasetReceipt.review.json.fixture.path, env.PATH);
     assert.equal(datasetReceipt.evidenceRoot, fs.realpathSync(preflight.evidenceRoot));
     write(gateRequest, datasetRequest); pass(preflightCall());
     const datasetEvidenceAlias = path.join(root, "dataset-evidence-alias");
@@ -323,16 +279,10 @@ process.exit(r.status===null?1:r.status);
     write(datasetFile, datasetText + "Changed decision.\n"); write(gateRequest, datasetRequest);
     assert.match(preflightCall().stdout, /receipt reviewDataset differs/);
     write(datasetFile, datasetText); pass(preflightCall());
-    env.MONO_FIXTURE_ALTER_DATASET = "1";
+    setReview(bin, { findings: blocking });
     write(gateRequest, { ...datasetRequest, collect: true });
-    assert.match(preflightCall().stdout, /collection consistency failed/);
-    assert.equal(json(receiptFile).receipt.consistency.error, "review dataset copy digest differs from source");
-    assert.equal(fs.existsSync(path.join(repo, datasetCopy)), false, "failed copy verification still cleans up");
-    delete env.MONO_FIXTURE_ALTER_DATASET;
-    env.MONO_FIXTURE_REVIEW_FINDINGS = "1";
-    assert.equal(preflightCall().stdout.trim(), "gate preflight: fail: invalid nonempty findings report required");
-    assert.equal(fs.existsSync(path.join(repo, datasetCopy)), false, "review findings still clean up the copy");
-    delete env.MONO_FIXTURE_REVIEW_FINDINGS;
+    assert.match(preflightCall().stdout.trim(), /^gate preflight: fail: review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 tracked\.txt:1 Invalid input is accepted \(when: value is negative; why: The changed line accepts the value\.\)$/);
+    setReview(bin, { findings: [] });
     write(receiptFile, datasetEnvelope); write(gateRequest, datasetRequest); pass(preflightCall());
     const outsideDataset = path.join(root, "outside.md"); write(outsideDataset, datasetText);
     const aliasDataset = path.join(preflight.evidenceRoot, "datasets", "alias.md"); fs.symlinkSync(outsideDataset, aliasDataset);
@@ -347,29 +297,24 @@ process.exit(r.status===null?1:r.status);
     const broadRequest = { ...preflight, collect: true, workerWritableRoots: [repo, state, path.join(state, "confirmations")] };
     write(gateRequest, broadRequest); pass(preflightCall());
     const narrow = json(receiptFile).receipt;
-    for (const [phase, command] of Object.entries({ verification: narrow.verification, review: narrow.review })) {
+    for (const [phase, command] of Object.entries({ verification: narrow.verification })) {
       const profile = command.sandbox.args.find(arg => arg.startsWith("permissions.mono-collector="));
       const grants = [...profile.matchAll(/("[^"]+")="write"/g)].map(match => JSON.parse(match[1]));
       assert.deepEqual(grants.sort(), [fs.realpathSync(repo), command.sandbox.tempRoot,
         ...(process.platform === "darwin" && phase === "verification" ? [path.join(root, "darwin-temp")] : [])].map(p => fs.realpathSync(path.dirname(p)) + path.sep + path.basename(p)).sort());
       assert.ok(!grants.some(grant => grant === state || grant.startsWith(state + path.sep)));
     }
-    for (const flag of ["--json-output", "--status-output"]) {
-      assert.equal(path.dirname(narrow.review.args[narrow.review.args.indexOf(flag) + 1]), narrow.review.sandbox.tempRoot);
-    }
     write(gateRequest, { ...broadRequest, collect: false }); pass(preflightCall());
-    env.MONO_FIXTURE_REVIEW_FINDINGS = "1";
+    setReview(bin, { findings: blocking });
     write(gateRequest, { ...preflight, collect: true });
     const findingResult = preflightCall();
     assert.equal(findingResult.status, 1);
-    assert.equal(findingResult.stdout.trim(), "gate preflight: fail: invalid nonempty findings report required");
+    assert.match(findingResult.stdout.trim(), /^gate preflight: fail: review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 tracked\.txt:1 Invalid input is accepted \(when: value is negative; why: The changed line accepts the value\.\)$/);
     const failedReview = json(receiptFile).receipt;
-    assert.equal(failedReview.review.exitCode, 1);
-    assert.equal(failedReview.review.sandbox.probed, true);
-    assert.equal(failedReview.loop.residualFindings[0].priority, "P2");
-    delete env.MONO_FIXTURE_REVIEW_FINDINGS;
+    assert.deepEqual([failedReview.review.outcome, failedReview.review.spent, failedReview.verification.exitCode], ["not-converged", true, null], "no verification after an unaccepted review");
+    setReview(bin, { findings: [] });
     write(gateRequest, preflight);
-    assert.equal(preflightCall().stdout.trim(), "gate preflight: fail: invalid nonempty findings report required");
+    assert.match(preflightCall().stdout.trim(), /^gate preflight: fail: review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 tracked\.txt:1 Invalid input is accepted \(when: value is negative; why: The changed line accepts the value\.\)$/);
     write(receiptFile, envelope);
     const tree = pass(run("git", ["rev-parse", "HEAD^{tree}"], repo, env)).stdout.trim();
     const alternate = pass(run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit-tree", tree, "-m", "alternate"], repo, env)).stdout.trim();
@@ -380,7 +325,7 @@ process.exit(r.status===null?1:r.status);
     write(gateRequest, { ...changedBase, collect: true });
     assert.match(preflightCall().stdout, /collection consistency failed/);
     assert.equal(json(receiptFile).receipt.consistency.passed, false);
-    assert.equal(json(receiptFile).receipt.review.json, null);
+    assert.equal(json(receiptFile).receipt.review.outcome, "clean");
     pass(run("git", ["update-ref", baseRef, head], repo, env));
     write(gateRequest, changedBase);
     assert.match(preflightCall().stdout, /collection consistency failed/);
@@ -389,10 +334,9 @@ process.exit(r.status===null?1:r.status);
     assert.match(preflightCall().stdout, /hand-made or modified/); write(receiptFile, envelope);
     env.MONO_FIXTURE_OPEN_SANDBOX = "1";
     write(gateRequest, { ...preflight, collect: true });
-    assert.match(preflightCall().stdout, /fail: local verification failed/);
+    assert.match(preflightCall().stdout, /fail: needs-decision: verification failed on the reviewed head/);
     assert.match(json(receiptFile).receipt.verification.output, /sandbox permits evidence writes/);
     assert.equal(json(receiptFile).receipt.verification.sandbox.probed, false);
-    assert.equal(json(receiptFile).receipt.review.json, null);
     delete env.MONO_FIXTURE_OPEN_SANDBOX;
     const retry = { ...preflight, collectionId: `preflight-collect:${head}:2` };
     write(gateRequest, retry);
@@ -415,12 +359,6 @@ process.exit(r.status===null?1:r.status);
         assert.match(preflightCall().stdout, /evidenceRoot must be outside/);
       }
     }
-    const linkedDir = path.join(repo, ".git", "linked-helper"), linkedHelper = path.join(linkedDir, "autoreview");
-    write(linkedHelper, fs.readFileSync(helper, "utf8")); fs.chmodSync(linkedHelper, 0o700);
-    fs.unlinkSync(helper); fs.symlinkSync(linkedHelper, helper);
-    write(gateRequest, { ...preflight, collect: true, workerWritableRoots: [...preflight.workerWritableRoots, linkedDir] });
-    assert.match(preflightCall().stdout, /autoreview helper real path must be outside/);
-    fs.unlinkSync(helper); fs.copyFileSync(linkedHelper, helper); fs.chmodSync(helper, 0o700);
     const filter = path.join(root, "clean-filter"), filterMarker = path.join(root, "filter-ran");
     write(filter, `#!/usr/bin/env node\nconst fs=require('node:fs');fs.writeFileSync(${JSON.stringify(filterMarker)},'unsafe');process.stdout.write(fs.readFileSync(0));`);
     fs.chmodSync(filter, 0o700);
@@ -437,12 +375,12 @@ process.exit(r.status===null?1:r.status);
     const attack = path.join(preflight.evidenceRoot, "untrusted-proof");
     write(gateRequest, { ...preflight, collect: true, verification: { command: process.execPath,
       args: ["-e", `require('node:fs').writeFileSync(${JSON.stringify(attack)},'forged')`] } });
-    assert.match(preflightCall().stdout, /fail: local verification failed/);
+    assert.match(preflightCall().stdout, /fail: needs-decision: verification failed on the reviewed head/);
     assert.equal(fs.existsSync(attack), false);
     assert.equal(json(receiptFile).receipt.verification.sandbox.probed, true);
     write(receiptFile, envelope); write(gateRequest, preflight); pass(preflightCall());
-    const sealed = structuredClone(envelope); sealed.receipt.route.effort = "low"; write(receiptFile, sealed);
-    assert.equal(preflightCall().status, 1, "tampered route refused"); write(receiptFile, envelope);
+    const sealed = structuredClone(envelope); sealed.receipt.review.outcome = "clean-with-successors"; write(receiptFile, sealed);
+    assert.equal(preflightCall().status, 1, "tampered review outcome refused"); write(receiptFile, envelope);
     for (const collect of [true, false]) {
       for (const extra of [{ probe: "/not-the-evidence-root" }, { exitCode: 0 }, { args: [42] }]) {
         write(gateRequest, { ...preflight, collect, verification: { ...preflight.verification, ...extra } });
@@ -538,7 +476,7 @@ console.log(JSON.stringify(result));
     fs.renameSync(history, savedHistory);
     try {
       write(gateRequest, { ...proofRequest, preflight: { ...preflight, idea, pins: pinsBinding, reviewDatasetVersion: 0 } });
-      const missing = shipCall(); assert.equal(missing.status, 1); assert.match(missing.stdout, /missing or stale autoreview artifact/u);
+      const missing = shipCall(); assert.equal(missing.status, 1); assert.match(missing.stdout, /missing or stale review receipt/u);
       assert.ok(!missing.stdout.includes("publishRequest") && !missing.stdout.includes("pending"));
     } finally {
       fs.renameSync(savedHistory, history);
@@ -555,16 +493,17 @@ console.log(JSON.stringify(result));
     const saveFixtureReceipt = receipt => write(receiptFile, { receipt,
       signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(receipt)).digest("hex") });
     for (const [change, reason] of [
-      [r => { r.head = alternate; }, /missing or stale autoreview artifact\/head\/base/],
-      [r => { r.base = alternate; }, /missing or stale autoreview artifact\/head\/base/],
-      [r => { r.route.effort = "low"; }, /wrong policy route/],
-      [r => { r.review.exitCode = 1; }, /incomplete or contradictory findings result/],
+      [r => { r.head = alternate; }, /missing or stale review receipt\/head\/base/],
+      [r => { r.base = alternate; }, /missing or stale review receipt\/head\/base/],
+      [r => { r.producer = "gate-autoreview-v2"; }, /old receipt format/],
+      [r => { r.review.outcome = "not-converged"; }, /review not-converged \(round 1 of 3\)/],
+      [r => { r.verification.exitCode = 1; }, /needs-decision: verification failed/],
     ]) {
       const invalid = structuredClone(envelope.receipt); change(invalid); saveFixtureReceipt(invalid);
       assert.match(shipCall().stdout, reason);
     }
     write(receiptFile, { receipt: envelope.receipt, signature: "worker-asserted" });
-    assert.match(shipCall().stdout, /hand-made or modified autoreview artifact/);
+    assert.match(shipCall().stdout, /hand-made or modified review receipt/);
     write(receiptFile, envelope);
     write(gateRequest, shipRequest);
     const greenShip = pass(shipCall());
@@ -620,7 +559,6 @@ console.log(JSON.stringify(result));
     };
     pass(credentialedPreflight(false));
     pass(credentialedPreflight(true));
-    assert.equal(json(receiptFile).receipt.review.json.fixture.gitEnv.GIT_CONFIG_GLOBAL, "/dev/null");
     assert.equal(fs.existsSync(monitorMarker), false, "global and local fsmonitor remain disabled for reads/fetch");
     pass(run("git", ["-c", "core.fsmonitor=false", "config", "--unset", "core.fsmonitor"], repo, env));
     write(receiptFile, envelope);
@@ -656,7 +594,6 @@ console.log(JSON.stringify(result));
     write(githubFile, { github: { ...github, baseRefOid: advanced }, checks });
     write(gateRequest, { ...remotePreflight, collect: true }); pass(preflightCall());
     assert.equal(json(receiptFile).receipt.base, head, "collector records merge-base, not advanced tip");
-    assert.equal(json(receiptFile).receipt.invocation[3], head, "helper reviews the same immutable diff base");
     write(receiptFile, envelope);
     const rebased = pass(run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
       "commit-tree", tree, "-p", advanced, "-m", "rebased head"], repo, env)).stdout.trim();
@@ -1249,7 +1186,7 @@ test('launch pins resolve BASE config and refuse unsupported transport before la
   }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 
-test('installed collectors seal configured engines and consume the same BASE route after config changes', async () => {
+test('installed collector takes review roles from the immutable BASE config; one model family is not-reviewed', async () => {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-engines-'));
   const skills=path.join(root,'skills'),repo=path.join(root,'repo'),state=path.join(root,'state'),bin=path.join(root,'bin');
   const env={...process.env,HOME:path.join(root,'home'),MONO_WORKFLOW_STATE_ROOT:path.join(root,'state-root'),
@@ -1258,83 +1195,34 @@ test('installed collectors seal configured engines and consume the same BASE rou
     copyPluginFixture(skills);
     controlledDarwinTemp(bin, root);
     const runtime=path.join(skills,'scripts');
-    const {requiredPairings,resolveModelRoutes,canonical}=await import(pathToFileURL(path.join(runtime,'runtime.mjs')));
-    write(path.join(bin,'codex'),`#!/usr/bin/env node
+    const {requiredPairings,resolveModelRoutes}=await import(pathToFileURL(path.join(runtime,'runtime.mjs')));
+    installReviewClis(bin,{packRoot:skills,codexStub:`
 const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path'),a=process.argv.slice(2);
-if(a[0]!=='sandbox')process.exit(71);
 const command=a.slice(a.indexOf('--')+1),p=JSON.parse(command.at(-1)),root=path.dirname(p.probe);
-fs.chmodSync(root,0o500);let r;try{r=cp.spawnSync(command[0],command.slice(1),{stdio:'inherit'});}finally{fs.chmodSync(root,0o700);}process.exit(r.status??1);
-`);fs.chmodSync(path.join(bin,'codex'),0o700);
-    const helper=path.join(skills,'autoreview/scripts/autoreview');
-    write(helper,`#!/usr/bin/env node
-const fs=require('node:fs'),crypto=require('node:crypto'),a=process.argv.slice(2),val=k=>a[a.indexOf(k)+1],engine=val('--engine');
-const keys=['ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','OPENAI_API_KEY','XAI_API_KEY','KIMI_API_KEY','KIMI_BASE_URL','OPENAI_BASE_URL','ANTHROPIC_BASE_URL','ANTHROPIC_DEFAULT_OPUS_MODEL','REVIEW_CREDENTIAL'];
-const environment=Object.fromEntries(keys.filter(k=>process.env[k]!==undefined).map(k=>[k,crypto.createHash('sha256').update(process.env[k]).digest('hex')]));
-fs.writeFileSync(val('--json-output'),JSON.stringify({findings:[],overall_correctness:'patch is correct',environment}));
-fs.writeFileSync(val('--status-output'),JSON.stringify({schema_version:1,status:'scoped-clean',engine,exit_code:0,report_produced:true,timed_out:false}));
-console.log('autoreview target: branch | engine: '+engine+' | model: '+val('--model')+' | thinking: '+val('--thinking'));
-console.log('autoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority');console.log('overall: patch is correct (0.9)');
-`);fs.chmodSync(helper,0o700);
+fs.chmodSync(root,0o500);let r;try{r=cp.spawnSync(command[0],command.slice(1),{stdio:'inherit'});}finally{fs.chmodSync(root,0o700);}process.exit(r.status??1);`});
     fs.mkdirSync(repo);fs.mkdirSync(state);pass(run('git',['init','-b','fixture'],repo,env));
-    pass(run('git',['commit','--allow-empty','-m','ancestor without models'],repo,env));
-    const ancestor = pass(run('git',['rev-parse','HEAD'],repo,env)).stdout.trim();
-    const ancestorPins = resolveModelRoutes(repo, ancestor, 'worker-default');
-    for(const engine of ['claude','kimi','pi','codex']) {
-      const config={models:{roles:{autoreview:{engine,model:'example-reviewer',effortByRisk:Object.fromEntries(['tiny','standard','deep','risky','riskyCritical'].map(r=>[r,engine==='kimi'?'on':'high'])),
-        provider:{id:engine==='claude'?'external':engine==='kimi'?'moonshot':'openai',endpoint:'https://fixture.invalid/v1',credentialEnv:'REVIEW_CREDENTIAL'}}}}};
-      config.models.pairingAccepted=requiredPairings(config).map(pair=>({...pair,linearDecision:'https://linear.app/example/issue/TEST-1#decision',by:'owner',date:'2026-09-16'}));
-      write(path.join(repo,'.agents/mono-workflow.config.json'),config);pass(run('git',['add','.'],repo,env));pass(run('git',['commit','-m','base '+engine],repo,env));
-      const base=pass(run('git',['rev-parse','HEAD'],repo,env)).stdout.trim(),modelRoutes=resolveModelRoutes(repo,base,'worker-default');
-      write(path.join(repo,'.agents/mono-workflow.config.json'),{models:{roles:{autoreview:{engine:'invalid-in-diff'}}}});
-      pass(run('git',['add','.'],repo,env));pass(run('git',['commit','-m','head config differs'],repo,env));
-      const head=pass(run('git',['rev-parse','HEAD'],repo,env)).stdout.trim();
-      const request={product:'fixture',collectionId:`preflight-collect:${head}:1`,root:state,worktree:repo,head,skillsRoot:skills,risk:'risky',critical:null,baseRef:base,evidenceRoot:path.join(root,'evidence'),workerWritableRoots:[repo,state],collect:true,modelRoutes,verification:{command:process.execPath,args:['-e','process.exit(0)']}};
-      const file=path.join(root,'request.json');write(file,request);
-      const secret=crypto.randomBytes(24).toString('hex'),callEnv={...env,REVIEW_CREDENTIAL:secret,ANTHROPIC_DEFAULT_OPUS_MODEL:'external',ANTHROPIC_AUTH_TOKEN:'external',XAI_API_KEY:'external',KIMI_BASE_URL:'https://external.invalid',OPENAI_API_KEY:'external'};
-      const call=installedAdmissionFixture(runtime,file,repo,callEnv);
-      pass(call());
-      const receiptPath=path.join(request.evidenceRoot,head+'.json'),envelope=json(receiptPath),receipt=envelope.receipt;
-      assert.equal(receipt.route.engine,engine);assert.equal(receipt.route.fingerprint,modelRoutes.roles.autoreview.fingerprint);
-      assert.equal(receipt.review.status.engine,engine);
-      const target=engine==='claude'?'ANTHROPIC_AUTH_TOKEN':engine==='kimi'?'KIMI_API_KEY':'OPENAI_API_KEY';
-      const endpoint=engine==='claude'?'ANTHROPIC_BASE_URL':engine==='kimi'?'KIMI_BASE_URL':'OPENAI_BASE_URL';
-      assert.deepEqual(Object.keys(receipt.review.json.environment).sort(),[target,endpoint].sort());
-      assert.equal(receipt.review.json.environment[target],crypto.createHash('sha256').update(secret).digest('hex'));
-      assert.equal(fs.readFileSync(receiptPath,'utf8').includes(secret),false);
-      write(file,{...request,collect:false});pass(call());
-      write(file,{...request,collect:false,modelRoutes:ancestorPins});
-      const changedBinding = call(); assert.equal(changedBinding.status, 1);
-      assert.match(changedBinding.stdout, /receipt modelRoutes differs from dispatch request/, 'modern receipts retain their sealed pin binding');
-      write(file,{...request,collect:false});
-      if (engine === 'claude') {
-        const legacy = structuredClone(receipt);
-        legacy.route = { model: legacy.route.model, effort: legacy.route.effort };
-        for (const includePins of [false, true]) {
-          if (includePins) legacy.modelRoutes = modelRoutes;
-          else delete legacy.modelRoutes;
-          write(receiptPath, { receipt: legacy, signature: crypto.createHmac('sha256', fs.readFileSync(path.join(request.evidenceRoot, 'receipt.key'))).update(canonical(legacy)).digest('hex') });
-          const refusal = call(); assert.equal(refusal.status, 1);
-          assert.match(refusal.stdout, /legacy receipt cannot certify model override pins/);
-        }
-        const ancestorRequest = { ...request, collectionId: `preflight-collect:${head}:2`, modelRoutes: ancestorPins };
-        write(file, ancestorRequest); pass(call());
-        const ancestorLegacy = json(receiptPath).receipt;
-        ancestorLegacy.route = { model: ancestorLegacy.route.model, effort: ancestorLegacy.route.effort };
-        delete ancestorLegacy.modelRoutes;
-        write(receiptPath, { receipt: ancestorLegacy, signature: crypto.createHmac('sha256', fs.readFileSync(path.join(request.evidenceRoot, 'receipt.key'))).update(canonical(ancestorLegacy)).digest('hex') });
-        write(file, { ...ancestorRequest, collect: false });
-        const ancestorRefusal = call();
-        assert.equal(ancestorRefusal.status, 1, 'ancestor pins without models cannot bypass models at the review base: ' + ancestorRefusal.stdout);
-        assert.match(ancestorRefusal.stdout, /legacy receipt cannot certify model override pins/);
-        write(receiptPath, envelope);
-        write(file, { ...request, collect: false });
-      }
-      const tampered=structuredClone(modelRoutes);tampered.roles.autoreview.fingerprint='0'.repeat(64);
-      write(file,{...request,collect:false,modelRoutes:tampered});assert.equal(call().status,1);
-      write(file,{...request,collect:true,modelRoutes:tampered});assert.match(call().stdout,/fingerprint mismatch/);
-      write(file,{...request,collect:true,modelRoutes:undefined});assert.match(call().stdout,/launch pins required/);
-    }
-  } finally {fs.rmSync(root,{recursive:true,force:true});}
+    const commit=(message,config)=>{
+      if(config)write(path.join(repo,'.agents/mono-workflow.config.json'),config);
+      pass(run('git',['add','.'],repo,env));pass(run('git',['commit','--allow-empty','-m',message],repo,env));
+      return pass(run('git',['rev-parse','HEAD'],repo,env)).stdout.trim();
+    };
+    const ancestor=commit('ancestor without models');
+    // A product override puts the checker in the reviewer's family; an accepted pairing does not authorize it.
+    const config={models:{roles:{'code-review-checker':{engine:'codex',model:JSON.parse(fs.readFileSync(path.join(bin,'review.json'),'utf8')).model}}}};
+    config.models.pairingAccepted=requiredPairings(config,{packRoot:skills,reviewerRole:'code-review'}).map(pair=>({...pair,linearDecision:'https://linear.app/example/issue/TEST-1#decision',by:'owner',date:'2026-11-10'}));
+    const base=commit('base with one family',config),head=commit('head config differs',{});
+    const request=(baseRef,n)=>({product:'fixture',collectionId:`preflight-collect:${head}:${n}`,root:state,worktree:repo,head,skillsRoot:skills,risk:'risky',critical:null,baseRef,evidenceRoot:path.join(root,'evidence'),
+      workerWritableRoots:[repo,state],collect:true,modelRoutes:resolveModelRoutes(repo,baseRef,'worker-default'),verification:{command:process.execPath,args:['-e','process.exit(0)']}});
+    const file=path.join(root,'request.json'),call=installedAdmissionFixture(runtime,file,repo,env),receiptPath=path.join(root,'evidence',head+'.json');
+    write(file,request(base,1));
+    const refused=call();assert.equal(refused.status,1,refused.stdout+refused.stderr);
+    assert.match(refused.stdout,/fail: not-reviewed: reviewer\/checker must use different families/);
+    assert.deepEqual([json(receiptPath).receipt.review.spent,reviewCalls(bin)],[false,[]],'no role is launched and no round is spent');
+    // The same head against a base without the override resolves the default pair, whatever the diff says.
+    write(file,request(ancestor,2));
+    assert.match(pass(call()).stdout,/pass: review clean \(round 1 of 3\)/);
+    assert.deepEqual(reviewCalls(bin),['reviewer','reviewer'],'a risky first round adds the ordinary pass');
+  } finally { fs.rmSync(root,{recursive:true,force:true}); }
 });
 
 test('wait-mode consumption verifies the live writer incarnation and outstanding command', async () => {
