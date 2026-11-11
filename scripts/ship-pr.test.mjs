@@ -178,6 +178,10 @@ test('description: rewritten between Ship markers, the bot block kept, the form 
   assert.match(problems(author()).join(), /ровно одна строка «Проверки»/);
   assert.match(problems(`${author()}\n${line}\nПроверки: 1 из 1 прошли; tests прошли`).join(), /ровно одна строка/);
   assert.match(problems(`<!--\n${author()}\n-->\nShort.\n${line}`).join(), /нет раздела «Что изменилось»/, 'sections hidden in a comment do not count');
+  for (const hidden of [`<details name="tech">\n${author()}\n</details>`, `<details><summary>a</summary>\n<details>x</details>\n${author()}\n</details>`, `<DETAILS>\n${author()}`])
+    assert.match(problems(`Short.\n${hidden}\n${line}`).join(), /нет раздела «Что изменилось»/, hidden.slice(0, 30));
+  assert.match(problems(`${author()}\n${line}\n  Проверки: 99 из 99 прошли`).join(), /ровно одна строка/, 'an indented checks line counts too');
+  assert.match(problems(`${author()}\n${line}\n- Проверки: 99 из 99 прошли`).join(), /ровно одна строка/, 'a checks line in a list counts too');
   const nested = composeBody({ author: `${author()}\n${line}`, head }).replace('<!-- /mono:ship body -->', '<!-- /mono:ship body -->\nhidden claim\n<!-- /mono:ship body -->');
   assert.match(bodyProblems({ body: nested, issue: 'MONO-324', head }).join(), /без части автора/, 'repeated markers leave no trusted author part');
   assert.match(composeBody({ author: 'new', head, current: `${SHIP_MARKER}\nold draft\n\n## Greptile Summary\nBot` }), /## Greptile Summary\nBot/, 'a draft without the author block keeps the bot block');

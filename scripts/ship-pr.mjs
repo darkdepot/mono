@@ -108,7 +108,13 @@ export function checksLine({ checks = [], head, deferred = [] }) {
   if (deferred.length) parts.push(`перенесено: ${deferred.join(', ')}`);
   return `Проверки: ${groups.passed.length} из ${onHead.length + deferred.length} прошли${parts.length ? `; ${parts.join('; ')}` : ''}`;
 }
-const visible = text => text.replace(/<details>[\s\S]*?<\/details>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ');
+// What a reader sees: comments and every <details> block (with attributes, nested, or left unclosed) removed.
+const visible = text => {
+  let seen = String(text).replace(/<!--[\s\S]*?-->/g, ' '), previous;
+  do { previous = seen; seen = seen.replace(/<details\b[^>]*>(?:(?!<details\b)[\s\S])*?<\/details\s*>/gi, ' '); } while (seen !== previous);
+  return seen.replace(/<details\b[\s\S]*$/i, ' ');
+};
+const CHECKS_LINE = /^[ \t]*(?:[-*+>][ \t]*)*Проверки:.*$/gm;
 const section = (text, name) => { const match = new RegExp(`^##\\s+${name}\\s*$([\\s\\S]*?)(?=^##\\s|(?![\\s\\S]))`, 'm').exec(text); return match ? match[1].trim() : null; };
 // U5: only the unambiguous is checked before leaving draft; the read-only pass judges the rest.
 export function bodyProblems({ body, issue, head, checks = [] }) {
@@ -124,7 +130,7 @@ export function bodyProblems({ body, issue, head, checks = [] }) {
   if (words > 400) problems.push(`видимая часть ${words} слов, больше 400`);
   if (!new RegExp(`\\[${issue}\\]\\(https://`).test(seen)) problems.push(`нет ссылки на задачу ${issue}`);
   if (/\b[a-f0-9]{40}\b/.test(seen)) problems.push('хеш версии в видимой части');
-  const lines = [...seen.matchAll(/^Проверки:.*$/gm)].map(match => match[0]), line = /^Проверки: (\d+) из (\d+) прошли/.exec(lines[0] ?? '');
+  const lines = [...seen.matchAll(CHECKS_LINE)].map(match => match[0]), line = /^Проверки: (\d+) из (\d+) прошли/.exec(lines[0] ?? '');
   const passed = checks.filter(check => check.head === head && CHECK_STATE(check) === 'passed').length;
   if (lines.length !== 1 || !line) problems.push('нужна ровно одна строка «Проверки», её пишет Ship');
   else if (Number(line[1]) > passed) problems.push(`строка «Проверки» называет прошедшими ${line[1]}, а прошло ${passed}`);
@@ -265,7 +271,7 @@ async function main(argv) {
     const pr = ghJson('api', `repos/${args.repo}/pulls/${args.pr}`), snapshot = readShipSnapshot(args.repo, Number(args.pr));
     requireThat(snapshot.head === args.head, `PR head moved: ${snapshot.head}`);
     // Ship writes the «Проверки» line itself from the head's checks; the author's text must not carry one.
-    const author = fs.readFileSync(args.file, 'utf8').replace(/^Проверки:.*$/gm, '').trim();
+    const author = fs.readFileSync(args.file, 'utf8').replace(CHECKS_LINE, '').trim();
     const line = checksLine({ checks: snapshot.checks, head: args.head, deferred: (args.deferred ?? '').split(';').map(item => item.trim()).filter(Boolean) });
     const body = composeBody({ author: `${author}\n\n${line} · Задача: ${args.issue}`, head: args.head, current: pr.body ?? '' });
     const problems = bodyProblems({ body, issue: args.issue, head: args.head, checks: snapshot.checks });
