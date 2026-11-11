@@ -8,9 +8,8 @@ import { test } from 'node:test';
 import { copyPluginFixture } from './plugin-fixture.mjs';
 import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
 import { atomicJson } from './runtime.mjs';
-import { versionDataset, recordDecision, readJournal, acceptedDeclines } from './decisions.mjs';
+import { versionDataset } from './orchestrator/dispatch.mjs';
 import { archiveReviewDataset } from './gate.mjs';
-import { declineFixture, seal, sha } from './decline-fixtures.mjs';
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = file => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -186,20 +185,9 @@ test('dispatch-default-dataset', async () => {
     assert.equal(pins.reviewDatasetVersion, 1); assert.equal(fs.existsSync(f.evidence), true);
     const bytes = fs.readFileSync(archive), digest = fs.readFileSync(archive + '.sha256');
     assert.equal(digest.toString().trim(), pins.reviewDatasetDigest);
-    // The gate archives the dispatch pin as v1; a receipt on that first dataset
-    // can use the existing decision-linked decline path without relaxing it.
+    // The gate archives the dispatch pin as v1.
     const binding = await archiveReviewDataset(archive, f.evidence);
     assert.equal(binding.version, 1); assert.equal(binding.digest, pins.reviewDatasetDigest);
-    const decline = declineFixture({ basis: 'boundary' }), receipt = { ...decline.receipt, reviewDataset: binding };
-    await recordDecision({ evidenceRoot: f.evidence, issue: f.issue, entry: decline.boundary });
-    const { recordDigest, ...entry } = decline.entry;
-    const receiptDigest = sha(receipt), findingDigest = sha(receipt.review.json.findings[0]);
-    const linked = seal({ ...entry, receipt: { ...entry.receipt, digest: receiptDigest }, datasetVersion: pins.reviewDatasetVersion,
-      finding: { id: `${receiptDigest}:0:${findingDigest}`, index: 0, digest: findingDigest } });
-    await recordDecision({ evidenceRoot: f.evidence, issue: f.issue, entry: linked });
-    assert.equal(acceptedDeclines(receipt, readJournal({ evidenceRoot: f.evidence, issue: f.issue }))[0].decisionId, linked.id);
-    // Clear only the fixture's journal so the default source remains byte-identical.
-    fs.unlinkSync(path.join(f.evidence, 'decisions', `${f.issue}.json`));
     const stat = fs.statSync(archive); await f.retire();
     pulse(f.root); pass(f.dispatch()); assert.deepEqual(fs.readFileSync(archive), bytes); assert.equal(fs.statSync(archive).mtimeMs, stat.mtimeMs);
     await f.retire();
@@ -223,6 +211,57 @@ test('dispatch-default-dataset', async () => {
     assert.equal(read(fourth.pins.file).reviewDataset, explicit); assert.equal(read(fourth.pins.file).reviewDatasetVersion, 9);
     assert.equal(fs.readFileSync(explicit, 'utf8'), '# Explicit source\n');
   } finally { await f.cleanup(); }
+});
+
+test('dataset versions change only with bytes and stay immutable', async () => {
+  const evidenceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-datasets-')), source = path.join(evidenceRoot, 'source.md');
+  try {
+    put(source, '# Scope\n\nFrozen contract.\n');
+    for (const issue of ['MONO-999', 'A-1', 'A0-10']) {
+      const options = { evidenceRoot, issue, source };
+      put(source, '# Scope\n\nFrozen contract.\n');
+      const v1 = await versionDataset(options), first = fs.readFileSync(v1.archive);
+      assert.equal(path.basename(v1.archive), `${issue}-review-scope.v1.md`); assert.equal(v1.created, true);
+      assert.deepEqual(first, fs.readFileSync(source));
+      assert.deepEqual(await versionDataset(options), { ...v1, created: false });
+      assert.deepEqual(await versionDataset({ ...options, source: v1.archive }), { ...v1, created: false });
+      fs.appendFileSync(source, '\nNext version.\n');
+      const v2 = await versionDataset(options);
+      assert.equal(v2.version, 2); assert.notEqual(v2.digest, v1.digest); assert.deepEqual(fs.readFileSync(v1.archive), first);
+      fs.writeFileSync(v2.archive + '.sha256', '0'.repeat(64) + '\n');
+      await assert.rejects(versionDataset(options), /digest mismatch/);
+      assert.deepEqual(fs.readFileSync(v1.archive), first);
+    }
+  } finally { fs.rmSync(evidenceRoot, { recursive: true, force: true }); }
+});
+
+test('interrupted dataset publication recovers only an identical retry under the shared archive lock', async () => {
+  const evidenceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-datasets-')), issue = 'MONO-999', source = path.join(evidenceRoot, 'scope.md'), options = { evidenceRoot, issue, source };
+  try {
+    put(source, '# Scope\n\nStable input.\n');
+    const version = await versionDataset(options), bytes = fs.readFileSync(version.archive), mtime = fs.statSync(version.archive).mtimeMs;
+    fs.unlinkSync(version.archive + '.sha256'); // Crash after publishing the archive, before publishing its digest.
+    assert.deepEqual(await versionDataset(options), { ...version, created: false });
+    assert.deepEqual(fs.readFileSync(version.archive), bytes); assert.equal(fs.statSync(version.archive).mtimeMs, mtime);
+    assert.equal(fs.readFileSync(version.archive + '.sha256', 'utf8'), version.digest + '\n');
+    fs.unlinkSync(version.archive + '.sha256'); put(source, '# Scope\n\nDifferent input.\n');
+    await assert.rejects(versionDataset(options), /orphan dataset archive differs/);
+    assert.equal(fs.existsSync(version.archive + '.sha256'), false);
+    assert.deepEqual(fs.readFileSync(version.archive), bytes);
+    put(source, '# Scope\n\nStable input.\n');
+    assert.equal((await versionDataset(options)).created, false);
+    put(source, '# Scope\n\nDifferent input.\n');
+    assert.equal((await versionDataset(options)).version, 2);
+  } finally { fs.rmSync(evidenceRoot, { recursive: true, force: true }); }
+});
+
+test('invalid issue keys fail before evidence access in dataset versioning', async t => {
+  const calls = [];
+  for (const name of ['existsSync', 'readFileSync', 'readdirSync', 'realpathSync', 'lstatSync', 'mkdirSync', 'openSync'])
+    t.mock.method(fs, name, () => { calls.push(name); throw new Error('evidence accessed'); });
+  for (const issue of ['MONO-.*', 'MONO-0', 'MONO-01', 'mono-1', '1MONO-1', 'MONO-1/../../other', 'MONO-1|OTHER-2', ''])
+    await assert.rejects(versionDataset({ issue, evidenceRoot: '/unused', source: '/unused' }), /invalid issue/);
+  assert.deepEqual(calls, []);
 });
 
 test('launch-watcher-required after launch preparation and before amendment resume', async t => {

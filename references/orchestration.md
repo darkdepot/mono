@@ -443,8 +443,7 @@ I slice definitions are boundaries; I remains outside PRD/Spec coverage lookup. 
 защищаемся/Валидация/Релиз и откат; absent optional sections are skipped. Unknown
 keys refuse before fallback; duplicate definitions or unclosed fences retain full docs with a note. Full deep/risky
 and explicitly full dispatches retain full documents; issue-only has no Project
-documents. --review-pilot JSON explicitly selects the template's optional review
-block with project/version/path/digest facts; it never changes stage rules.
+documents.
 
 ## Snapshot Markup Contract (U12)
 
@@ -1210,8 +1209,7 @@ runs only when the reviewer reports findings).
 
 Between rounds do nothing: the worker fixes open findings and requests the next
 round itself. At most three completed rounds per pins file, counted from signed
-receipts; the same head reuses its round; `not-reviewed` spends nothing. There
-are no continue permits, class decisions or decline approvals.
+receipts; the same head reuses its round; `not-reviewed` spends nothing.
 
 Parks:
 - needs-decision, `review not-converged after round 3` or `review round limit

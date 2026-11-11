@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { test } from 'node:test';
+import { canonical } from './runtime.mjs';
 
 function measure(events) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-127-cost-'));
@@ -83,4 +85,76 @@ test('a log that reports each run separately is still summed', () => {
   assert.equal(result.worker.attempts[0].counting, 'per-turn');
   assert.equal(result.worker.usage.input_tokens, 640);
   assert.equal(result.worker.usage.non_overlapping_total_tokens, 685);
+});
+
+function measureWithReceipts(envelopes) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-378-cost-'));
+  try {
+    const evidence = path.join(root, 'evidence'), key = crypto.randomBytes(32);
+    fs.mkdirSync(path.join(root, 'logs')); fs.mkdirSync(path.join(evidence, 'history'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'logs/MONO-999-mono-deliver-a1.jsonl'),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 1 } }) + '\n');
+    fs.writeFileSync(path.join(evidence, 'receipt.key'), key);
+    const pins = (issue, name = 'pins.json') => ({ file: path.join(root, 'dispatch', `${issue}-a1`, name), digest: 'd'.repeat(64) });
+    for (const [index, make] of envelopes.entries()) {
+      const { forged, ...receipt } = make(pins);
+      const signature = crypto.createHmac('sha256', forged ? crypto.randomBytes(32) : key).update(canonical(receipt)).digest('hex');
+      fs.writeFileSync(path.join(evidence, 'history', `${receipt.runId ?? index}.json`), JSON.stringify({ receipt, signature }));
+    }
+    const output = execFileSync(process.execPath, ['scripts/wave-cost.mjs', 'MONO-999', '--root', root, '--evidence-root', evidence], { encoding: 'utf8' });
+    return { result: JSON.parse(output.slice(0, output.lastIndexOf('\nЦена волны'))), line: output.slice(output.lastIndexOf('\nЦена волны') + 1).trim() };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const codexUsage = { input_tokens: 1000, cached_input_tokens: 400, output_tokens: 50, reasoning_output_tokens: 10 };
+const claudeUsage = { input_tokens: 10, cache_creation_input_tokens: 30, cache_read_input_tokens: 60, output_tokens: 5 };
+const cost = (role, engine, usage) => ({ role, engine, model: `${engine}-model`, family: engine, attempt: 1, elapsedMs: 5, usage });
+const round = (number, head, costs) => ({ number, head: head.repeat(40), base: 'b'.repeat(40), costs });
+const receipt = (runId, pins, head, review) => ({ producer: 'gate-review-v3', recordedAt: `2026-11-11T00:00:0${runId.slice(1)}Z`, runId, pins, head: head.repeat(40), base: 'b'.repeat(40), review });
+
+test('review cost comes from signed gate receipts and counts every round once', () => {
+  const first = round(1, '1', [cost('reviewer', 'codex', codexUsage), cost('checker', 'claude', claudeUsage)]);
+  const second = round(2, '2', [cost('reviewer', 'codex', codexUsage), { ...cost('checker', 'claude', null), failure: true }]);
+  const record = rounds => ({ schemaVersion: 1, contractDigest: 'c'.repeat(64), rounds, round: rounds.at(-1) });
+  const failed = [cost('reviewer', 'codex', codexUsage)];
+  const { result, line } = measureWithReceipts([
+    pins => receipt('r1', pins('MONO-999'), '1', { outcome: 'findings', spent: true, round: 1, record: record([first]) }),
+    pins => receipt('r2', pins('MONO-999'), '2', { outcome: 'clean', spent: true, round: 2, record: record([first, second]) }),
+    pins => receipt('r3', pins('MONO-999'), '2', { outcome: 'clean', spent: false, reusedFrom: 'r2', round: 2, record: record([first, second]) }),
+    pins => receipt('r4', pins('MONO-999'), '3', { outcome: 'not-reviewed', spent: false, round: null, record: null, costs: failed, failures: [{ reason: 'offline', costs: failed }] }),
+    pins => receipt('r5', pins('MONO-999', 'pins.v1.json'), '2', { outcome: 'clean', spent: true, round: 1, record: record([round(1, '2', [cost('reviewer', 'claude', claudeUsage)])]) }),
+    pins => ({ ...receipt('r6', pins('MONO-999'), '4', { outcome: 'clean', spent: true, round: 3, record: record([round(3, '4', [cost('reviewer', 'codex', { ...codexUsage, input_tokens: 9_000_000 })])]) }), forged: true }),
+    pins => receipt('r7', pins('MONO-9999'), '5', { outcome: 'clean', spent: true, round: 1, record: record([round(1, '5', [cost('reviewer', 'codex', codexUsage)])]) }),
+    pins => ({ ...receipt('r8', pins('MONO-999'), '6', { outcome: 'clean', spent: true, round: 1, record: record([round(1, '6', [cost('reviewer', 'codex', codexUsage)])]) }), producer: 'gate-review-v2' }),
+  ]);
+  assert.deepEqual(result.autoreview.receipts, { receipts: 5, rounds: 3, not_reviewed: 1, calls: 6, measured_calls: 5 });
+  assert.deepEqual(result.autoreview.usage, { input_tokens: 3200, cached_input_tokens: 1320, cache_write_input_tokens: 60, output_tokens: 160,
+    reasoning_output_tokens: 30, uncached_input_tokens: 1880, non_overlapping_total_tokens: 3360 });
+  assert.equal(result.measurable_total.input_tokens, 3210);
+  assert.match(line, /исполнитель 11, авто-ревью: кругов 3 \(не состоялось: 1\), 3 тыс\. токенов \(измерено 5 из 6 вызовов\), оркестратор/);
+  assert.doesNotMatch(line, /проходов авто-ревью|unavailable:/);
+});
+
+test('a role call counts its boundary probe, and an unreadable probe leaves the call unmeasured', () => {
+  const usage = { input_tokens: 1000, cached_input_tokens: 400, output_tokens: 50, reasoning_output_tokens: 10 };
+  const probed = { ...cost('reviewer', 'codex', usage), boundary: { probeUsage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 5, reasoning_output_tokens: 1 } } };
+  const broken = { ...cost('reviewer', 'codex', usage), boundary: { probeUsage: { input_tokens: 'many' } } };
+  const { result } = measureWithReceipts([pins => receipt('r1', pins('MONO-999'), '1', { outcome: 'clean', spent: true, round: 1,
+    record: { schemaVersion: 1, contractDigest: 'c'.repeat(64), rounds: [round(1, '1', [probed, broken])] } })]);
+  assert.deepEqual(result.autoreview.receipts, { receipts: 1, rounds: 1, not_reviewed: 0, calls: 2, measured_calls: 1 });
+  assert.equal(result.autoreview.usage.input_tokens, 2100);
+  assert.equal(result.autoreview.usage.output_tokens, 105);
+});
+test('receipts without usage are unavailable, and an Issue without receipts keeps the helper-log wording', () => {
+  const silent = measureWithReceipts([pins => receipt('r1', pins('MONO-999'), '1', { outcome: 'clean', spent: true, round: 1,
+    record: { contractDigest: 'c'.repeat(64), rounds: [round(1, '1', [cost('reviewer', 'codex', null)])] } })]);
+  assert.match(silent.result.autoreview.usage, /^unavailable: review receipts carry no token usage/);
+  assert.match(silent.line, /авто-ревью: кругов 1, н\/д \(в квитанциях нет учёта\), оркестратор/);
+  const legacy = measureWithReceipts([pins => receipt('r1', pins('MONO-9999'), '1', { outcome: 'clean', spent: true, round: 1,
+    record: { contractDigest: 'c'.repeat(64), rounds: [round(1, '1', [cost('reviewer', 'codex', codexUsage)])] } })]);
+  assert.equal(legacy.result.autoreview.receipts, undefined);
+  assert.match(legacy.result.autoreview.usage, /^unavailable: autoreview helper output does not report token usage/);
+  assert.match(legacy.line, /авто-ревью н\/д \(помощник не сообщает учёт\).*проходов авто-ревью н\/д \(вывод помощника не найден\)/);
 });
