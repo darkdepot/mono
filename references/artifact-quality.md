@@ -25,11 +25,11 @@ Require one PR, Read first / `Прочитать сначала`, AFK/HITL/human
 
 ## Preflight Certificate
 
-Use complete `mono-preflight certificate`/gates from `skills/preflight/SKILL.md`, worker recovery, review [role:code-review](model-policy.md#roles)/[role:code-review-checker](model-policy.md#roles); no later-stage claims.
+Use complete `mono-preflight certificate`/gates as recorded by Preflight, worker recovery, review [role:code-review](model-policy.md#roles)/[role:code-review-checker](model-policy.md#roles); no later-stage claims.
 
 ## Ship Green Certificate
 
-Use complete durable `mono-ship green certificate`/`Ship: green` from `skills/ship/SKILL.md` and worker recovery; no delivery/prod claims.
+Use complete durable `mono-ship green certificate`/`Ship: green` as recorded by Ship and worker recovery; no delivery/prod claims.
 
 ## Deploy Closeout
 
