@@ -217,6 +217,7 @@
       "indexFile": "evals/scenarios/index.json",
       "hosts": ["claude", "codex"],
       "perChange": false
-    }
+    },
+    "beforeMerge": false
   }
 }
