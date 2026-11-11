@@ -18,7 +18,7 @@ Link `role:<role>` to `#roles`; report values.
 | `qa` | `claude-opus-5-5` | `high` | Independent QA; models.roles override. | Owner. |
 | `code-review` | `gpt-6.1-sol` | `high` | Round reviewer. | Owner, 2026-11-01. |
 | `code-review-checker` | `claude-opus-5` | `high` | Finding checker. | Owner, 2026-11-01. |
-| `autoreview` | `claude-opus-5` | [Canonical Routes](autoreview-routing.md#canonical-routes) | Old. | Owner. |
+| `autoreview` | `claude-opus-5` | tiny: `low`; standard: `medium`; deep: `high`; risky: `high`; riskyCritical: `xhigh` | Legacy pins/configs; never runs. | Owner. |
 
 `idea-helper`/`scout`: `resolveRole` takes actual `host: "claude-code"|"codex"`
 (default codex). `models.roles.<role>` overrides; omissions inherit. Stages use `scout`;
@@ -26,7 +26,7 @@ Link `role:<role>` to `#roles`; report values.
 
 ## Reviewer and producer
 
-Owner approves pairs; disclose equal-model autoreview.
+Owner approves pairs; disclose equal-model review.
 
 ## Product overrides
 
@@ -44,7 +44,7 @@ Pi off|minimal|low|medium|high|xhigh.
 Routes bind engine/model, effort|effortByRisk, provider{id,endpoint}, credentialEnv;
 producer adds role. Compare every field/five risks; changes renew owner approval.
 `requiredPairings(config,{reviewerRole:'code-review'})` binds reviewer.role and
-reviewer.checker routes. Either change renews acceptance. Default: `autoreview`. Acceptance never waives native auth or different families.
+reviewer.checker routes. Either change renews acceptance. Default: legacy `autoreview`. Acceptance never waives native auth or different families.
 
 ## Audience profile
 
@@ -54,7 +54,8 @@ reviewer.checker routes. Either change renews acceptance. Default: `autoreview`.
 
 `resolveRole(role, config)`: table → override; fingerprint binds route/config digest.
 Launch from immutable BASE; pin `modelRoutes{base,configDigest,roles}` in
-dispatch/request/registry. Resume preserves routes without backfill; config edits
+dispatch/request/registry; roles: launch role, `code-review`, `code-review-checker`
+(older pins: legacy `autoreview`, still valid). Resume preserves routes without backfill; config edits
 affect new launches only.
 [Pack compatibility](install.md#compatibility).
 

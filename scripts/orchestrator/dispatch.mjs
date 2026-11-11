@@ -2,10 +2,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { atomicJson, readJson, isMain, deliveryConfig, shipBotChecks, RISK_KEYS, withLock, baseModelConfig, validateLanding, validateEvidenceGrants, packLayout, runtimePackRoot, syncDir } from "../runtime.mjs";
+import { atomicJson, readJson, isMain, deliveryConfig, shipBotChecks, RISK_KEYS, withLock, baseModelConfig, validateLanding, validateEvidenceGrants, packLayout, runtimePackRoot } from "../runtime.mjs";
 import { commandFlags, allowedFlags, sha256File, dispatchIdea, ideaBinding } from "./command-state.mjs";
 import { extractSnapshot, section } from "./snapshot.mjs";
 import { copyDesignSnapshot } from "./design-snapshot.mjs";
@@ -37,66 +36,6 @@ export function renderDispatch(template, values) {
 }
 
 const requireThat = (condition, message) => { if (!condition) throw new Error(message); };
-const hash = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
-function regular(file) {
-  const stat = fs.lstatSync(file);
-  requireThat(stat.isFile() && stat.nlink === 1, `plain file required: ${file}`);
-}
-function immutable(file, bytes) {
-  const stage = fs.mkdtempSync(path.join(path.dirname(file), ".dataset-stage-"));
-  try {
-    const temp = path.join(stage, "content"), fd = fs.openSync(temp, "wx", 0o600);
-    try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    fs.linkSync(temp, file);
-  } finally { fs.rmSync(stage, { recursive: true, force: true }); }
-  syncDir(path.dirname(file));
-}
-function versionAt(dir, issue, version) {
-  const archive = path.join(dir, `${issue}-review-scope.v${version}.md`);
-  regular(archive); regular(archive + ".sha256");
-  const bytes = fs.readFileSync(archive), digest = hash(bytes);
-  requireThat(fs.readFileSync(archive + ".sha256", "utf8") === digest + "\n", "immutable dataset digest mismatch");
-  return { version, digest, archive, bytes };
-}
-// Publishes the source bytes as the next immutable <KEY>-review-scope.v<N>.md (+ .sha256)
-// under <evidenceRoot>/datasets; identical bytes reuse their version. initialOnly never
-// adds a version to existing history: it selects v1 when unchanged, else the latest.
-export async function versionDataset({ evidenceRoot, issue, source, initialOnly = false }) {
-  requireThat(/^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(issue ?? ""), "invalid issue");
-  requireThat(path.isAbsolute(evidenceRoot ?? ""), "absolute evidenceRoot required");
-  regular(source);
-  fs.mkdirSync(evidenceRoot, { recursive: true });
-  const dir = path.join(fs.realpathSync(evidenceRoot), "datasets");
-  fs.mkdirSync(dir, { recursive: true });
-  requireThat(fs.realpathSync(dir) === dir, "directory must not be a symlink");
-  // The gate's archiveReviewDataset takes the same lock.
-  return withLock(path.join(dir, `${issue}-review-scope.archive.lock`), () => {
-    const bytes = fs.readFileSync(source), digest = hash(bytes);
-    let highest = 0, existing = null;
-    for (const name of fs.readdirSync(dir).sort()) {
-      const match = new RegExp(`^${issue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-review-scope\\.v([1-9][0-9]*)\\.md$`).exec(name);
-      if (!match) continue;
-      const archive = path.join(dir, name); regular(archive);
-      if (!fs.existsSync(archive + ".sha256")) {
-        requireThat(fs.readFileSync(archive).equals(bytes), "orphan dataset archive differs from source; digest recovery refused");
-        immutable(archive + ".sha256", digest + "\n");
-      }
-      const v = versionAt(dir, issue, Number(match[1])); highest = Math.max(highest, v.version);
-      if (v.bytes.equals(bytes)) existing = v;
-    }
-    if (initialOnly && highest) {
-      const first = fs.existsSync(path.join(dir, `${issue}-review-scope.v1.md`)) ? versionAt(dir, issue, 1) : null;
-      const selected = first?.bytes.equals(bytes) ? first : versionAt(dir, issue, highest);
-      return { version: selected.version, digest: selected.digest, archive: selected.archive, created: false };
-    }
-    if (existing) return { version: existing.version, digest, archive: existing.archive, created: false };
-    const version = highest + 1, archive = path.join(dir, `${issue}-review-scope.v${version}.md`);
-    requireThat(!fs.existsSync(archive + ".sha256"), "refusing to overwrite orphan dataset digest");
-    immutable(archive, bytes); immutable(archive + ".sha256", digest + "\n");
-    return { version, digest, archive, created: true };
-  });
-}
-
 export async function dispatch(args) {
   if (!path.isAbsolute(args.root ?? "")) throw new Error("absolute --root required");
   return withLock(path.join(args.root, "dispatch.lock"), () => prepareDispatch(args));
@@ -185,15 +124,8 @@ async function prepareDispatch(args) {
   const pins = { ...gate, release, modelRoutes, shipBotChecks: shipBotChecks(baseConfig), product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
     risk, critical, afk, openDecisions, workerWritableRoots: roots, packageKind: seam.package_kind,
     reviewDataset: args["review-dataset"] ?? settings.reviewDataset ?? null, reviewDatasetVersion: Number(args["review-dataset-version"] ?? settings.reviewDatasetVersion ?? 0) };
-  if (!pins.reviewDataset) {
-    const source = path.join(output, "default-review-scope.md");
-    fs.writeFileSync(source, `# ${issue}: ${body.split("\n")[0].replace(/^#+\s*/u, "")}\n`);
-    try {
-      const dataset = await versionDataset({ evidenceRoot, issue, source, initialOnly: true });
-      pins.reviewDataset = dataset.archive; pins.reviewDatasetVersion = dataset.version;
-    } finally { fs.unlinkSync(source); }
-  }
-  pins.reviewDatasetDigest = sha256File(pins.reviewDataset);
+  // An explicit dataset stays bound and archived; none is created by default (reviewers never read it).
+  pins.reviewDatasetDigest = pins.reviewDataset ? sha256File(pins.reviewDataset) : null;
   atomicJson(gateFile, gate); atomicJson(movesFile, moves);
   const snapshot = path.join(output, "snapshot"), preparedSnapshot = fs.mkdtempSync(path.join(output, "snapshot-"));
   let designSnapshot, chainSnapshot;

@@ -148,7 +148,7 @@ Never bring the user an unprepared question. Before asking:
    question and never present a stale item as decision-ready.
 
 Brief contents per `templates/orchestrator-brief.md`: what changes and for
-whom, why the decision is needed now, completed proof (tests, autoreview, CI,
+whom, why the decision is needed now, completed proof (tests, review round, CI,
 certificates as applicable), recommendation with rationale, exact options.
 Ask immediately and interactively; unblocked work continues in parallel.
 

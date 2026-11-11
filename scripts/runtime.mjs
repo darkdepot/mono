@@ -478,13 +478,14 @@ export function roleDefaults(skillsRoot, host = 'codex') {
     defaults[role] = { engine, model, effort: role === 'orchestrator' ? null : effort,
       provider: { id: NATIVE_PROVIDERS[engine], endpoint: null }, credentialEnv: null };
   }
-  const routing = fs.readFileSync(path.join(directory, 'autoreview-routing.md'), 'utf8');
+  // Legacy reviewer: only old launch pins and product configs name it, so its route stays resolvable byte for byte.
   const effortByRisk = {};
-  for (const risk of RISK_KEYS) {
-    const prefix = risk === 'riskyCritical' ? '| `risky` with critical escalation |' : `| \`${risk}\` |`;
-    const effort = routing.split('\n').find(line => line.startsWith(prefix))?.match(/\| `(low|medium|high|xhigh|max)` \|/)?.[1];
-    need(effort, `policy risk unavailable: ${risk}`); effortByRisk[risk] = effort;
+  for (const part of defaults.autoreview.effort.split(';')) {
+    const [risk, effort] = part.split(':').map(value => value.trim());
+    need(RISK_KEYS.includes(risk) && !Object.hasOwn(effortByRisk, risk) && EFFORTS.claude.includes(effort), `policy autoreview route invalid: ${part.trim()}`);
+    effortByRisk[risk] = effort;
   }
+  for (const risk of RISK_KEYS) need(effortByRisk[risk], `policy risk unavailable: ${risk}`);
   delete defaults.autoreview.effort; defaults.autoreview.effortByRisk = effortByRisk;
   return defaults;
 }
@@ -611,10 +612,14 @@ export function baseModelConfig(worktree, base) {
   if (!git(['ls-tree', base, '--', file]).trim()) return {};
   return JSON.parse(git(['show', `${base}:${file}`]));
 }
-export function resolveModelRoutes(worktree, base, role, options = {}) {
+// Launch pins bind the worker and the review round roles; a launch prepared by an older pack pinned the
+// legacy reviewer instead (legacyReviewer), and both shapes stay valid until that attempt ends.
+export const REVIEW_ROUND_ROLES = ['code-review', 'code-review-checker'];
+export function resolveModelRoutes(worktree, base, role, { legacyReviewer = false, ...options } = {}) {
   const config = baseModelConfig(worktree, base);
   need(['worker-default', 'worker-complex', 'worker-claude', 'second-voice'].includes(role), 'unsupported launch role');
-  return { base, configDigest: digest(config), roles: Object.fromEntries([...new Set([role, 'autoreview'])].map(name => [name, resolveRole(name, config, options)])) };
+  const pinned = [...new Set([role, ...(legacyReviewer ? ['autoreview'] : REVIEW_ROUND_ROLES)])];
+  return { base, configDigest: digest(config), roles: Object.fromEntries(pinned.map(name => [name, resolveRole(name, config, options)])) };
 }
 
 if (isMain(import.meta.url)) {

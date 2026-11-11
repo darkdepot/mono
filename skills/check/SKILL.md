@@ -122,7 +122,7 @@ Package slicing and membership mean [execution Issues](references/lifecycle.md#Ð
 - `post-ship`: Issue has PR chip/status, `In Review` after PR creation, `Done` only after verified deploy or explicit accepted delivery policy, deploy evidence is recorded, post-ship drift is synced back to Linear, and learning capture is reported when relevant.
 - `post-ship`: a missing, failed, or skipped project update is never a `FAIL`. Project Updates are informational, `mono:deploy` owns them, and this mode neither requires one nor reads one as evidence.
 - `post-ship` (issue-only lane): require the same Issue PR/status, deploy evidence, delivery-policy, drift, and learning records as Project-first, but validate delivered behavior against every acceptance ID and verification step in the fresh Issue `behavioral_oracle`. Require the marker and authenticated approval to remain approved-fresh; Project/PRD/Tech Spec artifacts remain intentionally absent.
-- `project-config`: the project repo has `.agents/mono-workflow.config.json`, required config fields are present, `prerequisites.autoreviewHelper` is `true`, no unresolved placeholders remain, and no legacy generated Mono files or previous-brand `.agents/linear-workflow*`, `.agents/skills/linear-*`, `.claude/skills/linear-*`, or `.github/workflows/update-linear-*.yml` files remain.
+- `project-config`: the project repo has `.agents/mono-workflow.config.json`, required config fields are present, no unresolved placeholders remain, and no legacy generated Mono files or previous-brand `.agents/linear-workflow*`, `.agents/skills/linear-*`, `.claude/skills/linear-*`, or `.github/workflows/update-linear-*.yml` files remain.
 
 Content-shape checks:
 

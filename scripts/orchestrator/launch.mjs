@@ -63,7 +63,9 @@ function selectedTransport(request) {
 }
 export function resolveWorkerPins(request) {
   const transport = selectedTransport(request);
-  const modelRoutes = resolveModelRoutes(request.worktree, request.base, request.role, { packRoot: request.packRoot });
+  // A dispatch prepared before the review roles were pinned keeps its legacy reviewer pin.
+  const legacyReviewer = Object.hasOwn(request.modelRoutes?.roles ?? {}, 'autoreview');
+  const modelRoutes = resolveModelRoutes(request.worktree, request.base, request.role, { packRoot: request.packRoot, legacyReviewer });
   transport.validateRoute?.(modelRoutes.roles[request.role]);
   if (request.modelRoutes && canonical(request.modelRoutes) !== canonical(modelRoutes)) throw new Error('dispatch model route fingerprint mismatch');
   return modelRoutes;
@@ -97,7 +99,6 @@ function effectiveGrants(entry, root, extraWritable = [], pins = entry.workerWri
   const skills = entry.skillsRoot;
   validateEvidenceGrants(packRoot, roots, packRoot !== skills ? "packRoot" : "installed skillsRoot");
   validateEvidenceGrants(skills, roots, "installed skillsRoot");
-  validateEvidenceGrants(path.join(skills, "autoreview/scripts/autoreview"), roots, "autoreview helper real path");
   if (canonical(roots) !== canonical(normalize(pins))) throw new Error("effective write grants differ from dispatch workerWritableRoots");
   if (entry.transport === "claude-cli" &&
       canonical(roots) !== canonical(normalize(entry.pins ? effectivePins(entry).workerWritableRoots : entry.workerWritableRoots)))

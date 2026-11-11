@@ -26,6 +26,20 @@ test('design config accepts paper/wonder or omitted tool and rejects unsupported
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+test('old review helper prerequisite is optional and an existing value is accepted silently', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-helper-flag-config-'));
+  try {
+    const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+    fs.mkdirSync(path.join(root, '.agents'));
+    for (const prerequisites of [undefined, { autoreviewHelper: true }, { autoreviewHelper: false }, {}]) {
+      if (prerequisites === undefined) delete config.prerequisites; else config.prerequisites = prerequisites;
+      fs.writeFileSync(path.join(root, '.agents/mono-workflow.config.json'), JSON.stringify(config));
+      const result = spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
+      assert.equal(result.status, 0, `${JSON.stringify(prerequisites)}: ${result.stderr}`);
+      assert.doesNotMatch(result.stdout + result.stderr, /prerequisites|autoreviewHelper/);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 test('ideaGate validates optional cutoff and four custom heading names', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-idea-config-'));
   try {
@@ -255,10 +269,11 @@ test('non-model token settings remain valid through CLI and BASE role resolution
       if (models === undefined) delete config.models; else config.models = models;
       fs.writeFileSync(file, JSON.stringify(config));
       const result = check(); assert.equal(result.status, 0, result.stderr);
-      const role = runtime.resolveRole('autoreview', config);
+      const role = runtime.resolveRole('code-review', config), legacyRole = runtime.resolveRole('autoreview', config);
       git('add', '.'); git('commit', '-m', 'non-model token settings');
       const pins = runtime.resolveModelRoutes(root, git('rev-parse', 'HEAD'), 'worker-default');
-      assert.deepEqual(pins.roles.autoreview, role);
+      assert.deepEqual(pins.roles['code-review'], role);
+      assert.deepEqual(runtime.resolveModelRoutes(root, git('rev-parse', 'HEAD'), 'worker-default', { legacyReviewer: true }).roles.autoreview, legacyRole);
     }
     config.models = { roles: { autoreview: reviewer() } }; accepted(config);
     config.models.roles.autoreview.provider.apiKey = String(Math.random());

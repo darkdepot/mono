@@ -643,9 +643,8 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     assert.equal(fs.existsSync(path.join(launched.snapshot, 'research')), false, 'pre-cutoff package dispatch succeeds without research/');
     assert.equal(launchedPins.idea.verdict, 'pass'); assert.equal(launchedPins.idea.projectId, ideaProjectId);
     assert.equal(readJson(path.join(launched.snapshot, 'idea/selected-record.json')).id, 'idea-1');
-    assert.equal(launchedPins.reviewDataset, fs.realpathSync(path.join(scratch, "evidence/datasets/MONO-999-review-scope.v1.md")));
-    assert.equal(launchedPins.reviewDatasetVersion, 1);
-    assert.equal(launchedPins.reviewDatasetDigest, createHash("sha256").update(fs.readFileSync(launchedPins.reviewDataset)).digest("hex"));
+    assert.equal(launchedPins.reviewDataset, null); assert.equal(launchedPins.reviewDatasetVersion, 0);
+    assert.equal(Object.hasOwn(launchedPins, "reviewDatasetDigest"), true); assert.equal(launchedPins.reviewDatasetDigest, null);
     assert.equal(readJson(launched.gateFile).worktree, worktree); assert.deepEqual(readJson(launched.spawnFile).gates, entry.gates);
     assert.deepEqual(readJson(launched.pins.file).shipBotChecks, ["Greptile Review"]);
     assert.ok(fs.readFileSync(launched.dispatchFile, "utf8").includes("Keep {{field_name}} literal.")); assert.match(fs.readFileSync(path.join(root, "ledger.md"), "utf8"), /\d{4}-\d\d-\d\dT.*Z DISPATCHED MONO-999/u);
@@ -658,8 +657,8 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     assert.ok(rendered.includes(`--ack '${path.join(root, "reports/MONO-999-gate-ack-a1.json")}'`));
     assert.ok(rendered.includes(`--ack '${path.join(worktree, ".orchestrator/MONO-999-gate-ack-a1.json")}'`), "wait instructions use the actual fallback ack location");
     const collectionSample = JSON.parse(/## Запрос сбора[\s\S]*?```json\n([\s\S]*?)```/u.exec(rendered)[1]);
-    assert.deepEqual(collectionSample.pins, entry.pins); assert.equal(collectionSample.reviewDatasetVersion, 1);
-    assert.equal(collectionSample.reviewDataset, launchedPins.reviewDataset); assert.equal(collectionSample.collect, false);
+    assert.deepEqual(collectionSample.pins, entry.pins); assert.equal(collectionSample.reviewDatasetVersion, 0);
+    assert.equal(Object.hasOwn(collectionSample, "reviewDataset"), false); assert.equal(collectionSample.collect, false);
     assert.throws(() => renderDispatch("{{collection_request}}", { collection_request: "" }), /unfilled dispatch placeholder/u);
     assert.ok(fs.existsSync(path.join(launched.snapshot, "prd-extract.md"))); assert.equal(fs.existsSync(path.join(launched.snapshot, "prd.md")), false);
     const baseline = JSON.parse(fixture("snapshot-u12-package-bytes.json")).find(item => item.coverage === "R4, U5");

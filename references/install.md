@@ -134,8 +134,7 @@ Start/resume accepts equal `surfaceRevision`; other version/commit values are
 descriptive. Report/task correlation remains strict for every present identity
 field. Resolve scripts and policy from the task's saved pack folder. If that
 folder is gone or the format differs, refuse with **start a new attempt**; never
-redirect the task to new files. External `autoreview` stays in separate `skillsRoot`; protect
-both roots and the helper's real path from worker writes.
+redirect the task to new files. Protect both roots from worker writes.
 
 ## Quiescence
 
@@ -183,37 +182,11 @@ migration and `--check` for shape, required fields, placeholders and forbidden f
 Config fields/policies: [handbook](../HANDBOOK.md#project-config). Use null for absent
 workflows; absent deploy blocks. `workflows.deploy` has no Land alias.
 
-## External Autoreview Helper
-
-Source: [openclaw/agent-skills, skills/autoreview](https://github.com/openclaw/agent-skills/tree/05d42d1fe0a76d00e339d7b80d248c27b0ea34d9/skills/autoreview).
-Verified upstream main on 2026-10-15: commit
-`05d42d1fe0a76d00e339d7b80d248c27b0ea34d9`; helper SHA-256
-`73ea6d7835a50c5348a52571f648be70cdd026a07139e7701237b0fec8a9cd80`.
-The helper is an external prerequisite, never vendored in Mono. The installing
-orchestrator updates it at release, after affected attempts stop; workers do not.
-Use a fresh source checkout and set `skills_root` to the external directory passed
-as `--skills-root` (normally `$HOME/.codex/skills`):
-
-```bash
-git clone https://github.com/openclaw/agent-skills.git /path/to/fresh/agent-skills
-git -C /path/to/fresh/agent-skills checkout --detach 05d42d1fe0a76d00e339d7b80d248c27b0ea34d9
-rsync -a --delete /path/to/fresh/agent-skills/skills/autoreview/ "$skills_root/autoreview/"
-diff -r /path/to/fresh/agent-skills/skills/autoreview "$skills_root/autoreview"
-"$skills_root/autoreview/scripts/autoreview" --version
-"$skills_root/autoreview/scripts/autoreview" --help
-```
-
-Require a matching tree and `autoreview source-sha256:` followed by the hash above.
-Use Python 3; install the selected engine CLI and its native authentication.
-The delivery gate no longer runs this helper: collection runs the read-only
-review round instead, so the helper serves only the manual `autoreview` skill.
-
 ## Project Policy
 
 The review round is mandatory: the collector host needs both review CLIs
-logged in. The manual `autoreview` skill passes the explicit
-[role:autoreview](model-policy.md#roles) model and effort from
-`references/autoreview-routing.md`; never inherit helper defaults. Optional
+logged in. The round runs [role:code-review](model-policy.md#roles) and
+[role:code-review-checker](model-policy.md#roles), pinned at launch from BASE config. Optional
 `"orchestration"` selects transport/concurrency; model routes come from BASE config.
 
 Transport `claude-cli` additionally requires the Claude Code CLI installed on the

@@ -113,9 +113,6 @@ function defaultConfig(projectName) {
       reviewFeedback: null,
       deploy: null,
     },
-    prerequisites: {
-      autoreviewHelper: true,
-    },
     deployApproval: "always",
   };
 }
@@ -142,7 +139,6 @@ function parseLegacyMarkdownConfig(text, projectName) {
     if (key === "Documentation workflow") config.workflows.documentation = normalizeOptionalWorkflow(value);
     if (key === "Review feedback workflow") config.workflows.reviewFeedback = normalizeOptionalWorkflow(value);
     if (key === "Deploy workflow") config.workflows.deploy = normalizeOptionalWorkflow(value);
-    if (key === "Autoreview helper") config.prerequisites.autoreviewHelper = true;
   }
   return config;
 }
@@ -236,9 +232,7 @@ function validateConfig(config, failures) {
       }
     }
   }
-  if (!config.prerequisites || config.prerequisites.autoreviewHelper !== true) {
-    failures.push("Project config must set prerequisites.autoreviewHelper to true");
-  }
+  // prerequisites (the old review helper flag) is no longer required; an existing value is accepted silently.
   if ("deployApproval" in config) {
     const allowed = ["always", "risky-only", "never"];
     if (!allowed.includes(config.deployApproval)) {
