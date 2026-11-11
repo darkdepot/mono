@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runReviewRound, runRemarkCheck, remarkDigest, prRemarkFindings, parseReviewer, parseChecker, findingKey, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, reviewGit, MAX_ANSWER_BYTES } from './code-review.mjs';
-import { requiredPairings, validateModels } from './runtime.mjs';
+import { requiredPairings, validateModels, digest } from './runtime.mjs';
 import { scoreCheckerProbes } from './code-review-eval.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 let catalogBin, originalPath;
@@ -118,12 +118,22 @@ test('PR remarks enter the round as open findings; a fix closes only when the ch
 test('remark check: a fresh read-only pass on the checker engine confirms or sends back each decision without a code change',async t=>{
  const f=fixture(t),remarks=[{id:'B1',source:'bot',title:'Summary',body:'Greptile summary',urgent:false,head:f.request.head,decision:'informational',evidence:'No change requested.'},
   {id:'T2',source:'bot',title:'Rename',body:'Rename value',urgent:true,head:f.request.head,decision:'rejected',evidence:'Public name.'}];
- const calls=[];const runRole=async request=>{calls.push(request);return {response:{completed:true,verdicts:[{id:'B1',verdict:'confirmed',reason:'summary only'},{id:'T2',verdict:'needs-fix',reason:'name misleads'}]},elapsedMs:5,usage:null};};
+ const none={verdict:'not-supplied',falseClaims:[]};
+ const calls=[];const runRole=async request=>{calls.push(request);return {response:{completed:true,verdicts:[{id:'B1',verdict:'confirmed',reason:'summary only'},{id:'T2',verdict:'needs-fix',reason:'name misleads'}],description:none},elapsedMs:5,usage:null};};
  const result=await runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,remarks,packRoot},{runRole});
  assert.equal(calls.length,1);assert.equal(calls[0].role,'remark-check');assert.equal(calls[0].route.engine,resolveReviewRoles({},packRoot)['code-review-checker'].engine);
  assert.match(calls[0].prompt,/^# PR remark check/);assert.match(calls[0].prompt,/Greptile summary/);
  assert.deepEqual(result.verdicts.map(v=>v.verdict),['confirmed','needs-fix']);assert.deepEqual(result.remarks,remarks.map(remark=>({id:remark.id,digest:remarkDigest(remark),decision:remark.decision})));assert.equal(result.head,f.request.head);
- await assert.rejects(runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,remarks,packRoot},{runRole:async()=>({response:{completed:true,verdicts:[{id:'B1',verdict:'confirmed',reason:'r'}]}})}),/remark without verdict/);
+ await assert.rejects(runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,remarks,packRoot},{runRole:async()=>({response:{completed:true,verdicts:[{id:'B1',verdict:'confirmed',reason:'r'}],description:none}})}),/remark without verdict/);
+ // The same pass judges the author's part of the PR description; a verdict binds to the digest of exactly that text.
+ const text='## Что изменилось\n\n- value accepts any number';
+ const truthful=await runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,description:text,packRoot},{runRole:async request=>{assert.match(request.prompt,/value accepts any number/);return {response:{completed:true,verdicts:[],description:{verdict:'truthful',falseClaims:[]}}};}});
+ assert.deepEqual(truthful.description,{verdict:'truthful',falseClaims:[],digest:digest(text)});
+ const untrue=await runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,description:text,packRoot},{runRole:async()=>({response:{completed:true,verdicts:[],description:{verdict:'false-claims',falseClaims:['negative input is rejected']}}})});
+ assert.deepEqual(untrue.description.falseClaims,['negative input is rejected']);
+ for(const bad of [{verdict:'truthful',falseClaims:['x']},{verdict:'false-claims',falseClaims:[]},{verdict:'not-supplied',falseClaims:[]}])
+  await assert.rejects(runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,description:text,packRoot},{runRole:async()=>({response:{completed:true,verdicts:[],description:bad}})}),/invalid description verdict/);
+ await assert.rejects(runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,packRoot},{runRole}),/remarks or a description required/);
  await assert.rejects(runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,remarks:[{...remarks[0],decision:'fixed'}],packRoot},{runRole}),/invalid remark decision/);
  await assert.rejects(runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,remarks:[{...remarks[1],decision:'deferred'}],packRoot},{runRole}),/urgent remark cannot be deferred/);
  await assert.rejects(runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,remarks:[{...remarks[0],source:'owner'}],packRoot},{runRole}),/invalid remark decision/,'an owner instruction is never declined by the pass');

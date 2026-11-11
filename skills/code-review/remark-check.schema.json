@@ -1,21 +1,66 @@
 {
   "type": "object",
   "properties": {
-    "completed": { "type": "boolean", "const": true },
+    "completed": {
+      "type": "boolean",
+      "const": true
+    },
     "verdicts": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "verdict": { "type": "string", "enum": ["confirmed", "needs-fix"] },
-          "reason": { "type": "string" }
+          "id": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "needs-fix"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
         },
-        "required": ["id", "verdict", "reason"],
+        "required": [
+          "id",
+          "verdict",
+          "reason"
+        ],
         "additionalProperties": false
       }
+    },
+    "description": {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "truthful",
+            "false-claims",
+            "not-supplied"
+          ]
+        },
+        "falseClaims": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "verdict",
+        "falseClaims"
+      ],
+      "additionalProperties": false
     }
   },
-  "required": ["completed", "verdicts"],
+  "required": [
+    "completed",
+    "verdicts",
+    "description"
+  ],
   "additionalProperties": false
 }

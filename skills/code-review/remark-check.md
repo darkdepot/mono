@@ -17,3 +17,9 @@ false green or blocked normal use) and stays inside the task; an informational
 one asks for no change. An `urgent` (P0/P1) remark is confirmed only when the
 code proves it describes no real defect. Otherwise answer `needs-fix`.
 Uncertainty is `needs-fix`. `reason` names the code that decides it.
+
+`description`, when supplied, is the author's part of the PR description.
+Answer `truthful` only when every statement in it is borne out by the change
+from base to head; otherwise `false-claims` and list each untrue statement in
+`falseClaims`. A «Проверки» line, «Не проверено» and plans are not claims
+about the code. Without a description answer `not-supplied` with an empty list.
