@@ -142,7 +142,8 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest }) {
     .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)));
   const completed = mine.filter(receipt => receipt.review.spent === true);
   const same = receipt => receipt.base === base && receipt.review.contractDigest === contractDigest;
-  const onHead = mine.filter(receipt => receipt.head === head && receipt.review.outcome !== 'refused');
+  // A failure streak belongs to one pins version: an amendment after restoring the CLIs may try again.
+  const onHead = mine.filter(receipt => receipt.head === head && receipt.pins.file === pins.file && receipt.review.outcome !== 'refused');
   let notReviewed = 0;
   for (let index = onHead.length - 1; index >= 0 && onHead[index].review.outcome === 'not-reviewed'; index--) notReviewed++;
   return { spent: completed.length, notReviewed, reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,

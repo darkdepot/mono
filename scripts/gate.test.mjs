@@ -199,6 +199,7 @@ test("review rounds are counted per task attempt from signed history", () => {
   assert.deepEqual([read(failed).spent, read(failed).notReviewed, read(failed, heads[1]).notReviewed], [0, 2, 1], 'not-reviewed spends nothing and counts in a row per head');
   assert.equal(read([...failed, receipt(heads[0], 'clean')]).notReviewed, 0);
   assert.equal(read([...failed, receipt(heads[0], 'refused')]).notReviewed, 2, 'a refusal is not a review attempt');
+  assert.equal(reviewHistory(failed, { pins: { file: '/root/dispatch/MONO-1-a1/pins.v1.json', digest: 'e' }, head: heads[0], base, contractDigest }).notReviewed, 0, 'an amendment clears the failure streak');
   const amended = { file: '/root/dispatch/MONO-1-a1/pins.v1.json', digest: 'e' }, amendedContract = 'f'.repeat(64);
   assert.deepEqual(reviewHistory(three, { pins: amended, head: heads[3], base, contractDigest: amendedContract }), { spent: 3, notReviewed: 0, reuse: null, record: three[2].review.record },
     'an amendment keeps the count and continues the record');
