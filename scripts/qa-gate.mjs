@@ -23,6 +23,8 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
   try {
     const recipeSource = qaRecipeSource(config);
     if (!recipeSource) return { state: 'not-connected', reason: 'тестировщик не подключён' };
+    // The product turned the merge gate off: QA still runs on request and before a release.
+    if (config.qa?.beforeMerge === false) return { state: 'not-connected', reason: 'тестировщик по запросу' };
     connected = true;
     const state = read(path.join(root, 'qa/state.json')), task = state.tasks?.[issue];
     need(task && task.head === head && sha(head), 'current task/head missing from host state');

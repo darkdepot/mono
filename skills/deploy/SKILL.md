@@ -54,7 +54,8 @@ Workflow:
    Linear/GitHub before this command and again immediately before merge and wave
    installation. Changed head returns to ship, then the whole QA list. Changed
    main alone retains QA. No recipe: record «тестировщик не подключён» in closeout
-   and continue the existing deploy path. This gate precedes deployment; Live QA
+   and continue the existing deploy path; recipe `beforeMerge: false` records
+   «тестировщик по запросу» the same way. This gate precedes deployment; Live QA
    below remains required after delivery. Resolve no-recipe products before worker
    state: `prepare --config <config>` returns the skip note without registry, pins
    or local ship files. Connected standalone work supplies the read-back JSON and
