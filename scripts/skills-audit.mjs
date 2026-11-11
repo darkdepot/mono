@@ -75,16 +75,21 @@ export function auditRows(host, rows, {stdout = false} = {}) {
 function turnState(host, rows, options) {
   const audit=auditRows(host,rows,options),terminals=[],activityLines=new Set();
   const calls=new Set(audit.calls.map(c=>c.line));
-  let turnId,lastActivity,identified=false;const background=new Set(),backgroundTasks=new Set(),notifications=new Set();
+  let turnId,lastActivity,identified=false;const background=new Set(),backgroundTasks=new Set(),notifications=new Set(),stopped=new Set();
   for(const row of rows) {
     const e=row.value,p=e.payload;
     if(e.parent_tool_use_id)continue;
+    // A task the parent stops itself reports "stopped" inside the same turn; no notification turn follows it.
+    if(host==='claude'&&e.type==='assistant'&&Array.isArray(e.message?.content))for(const block of e.message.content){
+      const id=block?.type==='tool_use'&&block.name==='TaskStop'?block.input?.task_id??block.input?.shell_id:undefined;
+      if(typeof id==='string')stopped.add(id);
+    }
     if(host==='claude'&&e.type==='system'){
       if(e.subtype==='init')notifications.clear();
       if(e.subtype==='background_tasks_changed'&&Array.isArray(e.tasks)){
         background.clear();for(const task of e.tasks)if(typeof task.task_id==='string'){background.add(task.task_id);backgroundTasks.add(task.task_id);}
       }else if(e.subtype==='task_started'&&e.is_backgrounded&&typeof e.task_id==='string'){background.add(e.task_id);backgroundTasks.add(e.task_id);}
-      else if(e.subtype==='task_notification'&&['completed','failed','stopped'].includes(e.status)){background.delete(e.task_id);if(backgroundTasks.has(e.task_id))notifications.add(e.run_id??e.task_id);}
+      else if(e.subtype==='task_notification'&&['completed','failed','stopped'].includes(e.status)){background.delete(e.task_id);if(backgroundTasks.has(e.task_id)&&!(e.status==='stopped'&&stopped.has(e.task_id)))notifications.add(e.run_id??e.task_id);}
     }
     if(host==='claude'&&e.type==='user'&&e.origin?.kind==='task-notification')notifications.delete(e.origin.runId);
     if(host==='codex'&&e.type==='event_msg'){
