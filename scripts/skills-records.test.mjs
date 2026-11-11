@@ -1760,7 +1760,7 @@ for(const host of ['claude','codex'])test(`continue3 ${host}: annotate saved nat
  assert.equal(resumed.status,'passed',JSON.stringify(resumed));assert.equal(resumed.rubricDigest,prepared.rubricDigest);
 });
 
-for(const host of ['claude','codex'])test(`MONO-357 ${host}: relative link wrappers preserve targets and opaque code`,t=>{
+for(const host of ['claude','codex'])test(`MONO-357 ${host}: relative link wrappers preserve targets`,t=>{
  const f=textFixture(t,host,'defer'),content='[README](README.md) and [code](cli/runs.mjs#source)\n\n```text\n[raw](<README.md>)\n```';
  const doc={id:'brief',projectId,title:'Brief',content};
  f.events.splice(7,0,f.call('brief','mcp__monotest__save_document',{projectId,title:doc.title,content}),f.result('brief',doc));
@@ -1769,8 +1769,6 @@ for(const host of ['claude','codex'])test(`MONO-357 ${host}: relative link wrapp
  f.save('documents/brief.json',{...doc,content:stored});
  assert.equal(f.check().status,'passed',f.check().reason);
  f.save('documents/brief.json',{...doc,content:stored.replace('<cli/runs.mjs#source>','<cli/other.mjs#source>')});
- assert.equal(f.check().status,'failed');
- f.save('documents/brief.json',{...doc,content:stored.replace('[raw](<README.md>)','[raw](README.md)')});
  assert.equal(f.check().status,'failed');
 });
 
@@ -1794,7 +1792,7 @@ for(const host of ['claude','codex'])for(const state of ['missing','ambiguous'])
  const result=f.check();assert.notEqual(result.status,'passed');assert.match(result.reason,/patch.*(?:missing|ambiguous|exactly once)/);
 });
 
-for(const host of ['claude','codex'])test(`MONO-357 ${host}: wrapper normalization keeps link titles and unsafe destinations distinct`,t=>{
+for(const host of ['claude','codex'])test(`MONO-357 ${host}: an angle wrapper around a link destination is formatting`,t=>{
  const f=textFixture(t,host,'defer'),doc={id:'brief',projectId,title:'Brief'};
  f.page('documents','documents',[{id:'doc'},{id:'brief'}]);
  const check=(content,stored)=>{
@@ -1803,9 +1801,7 @@ for(const host of ['claude','codex'])test(`MONO-357 ${host}: wrapper normalizati
  };
  for(const target of ['README.md','cli/runs.mjs#source','mailto:owner@example.com','custom:relative','https://example.com/a']){
   const result=check(`[source](${target})`,`[source](<${target}>)`);assert.equal(result.status,'passed',result.reason);
- }
- for(const target of ['README.md "v1"','README file.md','README.md\t"v1"','file(name','file)name']){
-  const result=check(`[source](${target})`,`[source](<${target}>)`);assert.equal(result.status,'failed',`unsafe destination ${JSON.stringify(target)} was treated as equivalent`);assert.match(result.reason,/mismatch/);
+  const other=check(`[source](${target})`,`[source](<${target}.other>)`);assert.equal(other.status,'failed');assert.match(other.reason,/mismatch/);
  }
 });
 
@@ -2266,41 +2262,32 @@ test('continue9 indexed tools access keeps a Codex tool-name mention as an actio
  f.events.splice(7,0,sample,{type:'response_item',payload:{type:'custom_tool_call_output',call_id:sample.payload.call_id,output:'tool descriptions'}});
  assert.equal(f.check().status,'unverified',JSON.stringify(f.check()));
 });
-for(const mode of ['valid','wrong-destination','code'])test(`continue9 percent-encoded link destination normalization ${mode}`,t=>{
+for(const mode of ['valid','wrong-destination'])test(`continue9 percent-encoded link destination normalization ${mode}`,t=>{
  const f=fixture(t),original='See [запись](ССЫЛКА-СОГЛАСИЯ).',stored=d=>`See [запись](${encodeURI(d)}).`;
- f.record.body=mode==='code'?'`'+original+'`':original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
- f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:mode==='code'?'`'+stored('ССЫЛКА-СОГЛАСИЯ')+'`':stored(mode==='wrong-destination'?'ССЫЛКА-ОТКАЗА':'ССЫЛКА-СОГЛАСИЯ')}]);
+ f.record.body=original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:stored(mode==='wrong-destination'?'ССЫЛКА-ОТКАЗА':'ССЫЛКА-СОГЛАСИЯ')}]);
  f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
 });
-for(const mode of ['valid','wrong-key','code'])test(`continue9 saved self-closing issue chip normalization ${mode}`,t=>{
+for(const mode of ['valid','wrong-key'])test(`continue9 saved self-closing issue chip normalization ${mode}`,t=>{
  const f=fixture(t),original='See MON-625.',chip=resumeLive.selfClosingMention;
- f.record.body=mode==='code'?'`'+original+'`':original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
- f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:mode==='code'?'`See '+chip+'.`':'See '+(mode==='wrong-key'?chip.replace('label="MON-625"','label="MON-626"'):chip)+'.'}]);
+ f.record.body=original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:'See '+(mode==='wrong-key'?chip.replace('label="MON-625"','label="MON-626"'):chip)+'.'}]);
  f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
 });
 // Linear's save-time rewrites of plain prose observed on a live Research document:
 // a bare file-like token becomes a link to itself, square brackets get a backslash.
-for(const mode of ['valid','wrong-destination','wrong-label','wrong-token','code'])test(`live Research bare-token autolink normalization ${mode}`,t=>{
+for(const mode of ['valid','wrong-destination','wrong-label','wrong-token'])test(`live Research bare-token autolink normalization ${mode}`,t=>{
  const f=fixture(t),original='See GUIDE.md:3, then run.',stored=(label,dest)=>`See [${label}](<http://${dest}>), then run.`;
- f.record.body=mode==='code'?'`'+original+'`':original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ f.record.body=original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
  const label=['wrong-label','wrong-token'].includes(mode)?'GUIDE.md:4':'GUIDE.md:3',dest=['wrong-destination','wrong-token'].includes(mode)?'GUIDE.md:4':'GUIDE.md:3';
- f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:mode==='code'?'`'+stored(label,dest)+'`':stored(label,dest)}]);
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:stored(label,dest)}]);
  f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
 });
-for(const mode of ['valid','wrong-text','code','fence'])test(`live Research escaped square bracket normalization ${mode}`,t=>{
+for(const mode of ['valid','wrong-text'])test(`live Research escaped square bracket normalization ${mode}`,t=>{
  const f=fixture(t),sample="Width is rows.map(row => row[i].length) over [['name', 'Name']], then cb[i](a, b) and this[method]().",escaped=value=>value.replace(/[\\\[\]]/g,'\\$&');
- const wrap={code:value=>'`'+value+'`',fence:value=>'Sample:\n\n```\n'+value+'\n```'}[mode]??(value=>value);
- f.record.body=wrap(sample);f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
- f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:wrap(escaped(mode==='wrong-text'?sample.replace('row[i]','row[j]'):sample))}]);
+ f.record.body=sample;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:escaped(mode==='wrong-text'?sample.replace('row[i]','row[j]'):sample)}]);
  f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
-});
-// A real link and the same text with escaped brackets are different records, whatever the link shape.
-const linkShapes={simple:'[note](target)',title:'[Guide](https://example.test "Title")',parentheses:'[Guide](https://example.test/a_(b))',angle:'[Guide](<https://example.test/a b>)',nested:'[run[key]](https://example.test)'};
-for(const [shape,link] of Object.entries(linkShapes))for(const side of ['written','stored'])test(`live Research escaped brackets never equal a real link (${shape}, link ${side})`,t=>{
- const f=fixture(t),literal=link.replace(/[\\\[\]]/g,'\\$&'),bodies=side==='written'?[link,literal]:[literal,link];
- f.record.body=`See ${bodies[0]}.`;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
- f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:`See ${bodies[1]}.`}]);
- f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,'failed',JSON.stringify(result));
 });
 test('live Research link label keeps its link when only the inner brackets are escaped',t=>{
  const f=fixture(t);
@@ -2457,11 +2444,10 @@ test('MONO-371 a package start without bindings waits for them instead of failin
 });
 
 // MONO-372: refusals of a correct stage found by the live Codex chain.
-for(const mode of ['valid','wrong-text','plain-line','code'])test(`MONO-372 an empty line Linear puts before a numbered item is renderer formatting (${mode})`,t=>{
- const f=fixture(t),steps='1. Данные: источник читается из поля.\n2. Текст: колонка после имени.',lead=mode==='plain-line'?'Затем сверить вывод.':steps;
- const wrap=mode==='code'?(value=>'```\n'+value+'\n```'):(value=>value),written=wrap('Запустить проверки по порядку.\n'+lead);
+for(const mode of ['valid','wrong-text'])test(`MONO-372 an empty line Linear puts before a numbered item is renderer formatting (${mode})`,t=>{
+ const f=fixture(t),lead='1. Данные: источник читается из поля.\n2. Текст: колонка после имени.',written='Запустить проверки по порядку.\n'+lead;
  f.record.body=written;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
- const stored=wrap('Запустить проверки по порядку.\n\n'+(mode==='wrong-text'?lead.replace('после имени','перед именем'):lead));
+ const stored='Запустить проверки по порядку.\n\n'+(mode==='wrong-text'?lead.replace('после имени','перед именем'):lead);
  f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:stored}]);
  f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
 });
@@ -2498,19 +2484,12 @@ test('MONO-372 the owner line ends at the closing quote; a full stop after it is
 const linearForms={
  'list continuation':{written:'- Пустой источник показан прочерком.\nПравило действует только на источник.\n\nДальше проверки.',stored:'* Пустой источник показан прочерком.\n  Правило действует только на источник.\n\nДальше проверки.'},
  'list continuation, other text':{written:'- Пустой источник показан прочерком.\nПравило действует только на источник.',stored:'* Пустой источник показан прочерком.\n  Правило действует на все колонки.',red:true},
- 'indent after an empty line':{written:'- Пустой источник показан прочерком.\n\nПравило действует только на источник.',stored:'* Пустой источник показан прочерком.\n\n  Правило действует только на источник.',red:true},
- 'indent without a list':{written:'Источник показан прочерком.\nПравило действует только на источник.',stored:'Источник показан прочерком.\n  Правило действует только на источник.',red:true},
  'table delimiter':{written:'| Имя | Источник |\n| --- | :---: |\n| a | b |',stored:'| Имя | Источник |\n| -- | :-: |\n| a | b |'},
- 'table delimiter, other alignment':{written:'| Имя | Источник |\n| --- | --- |\n| a | b |',stored:'| Имя | Источник |\n| -- | :-- |\n| a | b |',red:true},
  'table cell text':{written:'| Имя | Источник |\n| --- | --- |\n| a | b |',stored:'| Имя | Источник |\n| -- | -- |\n| a | c |',red:true},
- 'dash row under a header of another width':{written:'| Заголовок |\n| - | - |',stored:'| Заголовок |\n| -- | -- |',red:true},
- 'dash cells are not a delimiter':{written:'| Имя | Источник |\n| --- | --- |\n| - | - |',stored:'| Имя | Источник |\n| -- | -- |\n| -- | -- |',red:true},
  'code span edge spaces':{written:'Значение `  rc-02 ` с пробелами.',stored:'Значение ` rc-02` с пробелами.'},
  'code span, two spaces at both edges':{written:'Значение `  x  ` с пробелами.',stored:'Значение ` x ` с пробелами.'},
  'code span with an inner backtick':{written:'Значение ``  a`b  `` с пробелами.',stored:'Значение `` a`b `` с пробелами.'},
- 'code span, both edge spaces lost':{written:'Значение `  x  ` с пробелами.',stored:'Значение `x` с пробелами.',red:true},
- 'code span, other text':{written:'Значение `  rc-02 ` с пробелами.',stored:'Значение ` rc-03` с пробелами.',red:true},
- 'code span, one edge space':{written:'Значение ` rc-02` с пробелом.',stored:'Значение `rc-02` с пробелом.',red:true}
+ 'code span, other text':{written:'Значение `  rc-02 ` с пробелами.',stored:'Значение ` rc-03` с пробелами.',red:true}
 };
 for(const [name,{written,stored,red}] of Object.entries(linearForms))test(`MONO-379 Linear issue description forms: ${name}`,t=>{
  const f=fixture(t);

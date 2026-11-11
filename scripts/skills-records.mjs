@@ -55,9 +55,9 @@ function date(value){
 }
 
 const identityValues=value=>typeof value==='string'?[value]:[value?.id,value?.name].filter(text);
-// Linear's observed block spacing, link wrappers, list markers, self-links on
-// bare file-like tokens and backslashes before prose square brackets. Preserve
-// paragraph boundaries, code and all substantive bytes.
+// The created project against the version shown to the owner: Linear's observed block spacing, link wrappers, list
+// markers, self-links on bare file-like tokens and backslashes before prose square brackets. Preserve paragraph
+// boundaries, code and all substantive bytes. A write's read-back uses `words` below instead.
 const escapedBracket=(all,slashes,mark)=>slashes.length%2?all:`${slashes}\\${mark}`;
 function prose(value) {
  return value.replace(/<issue\b[^<>]*\/\s*>/g,all=>{
@@ -73,23 +73,18 @@ function prose(value) {
   .replace(/\[((?:[^\[\]\\\n]|\\.|\[[^\[\]\n]*\])*)\](\((?:<[^<>\n]+>|(?:[^\s<>()]|\([^\s<>()]*\))+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?\))|(\\*)([\[\]])/g,
    (all,label,tail,slashes,mark)=>tail?`[${label.replace(/(\\*)([\[\]])/g,escapedBracket)}]${tail}`:escapedBracket(all,slashes,mark));
 }
-// Code stays literal. `parsed` applies CommonMark's own rule to a written text, as Linear does on save: a span whose
-// content begins and ends with a space loses one at each end (`  x ` is stored as ` x`). Only a span on one line.
-function inlineProse(line,opened,parsed=false) {
- let result='',start=0,delimiter=opened,from=null;
+// Code stays literal.
+function inlineProse(line,opened) {
+ let result='',start=0,delimiter=opened;
  for(const match of line.matchAll(/`+/g)) {
   const part=line.slice(start,match.index);
   result+=delimiter===null?prose(part):part;
-  if(parsed&&from!==null&&delimiter===match[0].length){
-   const code=result.slice(from);
-   if(code.startsWith(' ')&&code.endsWith(' ')&&code.trim())result=result.slice(0,from)+code.slice(1,-1);
-  }
   result+=match[0];start=match.index+match[0].length;
-  if(delimiter===null){delimiter=match[0].length;from=result.length;}else if(delimiter===match[0].length){delimiter=null;from=null;}
+  if(delimiter===null)delimiter=match[0].length;else if(delimiter===match[0].length)delimiter=null;
  }
  const tail=line.slice(start);return result+(delimiter===null?prose(tail):tail);
 }
-function markdown(value,parsed=false){
+function markdown(value){
  if(typeof value!=='string')return value;
  const cells=line=>line.trim().slice(1,-1).split(/(?<!\\)\|/);
  let fence=null,inline=null,heading=false,item=false,row=0,columns=0;const result=[];
@@ -119,7 +114,7 @@ function markdown(value,parsed=false){
   if(row===1)columns=cells(line).length;
   if(row===2&&/^ {0,3}\|(?: *:?-+:? *\|)+ *$/.test(list)&&cells(list).length===columns)list='| '+cells(list).map(cell=>cell.trim().replace(/-+/,'---')).join(' | ')+' |';
   item=!literal&&line.trim()!==''&&(item||/^ {0,3}(?:[-*+] |\d{1,3}[.)] )/.test(line));
-  result.push(block?list:inlineProse(list,inline,parsed));
+  result.push(block?list:inlineProse(list,inline));
   heading=!literal&&/^#{1,6} /.test(line);
   if(!block)for(const tick of line.matchAll(/`+/g)){
    if(inline===null)inline=tick[0].length;
@@ -157,6 +152,16 @@ function applyPatch(kind,id,content,patch){
  }
  return content;
 }
+// A write and its read-back are compared by their words and numbers in order. Linear reformats a text on save
+// (spacing, list markers, escapes, link wrappers, issue chips), so formatting is not evidence; a changed, lost or
+// stale word is. A link counts as its label, destination and title; a link to its own label (README.md:7 stored as
+// [README.md:7](<http://README.md:7>)) counts once, and an issue chip counts as its label.
+const linkTarget=dest=>{dest=dest.replace(/^<|>$/g,'');try{return decodeURI(dest);}catch{return dest;}};
+const words=value=>value.normalize('NFC')
+ .replace(/<issue\b[^<>]*\blabel="([^"]*)"[^<>]*\/\s*>|<issue\b[^<>]*>([^<>]*)<\/issue>/g,(all,label,inner)=>` ${label??inner} `)
+ .replace(/\[((?:[^\[\]\\\n]|\\.|\[[^\[\]\n]*\])*)\]\((<[^<>\n]*>|(?:[^\s<>()]|\([^\s<>()]*\))*)((?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?)\)/g,
+  (all,label,dest,title)=>{const target=linkTarget(dest);return ` ${label} ${[label,`http://${label}`].includes(target)?'':target} ${title} `;})
+ .match(/[\p{L}\p{N}]+/gu)??[];
 function compareField(field,wanted,actual,id){
  let same;
  if(field==='status'||field==='labels'){
@@ -169,7 +174,7 @@ function compareField(field,wanted,actual,id){
    matched.add(index);return true;
   })&&matched.size===observed.length;
   if(!same&&unresolved)missing(`id/name resolution unavailable for ${id}.${field}`);
- }else same=isDeepStrictEqual(wanted,actual)||(['description','content','body'].includes(field)&&[markdown(wanted),markdown(wanted,true)].includes(markdown(actual)));
+ }else same=isDeepStrictEqual(wanted,actual)||(['description','content','body'].includes(field)&&typeof wanted==='string'&&typeof actual==='string'&&isDeepStrictEqual(words(wanted),words(actual)));
  if(!same)throw new Error(`read-back/write result mismatch for ${id}.${field}`);
 }
 
