@@ -14,5 +14,6 @@ For each remark id answer `confirmed` only when the code at the pinned head
 proves the decision: a rejected remark describes no real defect in this change;
 a deferred one is not dangerous (no data loss, security hole, gate bypass,
 false green or blocked normal use) and stays inside the task; an informational
-one asks for no change. Otherwise answer `needs-fix`. Uncertainty is
-`needs-fix`. `reason` names the code that decides it.
+one asks for no change. An `urgent` (P0/P1) remark is confirmed only when the
+code proves it describes no real defect. Otherwise answer `needs-fix`.
+Uncertainty is `needs-fix`. `reason` names the code that decides it.

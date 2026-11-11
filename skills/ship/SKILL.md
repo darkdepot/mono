@@ -50,7 +50,7 @@ never dispatch another stage. Preserve the following order.
 5. Run/report mono:check pre-ship, readiness-only, no repairs.
 6. Preflight opened the draft. Settle every `scripts/ship-pr.mjs remarks` item:
    fixed in the clean round, or settled without code by `check` (read-only pass,
-   named in botRemarks evidence). Then `ready`; `mention` once if the bot is
+   named in botRemarks evidence). Then `ready --preflight`; `mention` once if bot is
    silent. Queue In Review and PR chip after leaving draft, confirm them.
 7. Run Documentation workflow after PR/before stabilization (configured, e.g.
    `gstack document-release`). Record head effect; pushes restart on new head.

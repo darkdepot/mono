@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { SHIP_MARKER, scanPatch, unpushedSecrets, checkSecrets, draftBody, collectRemarks, readyBlockers, mentionNeeded, requestRemark, u6File } from './ship-pr.mjs';
-import { prRemarkFindings } from './code-review.mjs';
+import { SHIP_MARKER, scanBlob, unpushedSecrets, checkSecrets, draftBody, collectRemarks, readyBlockers, mentionNeeded, requestRemark, u6File } from './ship-pr.mjs';
+import { prRemarkFindings, remarkDigest } from './code-review.mjs';
 
 const head = 'a'.repeat(40), older = 'b'.repeat(40);
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -33,8 +33,11 @@ test('secrets: only commits not on the remote are scanned, with file and line', 
   assert.throws(() => checkSecrets({ worktree: work, repo: 'o/r', remote: 'origin', protection: 'unknown' }), /secret before push/, 'unreadable protection status scans too');
   assert.deepEqual(checkSecrets({ worktree: work, repo: 'o/r', remote: 'origin', protection: 'enabled' }), { scanned: false, protection: 'enabled', found: [] }, 'GitHub push protection is the check');
 });
-test('secrets: removed lines and ordinary text are not findings', () => {
-  assert.deepEqual(scanPatch(`+++ b/x.js\n@@ -1,2 +1,1 @@\n-const key = "${awsKey}";\n context\n+const ok = "sk-short";\n`), []);
+test('secrets: whole files are read, binary-looking ones and diff attributes included; ordinary text passes', t => {
+  assert.deepEqual(scanBlob('x.js', 'const ok = "sk-short";\n'), []);
+  const { work, commit } = repo(t);
+  commit('.gitattributes', 'creds.txt -diff\n'); commit('creds.txt', `token=${awsKey}\n`); commit('blob.bin', `\0\0binary${privateKey}\n`);
+  assert.deepEqual(unpushedSecrets(work, 'origin').map(item => [item.file, item.kind]).sort(), [['blob.bin', 'private key'], ['creds.txt', 'AWS access key']]);
 });
 
 test('draft body carries the marker, the result title and the task link', () => {
@@ -62,6 +65,7 @@ test('remarks: bot threads, bot comments, failed CI on the head and owner instru
   const remarks = collectRemarks({ snapshot: snapshot({ threads, checks, botComments: [{ id: 'B1', body: 'Greptile Summary', updatedAt: 'u' }] }), reviewComments, issueComments });
   assert.deepEqual(remarks.map(remark => [remark.source, remark.id, remark.file, remark.line, remark.urgent, remark.head === older]), [
     ['bot', 'T1', 'scripts/gate.mjs', 150, true, true],
+    ['bot', 'T2', '(pr)', 1, false, false],
     ['owner', 'T3', '(pr)', 1, false, false],
     ['bot', 'B1', '(pr)', 1, false, false],
     ['owner', 'I2', '(pr)', 1, false, false],
@@ -73,6 +77,8 @@ test('remarks: bot threads, bot comments, failed CI on the head and owner instru
   assert.doesNotThrow(() => prRemarkFindings(remarks.map(requestRemark)), 'every remark is a valid collection request remark');
   assert.deepEqual(collectRemarks({ snapshot: snapshot({ threads: threads.slice(2) }), issueComments: issueComments.slice(1) }), [],
     'without a marked Ship publication the owner\'s comments are not instructions');
+  assert.deepEqual(collectRemarks({ snapshot: snapshot(), issueComments: issueComments.slice(1), pr: { body: `${SHIP_MARKER}\nDraft`, created_at: '2026-11-11T09:00:00Z' } }).map(remark => remark.id), ['I2'],
+    'the marked draft description starts the owner\'s instructions');
 });
 test('Ship\'s own reply in a thread does not change the remark digest', () => {
   const thread = extra => ({ id: 'T1', isResolved: false, comments: [{ id: 'C1', body: 'Bug', author: { login: 'greptile-apps[bot]' } }, ...extra] });
@@ -85,20 +91,20 @@ test('remark digest changes when the remark text changes', () => {
   assert.notEqual(read('one'), read('two'));
 });
 
-test('ready: no failed CI, no open owner instruction, every remark fixed in a clean round or confirmed by the read-only pass', () => {
-  const remark = (id, source = 'bot', digest = 'd'.repeat(64)) => ({ id, source, title: id, digest });
-  const check = { head, remarks: [{ id: 'B1', digest: 'd'.repeat(64) }, { id: 'B2', digest: 'd'.repeat(64) }],
+test('ready: no failed CI, every remark carried in the clean collection or confirmed by the read-only pass for exactly its text', () => {
+  const build = (id, source = 'bot', extra = {}) => { const remark = { id, source, file: '(pr)', line: 1, title: id, body: `${id} body`, urgent: false, head, ...extra }; return { ...remark, digest: remarkDigest(remark) }; };
+  const [b1, b2, t1, owner, ci] = [build('B1'), build('B2'), build('T1'), build('I2', 'owner'), build('ci:validate', 'ci')];
+  const check = { head, remarks: [b1, b2].map(remark => ({ id: remark.id, digest: remark.digest, decision: 'informational' })),
     verdicts: [{ id: 'B1', verdict: 'confirmed', reason: 'r' }, { id: 'B2', verdict: 'needs-fix', reason: 'r' }] };
-  assert.deepEqual(readyBlockers({ head, remarks: [remark('T1'), remark('B1')], sent: [{ id: 'T1', digest: 'd'.repeat(64) }], check }), []);
-  assert.match(readyBlockers({ head, remarks: [remark('B2')], check })[0], /not settled/, 'needs-fix keeps the draft');
-  assert.match(readyBlockers({ head, remarks: [remark('B1', 'bot', 'e'.repeat(64))], check })[0], /not settled/, 'a changed remark needs a new pass');
-  assert.match(readyBlockers({ head: older, remarks: [remark('B1')], check })[0], /not settled/, 'a pass on another head does not count');
-  assert.match(readyBlockers({ head, remarks: [remark('T1', 'bot', 'e'.repeat(64))], sent: [{ id: 'T1', digest: 'd'.repeat(64) }] })[0], /not settled/);
-  assert.match(readyBlockers({ head, remarks: [remark('ci:validate', 'ci')] })[0], /failed CI/);
-  assert.match(readyBlockers({ head, remarks: [remark('I2', 'owner')] })[0], /owner instruction not done/);
-  assert.match(readyBlockers({ head, remarks: [remark('I2', 'owner')], check: { ...check, remarks: [{ id: 'I2', digest: 'd'.repeat(64) }], verdicts: [{ id: 'I2', verdict: 'confirmed', reason: 'r' }] } })[0],
-    /owner instruction/, 'the read-only pass cannot decline an owner instruction');
-  assert.deepEqual(readyBlockers({ head, remarks: [remark('I2', 'owner')], sent: [{ id: 'I2', digest: 'd'.repeat(64) }] }), [], 'an owner instruction done in a clean round');
+  assert.deepEqual(readyBlockers({ head, remarks: [t1, b1], sent: [requestRemark(t1)], check }), []);
+  assert.match(readyBlockers({ head, remarks: [b2], check })[0], /not settled/, 'needs-fix keeps the draft');
+  assert.match(readyBlockers({ head, remarks: [build('B1', 'bot', { body: 'changed text' })], check })[0], /not settled/, 'the pass covered other text');
+  assert.match(readyBlockers({ head: older, remarks: [b1], check })[0], /not settled/, 'a pass on another head does not count');
+  assert.match(readyBlockers({ head, remarks: [build('T1', 'bot', { body: 'new reply' })], sent: [requestRemark(t1)] })[0], /not settled/, 'a remark that changed after the round');
+  assert.match(readyBlockers({ head, remarks: [ci] })[0], /failed CI/);
+  assert.match(readyBlockers({ head, remarks: [owner], check: { head, remarks: [{ id: 'I2', digest: owner.digest }], verdicts: [{ id: 'I2', verdict: 'confirmed', reason: 'r' }] } })[0],
+    /owner instruction not done/, 'the read-only pass cannot decline an owner instruction');
+  assert.deepEqual(readyBlockers({ head, remarks: [owner], sent: [requestRemark(owner)] }), [], 'an owner instruction done in a clean round');
 });
 test('mention: once per head and only while the bot has not reported on it', () => {
   assert.equal(mentionNeeded({ snapshot: snapshot() }), true);

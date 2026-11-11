@@ -513,7 +513,8 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
       const index = record.findings.findIndex(finding => finding.key === remark.key);
       // A remark raised again reopens its finding; the stronger danger of the two is kept.
       if (index < 0) record.findings.push(remark);
-      else record.findings[index] = { ...record.findings[index], status: 'confirmed', outcome: 'confirmed', lastCheckedHead: remark.head,
+      else record.findings[index] = { ...record.findings[index], title: remark.title, line: remark.line, trigger: remark.trigger, evidence: remark.evidence,
+        status: 'confirmed', outcome: 'confirmed', lastCheckedHead: remark.head,
         dangerMaximum: maximumDanger(savedDanger(record.findings[index]), savedDanger(remark)), danger: maximumDanger(savedDanger(record.findings[index]), savedDanger(remark)) !== false };
     }
     requireValue(git(worktree, ['rev-parse', 'HEAD']).trim() === head && !git(worktree, ['status', '--porcelain=v1', '--untracked-files=all']).trim(), 'review requires the clean pinned HEAD');
@@ -601,7 +602,8 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
       // Once closed that way it stays closed until the reviewer reports it again or the checker stops rejecting it.
       const agreedFix = verdict.outcome === 'rejected' && verdict.closed === true && !!saved && saved.lastCheckedHead !== head &&
         !reported.has(verdict.key) && !unreviewedFiles.has(finding.file);
-      const retained = (danger || unreviewedFiles.has(finding.file)) && verdict.outcome === 'rejected' && !agreedFix;
+      // A PR remark sent as fixed closes only with a verified fix; settling it without code is the read-only pass's job.
+      const retained = (danger || unreviewedFiles.has(finding.file) || finding.class === 'pr-remark') && verdict.outcome === 'rejected' && !agreedFix;
       return { ...verdict, outOfContract: !!saved?.outOfContract || verdict.outOfContract, riskRaised: !!saved?.riskRaised || verdict.riskRaised,
         ...(deletionEvidence ? { deletionEvidence } : {}), checkerDanger: verdict.danger, dangerMaximum, danger,
         origin: saved && savedDanger(saved) !== false ? saved.origin : verdict.origin,
@@ -650,14 +652,18 @@ export function parseRemarkCheck(value, remarks) {
   requireValue(seen.size === expected.size, 'remark without verdict');
   return value.verdicts;
 }
+// The digest of what was checked: the remark's own text, never a value the worker supplies.
+export const remarkDigest = remark => digest([remark.id, remark.source, remark.title, remark.body, remark.urgent, remark.head]);
 export async function runRemarkCheck(input, { runRole = executeRole } = {}) {
   const { worktree, head, base, remarks, config = {}, packRoot = runtimePackRoot() } = input;
   requireValue(path.isAbsolute(worktree ?? '') && /^[a-f0-9]{40}$/.test(head) && /^[a-f0-9]{40}$/.test(base), 'absolute worktree and immutable head/base required');
   requireValue(Array.isArray(remarks) && remarks.length > 0 && remarks.length <= 100, 'one to 100 remarks required');
   for (const remark of remarks) {
-    exact(remark, ['id', 'digest', 'source', 'title', 'body', 'decision', 'evidence']);
-    requireValue(/^[A-Za-z0-9_.:/-]{1,200}$/.test(remark.id ?? '') && /^[a-f0-9]{64}$/.test(remark.digest ?? '') && PR_REMARK_SOURCES.includes(remark.source) &&
+    exact(remark, ['id', 'source', 'title', 'body', 'urgent', 'head', 'decision', 'evidence']);
+    requireValue(/^[A-Za-z0-9_.:/-]{1,200}$/.test(remark.id ?? '') && ['bot', 'ci'].includes(remark.source) && typeof remark.urgent === 'boolean' && /^[a-f0-9]{40}$/.test(remark.head ?? '') &&
       ['rejected', 'deferred', 'informational'].includes(remark.decision) && [remark.title, remark.body, remark.evidence].every(text), 'invalid remark decision');
+    // A P0/P1 remark may be rejected with this pass, never deferred; an owner instruction is never declined here.
+    requireValue(!remark.urgent || remark.decision !== 'deferred', 'an urgent remark cannot be deferred');
   }
   requireValue(new Set(remarks.map(remark => remark.id)).size === remarks.length, 'repeated remark id');
   requireValue(git(worktree, ['rev-parse', 'HEAD']).trim() === head && !git(worktree, ['status', '--porcelain=v1', '--untracked-files=all']).trim(), 'remark check requires the clean pinned HEAD');
@@ -670,7 +676,7 @@ export async function runRemarkCheck(input, { runRole = executeRole } = {}) {
     exported = exportReviewTree(worktree, head, binary);
     const context = { head, base, diff: changed.parts.map(part => part.diff).join(''), binaryFiles: [...binary], remarks };
     const result = await runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt: promptFor(packRoot, 'remark-check', context) });
-    return { head, base, engine: route.engine, model: route.model, remarks: remarks.map(({ id, digest }) => ({ id, digest })),
+    return { head, base, engine: route.engine, model: route.model, remarks: remarks.map(remark => ({ id: remark.id, digest: remarkDigest(remark), decision: remark.decision })),
       verdicts: parseRemarkCheck(result.response, remarks), elapsedMs: result.elapsedMs ?? null, usage: result.usage ?? null };
   } finally { if (exported) removeReviewTree(exported.root); }
 }

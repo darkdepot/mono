@@ -40,7 +40,7 @@ comments/certificates; apply worker snapshot/queue rules.
    [role:code-review-checker](references/model-policy.md#roles), then
    verification. No in-worker review or substitute.
 4. Commit; first request: `scripts/ship-pr.mjs open` (draft, once). Later: `push`,
-   then `remarks`; fixed ones go in the request's `prRemarks`. Run the pinned
+   then `remarks`; all fixed this attempt go in the request's `prRemarks`. Run the pinned
    gate.mjs preflight collect:false, publish its returned request, confirm, rerun.
 5. Follow the gate line per references/review-admission.md: open findings → fix,
    check, commit, next round (three per attempt); `needs-decision:`/`blocked:`
