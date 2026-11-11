@@ -951,6 +951,9 @@ After every confirmed green ship, resolve the recipe from the product config's
 `references/qa-recipes.md`. Examples, `workflows.qa`, `qaAuth` and assignment
 files do not connect a product. No recipe: do not launch a tester; preserve the
 existing merge path and record «тестировщик не подключён» in closeout.
+A recipe with `beforeMerge: false` turns this gate off for the product: merge does
+not wait for a tester and closeout records «тестировщик по запросу»; run `mono:qa`
+on request and once before a release.
 
 For connected products launch **mono:qa on the host**, on role `qa`, outside the
 worker's copy. Give it the task, approved PRD/design, current PR head, confirmed
