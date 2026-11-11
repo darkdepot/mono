@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "completed": { "type": "boolean", "const": true },
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "verdict": { "type": "string", "enum": ["confirmed", "needs-fix"] },
+          "reason": { "type": "string" }
+        },
+        "required": ["id", "verdict", "reason"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["completed", "verdicts"],
+  "additionalProperties": false
+}

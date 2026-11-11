@@ -18,7 +18,8 @@ and open findings. Same head reuses its round; new base, fresh record.
   request the same head once more. `blocked:` (twice in a row): park blocked.
 
 A fixed finding closes when the checker verifies the fix on the new head and
-the reviewer no longer reports it, dangerous or not.
+the reviewer no longer reports it, dangerous or not. PR remarks you fixed (bot,
+CI, owner) go in `prRemarks` as open findings; a P0/P1 one needs a fix.
 
 Successor candidates pass instead of blocking: an older defect the task did not
 introduce (any round); a minor P3 leftover from round 2 on, unless it is about

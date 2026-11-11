@@ -48,16 +48,17 @@ never dispatch another stage. Preserve the following order.
    acceptance. Confirm its writes under the sequencer. Earlier Project-first
    repair belongs to handoff; issue-only renewal to issue intake.
 5. Run/report mono:check pre-ship, readiness-only, no repairs.
-6. Delegate PR creation to configured Ship workflow, with package/preflight
-   context. Record number/URL/head; queue In Review and PR chip after creation,
-   then confirm them before further dependent progression.
+6. Preflight opened the draft. Settle every `scripts/ship-pr.mjs remarks` item:
+   fixed in the clean round, or settled without code by `check` (read-only pass,
+   named in botRemarks evidence). Then `ready`; `mention` once if the bot is
+   silent. Queue In Review and PR chip after leaving draft, confirm them.
 7. Run Documentation workflow after PR/before stabilization (configured, e.g.
    `gstack document-release`). Record head effect; pushes restart on new head.
    Missing workflow means intentionally unavailable with reason; always report outcome.
-8. Delegate Review feedback workflow once inspectable. Follow feedback-loop bot
-   config/dedup/published-replies/convergence rules. Missing resolver: inspect once;
-   actionable feedback → needs-human, otherwise all green conditions still apply.
-   Product/UX/business/scope/risk questions → needs-human.
+8. A late remark or CI failure after ready: settled without code by `check`, or
+   a non-dangerous one confirmed as successor; one needing a fix: `undo`, park
+   not-converged. Owner's unmarked PR comment: one question. Product/UX/business/
+   scope/risk questions → needs-human.
 9. Obtain live gate.mjs ship pass; publish full green certificate and confirm its
    queue before terminal green. Under dispatch no direct Linear writes.
 

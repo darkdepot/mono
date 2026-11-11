@@ -74,8 +74,9 @@ Workspace-write/network: worktree, derived/common Git dirs, <root>/reports
 (--add-dir spawn; writable_roots resume); copy grants to capsule.writable_roots.
 codex 0.153.4 guards linked-worktree metadata. Orchestrator
 root/confirmations/registry/control/consumed/logs: read-only.
-No early PR/push/unrelated network. Standalone implement network by exception;
-preflight network/.git, ship push. Exact hidden grants. Log disabled sandbox in
+No PR/push/unrelated network before the first collection request; then preflight
+pushes and opens the draft via scripts/ship-pr.mjs open|push (secrets first).
+Standalone implement network by exception; preflight/ship network/.git. Exact hidden grants. Log disabled sandbox in
 orchestrator ledger. Denied mailbox: same uncommitted JSON fallback.
 
 ## Claude PR probe
