@@ -626,7 +626,8 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     }
     const current = [...merged.values()];
     const active = current.filter(finding => !['closed', 'rejected'].includes(finding.status));
-    const blocking = active.filter(finding => finding.outcome === 'unresolved' || finding.origin !== 'pre-existing');
+    // An owner's instruction on the PR stays blocking until it is done, whatever its origin.
+    const blocking = active.filter(finding => finding.outcome === 'unresolved' || finding.origin !== 'pre-existing' || (finding.class === 'pr-remark' && finding.source === 'owner'));
     // A round only lists successors; after merge the task's Linear writer files them (references/review-admission.md).
     const successors = active.filter(finding => (finding.origin === 'pre-existing' && finding.danger) || (number === 3 && blocking.includes(finding) && !finding.danger));
     const outcome = unreviewedFiles.size ? 'not-reviewed' : blocking.length || current.some(finding => finding.outOfContract || finding.riskRaised) || successors.length ? 'not-converged' : 'clean';
