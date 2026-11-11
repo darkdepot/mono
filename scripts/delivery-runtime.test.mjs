@@ -81,13 +81,13 @@ function controlledDarwinTemp(bin, root) {
   fs.chmodSync(getconf, 0o700);
 }
 
-test("delivery config defaults confirmation to 1800 seconds and keeps it below the evidence limit", async () => {
+test("delivery config defaults confirmation to 6300 seconds and keeps it below the evidence limit", async () => {
   const { deliveryConfig } = await import("./runtime.mjs");
-  assert.equal(deliveryConfig().confirmationTimeoutSec, 1800);
-  assert.doesNotThrow(() => deliveryConfig({ orchestration: { delivery: { confirmationTimeoutSec: 2399, evidenceLimitSec: 2400 } } }));
+  assert.equal(deliveryConfig().confirmationTimeoutSec, 6300);
+  assert.doesNotThrow(() => deliveryConfig({ orchestration: { delivery: { confirmationTimeoutSec: 7199, evidenceLimitSec: 7200 } } }));
   assert.throws(
-    () => deliveryConfig({ orchestration: { delivery: { confirmationTimeoutSec: 2400, evidenceLimitSec: 2400 } } }),
-    /confirmationTimeoutSec.*2400.*evidenceLimitSec.*2400/
+    () => deliveryConfig({ orchestration: { delivery: { confirmationTimeoutSec: 7200, evidenceLimitSec: 7200 } } }),
+    /confirmationTimeoutSec.*7200.*evidenceLimitSec.*7200/
   );
 });
 

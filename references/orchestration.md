@@ -1394,8 +1394,8 @@ reviews are completed runs too, not missing actions. Return present evidence as
 and confirm through the same runtime. Publish and confirm enforce code → preflight → ship: read the latest earlier phase reports and earlier sequence confirmations, allowing only the fingerprint-bound code-report deferral above. Confirmations retain the report snapshot, so overwritten phase files do not erase sequence evidence. Missing or mismatched predecessors refuse before adapter calls. Fallback publication supplies --root; confirmation reads the report directory and root mailbox and refuses conflicting copies. Worker collect:false must pass before ready;
 A review fix uses a new head/write ID. Use write.id=request.collectionId=preflight-collect:<head>:<n>. Increment n for each collection request on that head, including transient retries after a recorded failure; also advance the phase sequence. Never reuse the failed collection ID for a new run; a lost response retains its original ID. Bind confirmation evidence to the immutable history receipt as well as the current head receipt. Never let a worker collect or select new
 pins. Preserve failed receipts. Configure confirmationTimeoutSec BEFORE dispatch
-to cover verification plus review. Defaults: `confirmationTimeoutSec=1800`,
-`collectionTimeoutSec=1500`, `collectionRetries=1` (nonnegative integer).
+to cover verification plus review. Defaults: `confirmationTimeoutSec=6300`,
+`collectionTimeoutSec=4500`, `collectionRetries=1` (nonnegative integer).
 Require `collectionTimeoutSec < confirmationTimeoutSec < evidenceLimitSec`.
 Launch pins all three collection/confirmation settings in the registry; old
 attempts retain their existing confirmation timeout and use the new collection

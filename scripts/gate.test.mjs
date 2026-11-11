@@ -791,7 +791,7 @@ test('ship-next-attempt-after-fix: new head/state opens a window in the same tas
     const request = { preflight: { ...pins, pins: binding, head, collect: false, collectionId: `preflight-collect:${head}:1` },
       repo: 'owner/repo', number: 162, attempt: 1, config, watch: true,
       stateFile: path.join(scratch, 'ship-1.json'), judgmentFile: path.join(scratch, 'judgment.json'), fixtureSnapshot: path.join(scratch, 'github.json') };
-    atomicJson(request.stateFile, { scope: { repo: request.repo, number: 162, attempt: 1 }, head, startedAt: Date.now() - 2401000, lastEventAt: Date.now() - 2401000 });
+    atomicJson(request.stateFile, { scope: { repo: request.repo, number: 162, attempt: 1 }, head, startedAt: Date.now() - 7201000, lastEventAt: Date.now() - 7201000 });
     for (const policy of [{ botChecks: [] }, { botChecks: ['Other Bot'] }, { botUnavailable: 'worker outage' }])
       await assert.rejects(shipGate({ ...request, policy }), /bot/);
     const previous = fs.readFileSync(request.stateFile);

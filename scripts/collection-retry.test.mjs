@@ -7,7 +7,7 @@ const config = delivery => ({ orchestration: { delivery } });
 test('retry-old-config-1200: defaults fit current windows; an old attempt cannot launch without budget', () => {
   const defaults = deliveryConfig();
   assert.equal(defaults.collectionRetries, 1);
-  assert.equal(defaults.collectionTimeoutSec, 1500);
+  assert.equal(defaults.collectionTimeoutSec, 4500);
   assert.ok(defaults.collectionTimeoutSec < defaults.confirmationTimeoutSec);
   assert.ok(defaults.confirmationTimeoutSec < defaults.evidenceLimitSec);
   assert.throws(() => deliveryConfig(config({ confirmationTimeoutSec: 1200 })), /collectionTimeoutSec.*confirmationTimeoutSec/);

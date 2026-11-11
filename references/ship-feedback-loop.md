@@ -21,7 +21,7 @@ Before resolving, inspect bot re-review-on-push/re-request. Fix repetition throu
 
 ## Defaults
 
-orchestration.delivery: pollSec=10, quietSec=120, evidenceLimitSec=2400 (positive
+orchestration.delivery: pollSec=10, quietSec=120, evidenceLimitSec=7200 (positive
 seconds). Keep the maximum 3 novel resolver rounds and Non-Blocking Convergence;
 dedup consumes no round. The PR-attempt deadline survives heads; head/evidence
 changes restart quiet time. Use the installed gate, never another prose timer.

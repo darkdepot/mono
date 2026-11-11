@@ -166,7 +166,7 @@ consumed/<ISSUE-KEY>-a<N>/ results; confirm whole queue. Unknown/conflict/read-e
 or partial/stale/foreign confirmation blocks. Reconcile lost replies/comments.
 Resume dispatch/capsule/branch; keep done/foreign changes; no reset/
 repeat applied moves/writes. Timeout
-orchestration.delivery.confirmationTimeoutSec (default 1800 seconds) parks
+orchestration.delivery.confirmationTimeoutSec (default 6300 seconds) parks
 write-unconfirmed (запись не подтверждена).
 
 Only generated implemented-needs-preflight comments defer waiting; all other
