@@ -48,10 +48,11 @@ never dispatch another stage. Preserve the following order.
    acceptance. Confirm its writes under the sequencer. Earlier Project-first
    repair belongs to handoff; issue-only renewal to issue intake.
 5. Run/report mono:check pre-ship, readiness-only, no repairs.
-6. Preflight opened the draft. Settle every `scripts/ship-pr.mjs remarks` item:
-   fixed in the clean round, or settled without code by `check` (read-only pass,
-   named in botRemarks evidence). Then `ready --preflight`; `mention` once if bot is
-   silent. Queue In Review and PR chip after leaving draft, confirm them.
+6. Preflight opened the draft. Write the description per templates/pr-body.md
+   (`ship-pr.mjs body`; again after each round, before ready and green). Settle every `remarks` item:
+   fixed in the clean round, or without code by `check --pr` (read-only pass, also
+   judges the description; named in botRemarks evidence). Then `ready`; `mention`
+   once if bot is silent. Queue In Review and PR chip after leaving draft.
 7. Run Documentation workflow after PR/before stabilization (configured, e.g.
    `gstack document-release`). Record head effect; pushes restart on new head.
    Missing workflow means intentionally unavailable with reason; always report outcome.

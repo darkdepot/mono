@@ -642,10 +642,15 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
 // The read-only pass for PR remarks settled without a code change (rejected, deferred, informational).
 // One fresh session on the checker's engine reads the change from base to head and every proposed
 // decision with its evidence; each remark comes back confirmed or needs-fix. Nothing is written.
-export function parseRemarkCheck(value, remarks) {
+export function parseRemarkCheck(value, remarks, description = null) {
   value = readRoleAnswer(value);
-  exact(value, ['completed', 'verdicts']);
+  exact(value, ['completed', 'verdicts', 'description']);
   requireValue(value.completed === true && Array.isArray(value.verdicts), 'remark check incomplete');
+  exact(value.description ?? {}, ['verdict', 'falseClaims']);
+  requireValue(Array.isArray(value.description?.falseClaims) && value.description.falseClaims.every(text) &&
+    (description === null ? value.description.verdict === 'not-supplied'
+      : value.description.verdict === 'truthful' ? value.description.falseClaims.length === 0
+      : value.description.verdict === 'false-claims' && value.description.falseClaims.length > 0), 'invalid description verdict');
   const expected = new Set(remarks.map(remark => remark.id)), seen = new Set();
   for (const verdict of value.verdicts) {
     exact(verdict, ['id', 'verdict', 'reason']);
@@ -653,14 +658,15 @@ export function parseRemarkCheck(value, remarks) {
     requireValue(['confirmed', 'needs-fix'].includes(verdict.verdict) && text(verdict.reason), 'invalid remark verdict');
   }
   requireValue(seen.size === expected.size, 'remark without verdict');
-  return value.verdicts;
+  return { verdicts: value.verdicts, description: value.description };
 }
 // The digest of what was checked: the remark's own text, never a value the worker supplies.
 export const remarkDigest = remark => digest([remark.id, remark.source, remark.title, remark.body, remark.urgent, remark.head]);
 export async function runRemarkCheck(input, { runRole = executeRole } = {}) {
-  const { worktree, head, base, remarks, config = {}, packRoot = runtimePackRoot() } = input;
+  const { worktree, head, base, remarks = [], description = null, config = {}, packRoot = runtimePackRoot() } = input;
   requireValue(path.isAbsolute(worktree ?? '') && /^[a-f0-9]{40}$/.test(head) && /^[a-f0-9]{40}$/.test(base), 'absolute worktree and immutable head/base required');
-  requireValue(Array.isArray(remarks) && remarks.length > 0 && remarks.length <= 100, 'one to 100 remarks required');
+  requireValue(description === null || (text(description) && description.length <= 20000), 'description must be the author part of the PR body');
+  requireValue(Array.isArray(remarks) && remarks.length <= 100 && (remarks.length > 0 || description !== null), 'remarks or a description required');
   for (const remark of remarks) {
     exact(remark, ['id', 'source', 'title', 'body', 'urgent', 'head', 'decision', 'evidence']);
     requireValue(/^[A-Za-z0-9_.:/-]{1,200}$/.test(remark.id ?? '') && ['bot', 'ci'].includes(remark.source) && typeof remark.urgent === 'boolean' && /^[a-f0-9]{40}$/.test(remark.head ?? '') &&
@@ -677,10 +683,11 @@ export async function runRemarkCheck(input, { runRole = executeRole } = {}) {
   let exported;
   try {
     exported = exportReviewTree(worktree, head, binary);
-    const context = { worktree: exported.root, head, base, diff: changed.parts.map(part => part.diff).join(''), binaryFiles: [...binary], remarks };
+    const context = { worktree: exported.root, head, base, diff: changed.parts.map(part => part.diff).join(''), binaryFiles: [...binary], remarks, description };
     const result = await runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt: promptFor(packRoot, 'remark-check', context) });
     return { head, base, engine: route.engine, model: route.model, remarks: remarks.map(remark => ({ id: remark.id, digest: remarkDigest(remark), decision: remark.decision })),
-      verdicts: parseRemarkCheck(result.response, remarks), elapsedMs: result.elapsedMs ?? null, usage: result.usage ?? null };
+      ...(({ verdicts, description: judged }) => ({ verdicts, description: { ...judged, digest: description === null ? null : digest(description) } }))(parseRemarkCheck(result.response, remarks, description)),
+      elapsedMs: result.elapsedMs ?? null, usage: result.usage ?? null };
   } finally { if (exported) removeReviewTree(exported.root); }
 }
 export function formatReviewReport(record) {

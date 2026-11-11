@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { SHIP_MARKER, scanBlob, unpushedSecrets, checkSecrets, pushesTo, draftBody, collectRemarks, readyBlockers, mentionNeeded, requestRemark, u6File } from './ship-pr.mjs';
+import { SHIP_MARKER, scanBlob, unpushedSecrets, checkSecrets, pushesTo, checksLine, composeBody, authorPart, bodyProblems, descriptionBlockers, nextDescriptionFailures, draftBody, collectRemarks, readyBlockers, mentionNeeded, requestRemark, u6File } from './ship-pr.mjs';
 import { prRemarkFindings, remarkDigest } from './code-review.mjs';
+import { digest } from './runtime.mjs';
 
 const head = 'a'.repeat(40), older = 'b'.repeat(40);
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -144,6 +145,69 @@ test('mention: once per head and only while the bot has not reported on it', () 
   assert.equal(mentionNeeded({ snapshot: snapshot({ reviews: [{ user: { login: 'greptile-apps[bot]' }, commit_id: head }] }) }), false);
   assert.equal(mentionNeeded({ snapshot: snapshot({ reviews: [{ user: { login: 'greptile-apps[bot]' }, commit_id: older }] }) }), true);
 });
+test('two untrue descriptions in a row stop Ship; a remarks-only pass in between does not reset the count', () => {
+  assert.deepEqual(['false-claims', 'not-supplied', 'false-claims'].reduce((counts, verdict) => [...counts, nextDescriptionFailures(counts.at(-1) ?? 0, verdict)], []), [1, 1, 2]);
+  assert.equal(nextDescriptionFailures(1, 'truthful'), 0);
+});
 test('the read-only pass result sits next to the attempt state file, per head', () => {
   assert.equal(u6File('/s/ship.json', head), `/s/ship.json.u6-${head}.json`);
+});
+
+const author = (extra = '') => `Ship пишет описание для людей.\n\n## Что изменилось\n\n- описание на русском\n\n## Зачем\n\nТак его читают.\n\n## Как проверить\n\n1. Открой PR, увидишь разделы.${extra}\n\nЗадача: [MONO-324](https://linear.app/darkdepot/issue/MONO-324)`;
+const passedCheck = (name, conclusion = 'SUCCESS', at = head) => ({ __typename: 'CheckRun', name, status: 'COMPLETED', conclusion, head: at });
+test('the «Проверки» line names only finished successful checks as passed', () => {
+  const checks = [passedCheck('validate'), passedCheck('docs', 'SKIPPED'), passedCheck('codeql', 'NEUTRAL'), passedCheck('lint', 'FAILURE'),
+    { __typename: 'CheckRun', name: 'greptile', status: 'IN_PROGRESS', head }, passedCheck('old', 'SUCCESS', older), { __typename: 'StatusContext', context: 'deploy', state: 'SUCCESS', head }];
+  assert.equal(checksLine({ checks, head, deferred: ['живой прогон'] }),
+    'Проверки: 2 из 7 прошли; пропущено: docs; нейтрально: codeql; упало: lint; идёт: greptile; перенесено: живой прогон');
+  assert.equal(checksLine({ checks: [], head }), 'Проверки: 0 из 0 прошли');
+});
+test('description: rewritten between Ship markers, the bot block kept, the form checked', () => {
+  const line = checksLine({ checks: [passedCheck('validate')], head });
+  const bot = '<!-- greptile_comment -->\n## Greptile Summary\nBot text\n<!-- /greptile_comment -->';
+  const body = composeBody({ author: `${author()}\n\n${line}`, head, current: composeBody({ author: 'old', head: older }) + `\n\n${bot}` });
+  assert.equal(authorPart(body).head, head); assert.ok(body.endsWith(`${bot}\n`)); assert.doesNotMatch(body, /\bold\b/);
+  assert.equal(body.split(SHIP_MARKER).length, 2, 'one marker');
+  assert.deepEqual(bodyProblems({ body, issue: 'MONO-324', head, checks: [passedCheck('validate')] }), [], 'a bot block does not break the form');
+  const problems = extra => bodyProblems({ body: composeBody({ author: extra, head }), issue: 'MONO-324', head, checks: [passedCheck('validate')] });
+  assert.match(problems(author().replace('## Зачем\n\nТак его читают.\n\n', '') + `\n${line}`).join(), /нет раздела «Зачем»/);
+  assert.match(problems(author().replace('- описание на русском', 'описание на русском') + `\n${line}`).join(), /«Что изменилось» со списком/);
+  assert.match(problems(`${author(' слово'.repeat(400))}\n${line}`).join(), /больше 400/);
+  assert.deepEqual(problems(`${author()}\n<details><summary>Техника</summary>\n${' слово'.repeat(500)}\n</details>\n${line}`), [], 'technique in details is not counted');
+  assert.match(problems(author().replace(/\nЗадача:.*$/, '') + `\n${line}`).join(), /нет ссылки на задачу/);
+  assert.match(problems(`${author(` ${older}`)}\n${line}`).join(), /хеш версии/);
+  assert.match(problems(author()).join(), /ровно одна строка «Проверки»/);
+  assert.match(problems(`${author()}\n${line}\nПроверки: 1 из 1 прошли; tests прошли`).join(), /ровно одна строка/);
+  assert.match(problems(`<!--\n${author()}\n-->\nShort.\n${line}`).join(), /нет раздела «Что изменилось»/, 'sections hidden in a comment do not count');
+  for (const hidden of [`<details name="tech">\n${author()}\n</details>`, `<details><summary>a</summary>\n<details>x</details>\n${author()}\n</details>`, `<DETAILS>\n${author()}`])
+    assert.match(problems(`Short.\n${hidden}\n${line}`).join(), /нет раздела «Что изменилось»/, hidden.slice(0, 30));
+  assert.match(problems(`${author()}\n${line}\n  Проверки: 99 из 99 прошли`).join(), /ровно одна строка/, 'an indented checks line counts too');
+  assert.match(problems(`${author()}\n${line}\n- Проверки: 99 из 99 прошли`).join(), /ровно одна строка/, 'a checks line in a list counts too');
+  const nested = composeBody({ author: `${author()}\n${line}`, head }).replace('<!-- /mono:ship body -->', '<!-- /mono:ship body -->\nhidden claim\n<!-- /mono:ship body -->');
+  assert.match(bodyProblems({ body: nested, issue: 'MONO-324', head }).join(), /без части автора/, 'repeated markers leave no trusted author part');
+  const legacy = composeBody({ author: 'new', head, current: `${SHIP_MARKER}\nold draft claim\n\n<!-- greptile_comment -->\nBot\n<!-- /greptile_comment -->` });
+  assert.match(legacy, /<!-- greptile_comment -->\nBot/, 'a draft without the author block keeps the bot block');
+  assert.doesNotMatch(legacy, /old draft claim/, 'old author text does not stay visible');
+  assert.equal(authorPart(composeBody({ author: 'new', head, current: `${SHIP_MARKER}\n<!-- mono:ship body head=none -->\nunclosed` })).text, 'new', 'stray markers are dropped on rewrite');
+  assert.match(problems(`${author()}\nПроверки: 3 из 3 прошли`).join(), /строка «Проверки» устарела/);
+  const running = checksLine({ checks: [{ __typename: 'CheckRun', name: 'validate', status: 'IN_PROGRESS', head }], head });
+  assert.match(problems(`${author()}\n${running}`).join(), /устарела: сейчас «Проверки: 1 из 1 прошли»/, 'a line written while checks ran is refreshed once they finish');
+  const carried = checksLine({ checks: [passedCheck('validate')], head, deferred: ['живой прогон'] });
+  assert.deepEqual(problems(`${author()}\n${carried} · Задача: MONO-324`), [], 'carried-over items keep their words');
+  const commas = checksLine({ checks: [passedCheck('validate')], head, deferred: ['браузер, мобильный экран', 'живой прогон'] });
+  assert.match(commas, /перенесено: браузер \/ мобильный экран, живой прогон$/);
+  assert.deepEqual(problems(`${author()}\n${commas}`), [], 'an item with a comma reads back as the same line');
+  assert.match(bodyProblems({ body: composeBody({ author: `${author()}\n${line}`, head }), issue: 'MONO-324|.*', head, checks: [passedCheck('validate')] }).join(), /нет ссылки/, 'the task key is text, never a pattern');
+  assert.match(bodyProblems({ body: composeBody({ author: `${author()}\n${line}`, head: older }), issue: 'MONO-324', head, checks: [] }).join(), /не переписано после последней версии/);
+  assert.match(bodyProblems({ body: 'no markers', issue: 'MONO-324', head }).join(), /без части автора/);
+});
+test('description: leaves draft only when the read-only pass found exactly this text truthful on this head', () => {
+  const line = checksLine({ checks: [passedCheck('validate')], head }), body = composeBody({ author: `${author()}\n\n${line}`, head });
+  const text = authorPart(body).text, checks = [passedCheck('validate')];
+  const judged = (verdict, extra = {}) => ({ head, description: { verdict, falseClaims: verdict === 'truthful' ? [] : ['описание обещает то, чего нет'], digest: digest(text), ...extra } });
+  assert.deepEqual(descriptionBlockers({ body, issue: 'MONO-324', head, checks, check: judged('truthful') }), []);
+  assert.match(descriptionBlockers({ body, issue: 'MONO-324', head, checks, check: judged('false-claims') })[0], /неверно: описание обещает/);
+  assert.match(descriptionBlockers({ body, issue: 'MONO-324', head, checks, check: judged('truthful', { digest: 'e'.repeat(64) }) })[0], /не проверено на правдивость/, 'a rewrite after the pass needs a new pass');
+  assert.match(descriptionBlockers({ body, issue: 'MONO-324', head, checks, check: { ...judged('truthful'), head: older } })[0], /не проверено/);
+  assert.match(descriptionBlockers({ body, issue: 'MONO-324', head, checks, check: null })[0], /не проверено/);
 });
