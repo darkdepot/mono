@@ -48,8 +48,9 @@ Gates in `references/lifecycle.md` keep their owners and order; no waiver.
 
 Delegated Project: latest Idea approval's outside-fence line
 «Ведёт оркестратор: владелец принёс идею оркестратору <дата>.». Repeat on Idea
-reapproval. A Project delegated before this version can rely on an explicit owner
-decision in a Project comment. Without either the owner leads: only owner starts
+reapproval. The owner's explicit words handing the Project over («веди сам») also
+delegate it: write them verbatim as a Project comment at once; delegation starts
+from that comment. Without either the owner leads: only owner starts
 Research and work (`by=owner`). Do not add `by` to strict `mono-idea` records.
 A `stale`/`legacy-migrate` Idea stops autonomous Research/work despite delegation:
 carry it to owner for approval in words on the shown version, confirmed new record and fresh check first.
