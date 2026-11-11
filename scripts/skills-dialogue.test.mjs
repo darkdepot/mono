@@ -7,7 +7,7 @@ import { loadCatalog } from './skills-catalog.mjs';
 const read=file=>fs.readFileSync(new URL('../'+file,import.meta.url),'utf8');
 const files=dir=>fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?files(path.join(dir,e.name)):e.isFile()?[path.join(dir,e.name)]:[]);
 test('all active stage contracts replace window labels with conversation across the whole AC1 scope',()=>{
- const corpus=[...files('skills'),...files('templates'),'references/owner-dialog.md','references/orchestration.md'];
+ const corpus=[...files('skills'),...files('templates'),'references/owner-dialog.md','references/orchestration.md','references/orchestration-stages.md','references/orchestration-dispatch.md','references/orchestration-delivery.md'];
  // These are retired answer labels and window-format markers, not prose pins.
  const windowForm=/«(?:Утвердить[^»]*|Начать[^»]*|Ещё обсудить|Разбить\s+проект|Разрешить\s+больше задач)»|(?:вызови|открой|доступный)\s+`?(?:AskUserQuestion|request_user_input)|\(Recommended\)|Свободный\s+ответ\s+доступен|Варианты\s+со\s+свободным\s+ответом/;
  const violations=corpus.flatMap(file=>{const match=read(file).match(windowForm);return match?[`${file}: ${match[0]}`]:[];});

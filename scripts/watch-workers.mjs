@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// External heartbeat for `mono:orchestrate` (references/orchestration.md,
+// External heartbeat for `mono:orchestrate` (references/orchestration-delivery.md,
 // "## Heartbeat"). Watches one orchestrator mailbox root and prints one
 // stable line per worker liveness event to stdout:
 //
@@ -445,7 +445,7 @@ function isFreshForLog(stat, log) {
   );
 }
 
-// Gate-ack of the two-phase dispatch handshake (references/orchestration.md,
+// Gate-ack of the two-phase dispatch handshake (references/orchestration-dispatch.md,
 // "## Two-Phase Dispatch Handshake"): the worker passed its start gates and
 // stopped, waiting for the orchestrator to apply the dispatch's lifecycle
 // moves and resume it. Its shape is deliberately minimal and carries no pack
@@ -471,7 +471,7 @@ function isFreshForLog(stat, log) {
 // since the resumed worker appends to the same stage log and a retained ack
 // would keep suppressing them. Renaming any earlier than the registration is
 // its own defect: the gate-phase pid is already gone, so an unsuppressed window
-// would report a healthy resume as dead (references/orchestration.md, step 5).
+// would report a healthy resume as dead (references/orchestration-dispatch.md, step 5).
 function isGateEntry(entry) {
   return (
     entry !== null &&
@@ -715,7 +715,7 @@ function isCorrelatedDeliveryLog(log, registryEntry) {
 
 // The handshake exists only where a dispatch can carry a lifecycle move, and
 // that is the implement stage: preflight and ship advances carry none and have
-// no gate phase at all (references/orchestration.md). An ack sitting beside any
+// no gate phase at all (references/orchestration-dispatch.md). An ack sitting beside any
 // other stage's log is spurious, and must neither deliver nor suppress.
 const GATE_PHASE_STAGE = "mono-implement";
 
