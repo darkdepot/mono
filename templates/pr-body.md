@@ -3,7 +3,7 @@
 The author's part of a Ship PR description. Ship keeps it between its own markers
 (`<!-- mono:ship body head=… -->` … `<!-- /mono:ship body -->`), writes the
 «Проверки» line itself from the head's checks and keeps a bot's block outside
-the markers. Rewrite the whole part after every round:
+the markers. Rewrite the whole part after every round, before leaving draft and before green:
 `scripts/ship-pr.mjs body --file <this text>`. Before leaving draft the form is
 checked (required sections, a list in «Что изменилось», visible part up to 400
 words, the task link, written for the current head) and the read-only pass

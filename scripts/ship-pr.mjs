@@ -85,9 +85,11 @@ export function authorPart(body) {
   return { head: start[1] === 'none' ? null : start[1], text: text.slice(start.index + start[0].length, end).trim(),
     outside: (text.slice(0, start.index) + text.slice(end + BODY_END.length)).replace(SHIP_MARKER, '').trim() };
 }
+// A bot's block in the description is the one it marks itself (Greptile: <!-- greptile_comment --> … <!-- /greptile_comment -->).
+export const botBlocks = body => [...String(body ?? '').matchAll(/<!-- ([a-z][a-z0-9_]*)_comment -->[\s\S]*?<!-- \/\1_comment -->/g)].map(match => match[0]);
 export function composeBody({ author, head, current = '' }) {
-  // Without a valid author part everything but Ship's own markers is kept: a bot block must survive.
-  const rest = authorPart(current)?.outside ?? String(current).replace(BODY_MARKERS, '').replace(SHIP_MARKER, '').trim();
+  // Everything else of the old description is replaced: old author text never stays visible beside the new.
+  const rest = botBlocks(current).join('\n\n');
   return `${SHIP_MARKER}\n<!-- mono:ship body head=${head ?? 'none'} -->\n${author.trim()}\n${BODY_END}${rest ? `\n\n${rest}` : ''}\n`;
 }
 export function draftBody({ issue, issueUrl, title, head = null }) {
@@ -128,12 +130,16 @@ export function bodyProblems({ body, issue, head, checks = [] }) {
   for (const name of ['Зачем', 'Как проверить']) if (!section(seen, name)) problems.push(`нет раздела «${name}»`);
   const words = seen.split(/\s+/).filter(Boolean).length;
   if (words > 400) problems.push(`видимая часть ${words} слов, больше 400`);
-  if (!new RegExp(`\\[${issue}\\]\\(https://`).test(seen)) problems.push(`нет ссылки на задачу ${issue}`);
+  if (!/^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(issue ?? '') || !seen.includes(`[${issue}](https://`)) problems.push(`нет ссылки на задачу ${issue}`);
   if (/\b[a-f0-9]{40}\b/.test(seen)) problems.push('хеш версии в видимой части');
-  const lines = [...seen.matchAll(CHECKS_LINE)].map(match => match[0]), line = /^Проверки: (\d+) из (\d+) прошли/.exec(lines[0] ?? '');
-  const passed = checks.filter(check => check.head === head && CHECK_STATE(check) === 'passed').length;
-  if (lines.length !== 1 || !line) problems.push('нужна ровно одна строка «Проверки», её пишет Ship');
-  else if (Number(line[1]) > passed) problems.push(`строка «Проверки» называет прошедшими ${line[1]}, а прошло ${passed}`);
+  // The line must say exactly what the head's checks say now; carried-over items keep their own words.
+  const lines = [...seen.matchAll(CHECKS_LINE)].map(match => match[0]);
+  if (lines.length !== 1 || !lines[0].startsWith('Проверки: ')) problems.push('нужна ровно одна строка «Проверки», её пишет Ship');
+  else {
+    const written = lines[0].split(' · ')[0].trim(), deferred = /перенесено: ([^;]*)/.exec(written)?.[1].split(', ').filter(Boolean) ?? [];
+    const fresh = checksLine({ checks, head, deferred });
+    if (written !== fresh) problems.push(`строка «Проверки» устарела: сейчас «${fresh}»; перепиши описание (ship-pr.mjs body)`);
+  }
   return problems;
 }
 // U1: push and open the draft once; a second entry finds the open PR of the branch.

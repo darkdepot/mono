@@ -164,8 +164,9 @@ test('the «Проверки» line names only finished successful checks as pas
 });
 test('description: rewritten between Ship markers, the bot block kept, the form checked', () => {
   const line = checksLine({ checks: [passedCheck('validate')], head });
-  const body = composeBody({ author: `${author()}\n\n${line}`, head, current: composeBody({ author: 'old', head: older }) + '\n\n## Greptile Summary\nBot text' });
-  assert.equal(authorPart(body).head, head); assert.match(body, /## Greptile Summary\nBot text\n$/); assert.doesNotMatch(body, /\bold\b/);
+  const bot = '<!-- greptile_comment -->\n## Greptile Summary\nBot text\n<!-- /greptile_comment -->';
+  const body = composeBody({ author: `${author()}\n\n${line}`, head, current: composeBody({ author: 'old', head: older }) + `\n\n${bot}` });
+  assert.equal(authorPart(body).head, head); assert.ok(body.endsWith(`${bot}\n`)); assert.doesNotMatch(body, /\bold\b/);
   assert.equal(body.split(SHIP_MARKER).length, 2, 'one marker');
   assert.deepEqual(bodyProblems({ body, issue: 'MONO-324', head, checks: [passedCheck('validate')] }), [], 'a bot block does not break the form');
   const problems = extra => bodyProblems({ body: composeBody({ author: extra, head }), issue: 'MONO-324', head, checks: [passedCheck('validate')] });
@@ -184,9 +185,16 @@ test('description: rewritten between Ship markers, the bot block kept, the form 
   assert.match(problems(`${author()}\n${line}\n- Проверки: 99 из 99 прошли`).join(), /ровно одна строка/, 'a checks line in a list counts too');
   const nested = composeBody({ author: `${author()}\n${line}`, head }).replace('<!-- /mono:ship body -->', '<!-- /mono:ship body -->\nhidden claim\n<!-- /mono:ship body -->');
   assert.match(bodyProblems({ body: nested, issue: 'MONO-324', head }).join(), /без части автора/, 'repeated markers leave no trusted author part');
-  assert.match(composeBody({ author: 'new', head, current: `${SHIP_MARKER}\nold draft\n\n## Greptile Summary\nBot` }), /## Greptile Summary\nBot/, 'a draft without the author block keeps the bot block');
+  const legacy = composeBody({ author: 'new', head, current: `${SHIP_MARKER}\nold draft claim\n\n<!-- greptile_comment -->\nBot\n<!-- /greptile_comment -->` });
+  assert.match(legacy, /<!-- greptile_comment -->\nBot/, 'a draft without the author block keeps the bot block');
+  assert.doesNotMatch(legacy, /old draft claim/, 'old author text does not stay visible');
   assert.equal(authorPart(composeBody({ author: 'new', head, current: `${SHIP_MARKER}\n<!-- mono:ship body head=none -->\nunclosed` })).text, 'new', 'stray markers are dropped on rewrite');
-  assert.match(problems(`${author()}\nПроверки: 3 из 3 прошли`).join(), /называет прошедшими 3, а прошло 1/);
+  assert.match(problems(`${author()}\nПроверки: 3 из 3 прошли`).join(), /строка «Проверки» устарела/);
+  const running = checksLine({ checks: [{ __typename: 'CheckRun', name: 'validate', status: 'IN_PROGRESS', head }], head });
+  assert.match(problems(`${author()}\n${running}`).join(), /устарела: сейчас «Проверки: 1 из 1 прошли»/, 'a line written while checks ran is refreshed once they finish');
+  const carried = checksLine({ checks: [passedCheck('validate')], head, deferred: ['живой прогон'] });
+  assert.deepEqual(problems(`${author()}\n${carried} · Задача: MONO-324`), [], 'carried-over items keep their words');
+  assert.match(bodyProblems({ body: composeBody({ author: `${author()}\n${line}`, head }), issue: 'MONO-324|.*', head, checks: [passedCheck('validate')] }).join(), /нет ссылки/, 'the task key is text, never a pattern');
   assert.match(bodyProblems({ body: composeBody({ author: `${author()}\n${line}`, head: older }), issue: 'MONO-324', head, checks: [] }).join(), /не переписано после последней версии/);
   assert.match(bodyProblems({ body: 'no markers', issue: 'MONO-324', head }).join(), /без части автора/);
 });
