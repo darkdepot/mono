@@ -23,17 +23,20 @@
                 "PRD",
                 "результат",
                 "решени",
-                "соглас"
+                "соглас",
+                "требовани"
               ],
               [
                 "Design",
                 "Tech Evaluation",
-                "Handoff"
+                "Handoff",
+                "дизайн"
               ],
               [
                 "Design",
                 "Tech Evaluation",
-                "Handoff"
+                "Handoff",
+                "дизайн"
               ]
             ],
             "forbidden": []
@@ -80,17 +83,20 @@
                 "PRD",
                 "результат",
                 "решени",
-                "соглас"
+                "соглас",
+                "требовани"
               ],
               [
                 "Design",
                 "Tech Evaluation",
-                "Handoff"
+                "Handoff",
+                "дизайн"
               ],
               [
                 "Design",
                 "Tech Evaluation",
-                "Handoff"
+                "Handoff",
+                "дизайн"
               ]
             ],
             "forbidden": []
