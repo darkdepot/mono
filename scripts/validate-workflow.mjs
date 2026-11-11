@@ -179,12 +179,12 @@ function validateReadBudgetFixtures() {
       ["plain-path", base + "\nFollow references/large.md.\n"],
       ["inline-tier", base + "\nRead when: `references/large.md` — condition.\n"],
     ]) fixture(`${label} addition is red with composition`, () => {
-      write("skills/ship/SKILL.md", text);
+      write("skills/preflight/SKILL.md", text);
       const result = spawnSync(process.execPath, [path.join(root, "scripts/read-budget.mjs"), "--root", scratch, "--json"], { encoding: "utf8" });
       require(result.status === 1, `expected red, got ${result.status}: ${result.stderr}`);
       const budget = JSON.parse(result.stdout);
       require(!budget.within_ceiling && budget.files.some((entry) => entry.path === "references/large.md"), "red output omitted composition");
-      write("skills/ship/SKILL.md", base);
+      write("skills/preflight/SKILL.md", base);
     });
     fixture("nested conditional addition is red", () => {
       write("references/nested.md", "Read when:\n- `references/large.md` — conditional.\n");
@@ -202,10 +202,10 @@ function validateReadBudgetFixtures() {
       require(measureReadBudget(scratch, { skills: ["manual"] }).files.some(entry => entry.path === "evals/manual.md"), "evaluation input omitted");
     });
     fixture("bare filename in a reading list is counted", () => {
-      write("skills/ship/large.md", "x".repeat(READ_BUDGET_MAX_BYTES));
-      write("skills/ship/SKILL.md", base + "- `large.md` — conditional.\n");
+      write("skills/preflight/large.md", "x".repeat(READ_BUDGET_MAX_BYTES));
+      write("skills/preflight/SKILL.md", base + "- `large.md` — conditional.\n");
       require(!measureReadBudget(scratch).within_ceiling, "bare list entry omitted");
-      write("skills/ship/SKILL.md", base);
+      write("skills/preflight/SKILL.md", base);
     });
     fixture("missing reading input fails closed", () => {
       write("references/nested.md", "Read `references/missing.md`.\n");
@@ -237,14 +237,14 @@ function validateReadBudgetFixtures() {
       let error;
       try { measureReadBudget(scratch); } catch (caught) { error = caught; }
       require(error?.message.includes("Russian read tiers require a listed Russian stage"), "unlisted Russian reads silently omitted");
-      write("skills/ship/SKILL.md", base);
+      write("skills/preflight/SKILL.md", base);
     });
     fixture("unlisted stage rejects Russian pack-root reads", () => {
       write("skills/preflight/SKILL.md", "Read now: `<корень>/references/large.md`.\n");
       let error;
       try { measureReadBudget(scratch); } catch (caught) { error = caught; }
       require(error?.message.includes("Russian pack-root paths require a listed Russian stage"), "unlisted Russian pack-root read silently omitted");
-      write("skills/ship/SKILL.md", base);
+      write("skills/preflight/SKILL.md", base);
     });
 
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
