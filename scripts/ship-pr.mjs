@@ -100,7 +100,8 @@ export function collectRemarks({ snapshot, reviewComments = [], issueComments = 
     const body = thread.comments.filter(comment => !marked(comment.body)).map(comment => comment.body).join('\n\n');
     remarks.push({ id: remarkId(thread.id), source, file: rest?.path ?? '(pr)', line: rest?.line ?? rest?.original_line ?? 1, title: firstLine(first.body),
       body: clip(body, 4000), urgent: source === 'bot' && URGENT.test(first.body), head: /^[a-f0-9]{40}$/.test(rest?.commit_id ?? '') ? rest.commit_id : head,
-      digest: digest(thread.comments.map(comment => [comment.id, comment.body])) });
+      // Ship's own replies in the thread do not change the remark it answers.
+      digest: digest(thread.comments.filter(comment => !marked(comment.body)).map(comment => [comment.id, comment.body])) });
   }
   for (const comment of snapshot.botComments ?? []) remarks.push({ id: remarkId(comment.id), source: 'bot', file: '(pr)', line: 1, title: firstLine(comment.body),
     body: clip(comment.body, 4000), urgent: URGENT.test(comment.body), head, digest: digest({ body: comment.body, updatedAt: comment.updatedAt ?? null }) });
@@ -127,8 +128,10 @@ export function readyBlockers({ head, remarks, sent = [], check = null }) {
     .map(item => [item.id, item.digest])) : new Map();
   for (const remark of remarks) {
     if (remark.source === 'ci') { blockers.push(`failed CI on head: ${remark.title}`); continue; }
-    if (remark.source === 'owner') { blockers.push(`owner instruction needs a decision: ${remark.title}`); continue; }
-    if (fixed.get(remark.id) === remark.digest || confirmed.get(remark.id) === remark.digest) continue;
+    if (fixed.get(remark.id) === remark.digest) continue;
+    // An owner instruction is done in a round or asked about; the read-only pass cannot decline it.
+    if (remark.source === 'owner') { blockers.push(`owner instruction not done; ask the owner one question: ${remark.title}`); continue; }
+    if (confirmed.get(remark.id) === remark.digest) continue;
     blockers.push(`remark not settled on this head: ${remark.title} (${remark.id})`);
   }
   return blockers;

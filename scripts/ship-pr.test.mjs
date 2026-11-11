@@ -74,6 +74,12 @@ test('remarks: bot threads, bot comments, failed CI on the head and owner instru
   assert.deepEqual(collectRemarks({ snapshot: snapshot({ threads: threads.slice(2) }), issueComments: issueComments.slice(1) }), [],
     'without a marked Ship publication the owner\'s comments are not instructions');
 });
+test('Ship\'s own reply in a thread does not change the remark digest', () => {
+  const thread = extra => ({ id: 'T1', isResolved: false, comments: [{ id: 'C1', body: 'Bug', author: { login: 'greptile-apps[bot]' } }, ...extra] });
+  const read = extra => collectRemarks({ snapshot: snapshot({ threads: [thread(extra)] }) })[0].digest;
+  assert.equal(read([]), read([{ id: 'C2', body: `${SHIP_MARKER}\nFixed`, author: { login: 'owner' } }]));
+  assert.notEqual(read([]), read([{ id: 'C3', body: 'Still broken', author: { login: 'greptile-apps[bot]' } }]));
+});
 test('remark digest changes when the remark text changes', () => {
   const read = body => collectRemarks({ snapshot: snapshot({ botComments: [{ id: 'B1', body, updatedAt: 'u' }] }) })[0].digest;
   assert.notEqual(read('one'), read('two'));
@@ -89,7 +95,10 @@ test('ready: no failed CI, no open owner instruction, every remark fixed in a cl
   assert.match(readyBlockers({ head: older, remarks: [remark('B1')], check })[0], /not settled/, 'a pass on another head does not count');
   assert.match(readyBlockers({ head, remarks: [remark('T1', 'bot', 'e'.repeat(64))], sent: [{ id: 'T1', digest: 'd'.repeat(64) }] })[0], /not settled/);
   assert.match(readyBlockers({ head, remarks: [remark('ci:validate', 'ci')] })[0], /failed CI/);
-  assert.match(readyBlockers({ head, remarks: [remark('I2', 'owner')] })[0], /owner instruction/);
+  assert.match(readyBlockers({ head, remarks: [remark('I2', 'owner')] })[0], /owner instruction not done/);
+  assert.match(readyBlockers({ head, remarks: [remark('I2', 'owner')], check: { ...check, remarks: [{ id: 'I2', digest: 'd'.repeat(64) }], verdicts: [{ id: 'I2', verdict: 'confirmed', reason: 'r' }] } })[0],
+    /owner instruction/, 'the read-only pass cannot decline an owner instruction');
+  assert.deepEqual(readyBlockers({ head, remarks: [remark('I2', 'owner')], sent: [{ id: 'I2', digest: 'd'.repeat(64) }] }), [], 'an owner instruction done in a clean round');
 });
 test('mention: once per head and only while the bot has not reported on it', () => {
   assert.equal(mentionNeeded({ snapshot: snapshot() }), true);
