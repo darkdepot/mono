@@ -8,7 +8,7 @@ import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER } from "./runtime.mjs";
 import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, registryEntry } from "./orchestrator/command-state.mjs";
 
-import { runReviewRound, STRICT_DANGER } from './code-review.mjs';
+import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
 
 export { reviewEnvironment } from "./model-environment.mjs";
 
@@ -161,7 +161,9 @@ export function roundOutcome(record, round) {
   // An older dangerous defect is filed after merge, not left to choice, unless it is a minor one outside the strict cases.
   const mustFile = finding => older(finding) && finding.danger !== false && (finding.weight !== 'P3' || STRICT_DANGER.includes(finding.dangerCase));
   const harmless = finding => round >= ROUND_LIMIT && finding.danger === false && settled(finding);
-  const stands = !open.length || record.findings.some(finding => finding.outOfContract || finding.riskRaised) ||
+  // An owner's instruction on the PR is done in the round or asked about; it never becomes a successor.
+  const ownerRemark = finding => finding.class === 'pr-remark' && finding.source === 'owner';
+  const stands = !open.length || record.findings.some(finding => finding.outOfContract || finding.riskRaised) || open.some(ownerRemark) ||
     !open.every(finding => older(finding) || minor(finding) || harmless(finding));
   // A clean round may still carry older harmless defects: they are listed, never dropped.
   if (!['not-converged', 'clean'].includes(record.outcome) || stands) return { outcome: record.outcome, successors: [] };
@@ -446,6 +448,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     "verification must contain only command and string-array args");
   requireThat(request.critical === null || (typeof request.critical === "string" && request.critical.trim()), "dispatch critical must be null or an escalation reason");
   requireThat(/^[a-f0-9]{40}$/.test(request.head), "dispatch head required");
+  // Remarks on the draft PR (bot, CI, owner) the worker fixed: open findings of this round, signed in the receipt.
+  if (request.prRemarks !== undefined) prRemarkFindings(request.prRemarks);
   const evidenceRoot = preflightEvidenceRoot(request);
   validateEvidenceGrants(request.packRoot ?? request.skillsRoot, request.workerWritableRoots, 'packRoot');
   validateEvidenceGrants(request.skillsRoot, request.workerWritableRoots, 'autoreview skillsRoot');
@@ -476,7 +480,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   const idea = pins?.idea ? verifyIdeaArtifact(pins.idea, pinnedIssue ?? request.issue) : null;
   const receiptFile = path.join(evidenceRoot, `${head}.json`);
   const dataset = reviewDatasetBinding(request, evidenceRoot);
-  const binding = { ...dataset, ...(idea ? { idea } : {}), ...(request.issue !== undefined ? { issue: request.issue } : {}), ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
+  const binding = { ...dataset, ...(idea ? { idea } : {}), ...(request.issue !== undefined ? { issue: request.issue } : {}), ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), ...(request.prRemarks?.length ? { prRemarks: request.prRemarks } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
     critical: request.critical, root: fs.realpathSync(request.root), worktree: repo, evidenceRoot,
     workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort() };
   // The task contract is the dispatch snapshot of the Issue (snapshot.vN after a full-snapshot amendment).
@@ -526,6 +530,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     }
     if (!request.pins && receipt.pins) throw new Error(`collection request mismatch: pins; expected ${canonical(receipt.pins)}`);
     requireThat(canonical(receipt.idea ?? null) === canonical(idea), 'receipt idea differs from dispatch pins');
+    requireThat(canonical(receipt.prRemarks ?? null) === canonical(request.prRemarks?.length ? request.prRemarks : null), 'receipt prRemarks differ from the request');
     for (const [key, value] of Object.entries(binding)) {
       const actual = key === "reviewDataset" && receipt[key] ? { source: receipt[key].source, digest: receipt[key].digest, copy: receipt[key].copy } : receipt[key];
       requireThat(canonical(actual) === canonical(value), `receipt ${key} differs from dispatch request`);
@@ -562,12 +567,15 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     // Review first: a round is spent only by a completed round on a new head.
     let review;
     const refuse = reason => ({ outcome: 'refused', spent: false, round: null, reason, successors: [], record: null });
+    // New PR remarks on the same head are not covered by the stored round: they need a round of their own.
+    if (prior.reuse && canonical(prior.reuse.prRemarks ?? null) !== canonical(request.prRemarks?.length ? request.prRemarks : null)) prior.reuse = null;
     if (prior.reuse) review = { ...prior.reuse.review, ...roundOutcome(prior.reuse.review.record, prior.reuse.review.round), spent: false, reusedFrom: prior.reuse.runId };
     else if (prior.notReviewed >= 2) review = refuse(`blocked: ${NOT_REVIEWED_TWICE}`);
     else if (prior.spent >= ROUND_LIMIT) review = refuse(`needs-decision: ${ROUND_LIMIT_REACHED}`);
     else {
       const record = await runReviewRound({ worktree: repo, head, base, contract, risk: request.critical ? 'riskyCritical' : request.risk,
-        config: baseModelConfig(repo, request.modelRoutes?.base ?? base), packRoot: path.resolve(scriptDir, '..'), ...(prior.record ? { stageRecord: prior.record } : {}) });
+        config: baseModelConfig(repo, request.modelRoutes?.base ?? base), packRoot: path.resolve(scriptDir, '..'), ...(prior.record ? { stageRecord: prior.record } : {}),
+        ...(request.prRemarks?.length ? { remarks: request.prRemarks } : {}) });
       const { costs, ...stageRecord } = record;
       review = record.outcome === 'not-reviewed'
         ? { outcome: 'not-reviewed', spent: false, round: null, repeated: prior.notReviewed > 0, reason: record.failures.at(-1)?.reason ?? `no readable text for ${record.unreviewedFiles.join(', ') || 'the review'}`,
@@ -808,7 +816,8 @@ if (isMain(import.meta.url)) {
 start request: {worktree, branch, base, packRoot, skillsRoot, packVersion, sourceCommit, surfaceRevision}
   Generated dispatch adds {root,issue,attempt,risk,critical,pins:{file,digest}}; start verifies the active registered attempt and current pins before code.
   The orchestrator's locked pre-launch invocation uses --before-spawn true for the next unregistered attempt; worker invocation omits it.
-preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],reviewDataset?,reviewDatasetVersion?,pins?:{file,digest},modelRoutes?,collect,verification:{command,args}}
+preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],reviewDataset?,reviewDatasetVersion?,pins?:{file,digest},modelRoutes?,prRemarks?:[{id,source:bot|ci|owner,file,line,title,body,urgent,head}],collect,verification:{command,args}}
+  prRemarks: remarks from the draft PR the worker fixed (scripts/ship-pr.mjs remarks); they enter the round as open findings and close only when the checker verifies the fix.
   modelRoutes pins immutable base/configDigest/roles from resolveModelRoutes; overrides require pins.
   risk is the final approved/diff risk; critical is a concrete escalation reason or null.
   Pin every request field from dispatch. Orchestrator only: collect:true, outside worker sandboxes.

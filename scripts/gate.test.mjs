@@ -173,6 +173,9 @@ test("review refusal and successor lines: an older dangerous defect must be file
   const older = roundOutcome({ outcome: 'not-converged', findings: [reviewed({ origin: 'pre-existing', danger: true, dangerCase: 'data' })] }, 1);
   assert.deepEqual(older.successors.map(item => item.line), ['must-file P2 a.mjs:3 Leftover']);
   assert.equal(roundOutcome({ outcome: 'clean', findings: [reviewed({ origin: 'pre-existing' })] }, 1).successors[0].line, 'P2 a.mjs:3 Leftover');
+  const owner = reviewed({ class: 'pr-remark', source: 'owner', weight: 'P3', danger: false });
+  assert.deepEqual(roundOutcome({ outcome: 'not-converged', findings: [owner] }, 3), { outcome: 'not-converged', successors: [] }, 'an owner instruction never becomes a successor');
+  assert.equal(roundOutcome({ outcome: 'not-converged', findings: [{ ...owner, source: 'bot' }] }, 2).outcome, 'clean-with-successors', 'a minor bot remark follows the ordinary rules');
   assert.equal(roundOutcome({ outcome: 'not-converged', findings: [reviewed({ origin: 'pre-existing', weight: 'P3', danger: true, dangerCase: 'silent-result' })] }, 1).successors[0].line, 'P3 a.mjs:3 Leftover', 'a minor older defect is a candidate');
   const many = Array.from({ length: 200 }, (_, index) => reviewed({ key: `k${index}`, trigger: 't'.repeat(300), reason: 'r'.repeat(400) }));
   const head = "a".repeat(40), base = "b".repeat(40);
@@ -553,7 +556,14 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         const blocked = call(at(offline, 3)); assert.equal(blocked.status, 1); assert.match(blocked.stdout, /fail: blocked: not-reviewed twice in a row/);
         setReview(bin, { loggedOut: null, findings: [], verdict: closing });
         const second = commit('export const two = 2;\n');
-        receipt = await round(at(second), 0, /pass: review clean \(round 2 of 3\) and verification verified on head/);
+        // A bot remark from the draft PR, fixed on this head: it enters the round and is signed with the receipt.
+        const prRemarks = [{ id: 'PRRT_1', source: 'bot', file: 'input.mjs', line: 1, title: 'Remark from the PR bot', body: 'one is not validated', urgent: false, head: offline }];
+        const withRemarks = (value, extra = {}) => ({ ...value, prRemarks, ...extra });
+        receipt = await round(withRemarks(at(second)), 0, /pass: review clean \(round 2 of 3\) and verification verified on head/);
+        assert.deepEqual(receipt.prRemarks, prRemarks, 'the remarks are bound in the signed receipt');
+        assert.ok(receipt.review.record.findings.some(finding => finding.class === 'pr-remark' && finding.status === 'closed'), 'the checker closed the fixed remark');
+        const unbound = call(at(second)); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /receipt prRemarks differ from the request/);
+        const malformed = call(withRemarks(at(second, 2), { prRemarks: [{ ...prRemarks[0], file: '../outside' }] })); assert.equal(malformed.status, 1); assert.match(malformed.stdout, /invalid PR remark location/);
         assert.equal(fs.readFileSync(verifySaw, 'utf8'), 'reviewer\nchecker\nreviewer\nchecker\n', 'verification starts only after the review round has finished');
         const gh = path.join(bin, 'gh');
         write(gh, `#!/usr/bin/env node
@@ -562,13 +572,13 @@ const pr={headRefOid:${JSON.stringify(second)},baseRefOid:${JSON.stringify(base)
 console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:pr,object:{statusCheckRollup:{contexts:empty}}}}}:a.includes('user')?{login:'fixture'}:[]));
 `); fs.chmodSync(gh, 0o700);
         const judgmentFile = path.join(scratch, 'judgment.json'), stateFile = path.join(scratch, 'ship.json'); atomicJson(judgmentFile, { ...judgment(), head: second });
-        const ship = () => { atomicJson(file, { preflight: at(second), repo: 'fixture/repo', number: 1, attempt: 1, stateFile, judgmentFile, watch: false });
+        const ship = () => { atomicJson(file, { preflight: withRemarks(at(second)), repo: 'fixture/repo', number: 1, attempt: 1, stateFile, judgmentFile, watch: false });
           return spawnSync(process.execPath, ['scripts/gate.mjs', 'ship', '--request', file], { env, encoding: 'utf8' }); };
         let shipped = ship(); assert.match(shipped.stdout, /fail: checks not created on head/, shipped.stdout + shipped.stderr);
         assert.equal(JSON.parse(fs.readFileSync(stateFile)).preflightReceipt.runId, receipt.runId, 'ship read the signed review receipt');
         const sealed = fs.readFileSync(stored(second)), old = JSON.parse(sealed); old.receipt.producer = 'gate-autoreview-v2';
         old.signature = crypto.createHmac("sha256", fs.readFileSync(path.join(evidence, "receipt.key"))).update(canonical(old.receipt)).digest("hex"); atomicJson(stored(second), old);
-        for (const refused of [ship(), call(at(second))]) { assert.equal(refused.status, 1); assert.match(refused.stdout, /old receipt format/); }
+        for (const refused of [ship(), call(withRemarks(at(second)))]) { assert.equal(refused.status, 1); assert.match(refused.stdout, /old receipt format/); }
         fs.writeFileSync(stored(second), sealed);
         setReview(bin, { findings: leftover('Second leftover'), verdict: reviewVerdict() });
         const third = commit('export const three = 3;\n');

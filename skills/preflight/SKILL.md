@@ -9,7 +9,7 @@ Shared files: here or pack root.
 
 [Landing](references/landing.md).
 
-No PR/merge/deploy/closeout or formal pre-ship review/check.
+Only a draft PR; no ready/merge/deploy/closeout or formal pre-ship review/check.
 
 Read first:
 
@@ -39,8 +39,9 @@ comments/certificates; apply worker snapshot/queue rules.
    committed head with [role:code-review](references/model-policy.md#roles) and
    [role:code-review-checker](references/model-policy.md#roles), then
    verification. No in-worker review or substitute.
-4. Commit; run the pinned gate.mjs preflight collect:false, publish its returned
-   request, confirm, rerun the gate.
+4. Commit; first request: `scripts/ship-pr.mjs open` (draft, once). Later: `push`,
+   then `remarks`; all fixed this attempt go in the request's `prRemarks`. Run the pinned
+   gate.mjs preflight collect:false, publish its returned request, confirm, rerun.
 5. Follow the gate line per references/review-admission.md: open findings → fix,
    check, commit, next round (three per attempt); `needs-decision:`/`blocked:`
    → park. No broad/release-sensitive rewrites or weakened tests.

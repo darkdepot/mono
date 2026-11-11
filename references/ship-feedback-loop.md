@@ -1,6 +1,6 @@
 # Ship Feedback Loop
 
-`mono:ship` stabilizes PRs through configured ship/docs/resolvers; deploy owns merge/post-ship/closeout/learnings.
+`mono:ship` takes the draft PR out of draft and stabilizes it; deploy owns merge/post-ship/closeout/learnings.
 
 ## Inputs
 
@@ -16,7 +16,7 @@ Before resolving, inspect bot re-review-on-push/re-request. Fix repetition throu
 2. Refresh head before waits/docs/resolver. Run docs on each head; docs/resolver pushes restart docs/review.
 3. Poll checks/reviews/threads/Greptile to terminal/timeout; prefer Greptile MCP, else identifying GitHub checks/statuses.
 4. Classify actionable comments/threads as novel/re-emitted under Finding Dedup.
-5. No actionable feedback: quiet period. Otherwise invoke configured resolver; absent resolver → needs-human with feedback/missing-workflow note.
+5. No actionable feedback: quiet period. Otherwise settle it per skills/ship step 8 (`scripts/ship-pr.mjs`); no external resolver.
 6. Repeat to terminal; after the authorized final novel-finding cycle apply Non-Blocking Convergence.
 
 ## Defaults

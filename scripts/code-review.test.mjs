@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { runReviewRound, parseReviewer, parseChecker, findingKey, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, reviewGit, MAX_ANSWER_BYTES } from './code-review.mjs';
+import { runReviewRound, runRemarkCheck, remarkDigest, prRemarkFindings, parseReviewer, parseChecker, findingKey, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, reviewGit, MAX_ANSWER_BYTES } from './code-review.mjs';
 import { requiredPairings, validateModels } from './runtime.mjs';
 import { scoreCheckerProbes } from './code-review-eval.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -88,6 +88,46 @@ test('an amended contract judges scope and risk objections again; same contract 
   const same=await runReviewRound({...f.request,stageRecord:first},responder({findings:[],verdicts:[verdict({outcome:'rejected',closed:true,[flag]:false})]}));
   assert.deepEqual([same.findings[0][flag],same.outcome],[true,'not-converged'],'without an amendment the flag is sticky');
  });
+});
+
+test('PR remarks enter the round as open findings; a fix closes only when the checker verifies it on the new head',async t=>{
+ const f=fixture(t),older=f.request.base,remark=(extra={})=>({id:'PRRT_1',source:'bot',file:'input.mjs',line:1,title:'Negative input passes',body:'value(-1) returns -1',urgent:false,head:older,...extra});
+ const [seeded]=prRemarkFindings([remark()]);
+ const fixed=await runReviewRound({...f.request,remarks:[remark()]},responder({verdicts:[verdict({outcome:'rejected',closed:true,reason:'The new guard rejects negative input.'})]}));
+ assert.deepEqual([fixed.outcome,fixed.findings[0].key,fixed.findings[0].status],['clean',seeded.key,'closed'],'a verified fix closes the bot remark');
+ const dismissed=await runReviewRound({...f.request,remarks:[remark()]},responder({verdicts:[verdict({outcome:'rejected',closed:false})]}));
+ assert.equal(dismissed.outcome,'not-converged','a remark sent as fixed is not dismissed in the round; that is the read-only pass\'s job');
+ const runner=responder({verdicts:[verdict()]}),open=await runReviewRound({...f.request,remarks:[remark()]},runner);
+ assert.equal(open.outcome,'not-converged','an unfixed remark keeps the round open');
+ assert.match(runner.calls[0].prompt,/value\(-1\) returns -1/,'the reviewer sees the remark among open findings');
+ const urgent=await runReviewRound({...f.request,remarks:[remark({urgent:true,head:f.request.head})]},responder({verdicts:[verdict({outcome:'rejected',danger:false,dangerCase:null})]}));
+ assert.equal(urgent.outcome,'not-converged','a P0/P1 remark is not dismissed without a verified fix');
+ const urgentFixed=await runReviewRound({...f.request,remarks:[remark({urgent:true})]},responder({verdicts:[verdict({outcome:'rejected',closed:true,danger:true,dangerCase:'gate-bypass',dangerReason:'Stale work passed the gate.'})]}));
+ assert.equal(urgentFixed.outcome,'clean','a P0/P1 remark closes with a verified fix on the new head');
+ const reported=await runReviewRound({...f.request,remarks:[remark()]},responder({findings:[{class:'pr-remark',file:'input.mjs',anchor:'bot PRRT_1',line:1,title:'still there',trigger:'value is negative',evidence:'input.mjs returns n'}],verdicts:[verdict({outcome:'rejected',closed:true})]}));
+ assert.equal(reported.outcome,'not-converged','the reviewer reporting the same remark again keeps it open');
+ const edited=await runReviewRound({...f.request,stageRecord:fixed,remarks:[remark({body:'value(-2) still returns -2'})]},runner);
+ assert.match(runner.calls.at(-1).prompt,/value\(-2\) still returns -2/,'a changed remark reaches the round with its new text');
+ const owner=await runReviewRound({...f.request,remarks:[remark({source:'owner'})]},responder({verdicts:[verdict({origin:'pre-existing'})]}));
+ assert.equal(owner.outcome,'not-converged','an owner instruction stays blocking even when the checker calls it pre-existing');
+ const repeated=await runReviewRound({...f.request,remarks:[remark({source:'owner'})]},responder({findings:[{class:'pr-remark',file:'input.mjs',anchor:'owner PRRT_1',line:1,title:'still open',trigger:'t',evidence:'e'}],verdicts:[verdict({origin:'pre-existing'})]}));
+ assert.deepEqual([repeated.outcome,repeated.findings[0].source],['not-converged','owner'],'the reviewer repeating an owner instruction keeps its source');
+ for(const bad of [{...remark(),id:'bad id'},{...remark(),source:'chat'},{...remark(),file:'../x'},{...remark(),head:'x'},{...remark(),extra:1}])assert.throws(()=>prRemarkFindings([bad]));
+ assert.throws(()=>prRemarkFindings([remark(),remark()]),/repeated/);
+});
+test('remark check: a fresh read-only pass on the checker engine confirms or sends back each decision without a code change',async t=>{
+ const f=fixture(t),remarks=[{id:'B1',source:'bot',title:'Summary',body:'Greptile summary',urgent:false,head:f.request.head,decision:'informational',evidence:'No change requested.'},
+  {id:'T2',source:'bot',title:'Rename',body:'Rename value',urgent:true,head:f.request.head,decision:'rejected',evidence:'Public name.'}];
+ const calls=[];const runRole=async request=>{calls.push(request);return {response:{completed:true,verdicts:[{id:'B1',verdict:'confirmed',reason:'summary only'},{id:'T2',verdict:'needs-fix',reason:'name misleads'}]},elapsedMs:5,usage:null};};
+ const result=await runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,remarks,packRoot},{runRole});
+ assert.equal(calls.length,1);assert.equal(calls[0].role,'remark-check');assert.equal(calls[0].route.engine,resolveReviewRoles({},packRoot)['code-review-checker'].engine);
+ assert.match(calls[0].prompt,/^# PR remark check/);assert.match(calls[0].prompt,/Greptile summary/);
+ assert.deepEqual(result.verdicts.map(v=>v.verdict),['confirmed','needs-fix']);assert.deepEqual(result.remarks,remarks.map(remark=>({id:remark.id,digest:remarkDigest(remark),decision:remark.decision})));assert.equal(result.head,f.request.head);
+ await assert.rejects(runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,remarks,packRoot},{runRole:async()=>({response:{completed:true,verdicts:[{id:'B1',verdict:'confirmed',reason:'r'}]}})}),/remark without verdict/);
+ await assert.rejects(runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,remarks:[{...remarks[0],decision:'fixed'}],packRoot},{runRole}),/invalid remark decision/);
+ await assert.rejects(runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,remarks:[{...remarks[1],decision:'deferred'}],packRoot},{runRole}),/urgent remark cannot be deferred/);
+ await assert.rejects(runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,remarks:[{...remarks[0],source:'owner'}],packRoot},{runRole}),/invalid remark decision/,'an owner instruction is never declined by the pass');
+ fs.writeFileSync(path.join(f.worktree,'dirty.txt'),'x');await assert.rejects(runRemarkCheck({worktree:f.worktree,head:f.request.head,base:f.request.base,remarks,packRoot},{runRole}),/clean pinned HEAD/);
 });
 
 test('C45: executable BOM additions and removals remain visible in diff hunks and checker evidence',async t=>{
