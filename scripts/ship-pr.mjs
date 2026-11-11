@@ -107,7 +107,8 @@ export function checksLine({ checks = [], head, deferred = [] }) {
   const onHead = checks.filter(check => check.head === head), groups = { passed: [], skipped: [], neutral: [], failed: [], running: [] };
   for (const check of onHead) groups[CHECK_STATE(check)].push(check.__typename === 'StatusContext' ? check.context : check.name);
   const parts = Object.entries(CHECK_WORDS).filter(([key]) => groups[key].length).map(([key, word]) => `${word}: ${groups[key].join(', ')}`);
-  if (deferred.length) parts.push(`перенесено: ${deferred.join(', ')}`);
+  // Items are separated by commas, so separators inside an item become slashes and the line reads back the same.
+  if (deferred.length) parts.push(`перенесено: ${deferred.map(item => item.replace(/\s*[,;·]\s*/g, ' / ').trim()).join(', ')}`);
   return `Проверки: ${groups.passed.length} из ${onHead.length + deferred.length} прошли${parts.length ? `; ${parts.join('; ')}` : ''}`;
 }
 // What a reader sees: comments and every <details> block (with attributes, nested, or left unclosed) removed.

@@ -194,6 +194,9 @@ test('description: rewritten between Ship markers, the bot block kept, the form 
   assert.match(problems(`${author()}\n${running}`).join(), /устарела: сейчас «Проверки: 1 из 1 прошли»/, 'a line written while checks ran is refreshed once they finish');
   const carried = checksLine({ checks: [passedCheck('validate')], head, deferred: ['живой прогон'] });
   assert.deepEqual(problems(`${author()}\n${carried} · Задача: MONO-324`), [], 'carried-over items keep their words');
+  const commas = checksLine({ checks: [passedCheck('validate')], head, deferred: ['браузер, мобильный экран', 'живой прогон'] });
+  assert.match(commas, /перенесено: браузер \/ мобильный экран, живой прогон$/);
+  assert.deepEqual(problems(`${author()}\n${commas}`), [], 'an item with a comma reads back as the same line');
   assert.match(bodyProblems({ body: composeBody({ author: `${author()}\n${line}`, head }), issue: 'MONO-324|.*', head, checks: [passedCheck('validate')] }).join(), /нет ссылки/, 'the task key is text, never a pattern');
   assert.match(bodyProblems({ body: composeBody({ author: `${author()}\n${line}`, head: older }), issue: 'MONO-324', head, checks: [] }).join(), /не переписано после последней версии/);
   assert.match(bodyProblems({ body: 'no markers', issue: 'MONO-324', head }).join(), /без части автора/);
