@@ -148,8 +148,9 @@ transition being supported.
 
 Only the latest Idea approval comment's outside-fence line
 «Ведёт оркестратор: владелец принёс идею оркестратору <дата>.» delegates a Project;
-repeat it on Idea reapproval. Projects delegated before this version may use an
-explicit owner decision in a Project comment. Without either, the owner leads.
+repeat it on Idea reapproval. A Project comment quoting the owner's explicit words
+handing the Project to the orchestrator also delegates it, from that comment on.
+Without either, the owner leads.
 Do not add `by` to the strict `mono-idea` record. The owner always approves Idea
 in words on the shown version. Through an orchestrator, the exact stage description
 is shown verbatim as its final message; the shown text, actual question and verbatim
