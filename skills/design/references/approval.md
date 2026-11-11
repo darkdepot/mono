@@ -85,8 +85,8 @@ mono-design: approved project=<uuid> prd=<uuid PRD> prd-updatedAt=<ISO> canvas=<
 Смесь двух видов, неполная пара `canvas`/`tool` и неизвестный `tool` дают
 `bad-record`. Новую запись всегда пиши с `canvas` и `tool`.
 
-5. Прочитай комментарий обратно байт в байт; обнови бриф по разделу
-   «Бриф после утверждения». Сохрани все свежие ответы Linear
+5. Сначала прочитай комментарий обратно байт в байт; только после совпадения
+   обнови бриф по разделу «Бриф после утверждения». Сохрани все свежие ответы Linear
    без переделки: `project.json`, `comments-N.json`, `comments-N.request.json`,
    `prd.json`. Запусти `node <корень>/scripts/idea-gate.mjs design --mode fresh --dump <папка>/linear --config <конфиг>`.
    Только exit 0, «Готово», JSON `pass`, затем `mono:check design` PASS завершают
