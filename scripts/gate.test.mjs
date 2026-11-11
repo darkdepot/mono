@@ -180,7 +180,7 @@ test("review refusal and successor lines: an older dangerous defect must be file
     review: { outcome: 'not-converged', round: 1, successors: [], record: { findings: many } } };
   assert.throws(() => validatePreflight(receipt, head, base), error => error.message.length < 48000 && /^review not-converged \(round 1 of 3\); fix and request the next round; 200 open: /.test(error.message) && / more in the next round$/.test(error.message));
 });
-test("review rounds are counted per pins file from signed history", () => {
+test("review rounds are counted per task attempt from signed history", () => {
   const pins = { file: '/root/dispatch/MONO-1-a1/pins.json', digest: 'd' }, base = 'b'.repeat(40), contractDigest = 'c'.repeat(64);
   const heads = ['1', '2', '3', '4'].map(digit => digit.repeat(40));
   let clock = 0;
@@ -199,12 +199,16 @@ test("review rounds are counted per pins file from signed history", () => {
   assert.deepEqual([read(failed).spent, read(failed).notReviewed, read(failed, heads[1]).notReviewed], [0, 2, 1], 'not-reviewed spends nothing and counts in a row per head');
   assert.equal(read([...failed, receipt(heads[0], 'clean')]).notReviewed, 0);
   assert.equal(read([...failed, receipt(heads[0], 'refused')]).notReviewed, 2, 'a refusal is not a review attempt');
-  const amended = { file: '/root/dispatch/MONO-1-a1/pins.v1.json', digest: 'e' };
-  assert.deepEqual(reviewHistory(three, { pins: amended, head: heads[2], base, contractDigest }), { spent: 0, notReviewed: 0, reuse: null, record: null }, 'a new pins version opens a fresh three');
-  for (const changed of [{ base: 'e'.repeat(40) }, { contractDigest: 'f'.repeat(64) }])
-    assert.deepEqual(read(three.slice(0, 2), heads[1], changed), { spent: 2, notReviewed: 0, reuse: null, record: null }, 'a new base or contract starts a fresh record and keeps the count');
-  const foreign = [{ ...three[0], producer: 'gate-autoreview-v2' }, { ...three[1], pins: { file: '/root/dispatch/MONO-2-a1/pins.json', digest: 'd' } }, { producer: REVIEW_PRODUCER, pins }, null];
-  assert.equal(read(foreign).spent, 0, 'old receipts and other tasks are never counted');
+  const amended = { file: '/root/dispatch/MONO-1-a1/pins.v1.json', digest: 'e' }, amendedContract = 'f'.repeat(64);
+  assert.deepEqual(reviewHistory(three, { pins: amended, head: heads[3], base, contractDigest: amendedContract }), { spent: 3, notReviewed: 0, reuse: null, record: three[2].review.record },
+    'an amendment keeps the count and continues the record');
+  assert.equal(reviewHistory(three, { pins: amended, head: heads[2], base, contractDigest: amendedContract }).reuse, null, 'a changed contract never reuses a round');
+  assert.equal(reviewHistory([...three.slice(0, 2), { ...three[2], pins: amended }], { pins, head: heads[3], base, contractDigest }).spent, 3, 'rounds under every pins version of the attempt count');
+  assert.deepEqual(read(three.slice(0, 2), heads[1], { contractDigest: amendedContract }), { spent: 2, notReviewed: 0, reuse: null, record: three[1].review.record }, 'a new contract continues the record');
+  assert.deepEqual(read(three.slice(0, 2), heads[1], { base: 'e'.repeat(40) }), { spent: 2, notReviewed: 0, reuse: null, record: null }, 'a new base starts a fresh record and keeps the count');
+  const foreign = [{ ...three[0], producer: 'gate-autoreview-v2' }, { ...three[1], pins: { file: '/root/dispatch/MONO-2-a1/pins.json', digest: 'd' } },
+    { ...three[2], pins: { file: '/root/dispatch/MONO-1-a2/pins.json', digest: 'd' } }, { producer: REVIEW_PRODUCER, pins }, null];
+  assert.equal(read(foreign).spent, 0, 'old receipts, other tasks and other attempts are never counted');
 });
 test("preflight accepts only a v3 receipt with an accepted review, exact head/base and proven verification", () => {
   const base = "b".repeat(40);
@@ -539,7 +543,14 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.deepEqual([reviewCalls(bin), fs.existsSync(verifySaw)], [['reviewer', 'checker'], false], 'no verification before an acceptable review');
         receipt = await round(at(first, 2), 1, /review not-converged \(round 1 of 3\)/);
         assert.equal(receipt.review.spent, false); assert.ok(receipt.review.reusedFrom); assert.equal(reviewCalls(bin).length, 2, 'the same head reuses its round');
-        setReview(bin, { findings: [], verdict: closing });
+        // A role that cannot run spends no round.
+        setReview(bin, { loggedOut: 'codex' });
+        const offline = commit('export const offline = 0;\n');
+        receipt = await round(at(offline), 1, /fail: not-reviewed: .*no round spent, request this head once more/);
+        assert.deepEqual([receipt.review.spent, receipt.review.record], [false, null]);
+        await round(at(offline, 2), 1, /fail: blocked: not-reviewed twice in a row on this head/);
+        const blocked = call(at(offline, 3)); assert.equal(blocked.status, 1); assert.match(blocked.stdout, /fail: blocked: not-reviewed twice in a row/);
+        setReview(bin, { loggedOut: null, findings: [], verdict: closing });
         const second = commit('export const two = 2;\n');
         receipt = await round(at(second), 0, /pass: review clean \(round 2 of 3\) and verification verified on head/);
         assert.equal(fs.readFileSync(verifySaw, 'utf8'), 'reviewer\nchecker\nreviewer\nchecker\n', 'verification starts only after the review round has finished');
@@ -562,7 +573,8 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         const third = commit('export const three = 3;\n');
         receipt = await round(at(third), 0, /pass: review clean-with-successors \(round 3 of 3\).*successor candidates: P2 input\.mjs:1 Second leftover/);
         assert.deepEqual(receipt.review.successors.map(item => item.line), ['P2 input.mjs:1 Second leftover']);
-        const fourth = commit('export const four = 4;\n'), calls = reviewCalls(bin).length, limit = /^gate preflight: fail: needs-decision: review round limit reached \(3 of 3 on this pins file\)/;
+        assert.deepEqual(receipt.review.record.rounds.map(item => item.scope), ['full', 'fixes-and-open-findings', 'fixes-and-open-findings'], 'only the first round reads the whole change');
+        const fourth = commit('export const four = 4;\n'), calls = reviewCalls(bin).length, limit = /^gate preflight: fail: needs-decision: review round limit reached \(3 of 3 on this task attempt\)/;
         const unpublished = call(at(fourth)); assert.equal(unpublished.status, 1, 'refused before the worker publishes'); assert.match(unpublished.stdout, limit);
         receipt = await round(at(fourth), 1, limit);
         assert.equal(receipt.review.outcome, 'refused'); assert.equal(reviewCalls(bin).length, calls, 'a fourth round is never launched');
@@ -574,18 +586,11 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         entry.completed_amendments = { 1: { pinsVersion: 1, resumeFile, change: { text: 'Narrow: only input.mjs.\n\n## issue-only note\nKept.' } } };
         entry.pinsVersion = 1; register();
         const next = { file: amended, digest: sha256File(amended) }, launchContract = receipt.review.contractDigest;
-        receipt = await round(at(fourth, 2, next), 1, /review not-converged \(round 1 of 3\)/);
-        assert.equal(receipt.review.record.rounds.length, 1, 'a new pins version opens a fresh three');
+        const fifth = commit('export const five = 5;\n');
+        receipt = await round(at(fifth, 1, next), 1, limit);
+        assert.equal(receipt.review.outcome, 'refused'); assert.equal(reviewCalls(bin).length, calls, 'an amendment keeps the count: no fourth round');
         assert.notEqual(receipt.review.contractDigest, launchContract, 'a full-snapshot amendment supplies the reviewed contract');
         assert.equal(receipt.review.contractDigest, digest('# MONO-999\n\nNarrowed fixture contract.\n\n\n## Orchestrator amendment 1\nNarrow: only input.mjs.\n\n## issue-only note\nKept.'), 'the reviewer reads the amendment text with the Issue');
-        setReview(bin, { loggedOut: 'codex' });
-        const fifth = commit('export const five = 5;\n');
-        receipt = await round(at(fifth, 1, next), 1, /fail: not-reviewed: .*no round spent, request this head once more/);
-        assert.deepEqual([receipt.review.spent, receipt.review.record], [false, null]);
-        await round(at(fifth, 2, next), 1, /fail: blocked: not-reviewed twice in a row on this head/);
-        const blocked = call(at(fifth, 3, next)); assert.equal(blocked.status, 1); assert.match(blocked.stdout, /fail: blocked: not-reviewed twice in a row/);
-        setReview(bin, { loggedOut: null, findings: [], verdict: closing });
-        await round(at(commit('export const six = 6;\n'), 1, next), 0, /pass: review clean \(round 2 of 3\)/);
         return;
       }
       let expectedField = null, expectedValue = null, expectedStatus = 2;

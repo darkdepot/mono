@@ -196,7 +196,7 @@ readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify se
 head/merge-base receipt before judgment; no string substitutes.
 Orchestrator rechecks preflight before ship. Ship-fix amendment: next ship-gate
 attempt, new head/stateFile; preserve old state/task attempt. No gate-attempt cap;
-the new head needs a review round (the amendment opens a fresh three).
+the new head needs one narrow review round within the attempt's three.
 
 ## Implementation exit evidence
 
