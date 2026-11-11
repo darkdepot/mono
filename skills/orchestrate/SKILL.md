@@ -221,7 +221,8 @@ Workflow states:
      with empty registry. halt refuses spawn/resume without stopping workers.
      Keep attempts.json when an entry retires; never reset the cap.
 5. `monitor`
-   - Apply Monitoring Protocol before every event/poll. No-change wakeups
+   - Apply Monitoring Protocol in `references/orchestration-delivery.md` before
+     every event/poll. No-change wakeups
      (false alarm after inspection, already-consumed report, or no events) create
      no owner message or routine ledger entry. Record actual observation recovery
      and healing steps/results. An unconfirmed alarm is no owner blocker. Validate startup gates,
@@ -237,7 +238,7 @@ Workflow states:
      start `scripts/orchestrator/collector.mjs start --root DIR --issue KEY
      --attempt N` outside worker sandboxes for empty/collection-only queues; inspect
      `status` and its reports log, and `stop` at attempt end. Connector queues still
-     apply Delivery Write Barriers through installed
+     apply Delivery Write Barriers (same file) through installed
      `scripts/orchestrator/accept.mjs report`: open a reconciliation session,
      inspect expanded writes (reread first on retry), apply through the connector,
      submit --session/--observe read-backs and confirm the full queue with the
