@@ -2503,8 +2503,12 @@ const linearForms={
  'table delimiter':{written:'| Имя | Источник |\n| --- | :---: |\n| a | b |',stored:'| Имя | Источник |\n| -- | :-: |\n| a | b |'},
  'table delimiter, other alignment':{written:'| Имя | Источник |\n| --- | --- |\n| a | b |',stored:'| Имя | Источник |\n| -- | :-- |\n| a | b |',red:true},
  'table cell text':{written:'| Имя | Источник |\n| --- | --- |\n| a | b |',stored:'| Имя | Источник |\n| -- | -- |\n| a | c |',red:true},
+ 'dash row under a header of another width':{written:'| Заголовок |\n| - | - |',stored:'| Заголовок |\n| -- | -- |',red:true},
  'dash cells are not a delimiter':{written:'| Имя | Источник |\n| --- | --- |\n| - | - |',stored:'| Имя | Источник |\n| -- | -- |\n| -- | -- |',red:true},
  'code span edge spaces':{written:'Значение `  rc-02 ` с пробелами.',stored:'Значение ` rc-02` с пробелами.'},
+ 'code span, two spaces at both edges':{written:'Значение `  x  ` с пробелами.',stored:'Значение ` x ` с пробелами.'},
+ 'code span with an inner backtick':{written:'Значение ``  a`b  `` с пробелами.',stored:'Значение `` a`b `` с пробелами.'},
+ 'code span, both edge spaces lost':{written:'Значение `  x  ` с пробелами.',stored:'Значение `x` с пробелами.',red:true},
  'code span, other text':{written:'Значение `  rc-02 ` с пробелами.',stored:'Значение ` rc-03` с пробелами.',red:true},
  'code span, one edge space':{written:'Значение ` rc-02` с пробелом.',stored:'Значение `rc-02` с пробелом.',red:true}
 };

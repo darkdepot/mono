@@ -73,21 +73,26 @@ function prose(value) {
   .replace(/\[((?:[^\[\]\\\n]|\\.|\[[^\[\]\n]*\])*)\](\((?:<[^<>\n]+>|(?:[^\s<>()]|\([^\s<>()]*\))+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?\))|(\\*)([\[\]])/g,
    (all,label,tail,slashes,mark)=>tail?`[${label.replace(/(\\*)([\[\]])/g,escapedBracket)}]${tail}`:escapedBracket(all,slashes,mark));
 }
-function inlineProse(line,opened) {
- let result='',start=0,delimiter=opened,whole=false;
+// Code stays literal. `parsed` applies CommonMark's own rule to a written text, as Linear does on save: a span whose
+// content begins and ends with a space loses one at each end (`  x ` is stored as ` x`). Only a span on one line.
+function inlineProse(line,opened,parsed=false) {
+ let result='',start=0,delimiter=opened,from=null;
  for(const match of line.matchAll(/`+/g)) {
-  const part=line.slice(start,match.index),closes=whole&&delimiter===match[0].length;
-  // Code stays literal, except CommonMark's own rule that Linear applies on save: a span whose content begins and
-  // ends with a space loses one at each end (`  x ` is stored as ` x`). Only a span opened and closed on this line.
-  result+=delimiter===null?prose(part):closes&&part.startsWith(' ')&&part.endsWith(' ')&&part.trim()?part.slice(1,-1):part;
+  const part=line.slice(start,match.index);
+  result+=delimiter===null?prose(part):part;
+  if(parsed&&from!==null&&delimiter===match[0].length){
+   const code=result.slice(from);
+   if(code.startsWith(' ')&&code.endsWith(' ')&&code.trim())result=result.slice(0,from)+code.slice(1,-1);
+  }
   result+=match[0];start=match.index+match[0].length;
-  if(delimiter===null){delimiter=match[0].length;whole=true;}else if(delimiter===match[0].length)delimiter=null;else whole=false;
+  if(delimiter===null){delimiter=match[0].length;from=result.length;}else if(delimiter===match[0].length){delimiter=null;from=null;}
  }
  const tail=line.slice(start);return result+(delimiter===null?prose(tail):tail);
 }
-function markdown(value){
+function markdown(value,parsed=false){
  if(typeof value!=='string')return value;
- let fence=null,inline=null,heading=false,item=false,row=0;const result=[];
+ const cells=line=>line.trim().slice(1,-1).split(/(?<!\\)\|/);
+ let fence=null,inline=null,heading=false,item=false,row=0,columns=0;const result=[];
  for(const line of value.split('\n')){
   const marker=inline===null?line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/):null;
   const block=Boolean(fence||marker||(inline===null&&/^(?: {4}|\t)/.test(line))),literal=block||inline!==null;
@@ -108,11 +113,13 @@ function markdown(value){
   let list=literal?line:line.replace(/^([ ]{0,3})- /,'$1* ');
   // A paragraph line directly under a list item continues that item; Linear stores it indented under the item.
   if(!literal&&item&&/^ {1,3}\S/.test(list)&&!/^ {1,3}(?:[-*+] |\d{1,3}[.)] |#{1,6} |>)/.test(list))list=list.trimStart();
-  // The second row of a table is its delimiter: Linear stores `| --- |` as `| -- |`; dash count and padding carry no meaning.
+  // The row under a table header with as many cells is the delimiter: Linear stores `| --- |` as `| -- |`; dash
+  // count and padding carry no meaning.
   row=!literal&&/^ {0,3}\|.*\| *$/.test(line)?row+1:0;
-  if(row===2&&/^ {0,3}\|(?: *:?-+:? *\|)+ *$/.test(list))list='| '+list.trim().slice(1,-1).split('|').map(cell=>cell.trim().replace(/-+/,'---')).join(' | ')+' |';
+  if(row===1)columns=cells(line).length;
+  if(row===2&&/^ {0,3}\|(?: *:?-+:? *\|)+ *$/.test(list)&&cells(list).length===columns)list='| '+cells(list).map(cell=>cell.trim().replace(/-+/,'---')).join(' | ')+' |';
   item=!literal&&line.trim()!==''&&(item||/^ {0,3}(?:[-*+] |\d{1,3}[.)] )/.test(line));
-  result.push(block?list:inlineProse(list,inline));
+  result.push(block?list:inlineProse(list,inline,parsed));
   heading=!literal&&/^#{1,6} /.test(line);
   if(!block)for(const tick of line.matchAll(/`+/g)){
    if(inline===null)inline=tick[0].length;
@@ -162,7 +169,7 @@ function compareField(field,wanted,actual,id){
    matched.add(index);return true;
   })&&matched.size===observed.length;
   if(!same&&unresolved)missing(`id/name resolution unavailable for ${id}.${field}`);
- }else same=isDeepStrictEqual(wanted,actual)||(['description','content','body'].includes(field)&&markdown(wanted)===markdown(actual));
+ }else same=isDeepStrictEqual(wanted,actual)||(['description','content','body'].includes(field)&&[markdown(wanted),markdown(wanted,true)].includes(markdown(actual)));
  if(!same)throw new Error(`read-back/write result mismatch for ${id}.${field}`);
 }
 
