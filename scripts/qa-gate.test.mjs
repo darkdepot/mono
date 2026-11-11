@@ -44,6 +44,20 @@ test('only config or an explicit product registry record enables QA', () => {
   assert.throws(() => qaRecipeSource({ qa: null }), /qa/);
 });
 
+test('beforeMerge:false opens the merge gate without a certificate; absent or true keeps it', t => {
+  const f = fixture(t);
+  for (const beforeMerge of [undefined, true]) {
+    const config = { ...f.config, qa: { ...f.config.qa, ...(beforeMerge === undefined ? {} : { beforeMerge }) } };
+    assert.equal(qaDeliveryState({ ...f.input, config }).state, 'waiting');
+    assert.throws(() => requireQaPassed({ ...f.input, config }), /QA: waiting/);
+  }
+  const config = { ...f.config, qa: { ...f.config.qa, beforeMerge: false } };
+  assert.deepEqual(qaDeliveryState({ ...f.input, config }), { state: 'not-connected', reason: 'тестировщик по запросу' });
+  assert.equal(requireQaPassed({ ...f.input, config }).state, 'not-connected');
+  for (const beforeMerge of ['false', 0, null])
+    assert.throws(() => qaRecipeSource({ ...f.config, qa: { ...f.config.qa, beforeMerge } }), /beforeMerge must be boolean/);
+});
+
 test('current host state is mandatory and cannot be replaced by certificate fields', t => {
   const f = fixture(t); f.save();
   assert.equal(qaDeliveryState(f.input).state, 'waiting');

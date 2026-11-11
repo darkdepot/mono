@@ -288,6 +288,8 @@ Workflow states:
      QA over all R/AE. Keep held tasks and bug successors blocked until that
      composition passes; publish/read back its report in the Project. No recipe:
      do not call QA, record «тестировщик не подключён» and continue normally.
+     Recipe `beforeMerge: false`: same path, record «тестировщик по запросу»;
+     QA runs on request and once before a release.
    - When a worker reports `green` (mono-ship green certificate), run
      `mono:deploy` from this session per the configured Deploy workflow
      and `deployApproval` policy, including its mandatory Live QA gate
