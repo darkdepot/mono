@@ -28,10 +28,10 @@ Every collection requires a pinned request and correlated admission; unpinned
 legacy requests cannot start collections. Receipts of the previous format are not accepted.
 
 Collections now share one deadline from phase publication through confirmation.
-Configure `orchestration.delivery.collectionTimeoutSec` (default 1500),
-`collectionRetries` (default 1) and `confirmationTimeoutSec` (default 1800)
+Configure `orchestration.delivery.collectionTimeoutSec` (default 4500),
+`collectionRetries` (default 1) and `confirmationTimeoutSec` (default 6300)
 before dispatch; require `collectionTimeoutSec < confirmationTimeoutSec < evidenceLimitSec`.
-A run is bounded to 1500 seconds by default; a crash before a signed receipt may
+A run is bounded to 4500 seconds by default; a crash before a signed receipt may
 retry once with the same admission, after class/cap and remaining-budget checks.
 Signed failures reconcile without another review. Failed project verification
 reruns once inside the same collection, with both outputs signed.

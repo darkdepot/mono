@@ -410,11 +410,11 @@ export function deliveryConfig(source) {
   }
   const config = configured ?? {};
   const result = {
-    confirmationTimeoutSec: positive(config.confirmationTimeoutSec, 1800, "confirmationTimeoutSec"),
-    collectionTimeoutSec: positive(config.collectionTimeoutSec, 1500, "collectionTimeoutSec"),
+    confirmationTimeoutSec: positive(config.confirmationTimeoutSec, 6300, "confirmationTimeoutSec"),
+    collectionTimeoutSec: positive(config.collectionTimeoutSec, 4500, "collectionTimeoutSec"),
     collectionRetries: config.collectionRetries ?? 1,
     quietSec: positive(config.quietSec, 120, "quietSec"),
-    evidenceLimitSec: positive(config.evidenceLimitSec, 2400, "evidenceLimitSec"),
+    evidenceLimitSec: positive(config.evidenceLimitSec, 7200, "evidenceLimitSec"),
     pollSec: positive(config.pollSec, 10, "pollSec"),
     stallSec: positive(config.stallSec, 120, "stallSec"),
     ackWaitSec: positive(config.ackWaitSec, 420, "ackWaitSec"),
