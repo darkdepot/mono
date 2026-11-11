@@ -482,6 +482,11 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const contractDigest = digest(contract);
     // An amended contract continues the record: open findings stay open and the next round stays narrow.
     requireValue(!record.base || record.base === base, 'stage base changed');
+    // The amendment may approve disputed work, so scope and risk objections are judged again against it:
+    // they return to the checker this round and stand only if the checker raises them again.
+    const rejudge = new Set(record.contractDigest && record.contractDigest !== contractDigest
+      ? record.findings.filter(finding => finding.outOfContract || finding.riskRaised).map(finding => finding.key) : []);
+    record.findings = record.findings.map(finding => rejudge.has(finding.key) ? { ...finding, outOfContract: false, riskRaised: false } : finding);
     requireValue(git(worktree, ['rev-parse', 'HEAD']).trim() === head && !git(worktree, ['status', '--porcelain=v1', '--untracked-files=all']).trim(), 'review requires the clean pinned HEAD');
     requireValue(git(worktree, ['merge-base', base, head]).trim() === base, 'base must be an ancestor of the reviewed head');
     const identity = treeIdentity(worktree);
@@ -524,7 +529,7 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
         }
       }
     };
-    const open = record.findings.filter(finding => !['closed', 'rejected'].includes(finding.status) || savedDanger(finding) !== false || finding.outOfContract || finding.riskRaised);
+    const open = record.findings.filter(finding => !['closed', 'rejected'].includes(finding.status) || savedDanger(finding) !== false || finding.outOfContract || finding.riskRaised || rejudge.has(finding.key));
     const found = [], covered = new Set();
     const absorb = result => { result.reviewedFiles.forEach(file => covered.add(file)); found.push(...result.findings); };
     absorb(await call('code-review', { openFindings: open, pass: 'all-defects' }, parseReviewer));
