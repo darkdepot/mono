@@ -137,6 +137,11 @@ function applyPatch(kind,id,content,patch){
    content=content.slice(0,offset)+edit.text+content.slice(offset);
    continue;
   }
+  if(edit?.op==='append'||edit?.op==='prepend'){
+   if(typeof edit.text!=='string'||!edit.text)missing(`unsupported ${kind} patch for ${id}`);
+   content=edit.op==='append'?content+edit.text:edit.text+content;
+   continue;
+  }
   if(edit?.op==='replace_range'){
    // Linear's range edit: `from` matches exactly once and starts the replaced text; `to` matches exactly once after it and stays.
    if(typeof edit.from!=='string'||!edit.from||typeof edit.to!=='string'||!edit.to||typeof edit.new_string!=='string')missing(`unsupported ${kind} patch for ${id}`);
@@ -730,7 +735,10 @@ export function verifyRecords(request){
    if(data.calls.some(c=>c.line>data.terminal.line&&isWrite(c.name)))throw new Error('write after scenario terminal');
    if(data.calls.some(c=>c.line>data.terminal.line))missing('call after successful trace terminal');
    const notification=e=>e.type==='user'&&e.origin?.kind==='task-notification'&&typeof e.message?.content==='string'||e.type==='system'&&e.subtype==='task_notification';
-   let previous=-Infinity;for(const row of data.rows)if(!(source.host==='claude'&&(row.value.isSynthetic===true||notification(row.value)))&&row.value.timestamp!==undefined){const stamp=date(row.value.timestamp);if(!Number.isFinite(stamp)||stamp<previous)missing('invalid or reversed native trace time order');previous=stamp;}
+   // Results of a child agent's parallel calls can be written a few milliseconds out of order. They are not conversation
+   // evidence, so they stay out of the order check; parent rows and the child's own calls stay strictly ordered.
+   const childResult=e=>Boolean(e.parent_tool_use_id)&&e.type==='user'&&Array.isArray(e.message?.content)&&e.message.content.length>0&&e.message.content.every(block=>block?.type==='tool_result');
+   let previous=-Infinity;for(const row of data.rows)if(!(source.host==='claude'&&(row.value.isSynthetic===true||notification(row.value)||childResult(row.value)))&&row.value.timestamp!==undefined){const stamp=date(row.value.timestamp);if(!Number.isFinite(stamp)||stamp<previous)missing('invalid or reversed native trace time order');previous=stamp;}
    data.expectedReplies=dump?undefined:source.expectedReplies;
    if(!dump&&data.audit.calls.some(c=>isOwnerWindow(c.name))&&dialogueMode(request.testedVersion??testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))!=='windows')throw new Error('stage called a window in text scenario');
    if(!dump&&(request.expectedReplies||source.expectedReplies)&&data.audit.calls.some(c=>isOwnerWindow(c.name)))throw new Error('stage called a window in text scenario');
