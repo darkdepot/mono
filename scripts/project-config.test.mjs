@@ -26,6 +26,26 @@ test('design config accepts paper/wonder or omitted tool and rejects unsupported
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+test('ship and review feedback accept only built-in Ship names and say why others fail', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-ship-workflow-config-'));
+  try {
+    const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+    fs.mkdirSync(path.join(root, '.agents'));
+    for (const [field, value, valid] of [
+      ['ship', null, true], ['ship', 'mono', true], ['ship', 'gstack ship', true],
+      ['ship', 'custom ship', false], ['ship', 'compound-engineering:ce-resolve-pr-feedback', false],
+      ['reviewFeedback', null, true], ['reviewFeedback', 'mono', true],
+      ['reviewFeedback', 'compound-engineering:ce-resolve-pr-feedback', true],
+      ['reviewFeedback', 'gstack ship', false], ['reviewFeedback', 'my-resolver', false],
+    ]) {
+      const workflows = { ...config.workflows, [field]: value };
+      fs.writeFileSync(path.join(root, '.agents/mono-workflow.config.json'), JSON.stringify({ ...config, workflows }));
+      const result = spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
+      assert.equal(result.status, valid ? 0 : 1, `${field}=${value}: ${result.stderr}`);
+      if (!valid) assert.match(result.stderr, new RegExp(`workflows\\.${field} .*Ship is built in.*"mono"`));
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 test('old review helper prerequisite is optional and an existing value is accepted silently', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-helper-flag-config-'));
   try {

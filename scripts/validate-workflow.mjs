@@ -233,14 +233,14 @@ function validateReadBudgetFixtures() {
       require(error?.message.includes("missing reading input"), "missing local input fell back to pack references");
     });
     fixture("unlisted stage rejects Russian read tiers", () => {
-      write("skills/ship/SKILL.md", "Прочитай сразу: `references/large.md`.\nПрочитай, когда:\n- `references/shared.md`: условие.\n");
+      write("skills/preflight/SKILL.md", "Прочитай сразу: `references/large.md`.\nПрочитай, когда:\n- `references/shared.md`: условие.\n");
       let error;
       try { measureReadBudget(scratch); } catch (caught) { error = caught; }
       require(error?.message.includes("Russian read tiers require a listed Russian stage"), "unlisted Russian reads silently omitted");
       write("skills/ship/SKILL.md", base);
     });
     fixture("unlisted stage rejects Russian pack-root reads", () => {
-      write("skills/ship/SKILL.md", "Read now: `<корень>/references/large.md`.\n");
+      write("skills/preflight/SKILL.md", "Read now: `<корень>/references/large.md`.\n");
       let error;
       try { measureReadBudget(scratch); } catch (caught) { error = caught; }
       require(error?.message.includes("Russian pack-root paths require a listed Russian stage"), "unlisted Russian pack-root read silently omitted");
@@ -6226,10 +6226,8 @@ const REQUIRED_HEADINGS = [
   ["references/worker-contract.md","Worker Report"],
   ["templates/orchestrator-dispatch.md","Worker Dispatch Prompt"],
   ["references/ship-feedback-loop.md","Review Bot Configuration Check"],
-  ["references/ship-feedback-loop.md","Finding Dedup"],
   ["references/ship-feedback-loop.md","Published Replies"],
   ["references/ship-feedback-loop.md","Green Exit"],
-  ["references/ship-feedback-loop.md","Non-Blocking Convergence"],
   ["references/install.md","Install-Source Verification (Deploy)"],
   ["references/review-rubric.md","Mono Review Rubric"],
   ["references/lifecycle.md","Linear Lifecycle"],

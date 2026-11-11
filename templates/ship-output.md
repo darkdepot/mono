@@ -1,60 +1,26 @@
-# Ship Output Template
+# Итог Ship
+
+Итог человеку языком продукта; сначала результат или точное решение.
 
 ```text
-<outcome/readiness/expiry/exact decision>
-PR: [#<number>](<url>)
-Linear Issue: `<key>` - <status>
+<1-3 строки: что готово, попытка, круги ревью из трёх, ожидание из предела>
+PR: [#<номер>](<url>)
+Задача: `<ключ>` - <статус>
 
 Статус ревью:
-- Preflight: <ready/blocked/drift-candidate/needs-human/not run>; <local readiness>.
-- Кто/что ревьюил: <reviewers + run/skipped/not configured + outcome>.
-- Documentation workflow: <run/skipped/not configured; head change/outcome>.
-- Bug/perf proof: <not applicable or original symptom/baseline + fix proof + regression proof/gap>.
-- Что нашли и что починили: <findings/fixes or none>.
-- Нерешённые треды: <count/state>.
+- Preflight: <ready/blocked/drift-candidate/needs-human/не запускался>.
+- Ревью: <кто, круги, итог>; замечания бота, CI и владельца: <решены как>.
+- Documentation workflow: <запущен/пропущен/не настроен; влияние на голову>.
+- Нерешённые обсуждения: <число>.
 
-Проверки CI:
-- <blocking check>: <state>.
-- <other checks>: <state/non-blocking>.
+Проверки: <строка Ship из описания PR>
 
 Проверено:
-- <inspected states>.
+- <что смотрел>.
 Не проверено:
-- <unrun manual/browser/prod/mobile/deploy/acceptance or none known>.
+- <ручное, браузер, прод, мобильный, выкладка, приёмка или «ничего известного»>.
 
-Статус в Linear:
-- <Issue/Project sync>.
-- <comments/resources/status writes>.
-
-Что дальше:
-1. <recommended next step/consequence; green normally mono:deploy>.
-2. <useful alternative/consequence>.
+Что дальше: <обычно mono:deploy; альтернатива и её цена>.
 ```
 
-Optional logs/Linear summary:
-
-```text
-Mono ship verdict: <green|needs-human|blocked|timed-out>
-
-PR:
-Linear Issue:
-Latest head SHA:
-Phases run:
-Rounds run:
-Checks status:
-Greptile status:
-Review status:
-Documentation workflow:
-Resolver used:
-Commits pushed:
-Fixes applied: <none or concise list with commit SHA>
-Merge state: <clean/blocked/conflict/unknown>
-Unresolved feedback:
-mono-ship green certificate: <recorded/not recorded + reason>
-Next: <mono:deploy | needs-human | blocked>
-Notes:
-```
-
-Verdicts:
-
-Apply Verdict copy in `templates/ship-status-ux.md`.
+Вердикты по `templates/ship-status-ux.md`.

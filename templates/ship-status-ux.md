@@ -1,20 +1,17 @@
 # Ship status UX (interactive mode)
 
-Interactive composition only; AFK uses report/certificate. Observed gh/check/Linear/certificate evidence only; no added gate.
+Только в разговоре; без человека отчёт и сертификат. Только наблюдённое в gh,
+проверках, Linear и сертификате; новых ворот нет.
 
-## Verdict copy
+## Вердикты
 
-- green: «PR готов к `mono:deploy`; `mono:ship` не мержил и не деплоил.»
-- needs-human only for explicit deploy approval, review/CI green: «PR готов к деплою, жду твоего подтверждения.» No blocker framing; deploy approval never gates ship.
-- needs-human for unresolved feedback: «Нужно решение по ревью-фидбеку» plus exact unresolved points.
-- blocked: missing prerequisite/exact unblock. timed-out: unsettled state and known/unknown PR safety.
+- green: «PR готов к `mono:deploy`; Ship не вливал и не выкладывал.»
+- needs-human только из-за согласия на выкладку: «PR готов, жду твоего подтверждения.» Не блокер: согласие на выкладку Ship не держит.
+- needs-human из-за замечаний: «Нужно решение по замечаниям» и точные пункты.
+- blocked: чего не хватает и как снять. timed-out: что не устоялось и безопасен ли PR.
 
-Give decision options/consequences/recommendation. Use observed events/fixes/counts/heads.
-
-## Статус ревью при наличии PR
-
-Use `templates/ship-output.md`: actual reviewer/finding/fix/thread/CI evidence, full boundary.
+Варианты с последствиями и советом; только наблюдённые события, правки, числа, головы.
 
 ## Review timeline
 
-Review timeline: actual feedback rounds only—pre-ship review/scope, docs/head, CI/head, findings/classes, fixes/commit or none, rechecked reviewer/threads/merge, certificate/head. No invented events; zero findings means shorter timeline.
+Review timeline: только настоящие круги: ревью перед Ship, описание и голова, CI, замечания и их классы, правки или их отсутствие, перепроверка обсуждений и слияния, сертификат на голове. Без выдуманных событий; нет замечаний, короче лента.
