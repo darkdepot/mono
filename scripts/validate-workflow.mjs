@@ -1186,11 +1186,22 @@ const ISSUE_DECISION_STEPS = {
 };
 const ISSUE_STEP_INPUTS = {
   "issue-start:label": ["issue-only"],
+  "issue-start:linear-readback": ["get_issue", "<start-issue-response.json>"],
   "issue-start:owner-author": ["issueOnlyLane.ownerPrincipal"],
   "issue-start:live-fingerprint": ["--emit-fingerprint"],
   "issue-start:readiness-check": ["mono:check issue", "PASS"],
+  "issue-edit:linear-readback": ["get_issue", "<edit-issue-response.json>"],
   "issue-edit:live-fingerprint": ["--emit-fingerprint"],
 };
+
+
+const ISSUE_DESCRIPTION_EXTRACTOR = 'const fs=require("node:fs"); const issue=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(typeof issue.description!=="string") throw new Error("get_issue description missing"); fs.writeFileSync(process.argv[2],issue.description);';
+const ISSUE_STEP_COMMANDS = Object.fromEntries(["start", "edit"].map(lane => [
+  `issue-${lane}:live-fingerprint`, [
+    `node -e '${ISSUE_DESCRIPTION_EXTRACTOR}' '<${lane}-issue-response.json>' '<${lane}-live-issue.md>'`,
+    `node '<pack-root>/scripts/resolve-issue-context.mjs' --issue '<${lane}-live-issue.md>' --emit-fingerprint`,
+  ],
+]));
 
 function issueDecisionStepErrors(source) {
   const errors = [];
@@ -1207,6 +1218,13 @@ function issueDecisionStepErrors(source) {
       for (const token of ISSUE_STEP_INPUTS[id] ?? []) {
         requireMachineToken(token);
         if (!step?.[4].includes(`\`${token}\``)) errors.push(`issue decision steps ${id}: missing ${token}`);
+      }
+      let previous = -1;
+      for (const command of ISSUE_STEP_COMMANDS[id] ?? []) {
+        requireMachineToken(command);
+        const at = step?.[4].indexOf(command) ?? -1;
+        if (at < 0 || at <= previous) errors.push(`issue decision commands ${id}: missing or out-of-order ${command}`);
+        previous = at;
       }
     }
   }
@@ -1232,9 +1250,36 @@ function validateIssueDecisionSteps() {
       if (!issueDecisionStepErrors(changed).some(error => error.startsWith(`issue decision steps ${id}:`))) fail(`issue decision fixture ${id} without ${token}: accepted`);
     }
   }
+  for (const [id, commands] of Object.entries(ISSUE_STEP_COMMANDS)) {
+    for (const command of commands) {
+      const missing = source.replace(command, "omitted command");
+      if (!issueDecisionStepErrors(missing).some(error => error.startsWith(`issue decision commands ${id}:`))) fail(`issue decision fixture ${id} missing command: accepted`);
+      const wrongFile = source.replace(command, command.replace(/<(?:start|edit)-(?:issue-response\.json|live-issue\.md)>/g, "<old-local-file>"));
+      if (!issueDecisionStepErrors(wrongFile).some(error => error.startsWith(`issue decision commands ${id}:`))) fail(`issue decision fixture ${id} stale file: accepted`);
+    }
+    const reversed = source.replace(commands[0], "SWAP_COMMAND").replace(commands[1], commands[0]).replace("SWAP_COMMAND", commands[1]);
+    if (!issueDecisionStepErrors(reversed).some(error => error.startsWith(`issue decision commands ${id}:`))) fail(`issue decision fixture ${id} reversed commands: accepted`);
+  }
+  // Execute the documented extractor on JSON: preserve every byte of the body,
+  // including escapes/newlines; a missing description must not reuse an old file.
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-issue-live-body-"));
+  try {
+    const response = path.join(scratch, "response.json"), bodyFile = path.join(scratch, "body.md");
+    const body = JSON.parse(read("scripts/fixtures/issue-recovery.json"))[0].body;
+    fs.writeFileSync(response, JSON.stringify({ description: body }));
+    const result = spawnSync(process.execPath, ["-e", ISSUE_DESCRIPTION_EXTRACTOR, response, bodyFile], { encoding: "utf8" });
+    if (result.status !== 0 || fs.readFileSync(bodyFile, "utf8") !== body) fail("issue live description extractor: body changed");
+    const fingerprint = runNode(["scripts/resolve-issue-context.mjs", "--issue", bodyFile, "--emit-fingerprint"]).trim();
+    if (!/^[a-f0-9]{64}$/.test(fingerprint)) fail("issue live description extractor: resolver rejected body");
+    for (const invalid of [{}, { description: null }]) {
+      fs.writeFileSync(response, JSON.stringify(invalid));
+      const rejected = spawnSync(process.execPath, ["-e", ISSUE_DESCRIPTION_EXTRACTOR, response, bodyFile], { encoding: "utf8" });
+      if (rejected.status !== 1 || !rejected.stderr.includes("get_issue description missing")) fail("issue live description extractor: missing body accepted");
+    }
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
   // Semantic wording remains review-owned, not a literal pin.
   const reworded = source.replace(/^(\d+\. `issue-(?:start|edit):[^`]+`)[^]*?(?=^\d+\. `issue-|^## |$(?![^]))/gm,
-    (_, heading) => `${heading} — reworded. ${Object.values(ISSUE_STEP_INPUTS).flat().map(token => `\`${token}\``).join(" ")}\n`);
+    (_, heading) => `${heading} — reworded. ${Object.values(ISSUE_STEP_INPUTS).flat().map(token => `\`${token}\``).join(" ")}\n${Object.values(ISSUE_STEP_COMMANDS).flat().join("\n")}\n`);
   if (issueDecisionStepErrors(reworded).length) fail("issue decision fixture free prose: rejected");
   console.log("PASS issue decision step fixtures: required order, missing steps, machine inputs and free prose");
 }
@@ -6472,6 +6517,8 @@ const ISSUE_RECOVERY_CASES = [
 ];
 
 const MACHINE_TOKENS = new Set([
+  ...Object.values(ISSUE_STEP_INPUTS).flat(),
+  ...Object.values(ISSUE_STEP_COMMANDS).flat(),
   ...Object.entries(ISSUE_DECISION_STEPS).flatMap(([lane, names]) => names.map(name => `issue-${lane}:${name}`)),
   "mono:check issue", "PASS", // Readiness invocation and closed verdict, not prose.
   ...ISSUE_RECOVERY_CASES, "дописать", "ждать", "старта нет",
