@@ -6938,6 +6938,66 @@ function validateReadFirstTierContract() {
   const certificate = "mono-preflight certificate\nPreflight: <ready|blocked|drift-candidate|needs-human>";
   requireMachineToken(certificate);
   if (read("skills/preflight/SKILL.md").split(certificate).length !== 2) fail("mono-preflight certificate must appear exactly once");
+  for (const error of skillReferenceReachabilityErrors(root)) fail(error);
+  validateSkillReferenceReachabilityFixture();
+}
+// Every file in skills/<skill>/references/ must be reachable from that
+// skill's SKILL.md reading paths, directly or through another of its own
+// references. Only paths are checked, never the condition prose. Existence of
+// SKILL.md paths is checkPlugin's job; this adds existence for the reading
+// paths named inside the skill's own references.
+function skillReferenceReachabilityErrors(base) {
+  const errors = [];
+  for (const skill of fs.readdirSync(path.join(base, "skills"), { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()) {
+    const entry = `skills/${skill}/SKILL.md`, referenceDir = path.join(base, "skills", skill, "references");
+    if (!fs.existsSync(referenceDir) || !fs.existsSync(path.join(base, entry))) continue;
+    const reached = new Set(), queue = [entry];
+    while (queue.length) {
+      const from = queue.shift();
+      let named;
+      try { named = readingPaths(fs.readFileSync(path.join(base, from), "utf8"), { file: from }); }
+      catch (error) { errors.push(error.message); continue; }
+      for (const reference of named) {
+        if (!/^(?:<(?:корень|pack-root)>\/)?(?:skills|references|templates|scripts|evals)\//.test(reference)) continue;
+        const resolved = resolveSkillPath(base, from, reference);
+        if (!fs.existsSync(resolved)) {
+          if (from !== entry) errors.push(`${from}: reading path ${reference} does not exist`);
+          continue;
+        }
+        const relative = path.relative(base, resolved).split(path.sep).join("/");
+        if (path.dirname(resolved) === referenceDir && relative.endsWith(".md") && !reached.has(relative)) {
+          reached.add(relative);
+          queue.push(relative);
+        }
+      }
+    }
+    for (const file of fs.readdirSync(referenceDir).filter(name => name.endsWith(".md")).sort()) {
+      if (!reached.has(`skills/${skill}/references/${file}`)) errors.push(`${entry}: references/${file} is not named in any reading list of the skill`);
+    }
+  }
+  return errors;
+}
+function validateSkillReferenceReachabilityFixture() {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-reference-reachability-"));
+  const write = (name, text) => { fs.mkdirSync(path.dirname(path.join(scratch, name)), { recursive: true }); fs.writeFileSync(path.join(scratch, name), text); };
+  const stage = "skills/design/SKILL.md", run = "skills/design/references/run.md";
+  const stageText = "Прочитай сразу: `references/run.md`.\n\nПрочитай, когда:\n- `references/paper.md`: выбран paper.\n";
+  const runText = "Прочитай, когда:\n- `references/nested.md`: условие.\n";
+  try {
+    write(stage, stageText); write(run, runText);
+    write("skills/design/references/paper.md", "paper\n"); write("skills/design/references/nested.md", "nested\n");
+    const errors = () => skillReferenceReachabilityErrors(scratch).join("\n");
+    if (errors()) fail(`reference reachability fixture: clean tree must pass, got ${errors()}`);
+    write(stage, stageText.replace("- `references/paper.md`: выбран paper.\n", ""));
+    if (!/skills\/design\/SKILL\.md: references\/paper\.md is not named/.test(errors())) fail("reference reachability fixture: a dropped stage reference must fail with its file name");
+    write(stage, stageText); write(run, "Прочитай, когда:\n- `references/missing.md`: условие.\n");
+    const missing = errors();
+    if (!/skills\/design\/references\/run\.md: reading path references\/missing\.md does not exist/.test(missing)) fail("reference reachability fixture: a missing path read inside a reference must fail");
+    if (!/references\/nested\.md is not named/.test(missing)) fail("reference reachability fixture: a reference read only through a nested reference must lose reachability with it");
+    console.log("PASS reference reachability fixtures: dropped stage reference, missing nested reading path");
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
 }
 function validateDocumentBoundaries() {
   const check = read("skills/check/SKILL.md");
