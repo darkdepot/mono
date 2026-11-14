@@ -153,7 +153,7 @@ Discovery без второй остановки.
 страница даёт новую запись без показа; меняется строка, новая страница. Во время
 первого утверждения другая версия PRD всегда требует нового показа. Второе
 исключение: правка ровно отложенного пункта через Discovery.
-Формат и порядок записи: [жизненный цикл](references/lifecycle.md#tech-evaluation).
+Формат и порядок записи: [запись техлида](skills/tech-evaluation/references/spec.md).
 Явная правка контрактов Tech Spec и проекта по решению владельца 21.10.2026;
 их SHA-256 обновлены, доставка снимка задач не меняется.
 
@@ -1280,7 +1280,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | Artifact contracts and stable rule IDs | [Contract index](references/artifact-contracts.md), [Project](references/contracts/project.md), [PRD](references/contracts/prd.md), [Tech Spec](references/contracts/tech-spec.md), [Issue](references/contracts/issue.md); retired IDs are not reused |
 | Scoped discovery intake and source precedence | [Artifact intake](references/artifact-intake.md); supplied paths, current Linear package and scoped context take precedence over stale scratch evidence; name missing/conflicting inputs |
 | Artifact form and execution quality | [Artifact rules](references/artifact-rules.md), [quality bar](references/artifact-quality.md), [execution quality](references/execution-quality.md), [repair](references/repair-machine.md) |
-| Risk, review and phase boundaries | [Readiness gates](references/readiness-gates.md), [review rubric](references/review-rubric.md), [lifecycle](references/lifecycle.md), [ship feedback loop](references/ship-feedback-loop.md) |
+| Risk, review and phase boundaries | [Readiness gates](references/readiness-gates.md), [review rubric](references/review-rubric.md), [lifecycle](references/lifecycle.md) (order, statuses, record chain and stage tasks; each stage keeps its own rules in its skill), [ship feedback loop](references/ship-feedback-loop.md) |
 | Decisions and owner-facing wording | [Questioning](references/questioning.md), [human output](references/human-friendly-output.md), [decision/status/wave brief](templates/orchestrator-brief.md) |
 | Runtime and worker recovery | [Orchestration](references/orchestration.md) with its parts for [stages](references/orchestration-stages.md), [dispatch](references/orchestration-dispatch.md) and [delivery](references/orchestration-delivery.md), [worker contract](references/worker-contract.md), [dispatch](templates/orchestrator-dispatch.md), [report](templates/orchestrator-report.md), [compaction](templates/compact-instructions.md) |
 | Linear artifact templates | [Project](templates/project.md), [PRD](templates/prd.md), [Tech Spec](templates/tech-spec.md), [Issue](templates/issue.md), [project updates](templates/project-update.md); templates define form, contracts define obligations |
