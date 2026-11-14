@@ -959,6 +959,45 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
         assert.deepEqual(fs.readdirSync(output).filter(name => /^pins\.v/.test(name)), names);
         assert.equal(readJson(registryFile)[ack.issue].pinsVersion, original.pinsVersion);
       }));
+      for (const deliveredPending of [true, false]) await t.test(`AC5 ambiguous old dataset replay: delivered pending ${deliveredPending}`, () => isolatedPreparation(async ({ registryFile, output, resumeScript }) => {
+        const text = "Retry historical amendments with the same remaining arguments.";
+        const first = JSON.parse(pass(run(process.execPath, amendArgs(text))));
+        await processes.stop(processes.track(first.pid));
+        const second = JSON.parse(pass(run(process.execPath, amendArgs("Originally distinguished by the retired dataset."))));
+        processes.track(second.pid);
+        const registry = readJson(registryFile), worker = registry[ack.issue];
+        const earlier = worker.completed_amendments[first.pinsVersion], later = worker.last_amendment;
+        for (const [record, datasetVersion] of [[earlier, 1], [later, 2]]) {
+          Object.assign(record.effectiveInputs, { reviewDataset: `/old/archive.v${datasetVersion}.md`, reviewDatasetVersion: datasetVersion, reviewDatasetDigest: String(datasetVersion).repeat(64) });
+          Object.assign(record.change, { text, reviewDataset: record.effectiveInputs.reviewDataset, reviewDatasetVersion: datasetVersion });
+          record.changeDigest = digest(record.change);
+        }
+        worker.completed_amendments = { [earlier.pinsVersion]: earlier };
+        delete worker.last_amendment;
+        if (deliveredPending) {
+          worker.pinsVersion = later.currentVersion;
+          delete later.registeredResume; delete later.resumeResult;
+          atomicJson(path.join(output, "amendment.pending.json"), later);
+        } else worker.completed_amendments[later.pinsVersion] = later;
+        atomicJson(registryFile, registry);
+        const names = fs.readdirSync(output).sort();
+        const files = new Map(names.filter(name => fs.statSync(path.join(output, name)).isFile()).map(name => [name, fs.readFileSync(path.join(output, name))]));
+        write(resumeScript, 'console.error("ambiguous replay must not launch");process.exitCode=73;\n');
+        const retried = run(process.execPath, amendArgs(text));
+        if (deliveredPending) {
+          assert.deepEqual(JSON.parse(pass(retried)), second);
+          const recovered = readJson(registryFile)[ack.issue];
+          assert.equal(recovered.pinsVersion, second.pinsVersion);
+          assert.deepEqual(recovered.last_resume, worker.last_resume);
+          assert.equal(fs.existsSync(path.join(output, "amendment.pending.json")), false);
+        } else {
+          assert.notEqual(retried.status, 0); assert.match(retried.stderr, /ambiguous amendment request/u);
+          assert.deepEqual(JSON.parse(retried.stdout).candidates, [first.pinsVersion, second.pinsVersion]);
+          assert.deepEqual(readJson(registryFile), registry);
+        }
+        for (const [name, bytes] of files) if (name !== "amendment.pending.json") assert.deepEqual(fs.readFileSync(path.join(output, name)), bytes);
+        assert.deepEqual(fs.readdirSync(output).sort(), names.filter(name => !deliveredPending || name !== "amendment.pending.json"));
+      }));
       await t.test("amend-live-wait-worker-proven-nondelivery", () => isolatedPreparation(async ({ registryFile, before }) => {
         const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
         const exited = new Promise(resolve => child.once("exit", resolve));
