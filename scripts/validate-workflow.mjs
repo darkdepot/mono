@@ -1178,6 +1178,67 @@ function validateProjectConfigBehavior() {
   }
 }
 
+// Agent rules stay prose; only ordered step identities and their machine inputs
+// are pinned. Live execution is checked by review and the orchestrator's S5 run.
+const ISSUE_DECISION_STEPS = {
+  start: ["label", "approval-comment", "linear-readback", "owner-author", "live-fingerprint", "permit-marker", "readiness-check", "handoff"],
+  edit: ["body-write", "linear-readback", "live-fingerprint", "superseded-marker"],
+};
+const ISSUE_STEP_INPUTS = {
+  "issue-start:label": ["issue-only"],
+  "issue-start:owner-author": ["issueOnlyLane.ownerPrincipal"],
+  "issue-start:live-fingerprint": ["--emit-fingerprint"],
+  "issue-start:readiness-check": ["mono:check issue", "PASS"],
+  "issue-edit:live-fingerprint": ["--emit-fingerprint"],
+};
+
+function issueDecisionStepErrors(source) {
+  const errors = [];
+  const steps = [...source.matchAll(/^(\d+)\. `(issue-(start|edit):[^`]+)`([^]*?)(?=^\d+\. `issue-|^## |$(?![^]))/gm)];
+  for (const [lane, names] of Object.entries(ISSUE_DECISION_STEPS)) {
+    const expected = names.map(name => `issue-${lane}:${name}`);
+    const actual = steps.filter(step => step[3] === lane);
+    if (JSON.stringify(actual.map(step => step[2])) !== JSON.stringify(expected) || actual.some((step, index) => Number(step[1]) !== index + 1)) {
+      errors.push(`issue decision steps ${lane}: missing, duplicate or out-of-order step`);
+    }
+    for (const id of expected) {
+      requireMachineToken(id);
+      const step = actual.find(step => step[2] === id);
+      for (const token of ISSUE_STEP_INPUTS[id] ?? []) {
+        requireMachineToken(token);
+        if (!step?.[4].includes(`\`${token}\``)) errors.push(`issue decision steps ${id}: missing ${token}`);
+      }
+    }
+  }
+  return errors;
+}
+
+function validateIssueDecisionSteps() {
+  const source = read("skills/issue/references/decisions.md");
+  failures.push(...issueDecisionStepErrors(source));
+  for (const [lane, names] of Object.entries(ISSUE_DECISION_STEPS)) {
+    for (const name of names) {
+      const id = `issue-${lane}:${name}`;
+      const missing = source.replace(new RegExp(`^\\d+\\. \x60${id}\x60`, "m"), "Removed step");
+      if (!issueDecisionStepErrors(missing).some(error => error.startsWith(`issue decision steps ${lane}:`))) fail(`issue decision fixture missing ${id}: accepted`);
+    }
+    const first = `issue-${lane}:${names[0]}`, last = `issue-${lane}:${names.at(-1)}`;
+    const swapped = source.replace(`\`${first}\``, "SWAP_STEP").replace(`\`${last}\``, `\`${first}\``).replace("SWAP_STEP", `\`${last}\``);
+    if (!issueDecisionStepErrors(swapped).some(error => error.startsWith(`issue decision steps ${lane}:`))) fail(`issue decision fixture reordered ${lane}: accepted`);
+  }
+  for (const [id, tokens] of Object.entries(ISSUE_STEP_INPUTS)) {
+    for (const token of tokens) {
+      const changed = source.replace(new RegExp(`(^\\d+\\. \x60${id}\x60[^]*?)(?=^\\d+\\. \x60issue-|^## |$(?![^]))`, "m"), step => step.replaceAll(`\`${token}\``, "omitted input"));
+      if (!issueDecisionStepErrors(changed).some(error => error.startsWith(`issue decision steps ${id}:`))) fail(`issue decision fixture ${id} without ${token}: accepted`);
+    }
+  }
+  // Semantic wording remains review-owned, not a literal pin.
+  const reworded = source.replace(/^(\d+\. `issue-(?:start|edit):[^`]+`)[^]*?(?=^\d+\. `issue-|^## |$(?![^]))/gm,
+    (_, heading) => `${heading} — reworded. ${Object.values(ISSUE_STEP_INPUTS).flat().map(token => `\`${token}\``).join(" ")}\n`);
+  if (issueDecisionStepErrors(reworded).length) fail("issue decision fixture free prose: rejected");
+  console.log("PASS issue decision step fixtures: required order, missing steps, machine inputs and free prose");
+}
+
 // State copies exercise the unchanged resolver, not an agent/recovery implementation.
 // Caller-authenticated inputs are explicit in each copy; time/author assertions
 // prevent accidentally passing an older, revoked or deferred approval to it.
@@ -6411,6 +6472,8 @@ const ISSUE_RECOVERY_CASES = [
 ];
 
 const MACHINE_TOKENS = new Set([
+  ...Object.entries(ISSUE_DECISION_STEPS).flatMap(([lane, names]) => names.map(name => `issue-${lane}:${name}`)),
+  "mono:check issue", "PASS", // Readiness invocation and closed verdict, not prose.
   ...ISSUE_RECOVERY_CASES, "дописать", "ждать", "старта нет",
   "references/qa-skills.md",
   // QA routing, certificate fields and modes; behavior is tested in QA fixtures.
@@ -7393,6 +7456,7 @@ if (process.argv.includes("--handbook-only")) {
 }
 
 if (process.argv.includes("--issue-recovery-only")) {
+  validateIssueDecisionSteps();
   validateIssueRecoveryStates();
   if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
   console.log("Issue recovery validation passed."); process.exit(0);
@@ -7469,6 +7533,7 @@ validateRepairAndRoutingContract();
 validateLandingBehavior();
 validateProjectConfigBehavior();
 validateIssueOnlyLaneBehavior();
+validateIssueDecisionSteps();
 validateIssueRecoveryStates();
 validateWatcherContaminationBehavior();
 await validateWatcherInactiveGateSpawnBehavior();
