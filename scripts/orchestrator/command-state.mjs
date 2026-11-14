@@ -3,7 +3,7 @@ import { validateShipCertificate } from "../ship-certificate.mjs";
 import { qaDeliveryState, requireQaPassed } from '../qa-gate.mjs';
 import path from "node:path";
 import crypto from "node:crypto";
-import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, shipBotChecks, baseModelConfig, validateLanding, processStart } from "../runtime.mjs";
+import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, shipBotChecks, baseModelConfig, processStart } from "../runtime.mjs";
 import { validatePhase, requirePredecessors, classifyQueue, confirmationPath, validateConfirmation, resolveWrite } from "../delivery-state.mjs";
 import { checkIdea, IDEA_GATE_DEFAULT_SINCE } from '../idea-gate.mjs';
 
@@ -231,9 +231,8 @@ export function collectionPinsBinding(entry, version = entry.pinsVersion ?? 0) {
   return { file, digest: sha256File(file) };
 }
 export function collectionPinMismatch(request, pins) {
-  for (const key of ["product", "root", "worktree", "packRoot", "skillsRoot", "baseRef", "evidenceRoot", "modelRoutes", "verification", "risk", "critical", "reviewDataset", "reviewDatasetVersion", "workerWritableRoots", "idea"]) {
-    const fallback = key === "reviewDatasetVersion" ? 0 : null;
-    if (canonical(request[key] ?? fallback) !== canonical(pins[key] ?? fallback)) return { field: key, expected: pins[key] ?? fallback };
+  for (const key of ["product", "root", "worktree", "packRoot", "skillsRoot", "baseRef", "evidenceRoot", "modelRoutes", "verification", "risk", "critical", "workerWritableRoots", "idea"]) {
+    if (canonical(request[key] ?? null) !== canonical(pins[key] ?? null)) return { field: key, expected: pins[key] ?? null };
   }
   return null;
 }
@@ -260,41 +259,26 @@ export function checkCollectionRequest(request) {
     if(request.collect===true)requestMismatch('admission','registered pins and orchestrator admission before collection');
     return null;
   }
-  const launch = effectivePins({ ...entry, pinsVersion: 0 });
-  if (!request.pins && /^[a-f0-9]{40}$/.test(launch.base ?? "") &&
-      validateLanding(baseModelConfig(request.worktree, launch.base))?.serialPaths !== undefined)
-    throw new Error("landing policy requires pinned dispatch");
-  const u13 = Object.hasOwn(launch, "reviewDatasetDigest");
-  const legacy=!u13&&!request.pins;
-  if (legacy) {
-    if(request.collect===true)requestMismatch('admission','pinned dispatch request before collection');
-    return null;
-  }
   if (!/^[a-f0-9]{40}$/.test(request.head??'') || !new RegExp(`^preflight-collect:${request.head}:[1-9][0-9]*$`,'u').test(request.collectionId ?? "")) requestMismatch("collectionId", "preflight-collect:<head>:<n>");
   const admissionFile = path.join(attemptDirectory(root, entry), "admissions", `${request.collectionId}.json`);
   const admission = fs.existsSync(admissionFile) ? readJson(admissionFile) : null;
   const version = admission?.pinsVersion ?? entry.pinsVersion ?? 0;
   const pins = effectivePins({ ...entry, pinsVersion: version });
   if (admission && (admission.collectionId !== request.collectionId || admission.manifestDigest !== digest(pins))) requestMismatch("admission", "registered manifest for collectionId");
-  if(!legacy) {
-    const expected = collectionPinsBinding(entry, version);
-    if (expected.file !== path.join(root, "dispatch", `${entry.issue}-a${entry.attempt}`, version ? `pins.v${version}.json` : "pins.json")) requestMismatch("pins.file", "registered dispatch pins file");
-    if (!request.pins) requestMismatch("pins", expected);
-    if (request.pins.file !== expected.file) requestMismatch("pins.file", expected.file);
-    if (canonical(request.pins) !== canonical(expected)) requestMismatch("pins.digest", expected.digest);
-  }
-  if (u13 && !Object.hasOwn(request, "reviewDatasetVersion")) requestMismatch("reviewDatasetVersion", pins.reviewDatasetVersion);
+  const expected = collectionPinsBinding(entry, version);
+  if (expected.file !== path.join(root, "dispatch", `${entry.issue}-a${entry.attempt}`, version ? `pins.v${version}.json` : "pins.json")) requestMismatch("pins.file", "registered dispatch pins file");
+  if (!request.pins) requestMismatch("pins", expected);
+  if (request.pins.file !== expected.file) requestMismatch("pins.file", expected.file);
+  if (canonical(request.pins) !== canonical(expected)) requestMismatch("pins.digest", expected.digest);
   const mismatch = collectionPinMismatch(request, pins);
   if (mismatch) requestMismatch(mismatch.field, mismatch.expected);
-  if (u13 && pins.reviewDataset === null && Object.hasOwn(request, "reviewDataset")) requestMismatch("reviewDataset", "omitted");
-  if (u13 && (pins.reviewDataset ? sha256File(pins.reviewDataset) : null) !== pins.reviewDatasetDigest) requestMismatch("reviewDatasetDigest", pins.reviewDatasetDigest);
   if (request.collect !== false && request.collect !== true) requestMismatch("collect", false);
   if(request.collect===true) {
     if(!admission)requestMismatch('admission','orchestrator admission before collection');
     if(collectionExecuted(pins,request.collectionId))
       throw new Error('collection already executed; reconcile the same request with collect:false');
   }
-  return legacy?null:pins;
+  return pins;
 }
 // Read current attempt decisions even when preflight recovers an older admission.
 export function pinnedShipPolicy(request) {
@@ -336,18 +320,17 @@ export function admitUnderLock(root, report) {
       admitted.push(prior); continue;
     }
     const request = write.payload.request;
-    const bound = Object.hasOwn(readJson(entry.pins.file), "reviewDatasetDigest") || request.pins;
-    if (bound) {
+    if (entry.pins) {
+      if (!request.pins) throw new CollectionAdmissionRefusal("collection pin mismatch: pins");
       const name = path.basename(request.pins?.file ?? "");
       const match = /^pins\.v([1-9][0-9]*)\.json$/u.exec(name);
       const version = name === "pins.json" ? 0 : match ? Number(match[1]) : null;
       if (version !== pins.pinsVersion) throw new CollectionAdmissionRefusal(`new collection request uses stale pinsVersion; expected ${collectionPinsBinding(entry).file}`);
-    } else if ((report.pinsVersion ?? 0) !== pins.pinsVersion) throw new CollectionAdmissionRefusal("new collection request uses stale pinsVersion");
+    }
     const mismatch = collectionPinMismatch(request, pins);
     if (mismatch) throw new CollectionAdmissionRefusal(`collection pin mismatch: ${mismatch.field}`);
-    if (bound) {
+    if (entry.pins) {
       if (canonical(request.pins) !== canonical(collectionPinsBinding(entry))) throw new CollectionAdmissionRefusal("collection pin mismatch: pins");
-      if (!Object.hasOwn(request, "reviewDatasetVersion")) throw new CollectionAdmissionRefusal("collection pin mismatch: reviewDatasetVersion");
     }
     if (request.collect !== false || request.head !== report.head || canonical(report.capsule.writable_roots) !== canonical(pins.workerWritableRoots))
       throw new CollectionAdmissionRefusal("collection head/grants/collect mismatch");
@@ -373,16 +356,25 @@ export function amendmentState(entry, record) {
 }
 
 export function amendmentChange(args, inputs, supplied) {
-  const reviewDataset = args["review-dataset"] ?? inputs.reviewDataset ?? null;
   return { risk: args.risk ?? inputs.risk, critical: args.critical ?? inputs.critical,
-    reviewDataset,
-    reviewDatasetVersion: !reviewDataset && (inputs.reviewDatasetVersion ?? 0) === 0 && Object.hasOwn(inputs, "reviewDatasetDigest") ? 0 : Number(args["review-dataset-version"] ?? inputs.reviewDatasetVersion ?? 0),
     workerWritableRoots: supplied.roots ?? inputs.workerWritableRoots, text: args.text,
     ...(args["bot-unavailable"] !== undefined || inputs.botUnavailable !== undefined ? { botUnavailable:
       args["bot-unavailable"] === undefined ? inputs.botUnavailable :
         { issue: args.issue, attempt: Number(args.attempt), reason: args["bot-unavailable"] } } : {}),
     fullSnapshot: args["full-snapshot"] ? { digest: digest(supplied.documents) } :
       (inputs.fullSnapshot ? { digest: inputs.fullSnapshot.digest } : null) };
+}
+
+// Compatibility with amendment identities recorded before dataset pins were retired.
+// All replay candidates (completed, last and pending) use this comparison.
+export function amendmentMatches(args, record, supplied) {
+  const change = amendmentChange(args, record.effectiveInputs, supplied);
+  if (digest(change) === record.changeDigest) return true;
+  if (!Object.hasOwn(record.change, "reviewDataset")) return false;
+  const inputs = record.effectiveInputs, reviewDataset = inputs.reviewDataset ?? null;
+  return digest({ ...change, reviewDataset,
+    reviewDatasetVersion: !reviewDataset && (inputs.reviewDatasetVersion ?? 0) === 0 && Object.hasOwn(inputs, "reviewDatasetDigest")
+      ? 0 : Number(inputs.reviewDatasetVersion ?? 0) }) === record.changeDigest;
 }
 
 export function amendmentDocuments(directory, issue, packageKind) {

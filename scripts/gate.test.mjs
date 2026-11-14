@@ -250,22 +250,6 @@ test("stream retention keeps the sandbox probe line beyond the diagnostic tail",
   assert.ok(result.diagnosticTail.length <= 64);
 });
 
-test("dataset archives reuse identical bytes and refuse an explicit version overwrite", async () => {
-  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
-  const { archiveReviewDataset } = await import('./gate.mjs');
-  assert.equal(typeof archiveReviewDataset,'function');
-  const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-dataset-'));
-  try {
-    const source=path.join(root,'datasets/MONO-998-review-scope.md'); fs.mkdirSync(path.dirname(source)); fs.writeFileSync(source,'first');
-    const a=await archiveReviewDataset(source,root); assert.equal(a.version,1);
-    assert.equal(fs.readFileSync(a.archive,'utf8'),'first'); assert.equal(fs.readFileSync(a.archive+'.sha256','utf8').trim(),a.digest);
-    assert.deepEqual(await archiveReviewDataset(source,root),a);
-    fs.writeFileSync(source,'second'); const b=await archiveReviewDataset(source,root); assert.equal(b.version,2);
-    fs.writeFileSync(b.archive,'tampered'); await assert.rejects(archiveReviewDataset(source,root),/immutable|digest/);
-    assert.equal(fs.readFileSync(a.archive,'utf8'),'first');
-  } finally {fs.rmSync(root,{recursive:true,force:true});}
-});
-
 test('oversized diagnostic lines do not invalidate the sandbox probe line', async () => {
   const {captureOutput}=await import('./gate.mjs');
   const capture=captureOutput({tailBytes:64});
@@ -304,24 +288,6 @@ test('a quoted probe marker does not become sandbox evidence', async () => {
   const result=capture.finish();
   assert.equal(result.retentionError,null);
   assert.equal(result.output,'mono-boundary-denied:real\n');
-});
-
-test("dataset archive recovers a missing digest only for identical source bytes", async () => {
-  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
-  const { archiveReviewDataset } = await import('./gate.mjs');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-dataset-recovery-'));
-  try {
-    const source = path.join(root, 'MONO-998-review-scope.md');
-    const archive = path.join(root, 'datasets', 'MONO-998-review-scope.v1.md');
-    fs.mkdirSync(path.dirname(archive)); fs.writeFileSync(source, 'complete dataset'); fs.writeFileSync(archive, 'complete dataset');
-    const result = await archiveReviewDataset(source, root);
-    assert.equal(result.version, 1); assert.equal(fs.readFileSync(archive + '.sha256', 'utf8').trim(), result.digest);
-    assert.equal(fs.readFileSync(archive, 'utf8'), 'complete dataset');
-    fs.unlinkSync(archive + '.sha256'); fs.writeFileSync(source, 'different dataset');
-    await assert.rejects(archiveReviewDataset(source, root), /orphan|digest/);
-    assert.equal(fs.existsSync(archive + '.sha256'), false);
-    assert.equal(fs.readFileSync(archive, 'utf8'), 'complete dataset');
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('review environment is built from the route', async () => {
@@ -377,8 +343,7 @@ console.log(process.env.MONO_FIXTURE_DARWIN_TEMP);
       const git = (...args) => { const r = spawnSync("git", args, { cwd: repo, encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
       write(path.join(repo, ".gitignore"), ".orchestrator/\n");
       git("init", "-b", "delivery"); git("add", ".gitignore"); git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture");
-      const head = git("rev-parse", "HEAD"), dataset = path.join(evidence, "datasets/fixture.md");
-      write(dataset, "Approved U13 decisions.\n");
+      const head = git("rev-parse", "HEAD");
       for (const policy of ["model-policy.md"]) write(path.join(skills, "references", policy), fs.readFileSync(path.join("references", policy), "utf8"));
       let pack = null;
       if (fixture.protected === "packRoot") {
@@ -426,8 +391,14 @@ process.exit(r.status===null?1:r.status);` });
       const pinsFile = path.join(root, "dispatch/MONO-999-a1/pins.json");
       write(path.join(path.dirname(pinsFile), "snapshot/issue-MONO-999.md"), "# MONO-999\n\nFixture task contract.\n");
       const pins = { product: "fixture", root, worktree: repo, skillsRoot: skills, baseRef: "HEAD", evidenceRoot: evidence,
-        risk: "standard", critical: null, verification: { command: process.execPath, args: ["-e", "process.exit(0)"] }, workerWritableRoots: [repo],
-        reviewDataset: dataset, reviewDatasetVersion: 1, reviewDatasetDigest: sha256File(dataset) };
+        risk: "standard", critical: null, verification: { command: process.execPath, args: ["-e", "process.exit(0)"] }, workerWritableRoots: [repo] };
+      // AC4: preserve the complete old manifest; obsolete fields are ignored, never trimmed.
+      if (fixture.mode === "compatibility") {
+        const archive = path.join(evidence, "datasets/fixture.v1.md");
+        if (fixture.populated) { write(archive, "Old archived decisions.\n"); write(archive + ".sha256", sha256File(archive) + "\n"); }
+        Object.assign(pins, { reviewDataset: fixture.populated ? archive : null,
+          reviewDatasetVersion: fixture.populated ? 1 : 0, reviewDatasetDigest: fixture.populated ? sha256File(archive) : null });
+      }
       if (pack) pins.packRoot = pack;
       if (fixture.mode.startsWith("temp-")) pins.verification.args = ["-e", `
 const assert=require('node:assert/strict'),path=require('node:path');
@@ -467,7 +438,7 @@ process.exit(n<=${fixture.failRuns ?? 0}?1:0);
         packVersion: "fixture", sourceCommit: "b".repeat(40), surfaceRevision: 4, pins: binding, pinsVersion: 0 };
       const registryFile = path.join(root, "workers.json");
       const register = () => atomicJson(registryFile, { "MONO-999": entry }); register();
-      let request = { ...pins, head, collect: false, collectionId: `preflight-collect:${head}:1`, pins: binding }; delete request.reviewDatasetDigest;
+      let request = { ...pins, head, collect: false, collectionId: `preflight-collect:${head}:1`, pins: binding };
       const file = path.join(scratch, "request.json"), receiptFile = path.join(evidence, `${head}.json`);
       const call = value => { atomicJson(file, value); return spawnSync(process.execPath, [...(fixture.platform ? ["--require", preload] : []), "scripts/gate.mjs", "preflight", "--request", file], { env, encoding: "utf8" }); };
       const admit = async value => {
@@ -479,6 +450,36 @@ process.exit(n<=${fixture.failRuns ?? 0}?1:0);
       };
       const collect = async (value, expected = 0) => { await admit(value); const r = call({ ...value, collect: true }); assert.equal(r.status, expected, r.stdout + r.stderr); return JSON.parse(fs.readFileSync(receiptFile, "utf8")); };
       const seal = envelope => { envelope.signature = crypto.createHmac("sha256", fs.readFileSync(path.join(evidence, "receipt.key"))).update(canonical(envelope.receipt)).digest("hex"); atomicJson(receiptFile, envelope); };
+      if (fixture.mode === "compatibility") {
+        delete request.reviewDatasetDigest;
+        if (!fixture.populated) delete request.reviewDataset;
+        // Old admission is serialized using the full original pins, before any amendment.
+        await admit(request);
+        const admissionFile = path.join(root, "consumed/MONO-999-a1/admissions", request.collectionId + ".json");
+        const admission = JSON.parse(fs.readFileSync(admissionFile));
+        assert.equal(admission.manifestDigest, digest({ ...pins, pinsVersion: 0 }));
+        const amended = path.join(path.dirname(pinsFile), "pins.v1.json");
+        atomicJson(amended, { pinsVersion: 1, risk: "standard", critical: null }); entry.pinsVersion = 1; register();
+        // Recovery uses the admission's old version even when the registry moved forward.
+        const collected = call({ ...request, collect: true }); assert.equal(collected.status, 0, collected.stdout + collected.stderr);
+        const envelope = JSON.parse(fs.readFileSync(receiptFile));
+        assert.equal(Object.hasOwn(envelope.receipt, "reviewDataset"), false, "new gate receipt omits retired binding");
+        const beforeArchive = fixture.populated ? fs.readFileSync(pins.reviewDataset) : null;
+        const oldBinding = fixture.populated ? { source: pins.reviewDataset, digest: pins.reviewDatasetDigest,
+          copy: ".orchestrator/review-dataset-old.md", archive: pins.reviewDataset, version: 1 } : null;
+        envelope.receipt.reviewDataset = oldBinding; seal(envelope);
+        if (fixture.populated) fs.unlinkSync(pins.reviewDataset);
+        assert.equal(call(request).status, 0, "old signed receipt reads without inspecting the obsolete archive");
+        assert.deepEqual(JSON.parse(fs.readFileSync(admissionFile)), admission, "prior admission manifest is unchanged");
+        if (fixture.populated) write(pins.reviewDataset, beforeArchive);
+        const next = { ...request, pins: { file: amended, digest: sha256File(amended) }, collectionId: `preflight-collect:${head}:2` };
+        await collect(next);
+        assert.equal(call(next).status, 0, "a new amendment over the old base also collects and reads");
+        assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(receiptFile)).receipt, "reviewDataset"), false);
+        if (fixture.populated) assert.deepEqual(fs.readFileSync(pins.reviewDataset), beforeArchive);
+        else assert.equal(fs.existsSync(path.join(evidence, "datasets")), false);
+        return;
+      }
       if (fixture.mode.startsWith('idea-')) {
         if (fixture.mode === 'idea-new-no-pin') {
           const result = call(request); assert.equal(result.status, 1); assert.match(result.stdout, /idea pin required/u);
@@ -604,20 +605,14 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
       let expectedField = null, expectedValue = null, expectedStatus = 2;
       if (fixture.mode === "mismatch") { expectedField = fixture.field; expectedValue = pins[fixture.field]; if (fixture.omit) delete request[fixture.field]; else request[fixture.field] = fixture.value; }
       if (fixture.mode === "pins-digest") { request.pins = { ...binding, digest: "0".repeat(64) }; expectedField = "pins.digest"; expectedValue = binding.digest; }
-      if (fixture.mode === "dataset-tamper") { write(dataset, "Changed decisions.\n"); expectedField = "reviewDatasetDigest"; expectedValue = pins.reviewDatasetDigest; }
       if (fixture.mode === "no-pins") { delete request.pins; expectedField = "pins"; expectedValue = binding; }
       if (["amended", "admitted"].includes(fixture.mode)) {
         if (fixture.mode === "admitted") { await collect(request); expectedStatus = 0; }
         if (fixture.mode === "admitted") atomicJson(path.join(root, "consumed/MONO-999-a1/admissions", `${request.collectionId}.json`),
           { collectionId: request.collectionId, reportDigest: "f".repeat(64), pinsVersion: 0, manifestDigest: digest({ ...pins, pinsVersion: 0 }) });
-        const amendment = path.join(path.dirname(pinsFile), "pins.v1.json"); atomicJson(amendment, { pinsVersion: 1, reviewDatasetVersion: 2, reviewDatasetDigest: pins.reviewDatasetDigest });
+        const amendment = path.join(path.dirname(pinsFile), "pins.v1.json"); atomicJson(amendment, { pinsVersion: 1 });
         entry.pinsVersion = 1; register();
         if (fixture.mode === "amended") { expectedField = "pins.file"; expectedValue = amendment; }
-      }
-      if (fixture.mode === "no-dataset") {
-        pins.reviewDataset = null; pins.reviewDatasetVersion = 0; pins.reviewDatasetDigest = null; atomicJson(pinsFile, pins);
-        binding.digest = sha256File(pinsFile); register(); request = { ...request, reviewDatasetVersion: 0, pins: binding }; delete request.reviewDataset;
-        if (fixture.omitVersion) { delete request.reviewDatasetVersion; expectedField = "reviewDatasetVersion"; expectedValue = 0; }
       }
       if (fixture.mode === "other-head") {
         const envelope = await collect(request); envelope.receipt.collectionId = `preflight-collect:${head}:2`; seal(envelope);
@@ -627,8 +622,9 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
       if (fixture.mode === "collect") { expectedStatus = 0; request.collect = true; }
       if (fixture.mode.startsWith("temp-")) { expectedStatus = fixture.protected ? 1 : 0; request.collect = true; }
       if (fixture.mode === "legacy") {
-        delete pins.reviewDatasetDigest; atomicJson(pinsFile, pins); binding.digest = sha256File(pinsFile); register(); delete request.pins;
-        const envelope = await collect({...request,pins:binding}); delete envelope.receipt.pins; delete envelope.receipt.idea; seal(envelope); expectedStatus = 0;
+        const envelope = await collect(request); delete envelope.receipt.pins; delete envelope.receipt.idea; seal(envelope);
+        expectedStatus = 1;
+        if (fixture.unregistered) { delete request.pins; expectedStatus = 0; }
       }
       if (fixture.mode === "receipt-pins") {
         const envelope = await collect(request); envelope.receipt.pins.digest = "0".repeat(64); seal(envelope); expectedStatus = 1;
@@ -794,7 +790,7 @@ test('ship-next-attempt-after-fix: new head/state opens a window in the same tas
     const { atomicJson } = await import('./runtime.mjs');
     const root = path.join(scratch, 'root'), issue = 'MONO-162';
     const file = path.join(root, 'dispatch', `${issue}-a1`, 'pins.json');
-    const pins = { root, worktree: scratch, reviewDatasetDigest: null, reviewDatasetVersion: 0, workerWritableRoots: [scratch] };
+    const pins = { root, worktree: scratch, workerWritableRoots: [scratch] };
     const crypto = await import('node:crypto');
     atomicJson(file, pins);
     const binding = { file, digest: crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') };

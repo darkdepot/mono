@@ -9,7 +9,6 @@ import { copyPluginFixture } from './plugin-fixture.mjs';
 import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
 import { atomicJson } from './runtime.mjs';
 import { createHash } from 'node:crypto';
-import { archiveReviewDataset } from './gate.mjs';
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = file => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -177,21 +176,13 @@ test('launch-watcher-required through amendment resume', async t => {
   });
 });
 
-test('dispatch-without-dataset', async () => {
+test('dispatch creates only active launch pins', async () => {
   const f = fixture();
   try {
-    // Reviewers never read a dataset, so dispatch creates none; an explicit one stays pinned.
     pulse(f.root); const launched = JSON.parse(pass(f.dispatch()));
     const pins = read(launched.pins.file);
-    assert.equal(pins.reviewDataset, null); assert.equal(pins.reviewDatasetVersion, 0);
-    assert.equal(Object.hasOwn(pins, 'reviewDatasetDigest'), true); assert.equal(pins.reviewDatasetDigest, null);
+    assert.equal(pins.worktree, path.join(f.repo, '.worktrees', f.issue));
     assert.equal(fs.existsSync(path.join(f.evidence, 'datasets')), false);
-    await f.retire();
-    const explicit = path.join(f.evidence, 'explicit.md'); put(explicit, '# Explicit source\n');
-    pulse(f.root); const fourth = JSON.parse(pass(f.dispatch('--review-dataset', explicit, '--review-dataset-version', '9')));
-    assert.equal(read(fourth.pins.file).reviewDataset, explicit); assert.equal(read(fourth.pins.file).reviewDatasetVersion, 9);
-    assert.equal(read(fourth.pins.file).reviewDatasetDigest, createHash('sha256').update(fs.readFileSync(explicit)).digest('hex'));
-    assert.equal(fs.readFileSync(explicit, 'utf8'), '# Explicit source\n');
   } finally { await f.cleanup(); }
 });
 
@@ -234,15 +225,14 @@ test('launch-watcher-required after launch preparation and before amendment resu
   });
 });
 
-test('dispatch-without-dataset ignores immutable history', async () => {
+test('AC4 dispatch preserves existing evidence archives', async () => {
   const f = fixture();
   try {
-    fs.mkdirSync(f.evidence); const source = path.join(f.evidence, `${f.issue}-review-scope.v9.md`);
-    put(source, '# Explicit historical scope\n');
-    const prior = await archiveReviewDataset(source, f.evidence);
-    const bytes = fs.readFileSync(prior.archive), digest = fs.readFileSync(prior.archive + '.sha256');
-    pulse(f.root); const result = JSON.parse(pass(f.dispatch())), pins = read(result.pins.file);
-    assert.equal(pins.reviewDataset, null); assert.equal(pins.reviewDatasetVersion, 0); assert.equal(pins.reviewDatasetDigest, null);
-    assert.deepEqual(fs.readFileSync(prior.archive), bytes); assert.deepEqual(fs.readFileSync(prior.archive + '.sha256'), digest);
+    const archive = path.join(f.evidence, 'datasets', `${f.issue}-scope.v9.md`);
+    put(archive, '# Historical scope\n');
+    const bytes = fs.readFileSync(archive), hash = createHash('sha256').update(bytes).digest('hex');
+    put(archive + '.sha256', hash + '\n');
+    pulse(f.root); pass(f.dispatch());
+    assert.deepEqual(fs.readFileSync(archive), bytes); assert.equal(fs.readFileSync(archive + '.sha256', 'utf8').trim(), hash);
   } finally { await f.cleanup(); }
 });
