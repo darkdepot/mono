@@ -6967,13 +6967,15 @@ function skillReferenceReachabilityErrors(base) {
           continue;
         }
         const relative = path.relative(base, resolved).split(path.sep).join("/");
-        if (path.dirname(resolved) === referenceDir && relative.endsWith(".md") && !reached.has(relative)) {
+        if (resolved.startsWith(referenceDir + path.sep) && relative.endsWith(".md") && !reached.has(relative)) {
           reached.add(relative);
           queue.push(relative);
         }
       }
     }
-    for (const file of fs.readdirSync(referenceDir).filter(name => name.endsWith(".md")).sort()) {
+    const walk = (directory) => fs.readdirSync(directory, { withFileTypes: true }).flatMap(item =>
+      item.isDirectory() ? walk(path.join(directory, item.name)) : item.name.endsWith(".md") ? [path.relative(referenceDir, path.join(directory, item.name)).split(path.sep).join("/")] : []);
+    for (const file of walk(referenceDir).sort()) {
       if (!reached.has(`skills/${skill}/references/${file}`)) errors.push(`${entry}: references/${file} is not named in any reading list of the skill`);
     }
   }
@@ -6983,15 +6985,17 @@ function validateSkillReferenceReachabilityFixture() {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-reference-reachability-"));
   const write = (name, text) => { fs.mkdirSync(path.dirname(path.join(scratch, name)), { recursive: true }); fs.writeFileSync(path.join(scratch, name), text); };
   const stage = "skills/design/SKILL.md", run = "skills/design/references/run.md";
-  const stageText = "Прочитай сразу: `references/run.md`.\n\nПрочитай, когда:\n- `references/paper.md`: выбран paper.\n";
+  const stageText = "Прочитай сразу: `references/run.md`.\n\nПрочитай, когда:\n- `references/paper.md`: выбран paper.\n- `references/tools/wonder.md`: выбран wonder.\n";
   const runText = "Прочитай, когда:\n- `references/nested.md`: условие.\n- `sibling.md`: условие.\n";
   try {
     write(stage, stageText); write(run, runText);
-    write("skills/design/references/paper.md", "paper\n"); write("skills/design/references/nested.md", "nested\n"); write("skills/design/references/sibling.md", "sibling\n");
+    write("skills/design/references/paper.md", "paper\n"); write("skills/design/references/nested.md", "nested\n"); write("skills/design/references/sibling.md", "sibling\n"); write("skills/design/references/tools/wonder.md", "wonder\n");
     const errors = () => skillReferenceReachabilityErrors(scratch).join("\n");
     if (errors()) fail(`reference reachability fixture: clean tree must pass, got ${errors()}`);
     write(stage, stageText.replace("- `references/paper.md`: выбран paper.\n", ""));
     if (!/skills\/design\/SKILL\.md: references\/paper\.md is not named/.test(errors())) fail("reference reachability fixture: a dropped stage reference must fail with its file name");
+    write(stage, stageText.replace("- `references/tools/wonder.md`: выбран wonder.\n", ""));
+    if (!/references\/tools\/wonder\.md is not named/.test(errors())) fail("reference reachability fixture: a dropped reference in a subfolder must fail with its path");
     write(stage, stageText); write(run, "Прочитай, когда:\n- `references/missing.md`: условие.\n");
     const missing = errors();
     if (!/skills\/design\/references\/run\.md: reading path references\/missing\.md does not exist/.test(missing)) fail("reference reachability fixture: a missing path read inside a reference must fail");
