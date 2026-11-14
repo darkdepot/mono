@@ -145,12 +145,14 @@ export async function acceptAmend(args) {
         const matches = [...records.values()].filter(record => record.effectiveInputs &&
           amendmentMatches(args, record, supplied));
         const deliveredPending = matches.includes(pending) && amendmentState(entry, pending).state === "delivered" ? pending : null;
-        if (matches.length > 1 && !deliveredPending) {
+        const latestRegistered = matches.length > 1 && matches.every(record => amendmentState(entry, record).state === "registered")
+          ? matches.reduce((latest, record) => record.pinsVersion > latest.pinsVersion ? record : latest) : null;
+        if (matches.length > 1 && !deliveredPending && !latestRegistered) {
           const error = new Error("ambiguous amendment request; supply distinguishing existing arguments");
           error.candidates = matches.map(record => record.pinsVersion).sort((a, b) => a - b); throw error;
         }
         if (matches.length) {
-          const record = deliveredPending ?? matches[0]; version = record.pinsVersion;
+          const record = deliveredPending ?? latestRegistered ?? matches[0]; version = record.pinsVersion;
           state = amendmentState(entry, record).state;
           const verified = validateAmendment(entry, record);
           if (state === "registered") {

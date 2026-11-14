@@ -959,7 +959,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
         assert.deepEqual(fs.readdirSync(output).filter(name => /^pins\.v/.test(name)), names);
         assert.equal(readJson(registryFile)[ack.issue].pinsVersion, original.pinsVersion);
       }));
-      for (const deliveredPending of [true, false]) await t.test(`AC5 ambiguous old dataset replay: delivered pending ${deliveredPending}`, () => isolatedPreparation(async ({ registryFile, output, resumeScript }) => {
+      for (const replayState of ["delivered", "registered", "prepared"]) await t.test(`AC5 ambiguous old dataset replay: ${replayState}`, () => isolatedPreparation(async ({ registryFile, output, resumeScript }) => {
         const text = "Retry historical amendments with the same remaining arguments.";
         const first = JSON.parse(pass(run(process.execPath, amendArgs(text))));
         await processes.stop(processes.track(first.pid));
@@ -974,9 +974,10 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
         }
         worker.completed_amendments = { [earlier.pinsVersion]: earlier };
         delete worker.last_amendment;
-        if (deliveredPending) {
+        if (replayState !== "registered") {
           worker.pinsVersion = later.currentVersion;
           delete later.registeredResume; delete later.resumeResult;
+          if (replayState === "prepared") worker.last_resume = later.previousResume;
           atomicJson(path.join(output, "amendment.pending.json"), later);
         } else worker.completed_amendments[later.pinsVersion] = later;
         atomicJson(registryFile, registry);
@@ -984,19 +985,26 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
         const files = new Map(names.filter(name => fs.statSync(path.join(output, name)).isFile()).map(name => [name, fs.readFileSync(path.join(output, name))]));
         write(resumeScript, 'console.error("ambiguous replay must not launch");process.exitCode=73;\n');
         const retried = run(process.execPath, amendArgs(text));
-        if (deliveredPending) {
+        if (replayState === "delivered") {
           assert.deepEqual(JSON.parse(pass(retried)), second);
           const recovered = readJson(registryFile)[ack.issue];
           assert.equal(recovered.pinsVersion, second.pinsVersion);
           assert.deepEqual(recovered.last_resume, worker.last_resume);
           assert.equal(fs.existsSync(path.join(output, "amendment.pending.json")), false);
+        } else if (replayState === "registered") {
+          assert.deepEqual(JSON.parse(pass(retried)), second);
+          assert.deepEqual(readJson(registryFile), registry, "completed replay only returns the latest matching record");
+          worker.completed_amendments = Object.fromEntries([later, earlier].map(record => [record.changeDigest, record]));
+          atomicJson(registryFile, registry);
+          assert.deepEqual(JSON.parse(pass(run(process.execPath, amendArgs(text)))), second);
+          assert.deepEqual(readJson(registryFile), registry, "maximum pinsVersion wins regardless of stored order");
         } else {
           assert.notEqual(retried.status, 0); assert.match(retried.stderr, /ambiguous amendment request/u);
           assert.deepEqual(JSON.parse(retried.stdout).candidates, [first.pinsVersion, second.pinsVersion]);
           assert.deepEqual(readJson(registryFile), registry);
         }
         for (const [name, bytes] of files) if (name !== "amendment.pending.json") assert.deepEqual(fs.readFileSync(path.join(output, name)), bytes);
-        assert.deepEqual(fs.readdirSync(output).sort(), names.filter(name => !deliveredPending || name !== "amendment.pending.json"));
+        assert.deepEqual(fs.readdirSync(output).sort(), names.filter(name => replayState !== "delivered" || name !== "amendment.pending.json"));
       }));
       await t.test("amend-live-wait-worker-proven-nondelivery", () => isolatedPreparation(async ({ registryFile, before }) => {
         const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
@@ -1128,7 +1136,7 @@ console.error("resume: worker process is still live; resume refused");process.ex
           for (const [file, bytes] of firstFiles) assert.equal(fs.readFileSync(file, "utf8"), bytes);
         } finally { write(resumeScript, source); }
       });
-      await t.test("amend-historical-omitted-pins-and-snapshot-ambiguity: candidates require distinguishing arguments", async () => {
+      await t.test("amend-historical-omitted-pins-and-snapshot-ambiguity: latest registered match wins, explicit arguments select history", async () => {
         const text = "Identical text with different saved effective inputs.", args = amendArgs(text);
         const first = JSON.parse(pass(run(process.execPath, args))); livePid = processes.track(first.pid);
         await processes.stop(livePid); livePid = null;
@@ -1139,9 +1147,7 @@ console.error("resume: worker process is still live; resume refused");process.ex
         const second = JSON.parse(pass(run(process.execPath, secondArgs))); livePid = processes.track(second.pid);
         assert.equal(second.version, first.version + 1);
         const registryFile = path.join(root, "workers.json"), registry = fs.readFileSync(registryFile), output = path.dirname(first.pinsFile), names = fs.readdirSync(output);
-        const ambiguous = run(process.execPath, args); assert.notEqual(ambiguous.status, 0);
-        const refusal = JSON.parse(ambiguous.stdout); assert.equal(refusal.version, null); assert.equal(refusal.outcome, "refused");
-        assert.deepEqual(refusal.candidates, [first.version, second.version]);
+        assert.deepEqual(JSON.parse(pass(run(process.execPath, args))), second);
         assert.deepEqual(fs.readFileSync(registryFile), registry); assert.deepEqual(fs.readdirSync(output), names);
         assert.deepEqual(JSON.parse(pass(run(process.execPath, [...args, "--full-snapshot", "--snapshot", snapshot]))), first, "resolve omissions using each candidate, using the supplied original snapshot");
         assert.deepEqual(JSON.parse(pass(run(process.execPath, secondArgs))), second);
