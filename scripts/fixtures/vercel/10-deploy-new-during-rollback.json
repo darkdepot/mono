@@ -1,0 +1,174 @@
+{
+  "command": "vercel api /v13/deployments --scope <TEAM_SLUG> -X POST --input <body>",
+  "exitCode": 0,
+  "requestBody": {
+    "name": "mono-deploy-probe",
+    "project": "prj_<PROJECT_ID>",
+    "target": "production",
+    "gitSource": {
+      "type": "github",
+      "repoId": "<REPO_ID>",
+      "ref": "main",
+      "sha": "2066a8ee9fe3854823254195194e519d1f2d6200"
+    }
+  },
+  "response": {
+    "alias": [
+      "mono-deploy-probe-<TEAM_SLUG>.vercel.app",
+      "mono-deploy-probe-git-main-<TEAM_SLUG>.vercel.app"
+    ],
+    "aliasAssigned": false,
+    "automaticAliases": [
+      "mono-deploy-probe-<TEAM_SLUG>.vercel.app",
+      "mono-deploy-probe-git-main-<TEAM_SLUG>.vercel.app"
+    ],
+    "bootedAt": 1794675660230,
+    "buildingAt": 1794675660230,
+    "buildSkipped": false,
+    "createdAt": 1794675660230,
+    "creator": {
+      "uid": "<USER_ID>",
+      "username": "<TEAM_SLUG>"
+    },
+    "duration": {},
+    "gitSource": {
+      "type": "github",
+      "repoId": "<REPO_ID>",
+      "ref": "main",
+      "sha": "2066a8ee9fe3854823254195194e519d1f2d6200"
+    },
+    "id": "dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9",
+    "name": "mono-deploy-probe",
+    "meta": {
+      "githubCommitAuthorName": "<GITHUB_LOGIN>",
+      "githubCommitAuthorEmail": "<GITHUB_NOREPLY_EMAIL>",
+      "githubCommitMessage": "probe v2",
+      "githubCommitOrg": "<TEAM_SLUG>",
+      "githubCommitRef": "main",
+      "githubCommitRepo": "mono-deploy-probe",
+      "githubCommitSha": "2066a8ee9fe3854823254195194e519d1f2d6200",
+      "githubDeployment": "1",
+      "githubOrg": "<TEAM_SLUG>",
+      "githubRepo": "mono-deploy-probe",
+      "githubRepoOwnerType": "Organization",
+      "githubCommitRepoId": "<REPO_ID>",
+      "githubRepoId": "<REPO_ID>",
+      "githubRepoVisibility": "private",
+      "githubHost": "github.com",
+      "githubCommitAuthorLogin": "<GITHUB_LOGIN>",
+      "githubCommitVerification": "unverified",
+      "branchAlias": "mono-deploy-probe-git-main-<TEAM_SLUG>.vercel.app"
+    },
+    "originCacheRegion": "iad1",
+    "project": {
+      "id": "prj_<PROJECT_ID>",
+      "name": "mono-deploy-probe",
+      "framework": null
+    },
+    "public": false,
+    "readyState": "INITIALIZING",
+    "readySubstate": "STAGED",
+    "regions": [
+      "iad1"
+    ],
+    "source": "cli",
+    "status": "INITIALIZING",
+    "target": "production",
+    "team": {
+      "id": "team_<TEAM_ID>",
+      "name": "<TEAM_NAME>",
+      "slug": "<TEAM_SLUG>"
+    },
+    "type": "LAMBDAS",
+    "url": "mono-deploy-probe-gvrwxhqxm-<TEAM_SLUG>.vercel.app",
+    "version": 2,
+    "previewCommentsEnabled": true,
+    "oidcTokenClaims": {
+      "sub": "owner:<TEAM_SLUG>:project:mono-deploy-probe:environment:production",
+      "iss": "https://oidc.vercel.com/<TEAM_SLUG>",
+      "scope": "owner:<TEAM_SLUG>:project:mono-deploy-probe:environment:production",
+      "aud": "https://vercel.com/<TEAM_SLUG>",
+      "owner": "<TEAM_SLUG>",
+      "owner_id": "team_<TEAM_ID>",
+      "project": "mono-deploy-probe",
+      "project_id": "prj_<PROJECT_ID>",
+      "deployment_id": "dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9",
+      "environment": "production",
+      "plan": "pro"
+    },
+    "lambdas": [
+      {
+        "id": "bld_fn1ey2vmh",
+        "createdAt": 1794675658706,
+        "entrypoint": ".",
+        "readyState": "READY",
+        "readyStateAt": 1794675658706,
+        "output": []
+      }
+    ],
+    "aliasAssignedAt": null,
+    "build": {
+      "env": []
+    },
+    "builds": [],
+    "createdIn": "sfo1",
+    "env": [],
+    "functions": null,
+    "inspectorUrl": "https://vercel.com/<TEAM_SLUG>/mono-deploy-probe/BBFG9ZXNyz2D5VspzV9NW19N9xB9",
+    "isInConcurrentBuildsQueue": false,
+    "isInSystemBuildsQueue": true,
+    "ownerId": "team_<TEAM_ID>",
+    "plan": "pro",
+    "projectId": "prj_<PROJECT_ID>",
+    "resourceConfig": {
+      "buildMachine": {
+        "cores": 30,
+        "memory": 61440,
+        "defaultPurchaseType": "standard",
+        "machineSelectionType": "fixed",
+        "purchaseType": "turbo",
+        "selectionSource": "project-setting"
+      }
+    },
+    "projectSettings": {
+      "buildCommand": null,
+      "devCommand": null,
+      "framework": null,
+      "commandForIgnoringBuildStep": null,
+      "installCommand": null,
+      "outputDirectory": null,
+      "speedInsights": {
+        "id": "<SPEED_INSIGHTS_ID>",
+        "hasData": false
+      },
+      "webAnalytics": {
+        "id": "<WEB_ANALYTICS_ID>"
+      },
+      "nodeVersion": "26.x"
+    },
+    "routes": null,
+    "config": {
+      "version": 1,
+      "secureComputePrimaryRegion": null,
+      "secureComputeFallbackRegion": null,
+      "functionTimeout": 300,
+      "functionType": "fluid",
+      "functionMemoryType": "standard",
+      "isUsingActiveCPU": true,
+      "resourceConfig": {
+        "buildMachine": {
+          "defaultPurchaseType": "standard",
+          "machineSelectionType": "fixed",
+          "purchaseType": "turbo",
+          "selectionSource": "project-setting",
+          "cores": 30,
+          "memory": 61440
+        },
+        "buildQueue": {
+          "configuration": "SKIP_NAMESPACE_QUEUE"
+        },
+        "elasticConcurrency": "PROJECT_SETTING"
+      }
+    }
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "command": "vercel api /v9/projects/prj_<PROJECT_ID> --scope <TEAM_SLUG> -X PATCH --input <body>",
+  "exitCode": 0,
+  "requestBody": {
+    "ssoProtection": {
+      "deploymentType": "prod_deployment_urls_and_all_previews"
+    }
+  },
+  "response": {
+    "accountId": "team_<TEAM_ID>",
+    "creator": {
+      "type": "user",
+      "user": {
+        "id": "<USER_ID>"
+      },
+      "via": {
+        "type": "app",
+        "app": {
+          "id": "cl_HYyOPBNtFMfHhaUn9L4QPfTZz6TP47bp",
+          "clientId": "cl_HYyOPBNtFMfHhaUn9L4QPfTZz6TP47bp"
+        }
+      }
+    },
+    "alias": [],
+    "autoExposeSystemEnvs": true,
+    "autoAssignCustomDomains": true,
+    "autoAssignCustomDomainsUpdatedBy": "system",
+    "buildCommand": null,
+    "perimeters": [],
+    "createdAt": 1794675574256,
+    "deploymentExpiration": {
+      "expirationDays": 30,
+      "expirationDaysProduction": 30,
+      "expirationDaysCanceled": 30,
+      "expirationDaysErrored": 30
+    },
+    "devCommand": null,
+    "directoryListing": false,
+    "framework": null,
+    "gitForkProtection": true,
+    "gitLFS": false,
+    "id": "prj_<PROJECT_ID>",
+    "installCommand": null,
+    "jobs": {
+      "lint": {
+        "targets": [
+          "production",
+          "preview"
+        ]
+      },
+      "typecheck": {
+        "targets": [
+          "production",
+          "preview"
+        ]
+      }
+    },
+    "lastRollbackTarget": null,
+    "lastAliasRequest": null,
+    "name": "mono-deploy-probe",
+    "nodeVersion": "26.x",
+    "outputDirectory": null,
+    "sandbox": {
+      "failoverRegions": [],
+      "region": "iad1"
+    },
+    "productionDeploymentsFastLane": true,
+    "defaultResourceConfig": {
+      "fluid": true,
+      "functionDefaultRegions": [
+        "iad1"
+      ],
+      "functionDefaultTimeout": 300,
+      "functionDefaultMemoryType": "standard",
+      "functionZeroConfigFailover": false,
+      "elasticConcurrencyEnabled": true
+    },
+    "resourceConfig": {
+      "fluid": true,
+      "functionDefaultRegions": [
+        "iad1"
+      ],
+      "elasticConcurrencyEnabled": true,
+      "buildMachineType": "turbo",
+      "buildMachineSelection": "fixed"
+    },
+    "rootDirectory": null,
+    "serverlessFunctionRegion": "iad1",
+    "skewProtectionMaxAge": 43200,
+    "sourceFilesOutsideRootDirectory": true,
+    "enableAffectedProjectsDeployments": true,
+    "ssoProtection": {
+      "deploymentType": "prod_deployment_urls_and_all_previews"
+    },
+    "updatedAt": 1794675583230,
+    "live": false,
+    "enableExternalRewriteCaching": true,
+    "gitComments": {
+      "onCommit": false,
+      "onPullRequest": true
+    },
+    "gitProviderOptions": {
+      "createDeployments": "disabled",
+      "disableRepositoryDispatchEvents": true
+    },
+    "oidcTokenConfig": {
+      "enabled": true,
+      "issuerMode": "team"
+    },
+    "link": {
+      "type": "github",
+      "repo": "mono-deploy-probe",
+      "repoId": "<REPO_ID>",
+      "org": "<TEAM_SLUG>",
+      "repoOwnerId": "<REPO_OWNER_ID>",
+      "gitCredentialId": "cred_<GIT_CREDENTIAL_ID>",
+      "productionBranch": "main",
+      "createdAt": 1794675574105,
+      "updatedAt": 1794675574105,
+      "deployHooks": []
+    },
+    "latestDeployments": [],
+    "targets": {},
+    "features": {
+      "webAnalytics": false
+    },
+    "protectedSourcemaps": true
+  }
+}

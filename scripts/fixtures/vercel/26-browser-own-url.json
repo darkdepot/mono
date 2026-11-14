@@ -1,0 +1,32 @@
+{
+  "command": "open protected own deployment URL in browsers (read-only, no clicks)",
+  "exitCode": 0,
+  "response": {
+    "url": "https://mono-deploy-probe-gvrwxhqxm-<TEAM_SLUG>.vercel.app/",
+    "date": "2026-11-15",
+    "results": [
+      {
+        "browser": "built-in browser pane of the agent app (no Vercel login)",
+        "opened": false,
+        "finalHost": "vercel.com",
+        "finalPath": "/login/scope/<TEAM_SLUG>",
+        "title": "Authentication Required",
+        "heading": "Log in to <TEAM_NAME>",
+        "windowOrPrompt": "Vercel login page; not logged in (agent does not enter passwords)"
+      },
+      {
+        "browser": "owner's Chrome via Claude in Chrome extension, existing Vercel login, new tab",
+        "opened": true,
+        "finalPath": "/",
+        "title": "probe",
+        "heading": "Probe v2",
+        "windowOrPrompt": "none"
+      },
+      {
+        "browser": "Aside (owner's designated browser for scenario checks)",
+        "opened": null,
+        "notVerifiedReason": "Aside CLI: account signed out, sign-in required (owner action)"
+      }
+    ]
+  }
+}

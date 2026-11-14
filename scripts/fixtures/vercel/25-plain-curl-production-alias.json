@@ -1,0 +1,5 @@
+{
+  "command": "curl -s -o /dev/null -w '%{http_code}' https://mono-deploy-probe.vercel.app/",
+  "exitCode": 0,
+  "output": "200"
+}

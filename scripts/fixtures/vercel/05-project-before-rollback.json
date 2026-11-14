@@ -1,0 +1,359 @@
+{
+  "command": "vercel api /v9/projects/prj_<PROJECT_ID> --scope <TEAM_SLUG>",
+  "exitCode": 0,
+  "response": {
+    "accountId": "team_<TEAM_ID>",
+    "creator": {
+      "type": "user",
+      "user": {
+        "id": "<USER_ID>"
+      },
+      "via": {
+        "type": "app",
+        "app": {
+          "id": "cl_HYyOPBNtFMfHhaUn9L4QPfTZz6TP47bp",
+          "clientId": "cl_HYyOPBNtFMfHhaUn9L4QPfTZz6TP47bp"
+        }
+      }
+    },
+    "alias": [],
+    "speedInsights": {
+      "id": "<SPEED_INSIGHTS_ID>",
+      "hasData": false
+    },
+    "autoExposeSystemEnvs": true,
+    "autoAssignCustomDomains": true,
+    "autoAssignCustomDomainsUpdatedBy": "system",
+    "buildCommand": null,
+    "perimeters": [],
+    "createdAt": 1794675574256,
+    "crons": {
+      "enabledAt": 1794675604347,
+      "disabledAt": null,
+      "updatedAt": 1794675615289,
+      "deploymentId": "dpl_CGBNUoU6NtkXvRT93bnB4dK2DLw5",
+      "definitions": []
+    },
+    "deploymentExpiration": {
+      "expirationDays": 30,
+      "expirationDaysProduction": 30,
+      "expirationDaysCanceled": 30,
+      "expirationDaysErrored": 30
+    },
+    "devCommand": null,
+    "directoryListing": false,
+    "framework": null,
+    "gitForkProtection": true,
+    "gitLFS": false,
+    "id": "prj_<PROJECT_ID>",
+    "installCommand": null,
+    "jobs": {
+      "lint": {
+        "targets": [
+          "production",
+          "preview"
+        ]
+      },
+      "typecheck": {
+        "targets": [
+          "production",
+          "preview"
+        ]
+      }
+    },
+    "lastRollbackTarget": null,
+    "lastAliasRequest": null,
+    "name": "mono-deploy-probe",
+    "nodeVersion": "26.x",
+    "outputDirectory": null,
+    "sandbox": {
+      "failoverRegions": [],
+      "region": "iad1"
+    },
+    "productionDeploymentsFastLane": true,
+    "defaultResourceConfig": {
+      "fluid": true,
+      "functionDefaultRegions": [
+        "iad1"
+      ],
+      "functionDefaultTimeout": 300,
+      "functionDefaultMemoryType": "standard",
+      "functionZeroConfigFailover": false,
+      "elasticConcurrencyEnabled": true
+    },
+    "resourceConfig": {
+      "fluid": true,
+      "functionDefaultRegions": [
+        "iad1"
+      ],
+      "elasticConcurrencyEnabled": true,
+      "buildMachineType": "turbo",
+      "buildMachineSelection": "fixed"
+    },
+    "rootDirectory": null,
+    "serverlessFunctionRegion": "iad1",
+    "skewProtectionMaxAge": 43200,
+    "sourceFilesOutsideRootDirectory": true,
+    "enableAffectedProjectsDeployments": true,
+    "ssoProtection": {
+      "deploymentType": "prod_deployment_urls_and_all_previews"
+    },
+    "updatedAt": 1794675615289,
+    "live": false,
+    "enableExternalRewriteCaching": true,
+    "gitComments": {
+      "onCommit": false,
+      "onPullRequest": true
+    },
+    "gitProviderOptions": {
+      "createDeployments": "disabled",
+      "disableRepositoryDispatchEvents": true
+    },
+    "webAnalytics": {
+      "id": "<WEB_ANALYTICS_ID>"
+    },
+    "oidcTokenConfig": {
+      "enabled": true,
+      "issuerMode": "team"
+    },
+    "hasDeployments": true,
+    "link": {
+      "type": "github",
+      "repo": "mono-deploy-probe",
+      "repoId": "<REPO_ID>",
+      "org": "<TEAM_SLUG>",
+      "repoOwnerId": "<REPO_OWNER_ID>",
+      "gitCredentialId": "cred_<GIT_CREDENTIAL_ID>",
+      "productionBranch": "main",
+      "createdAt": 1794675574105,
+      "updatedAt": 1794675574105,
+      "deployHooks": []
+    },
+    "latestDeployments": [
+      {
+        "alias": [
+          "mono-deploy-probe.vercel.app",
+          "mono-deploy-probe-<TEAM_SLUG>.vercel.app",
+          "mono-deploy-probe-git-main-<TEAM_SLUG>.vercel.app"
+        ],
+        "aliasAssigned": 1794675615237,
+        "aliasError": null,
+        "automaticAliases": [
+          "mono-deploy-probe-<TEAM_SLUG>.vercel.app",
+          "mono-deploy-probe-git-main-<TEAM_SLUG>.vercel.app"
+        ],
+        "builds": [],
+        "createdAt": 1794675612436,
+        "createdIn": "sfo1",
+        "creator": {
+          "uid": "<USER_ID>",
+          "email": "<OWNER_EMAIL>",
+          "username": "<TEAM_SLUG>",
+          "githubLogin": "<GITHUB_LOGIN>"
+        },
+        "deploymentHostname": "mono-deploy-probe-8wf8gpoqe-<TEAM_SLUG>",
+        "forced": false,
+        "id": "dpl_CGBNUoU6NtkXvRT93bnB4dK2DLw5",
+        "meta": {
+          "githubCommitAuthorName": "<GITHUB_LOGIN>",
+          "githubCommitAuthorEmail": "<GITHUB_NOREPLY_EMAIL>",
+          "githubCommitMessage": "probe v2",
+          "githubCommitOrg": "<TEAM_SLUG>",
+          "githubCommitRef": "main",
+          "githubCommitRepo": "mono-deploy-probe",
+          "githubCommitSha": "2066a8ee9fe3854823254195194e519d1f2d6200",
+          "githubDeployment": "1",
+          "githubOrg": "<TEAM_SLUG>",
+          "githubRepo": "mono-deploy-probe",
+          "githubRepoOwnerType": "Organization",
+          "githubCommitRepoId": "<REPO_ID>",
+          "githubRepoId": "<REPO_ID>",
+          "githubRepoVisibility": "private",
+          "githubHost": "github.com",
+          "githubCommitAuthorLogin": "<GITHUB_LOGIN>",
+          "githubCommitVerification": "unverified",
+          "branchAlias": "mono-deploy-probe-git-main-<TEAM_SLUG>.vercel.app"
+        },
+        "name": "mono-deploy-probe",
+        "plan": "pro",
+        "private": true,
+        "readyState": "READY",
+        "readySubstate": "PROMOTED",
+        "target": "production",
+        "teamId": "team_<TEAM_ID>",
+        "type": "LAMBDAS",
+        "url": "mono-deploy-probe-8wf8gpoqe-<TEAM_SLUG>.vercel.app",
+        "userId": "<USER_ID>",
+        "withCache": false,
+        "buildingAt": 1794675613567,
+        "readyAt": 1794675615017,
+        "previewCommentsEnabled": true,
+        "oidcTokenClaims": {
+          "sub": "owner:<TEAM_SLUG>:project:mono-deploy-probe:environment:production",
+          "iss": "https://oidc.vercel.com/<TEAM_SLUG>",
+          "scope": "owner:<TEAM_SLUG>:project:mono-deploy-probe:environment:production",
+          "aud": "https://vercel.com/<TEAM_SLUG>",
+          "owner": "<TEAM_SLUG>",
+          "owner_id": "team_<TEAM_ID>",
+          "project": "mono-deploy-probe",
+          "project_id": "prj_<PROJECT_ID>",
+          "deployment_id": "dpl_CGBNUoU6NtkXvRT93bnB4dK2DLw5",
+          "environment": "production",
+          "plan": "pro"
+        }
+      },
+      {
+        "alias": [
+          "mono-deploy-probe.vercel.app",
+          "mono-deploy-probe-<TEAM_SLUG>.vercel.app",
+          "mono-deploy-probe-git-main-<TEAM_SLUG>.vercel.app"
+        ],
+        "aliasAssigned": 1794675604259,
+        "aliasError": null,
+        "automaticAliases": [
+          "mono-deploy-probe-<TEAM_SLUG>.vercel.app",
+          "mono-deploy-probe-git-main-<TEAM_SLUG>.vercel.app"
+        ],
+        "builds": [],
+        "createdAt": 1794675601562,
+        "createdIn": "sfo1",
+        "creator": {
+          "uid": "<USER_ID>",
+          "email": "<OWNER_EMAIL>",
+          "username": "<TEAM_SLUG>",
+          "githubLogin": "<GITHUB_LOGIN>"
+        },
+        "deploymentHostname": "mono-deploy-probe-71n2xwchq-<TEAM_SLUG>",
+        "forced": false,
+        "id": "dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ",
+        "meta": {
+          "githubCommitAuthorName": "<GITHUB_LOGIN>",
+          "githubCommitAuthorEmail": "<GITHUB_NOREPLY_EMAIL>",
+          "githubCommitMessage": "probe v1",
+          "githubCommitOrg": "<TEAM_SLUG>",
+          "githubCommitRef": "main",
+          "githubCommitRepo": "mono-deploy-probe",
+          "githubCommitSha": "51b157347975a246fff0b75c6d1a9ba16060d91c",
+          "githubDeployment": "1",
+          "githubOrg": "<TEAM_SLUG>",
+          "githubRepo": "mono-deploy-probe",
+          "githubRepoOwnerType": "Organization",
+          "githubCommitRepoId": "<REPO_ID>",
+          "githubRepoId": "<REPO_ID>",
+          "githubRepoVisibility": "private",
+          "githubHost": "github.com",
+          "githubCommitAuthorLogin": "<GITHUB_LOGIN>",
+          "githubCommitVerification": "unverified",
+          "branchAlias": "mono-deploy-probe-git-main-<TEAM_SLUG>.vercel.app"
+        },
+        "name": "mono-deploy-probe",
+        "plan": "pro",
+        "private": true,
+        "readyState": "READY",
+        "readySubstate": "PROMOTED",
+        "target": "production",
+        "teamId": "team_<TEAM_ID>",
+        "type": "LAMBDAS",
+        "url": "mono-deploy-probe-71n2xwchq-<TEAM_SLUG>.vercel.app",
+        "userId": "<USER_ID>",
+        "withCache": false,
+        "buildingAt": 1794675602928,
+        "readyAt": 1794675604074,
+        "previewCommentsEnabled": true,
+        "oidcTokenClaims": {
+          "sub": "owner:<TEAM_SLUG>:project:mono-deploy-probe:environment:production",
+          "iss": "https://oidc.vercel.com/<TEAM_SLUG>",
+          "scope": "owner:<TEAM_SLUG>:project:mono-deploy-probe:environment:production",
+          "aud": "https://vercel.com/<TEAM_SLUG>",
+          "owner": "<TEAM_SLUG>",
+          "owner_id": "team_<TEAM_ID>",
+          "project": "mono-deploy-probe",
+          "project_id": "prj_<PROJECT_ID>",
+          "deployment_id": "dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ",
+          "environment": "production",
+          "plan": "pro"
+        }
+      }
+    ],
+    "targets": {
+      "production": {
+        "alias": [
+          "mono-deploy-probe.vercel.app",
+          "mono-deploy-probe-<TEAM_SLUG>.vercel.app",
+          "mono-deploy-probe-git-main-<TEAM_SLUG>.vercel.app"
+        ],
+        "aliasAssigned": 1794675615237,
+        "aliasError": null,
+        "automaticAliases": [
+          "mono-deploy-probe-<TEAM_SLUG>.vercel.app",
+          "mono-deploy-probe-git-main-<TEAM_SLUG>.vercel.app"
+        ],
+        "builds": [],
+        "createdAt": 1794675612436,
+        "createdIn": "sfo1",
+        "creator": {
+          "uid": "<USER_ID>",
+          "email": "<OWNER_EMAIL>",
+          "username": "<TEAM_SLUG>",
+          "githubLogin": "<GITHUB_LOGIN>"
+        },
+        "deploymentHostname": "mono-deploy-probe-8wf8gpoqe-<TEAM_SLUG>",
+        "forced": false,
+        "id": "dpl_CGBNUoU6NtkXvRT93bnB4dK2DLw5",
+        "meta": {
+          "githubCommitAuthorName": "<GITHUB_LOGIN>",
+          "githubCommitAuthorEmail": "<GITHUB_NOREPLY_EMAIL>",
+          "githubCommitMessage": "probe v2",
+          "githubCommitOrg": "<TEAM_SLUG>",
+          "githubCommitRef": "main",
+          "githubCommitRepo": "mono-deploy-probe",
+          "githubCommitSha": "2066a8ee9fe3854823254195194e519d1f2d6200",
+          "githubDeployment": "1",
+          "githubOrg": "<TEAM_SLUG>",
+          "githubRepo": "mono-deploy-probe",
+          "githubRepoOwnerType": "Organization",
+          "githubCommitRepoId": "<REPO_ID>",
+          "githubRepoId": "<REPO_ID>",
+          "githubRepoVisibility": "private",
+          "githubHost": "github.com",
+          "githubCommitAuthorLogin": "<GITHUB_LOGIN>",
+          "githubCommitVerification": "unverified",
+          "branchAlias": "mono-deploy-probe-git-main-<TEAM_SLUG>.vercel.app"
+        },
+        "name": "mono-deploy-probe",
+        "plan": "pro",
+        "private": true,
+        "readyState": "READY",
+        "readySubstate": "PROMOTED",
+        "target": "production",
+        "teamId": "team_<TEAM_ID>",
+        "type": "LAMBDAS",
+        "url": "mono-deploy-probe-8wf8gpoqe-<TEAM_SLUG>.vercel.app",
+        "userId": "<USER_ID>",
+        "withCache": false,
+        "buildingAt": 1794675613567,
+        "readyAt": 1794675615017,
+        "previewCommentsEnabled": true,
+        "oidcTokenClaims": {
+          "sub": "owner:<TEAM_SLUG>:project:mono-deploy-probe:environment:production",
+          "iss": "https://oidc.vercel.com/<TEAM_SLUG>",
+          "scope": "owner:<TEAM_SLUG>:project:mono-deploy-probe:environment:production",
+          "aud": "https://vercel.com/<TEAM_SLUG>",
+          "owner": "<TEAM_SLUG>",
+          "owner_id": "team_<TEAM_ID>",
+          "project": "mono-deploy-probe",
+          "project_id": "prj_<PROJECT_ID>",
+          "deployment_id": "dpl_CGBNUoU6NtkXvRT93bnB4dK2DLw5",
+          "environment": "production",
+          "plan": "pro"
+        }
+      }
+    },
+    "features": {
+      "webAnalytics": false
+    },
+    "protectedSourcemaps": true,
+    "avatar": null,
+    "avatarDarkMode": null
+  }
+}

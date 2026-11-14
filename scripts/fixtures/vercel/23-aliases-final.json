@@ -1,0 +1,76 @@
+{
+  "command": "vercel api \"/v4/aliases?projectId=prj_<PROJECT_ID>\" --scope <TEAM_SLUG>",
+  "exitCode": 0,
+  "response": {
+    "aliases": [
+      {
+        "alias": "mono-deploy-probe-<TEAM_SLUG>.vercel.app",
+        "created": "2026-11-14T17:00:04.177Z",
+        "createdAt": 1794675604177,
+        "creator": {
+          "uid": "<USER_ID>",
+          "email": "<OWNER_EMAIL>",
+          "username": "<TEAM_SLUG>"
+        },
+        "deletedAt": null,
+        "deployment": {
+          "id": "dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9",
+          "url": "mono-deploy-probe-gvrwxhqxm-<TEAM_SLUG>.vercel.app"
+        },
+        "deploymentId": "dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9",
+        "projectId": "prj_<PROJECT_ID>",
+        "redirect": null,
+        "redirectStatusCode": null,
+        "uid": "66ed9a1fa03a3f89e252203740d89277d24176b35f638ad055846c7bb273aff4f30aa7c21fcd98170432335a22b48e3633669d284a4b065c072e68418b1c0e75",
+        "updatedAt": 1794675803052
+      },
+      {
+        "alias": "mono-deploy-probe.vercel.app",
+        "created": "2026-11-14T17:00:04.177Z",
+        "createdAt": 1794675604177,
+        "creator": {
+          "uid": "<USER_ID>",
+          "email": "<OWNER_EMAIL>",
+          "username": "<TEAM_SLUG>"
+        },
+        "deletedAt": null,
+        "deployment": {
+          "id": "dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9",
+          "url": "mono-deploy-probe-gvrwxhqxm-<TEAM_SLUG>.vercel.app"
+        },
+        "deploymentId": "dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9",
+        "projectId": "prj_<PROJECT_ID>",
+        "redirect": null,
+        "redirectStatusCode": null,
+        "uid": "df8d70f963270eed8ac815b2d8d7185a73ca2632d4c0abfb2c5f4b1f2ef37e0ac096c6ba1a4413f6c0ff72ac6b48ef6038d83c17ce158cc08069c273f161ba7b",
+        "updatedAt": 1794675803053
+      },
+      {
+        "alias": "mono-deploy-probe-git-main-<TEAM_SLUG>.vercel.app",
+        "created": "2026-11-14T17:00:01.696Z",
+        "createdAt": 1794675601696,
+        "creator": {
+          "uid": "<USER_ID>",
+          "email": "<OWNER_EMAIL>",
+          "username": "<TEAM_SLUG>"
+        },
+        "deletedAt": null,
+        "deployment": {
+          "id": "dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9",
+          "url": "mono-deploy-probe-gvrwxhqxm-<TEAM_SLUG>.vercel.app"
+        },
+        "deploymentId": "dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9",
+        "projectId": "prj_<PROJECT_ID>",
+        "redirect": null,
+        "redirectStatusCode": null,
+        "uid": "4c170a964de470993180237a4f2a623461d2961084f6becad96be573f9db94f306a64e2f718b2b9c2e25714ea46956897ed1e130fd125192faf056834eda1c13",
+        "updatedAt": 1794675662767
+      }
+    ],
+    "pagination": {
+      "count": 3,
+      "next": null,
+      "prev": 1794675604177
+    }
+  }
+}

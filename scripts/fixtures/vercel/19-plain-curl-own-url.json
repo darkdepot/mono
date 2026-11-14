@@ -1,0 +1,5 @@
+{
+  "command": "curl -s -o /dev/null -w '%{http_code} %{redirect_url}' https://mono-deploy-probe-gvrwxhqxm-<TEAM_SLUG>.vercel.app/  (query string of redirect removed)",
+  "exitCode": 0,
+  "output": "302 https://vercel.com/sso-api?<query>"
+}
