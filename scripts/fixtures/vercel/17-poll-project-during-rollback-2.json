@@ -1,0 +1,5 @@
+{
+  "command": "12x vercel api /v9/projects/prj_<PROJECT_ID> (~1s apart) -> time autoAssignCustomDomains lastRollbackTarget targets.production.id",
+  "exitCode": 0,
+  "output": "01:01:37 True None dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9\n01:01:38 True None dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9\n01:01:39 True None dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ\n01:01:40 True None dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ\n01:01:41 False None dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ\n01:01:43 False None dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ\n01:01:44 False None dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ\n01:01:45 False None dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ\n01:01:46 False None dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ\n01:01:47 False None dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ\n01:01:48 False None dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ\n01:01:49 False None dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ"
+}

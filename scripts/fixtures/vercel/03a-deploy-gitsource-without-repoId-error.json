@@ -1,0 +1,15 @@
+{
+  "command": "vercel api /v13/deployments --scope <TEAM_SLUG> -X POST --input <body>",
+  "exitCode": 1,
+  "requestBody": {
+    "name": "mono-deploy-probe",
+    "project": "prj_<PROJECT_ID>",
+    "target": "production",
+    "gitSource": {
+      "type": "github",
+      "ref": "main",
+      "sha": "51b157347975a246fff0b75c6d1a9ba16060d91c"
+    }
+  },
+  "output": "Error: Invalid request: `gitSource` missing required property `repoId`. (400)"
+}

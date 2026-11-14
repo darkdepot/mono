@@ -1,0 +1,5 @@
+{
+  "command": "vercel rollback dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ --yes --scope <TEAM_SLUG> --timeout 3m",
+  "exitCode": 0,
+  "output": "Vercel CLI 59.5.0 (Node.js 26.5.0)\nFetching deployment \"dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ\" in <TEAM_SLUG>…\n> Fetching deployment \"dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ\" in <TEAM_SLUG>…\nRollback in progress…\nRollback in progress…\nRollback in progress…\nRollback in progress…\nRollback in progress…\n> Rollback in progress…\n> Success! mono-deploy-probe was rolled back to mono-deploy-probe-71n2xwchq-<TEAM_SLUG>.vercel.app (dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ) [3s]"
+}

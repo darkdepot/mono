@@ -1,0 +1,11 @@
+{
+  "name": "mono-deploy-probe",
+  "project": "prj_<PROJECT_ID>",
+  "target": "production",
+  "gitSource": {
+    "type": "github",
+    "repoId": "<REPO_ID>",
+    "ref": "main",
+    "sha": "2066a8ee9fe3854823254195194e519d1f2d6200"
+  }
+}

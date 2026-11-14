@@ -1,0 +1,5 @@
+{
+  "command": "vercel promote dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9 --yes --scope <TEAM_SLUG> --timeout 3m",
+  "exitCode": 0,
+  "output": "Vercel CLI 59.5.0 (Node.js 26.5.0)\nFetching deployment \"dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9\" in <TEAM_SLUG>…\n> Fetching deployment \"dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9\" in <TEAM_SLUG>…\nPromote in progress…\nPromote in progress…\nPromote in progress…\nPromote in progress…\n> Promote in progress…\n> Success! mono-deploy-probe was promoted to mono-deploy-probe-gvrwxhqxm-<TEAM_SLUG>.vercel.app (dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9) [2s]"
+}

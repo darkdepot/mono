@@ -1,0 +1,208 @@
+{
+  "issue": "MONO-421",
+  "date": "2026-11-15",
+  "vercelCli": "59.5.0",
+  "endpoint": "api.vercel.com via `vercel api`",
+  "session": "non-interactive agent session on owner's Mac; cwd without .vercel link (no `vercel link`)",
+  "probeProject": "mono-deploy-probe (static index.html, two commits on main)",
+  "deployments": {
+    "v1": "dpl_ERKwcURxUJbmcee92rHGvbWSnpkQ (sha 51b1573)",
+    "v2": "dpl_CGBNUoU6NtkXvRT93bnB4dK2DLw5 (sha 2066a8e)",
+    "v2-redeploy-during-rollback": "dpl_BBFG9ZXNyz2D5VspzV9NW19N9xB9 (sha 2066a8e)"
+  },
+  "replacements": [
+    {
+      "from": "Vercel team id",
+      "to": "team_<TEAM_ID>"
+    },
+    {
+      "from": "Vercel project id",
+      "to": "prj_<PROJECT_ID>"
+    },
+    {
+      "from": "Vercel user id",
+      "to": "<USER_ID>"
+    },
+    {
+      "from": "Vercel git credential id",
+      "to": "cred_<GIT_CREDENTIAL_ID>"
+    },
+    {
+      "from": "GitHub noreply commit email",
+      "to": "<GITHUB_NOREPLY_EMAIL>"
+    },
+    {
+      "from": "owner email",
+      "to": "<OWNER_EMAIL>"
+    },
+    {
+      "from": "GitHub login (owner name)",
+      "to": "<GITHUB_LOGIN>"
+    },
+    {
+      "from": "team display name",
+      "to": "<TEAM_NAME>"
+    },
+    {
+      "from": "team slug / GitHub org (also inside hostnames)",
+      "to": "<TEAM_SLUG>"
+    },
+    {
+      "from": "GitHub repo id",
+      "to": "<REPO_ID>"
+    },
+    {
+      "from": "GitHub repo owner id",
+      "to": "<REPO_OWNER_ID>"
+    },
+    {
+      "from": "GitHub user id",
+      "to": "<GITHUB_USER_ID>"
+    },
+    {
+      "from": "project speed insights id",
+      "to": "<SPEED_INSIGHTS_ID>"
+    },
+    {
+      "from": "project web analytics id",
+      "to": "<WEB_ANALYTICS_ID>"
+    }
+  ],
+  "notes": [
+    "In requestBody fields the placeholder <REPO_ID> stands for a JSON number (GitHub repo id = project link.repoId), not a string.",
+    "POST /v13/deployments with gitSource {type, ref, sha} only fails: 400 `gitSource` missing required property `repoId` (03a). Working body adds repoId (new-production-deployment-request-body.json).",
+    "Probe uses *.vercel.app aliases only; custom-domain behaviour (as on Zeni) is not covered."
+  ],
+  "otherEdits": [
+    "CLI plugin hint tags (<claude-code-hint .../>) removed from captured stderr",
+    "SSO redirect query string removed from 19-plain-curl-own-url"
+  ],
+  "notReplaced": [
+    "deployment ids (dpl_*), commit shas, alias uids, Vercel CLI OAuth client id (cl_*): not account identifiers"
+  ],
+  "sourceProvenanceSha256": "f1b6b418c79d6ac4d72993452c7d1d8ef02646f5e2c50da08d8e9406248ef115",
+  "importNotes": [
+    "Host-supplied sanitized JSON captures imported for MONO-421; no live probe repeated by the delivery worker.",
+    "All 29 other supplied JSON files are byte-identical. This provenance adds source reference and SHA-256 inventory only; original provenance fields are unchanged.",
+    "Input date is the host-reported local date, 2026-11-15; response timestamps use the platform clock."
+  ],
+  "files": [
+    {
+      "path": "01-create-project.json",
+      "sha256": "c7905c249a7c5653a3f4144dc9c19e151996a814c47443edcb2b38072c196c9f"
+    },
+    {
+      "path": "02-set-protection.json",
+      "sha256": "060655c5cd202b72c3ae91043e6b15d11126f850425fe4fa009c900d90ab2b08"
+    },
+    {
+      "path": "03-deploy-v1.json",
+      "sha256": "7207959c2ec868b587aaa28337d3b79774b0096f1133f7e34f5d65a03210cdfd"
+    },
+    {
+      "path": "03a-deploy-gitsource-without-repoId-error.json",
+      "sha256": "6ab3985056684520b3ddb24eee9a5f938621757203a4c1dd9638a5365423d9c0"
+    },
+    {
+      "path": "04-deploy-v2.json",
+      "sha256": "bec7ff35192ed471e53e3a4fac2dd53cc21998b319293f5cb6294a365a77738e"
+    },
+    {
+      "path": "05-project-before-rollback.json",
+      "sha256": "e2cfb2d0925ad0babc5773ce5dc8d585e2752eaab15dc24e316aac34eb5dbfe8"
+    },
+    {
+      "path": "06-domain-read-before-rollback.json",
+      "sha256": "5f567a2ab2ec1451373f8f5efd16e2283bb7dd1f23c78bd00053fa32285ba948"
+    },
+    {
+      "path": "07-rollback.json",
+      "sha256": "15ec13c8dd045f54f8dbccb90a4816e11e51c5b0c438480df19fc27a7894c792"
+    },
+    {
+      "path": "08-project-during-rollback.json",
+      "sha256": "91bcb74cc3d91fe077afaff88c7ea52aa679be534069af271e9b2903e060806b"
+    },
+    {
+      "path": "09-domain-read-during-rollback.json",
+      "sha256": "95017ebd43419bddb88dbc3e2391e7f1abc79b132a1631675b70390d8060f063"
+    },
+    {
+      "path": "10-deploy-new-during-rollback.json",
+      "sha256": "332b47b2fe39132719c4002bdacee7d7491d558c3f24d71e76cce0c2713969a8"
+    },
+    {
+      "path": "11-new-deploy-ready-staged.json",
+      "sha256": "c6910669460cabdc3a6732a0c00e252fdb8706812849622c201ea824ba57690a"
+    },
+    {
+      "path": "12-domain-read-after-new-deploy.json",
+      "sha256": "95017ebd43419bddb88dbc3e2391e7f1abc79b132a1631675b70390d8060f063"
+    },
+    {
+      "path": "13-promote.json",
+      "sha256": "d56d4afe62168e2874896f862961f4cfb520b8b91da3a8dc0a8ad93cda441b56"
+    },
+    {
+      "path": "14-project-after-promote.json",
+      "sha256": "00a55afd9cbfa6b85baf25992b67597c0599647c7676b7e5bcabbef9be49d0bc"
+    },
+    {
+      "path": "15-domain-read-after-promote.json",
+      "sha256": "15ccccb1397245da9ea41b48c25c9707852bf6c2ca7b1b02415cf3e376268d4b"
+    },
+    {
+      "path": "16-aliases-after-promote.json",
+      "sha256": "ac0c14cd467c6e366ec33c2c31caffa725dacd6f138f5336e1e5bd2685d7ca08"
+    },
+    {
+      "path": "17-poll-project-during-rollback-2.json",
+      "sha256": "f0df1a9fb05bca06c1bfa6257ba167e19a172e9f874f4d43ac8f364689668bd6"
+    },
+    {
+      "path": "17-rollback-2.json",
+      "sha256": "f85a3364aceec6809b967b1caddae4672dd9b9a7c652641dc432aa0d09e77f2b"
+    },
+    {
+      "path": "18-project-during-rollback-2.json",
+      "sha256": "91e1ab3e50d9440ae389598ded2ee9e3cf2fee9440b91719130f848df101bbce"
+    },
+    {
+      "path": "19-plain-curl-own-url.json",
+      "sha256": "5b662278c85d62ed9092e8a99e44f0620779680ccea3a95e754c57a940761ea5"
+    },
+    {
+      "path": "20-vercel-curl-own-url.json",
+      "sha256": "223e8b440c2930f2a53c97671f5488698e738ba163aa9e12018e3a096a17fbe7"
+    },
+    {
+      "path": "21-promote-2-return.json",
+      "sha256": "07c2cc2970c4b22b961f2926ab7e8bdbe57c587a1e328a495ae4752ccd8ce374"
+    },
+    {
+      "path": "22-project-after-promote-2.json",
+      "sha256": "3681c7e8c93ecf27627de0371cbbca3c220a462a60dd3c9595d21f72976f0460"
+    },
+    {
+      "path": "23-aliases-final.json",
+      "sha256": "9f89853182f6d6cb5a5cd9b2d7c29e0ae7e6bbf5dc2dd4a0a8a21f3cc8958a18"
+    },
+    {
+      "path": "24-domain-read-final.json",
+      "sha256": "fe1b8fb6c3bc5ecf476f24964e21be6f625eddc4f967eb23f4a88f7bd29919f5"
+    },
+    {
+      "path": "25-plain-curl-production-alias.json",
+      "sha256": "dfdcb5358ac8e9be78d0ed065e8559713734ec4e5d0417c5fc49b08cf3ae00c9"
+    },
+    {
+      "path": "26-browser-own-url.json",
+      "sha256": "8ba4b3f67b80bb1c213c065ab01eb127c11f0c5631ec3f2f36b46eda5c45bd9b"
+    },
+    {
+      "path": "new-production-deployment-request-body.json",
+      "sha256": "a9315e09dc48a980c0cbe9e4cbcef2175d7e14b43b4a13985d483036f5a05181"
+    }
+  ],
+  "sourceCommentId": "174e372a-64c0-43b8-81c5-75edeb44dc36"
+}
