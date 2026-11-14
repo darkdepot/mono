@@ -3,9 +3,9 @@
 ## Order And Statuses
 
 Stages run Idea → Research → Discovery → Design when required → Tech Evaluation
-when named → Handoff → Delivery (Implement, QA, Code Review, Preflight) → Ship →
-Deploy. Each stage owns its rules, records and recovery in its own skill; this
-reference keeps only what they share.
+when named → Handoff → Delivery (Implement, then Preflight with its code review
+round) → Ship → independent QA before merge → Deploy. Each stage owns its rules,
+records and recovery in its own skill; this reference keeps only what they share.
 
 Project statuses: `Idea` until Research starts; Research moves it to `Discovery`;
 Handoff sets `Ready` after the package record, execution Issues and
@@ -192,8 +192,8 @@ execution Issue(s) after the authorized start per PC-016/019 (legacy: package
 approval) covers the current Issue set. Start from Ready; Discovery is accepted for a
 legacy Project or a workspace without Ready, with package checks passed. It moves the
 Project to Delivery and never creates PRs, runs pre-ship review/check, deploys or
-closes out. Independent QA (`mono:qa`) and code review (`mono:code-review`) run
-before merge by their own rules.
+closes out. The code review round (`mono:code-review` roles) runs inside Preflight;
+independent QA (`mono:qa`) runs after the ship green certificate, before merge.
 
 Gate: `mono:check delivery`.
 
