@@ -387,7 +387,8 @@ approval references are conditional. Measure with
 `node scripts/read-budget.mjs --skill design --mandatory`.
 `mono:check` is a listed Russian stage too: it reads its SKILL.md, the readiness
 gates and the check output template eagerly, then only the mode file it runs
-(`references/before-work.md` or `references/delivery.md`); measure with
+(`references/before-work.md` or `references/delivery.md`; Project-first `delivery`
+also reads the record chain from the first); measure with
 `node scripts/read-budget.mjs --skill check --mandatory`.
 Activation cases: [evals/tech-evaluation](evals/tech-evaluation/README.md).
 Claude validation, skill-doctor and host tests run on the preflight-ready head
