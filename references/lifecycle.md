@@ -1,118 +1,49 @@
 # Linear Lifecycle
 
+## Order And Statuses
+
+Stages run Idea → Research → Discovery → Design when required → Tech Evaluation
+when named → Handoff → Delivery (Implement, QA, Code Review, Preflight) → Ship →
+Deploy. Each stage owns its rules, records and recovery in its own skill; this
+reference keeps only what they share.
+
+Project statuses: `Idea` until Research starts; Research moves it to `Discovery`;
+Handoff sets `Ready` after the package record, execution Issues and
+`mono:check handoff` pass (a workspace without `Ready` keeps `Discovery`);
+`mono:implement` moves it to `Delivery`; `mono:deploy` completes it after the last
+shipment. Close sets `Canceled`; defer keeps the status. Ordinary Projects need the
+owner's start; delegated Projects (PC-019: latest Idea delegation mark or explicit
+owner decision) allow the orchestrator's start `by=orchestrator` with reason and
+countercheck. Stage sessions and the orchestrator follow
+`references/owner-dialog.md` and `references/orchestration-stages.md`.
+
 ## Idea
 
-`mono:idea` handles a raw idea or an existing Idea Project. Two read-only scouts,
-`linear-scout` and `code-scout`, gather linked facts in parallel before the recap.
-Unmistakable one-PR projectless work routes to `mono:issue` only when the configured
-lane is enabled and has `ownerPrincipal`; otherwise it goes through a Project.
-Questions concern meaning, at most three, each built on the last answer (one at a time); a route question is separate and may come early from the Linear facts.
-The stage session runs Idea; its orchestrator answers questions with reasons,
-shows the description verbatim as its final message and relays the shown text, question and verbatim owner reply.
-
-Exit requires the owner's approval of What / Why / Target outcome / prioritized
-Unknowns, given by clear agreement in words (or historical press) per `references/owner-dialog.md` (also through the orchestrator with the verbatim owner triple; no owner reply
-means no approval or record), and successful `verify` for that exact Project record. The writing
-and recovery steps live only in `skills/idea/references/record.md`. After «Готово» the
-status stays Idea, confirmed by read-back, then `mono:check idea` must pass. A Project returned
-with the three idea sections unchanged keeps its body, package and status;
-Unknowns may be new. Without those sections, write the approved body and preserve
-old text verbatim in the Brief’s «Отброшено»; Idea never changes the status. Owner corrections to What / Why /
-Target outcome follow that body-write path without an approved package. With an
-approved package, stop before recording and route the correction through
-`mono:handoff` artifact repair, then return to Idea recording and verification.
-Idea creates or updates the Project Brief before its approval comment and adds
-the approval link to the Idea decision row immediately after publication and reads
-it back; recovery lives in `skills/idea/references/record.md`. Unknowns stay in the record. No Research document, PRD, Tech Spec, Issue, implementation
-plan, ExecPlan or code is created here. A refusal returns to Idea.
-
-The next stage is Research (`mono:research`). The description itself is the summary,
-with one line on what Research will check, a position and one contextual question
-as the final message per `references/owner-dialog.md`. Prepare the Research plan before showing it
-(`skills/research/references/plan.md`). After verified recording, give one recording line
-and honor the selected start or deferral; no repeated summary. A later explicit start
-reuses verified approval of the same version. Ordinary Projects need owner start. Delegated Projects
-(PC-019: latest Idea delegation mark or explicit owner decision) allow
-orchestrator Research start after confirmed Idea approval. The Project stays in Idea until then.
-Idea approval is separate from the Handoff start.
+`mono:idea` (`skills/idea/SKILL.md`): turns a raw idea into an Idea Project with an
+owner-approved, read-back `mono-idea` record and Brief, or routes one-PR
+projectless work to `mono:issue`. Next: Research. Gate: `mono:check idea`.
 
 ## Research
 
-`mono:research` gathers facts before choosing a solution, without owner questions or
-a separate yes. Its plan comes from the approved Idea record and the notes block
-«Что всплыло в разговоре»; a legacy Project uses its description. Entered from an Idea
-Project, it needs a fresh `pass` and authorized start (owner, or delegated
-orchestrator per PC-019), checked read-only before any
-Linear write; then it moves the Project to Discovery, reads it back and only then opens
-its stage task. It writes one Research («Исследование») document and one
-comment in its stage task with the stage log, then stops with an answer, advice and next step.
-`mono:discovery` follows. Only a Project on the old path (`skills/check/SKILL.md`, mode
-`discovery`, Old path: a legacy approved package) goes to `mono:handoff`, which repairs
-that package and never writes a new one.
-A Project without Research routes here, except a package approved before
-`researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
-
-Stage transitions: owner sessions continue in the same session after an authorized
-transition, except Design in a separate session whose parent ran Discovery.
-Ordinary Projects need owner Research/work start. Delegated Projects use the
-latest Idea delegation mark (or explicit owner Project comment); only then
-may orchestrator start Research/work itself, `by=orchestrator` with reason and
-countercheck. Handoff asks about starting the shown package in a final text message. Delegation needs explicit owner words.
-Owner's explicit words «передай оркестратору» records `by=owner` and transfers work.
-Stage agents finish with confirmed record and selected transition; orchestrator
-launches the next stage. Each session writes and reads back its own Linear records.
-Single writer applies only to implement/preflight/ship workers' queued mutations.
-Shared `owner-dialog.md` owns the launch-context exception: orchestrator words/reason
-is agreement in words on the shown version, never for Idea or in owner sessions. No stage agents
-spawn stages. Discovery callbacks from Design/Tech Evaluation stay in that session,
-with partial-write recovery unchanged. Every `by=orchestrator` record requires the
-orchestrator's independent countercheck, verdict/model/version and reason outside
-fences in the same comment. Every stage result goes to owner immediately.
+`mono:research` (`skills/research/SKILL.md`): after an authorized start, moves the
+Project to Discovery and writes one «Исследование» document. Next:
+`mono:discovery`, or `mono:handoff` for a Project on the old path
+(`skills/check/SKILL.md`, mode `discovery`).
 
 ## Discovery
 
-`mono:discovery` takes the approved Idea record and Research («Исследование»),
-searches for the solution with the owner in conversation (own view, two or three
-solutions that differ by what the owner gets, a live example), obtains an explicit
-choice and writes the chosen solution's PRD in Linear with clear agreement in words or a historical press
-bound to the shown document version. It runs in
-the owner session or a stage agent launched by the orchestrator; delivery workers
-(codex-cli, claude-cli) do not lead stages. Launch task alone identifies the owner. Details and the selected Research link stay in the Discovery task.
-
-Close/defer is decided by the lead: owner, or orchestrator with a reason. Close
-sets Canceled; defer keeps status, records the return condition in the closed task.
-Both exit without PRD or Handoff. Do not resume deferred work before the condition
-or an owner return. Otherwise gate: `mono:check discovery`, then the route in the PRD approval below.
-Discovery decides whether the solution changes what the user sees (Research
-`interface: true` or an affected screen/window), then PRD size. It writes one
-approval with `design=` and `next=`, with the design reason below.
-A raw implementation plan never authorizes code or Delivery.
-
-Discovery always follows Research. The old path is decided by records, not dates:
-no `mono-prd: approved` record and an approved legacy package (approval comment,
-no package record). Product `discoveryGate.since` no longer changes routing; the key
-stays valid in config. The old-path eligibility and package-aware checks have one home:
-`skills/check/SKILL.md`, mode `discovery`. Tiny Discovery work gets a short PRD.
-Handoff reads the approved PRD only: a finding that needs a PRD change gets the
-owner's answer in Handoff, then Discovery changes the PRD with a renewed approval in
-the same touch and Handoff continues. After authorized start, normal repair/Ship
-drift applies, without rechecking PRD yes.
-
-The entry `fresh` check admits `pass`; owner-led stale/legacy Ideas are shown in
-Handoff and carried only in owner-approved start (legacy: package approval).
-Delegated `stale`/`legacy-migrate` stops autonomous Research/work: carry Idea to
-owner, obtain their agreement in words or historical button approval, confirmed record and fresh check first.
-An orchestrator reply/start never approves that Idea snapshot. Migration alone
-never permits implementation. `no-record` on a new project returns to `mono:idea`.
-Implement checks `approved` before start.
+`mono:discovery` (`skills/discovery/SKILL.md`): finds the solution with the owner
+and writes the PRD with one `mono-prd: approved` record carrying `design=` and
+`next=`, or closes/defers the Project. The old path is decided by records, never
+dates; product `discoveryGate.since` no longer changes routing. Its home is
+`skills/check/SKILL.md`, mode `discovery`, which is also the gate.
 
 ## Design
 
-The Design switch and all new record writers are enabled together, without a
-product override or temporary route. Project contract PC-001 is explicitly
-updated; the PRD contract and its fingerprint stay unchanged.
-Rollback is possible only before the first new-format record (`mono-design`,
-PRD `design=` or `next=design`, tech `design=`); after it, fix forward.
+`mono:design` (`skills/design/SKILL.md`): mockups for a PRD with
+`design=needed next=design`, then one `mono-design: approved` record routing
+ordinary/large work to Tech Evaluation and tiny work to Handoff. Gate:
+`mono:check design`.
 
 ### Record chain
 
@@ -122,188 +53,36 @@ complete comment responses with actual request cursors and run:
 `node <pack-root>/scripts/idea-gate.mjs route --mode fresh --dump <dir> --config <path>`.
 Require exit 0, «Готово», JSON `pass` before deciding which stage checks to skip.
 This also applies without a PRD approval: old-path exemptions apply only after
-`pass`. Damaged records stop at their writer.
-`requiredRecords` names the records to verify; route validates fields and closed
-dictionaries, not freshness or stage completion. `bad-record` stops at its named
-writer stage; it is never absence. `tech` also performs this validation before
-returning `no-record`. The most recent approval by `createdAt` wins; no fallback
-from a damaged newer one. A PRD without `design=` is the Design old path, with
-or without `next=`; it keeps today's Tech Evaluation route. Records, never dates.
+`pass`. `requiredRecords` names the records to verify; route validates fields and
+closed dictionaries, not freshness or stage completion. `bad-record` stops at its
+named writer stage; it is never absence. The most recent approval by `createdAt`
+wins; no fallback from a damaged newer one. A PRD without `design=` is the Design
+old path, with or without `next=`. Records, never dates.
 
-The active record formats are:
-
-```text
-mono-prd: approved project=<uuid> document=<uuid PRD> updatedAt=<ISO> design=needed|not-needed next=<stage> by=owner|orchestrator
-mono-design: approved project=<uuid> prd=<uuid PRD> prd-updatedAt=<ISO> canvas=<https-ссылка> tool=paper|wonder images=<sha256> next=tech-evaluation|handoff by=owner|orchestrator
-```
-
-Discovery writes the design reason below its record. `design=needed` only pairs
-with `next=design`; `design=not-needed` only with `next=tech-evaluation|handoff`,
-or no `next` if the former approval lacked it. Unknown fields, values or other
-combinations are `bad-record`. No separate “design not required” record.
-Design reads legacy `paper=<https>` alone as `canvas` with `tool=paper`.
-Mixed legacy/new fields, an incomplete `canvas`/`tool` pair, or a tool other
-than `paper|wonder` are `bad-record`; a damaged latest record never falls back.
-Next follows the last approval in the chain: PRD → Design when required →
-Tech Evaluation when named → Handoff. Tech Evaluation entry requires its
-predecessor to name `next=tech-evaluation`. Handoff and work start require a valid
-record at every named stage; missing/stale design returns to Design, never skips.
-An existing tech record is still consumed on the old path, even without `next`.
+The chain follows the last approval: PRD → Design when required → Tech Evaluation
+when named → Handoff. Handoff and work start require a valid record at every named
+stage; missing or stale returns to that stage, never skips. Record formats and
+writing order live with their writers: `mono-prd: approved` in
+`skills/discovery/references/prd.md`, `mono-design: approved` in
+`skills/design/references/approval.md`, `mono-tech: approved` with its
+`mono-tech-page` fence in `skills/tech-evaluation/references/spec.md`.
 
 ### Project Brief at stage entry
 
 Research, Discovery, Design, Tech Evaluation and Handoff (including repair) read
 the project Brief first, through the `Бриф:` URL in the Idea approval record.
-No such line means the preserved old path, regardless of project date; Research
-uses `Что всплыло` in that record, or the description and Unknowns if absent.
-A URL requires its actual document with the terminal `mono-brief` block bound to
-this project; missing/unreadable/wrong binding is FAIL → Idea, never a substitute
-Brief or silent fallback. Format and consent rules live in `references/brief.md`,
-read conditionally before writes. Research's private `brief.md` is a research
-frame; the file handed to Design is the designer's assignment. Machine paths stay.
-
-### Designer and approval
-
-`skills/design/SKILL.md` owns the designer, two-layer memory, Paper approval and
-`Design: <project>` task under the stage-task rules. Product memory is outside
-repos under `~/.mono-agent-workflow/design/`; only the designer writes it after
-owner consent. First run asks whom to emulate and confirms two rings of strong
-exemplars. Every run updates production screens if anything merged since the
-last update, reads old Paper threads, design system and taste rules before drawing.
-Feature depth: references, 2–3 layout directions, scenarios, states, with owner
-contact after each. Otherwise one solution over the production screen and one
-showing. The owner can change depth; platforms follow the affected product.
-Inspect exported images before every showing. Comments become an owner rule,
-product rule or one-off fix, with consent before recording a rule.
-
-Approved artboards stay on the task’s Paper page; export them
-as `NN-<name>.png` (ASCII letters, digits, hyphens) into a new immutable version:
-`~/.mono-agent-workflow/design/<slug>/approved/<project uuid>/<first 12 of images>/`.
-Compute `images` within that folder using
-`LC_ALL=C ls *.png | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256`.
-The Design record binds latest PRD approval id/version, Paper page, image hash
-and `next`: ordinary/large PRD to `tech-evaluation`, tiny to `handoff`.
-Design task depth does not change that route. Raw dump also includes `prd.json`;
-run `idea-gate.mjs design --mode fresh --dump <dir> --config <path>`.
-Exit 0, «Готово», JSON `pass` are required; `no-record`, `stale-prd`,
-`stale-images`, `bad-record` stop. Reading is not a substitute.
-
-A PRD correction uses one approval of mockups and «Было / Стало». Discovery
-writes the PRD and its approval with `design=needed next=design`, then Design
-writes its record with the new `prd-updatedAt` in the same touch. Only the first
-succeeded: retry the second under the same approval. Designer never edits PRD.
-Owner-led Discovery asks about approving the shown PRD and starting Design; Desktop opens a fresh
-session via `mcp__ccd_session__start_session` using
-`$TMPDIR/mono-design/<project>/brief.md`; Codex/terminal use that assignment with
-`mono:design`. Design ends after checked recording, without a
-question about starting the next stage. Return: round marker to the waiting Claude Code parent;
-manual in Codex; agent turn end under delegation. Parent verifies the record
-before offering `next`. The orchestrator approves the shown version
-`by=orchestrator` with reason and countercheck. No product memory: the owner
-chooses proposed exemplars; only that Project waits. Taste memory needs owner
-consent. Owner gets each result; Handoff includes design/tech decisions.
-
-### Reapproval and technical evaluation
-
-At every PRD reapproval,
-including the old path, Discovery decides design again, then size and `next`;
-not-needed with a previously absent `next` keeps its absence. A changed route
-invalidates downstream approvals; rerun with showing under the current mode.
-A new-format PRD approval requires lower records created after it even if its
-document version is unchanged; historical approvals without `design=` retain
-their previous freshness semantics until reapproval. Same route: each stage itself decides whether its approved artifact changes.
-Designer sees unchanged screens: new record, same images, new PRD version,
-no showing. Tech lead sees unchanged page: renewed record without showing.
-
-With a valid design record, Tech Evaluation reads its PNGs with the product and
-checks screen risks. An infeasible mockup returns to Design before page showing.
-A PRD item present on approved screens cannot be deferred by the tech lead:
-return to Design before showing, with «предлагаю убрать: …, потому что …» in
-its stage task; new design round and PRD correction through Discovery.
-An item absent from screens may be deferred on the page as today. Its approval
-calls Discovery in the same touch; unchanged screens get a new Design record
-with the same images without showing, then Tech Spec and tech approval.
-`mono-tech` adds optional `design=<latest mono-design comment id>|none`;
-omission means `none`. Mismatch with the latest design record yields
-`stale-design`, so Tech Evaluation reenters on design changes too.
+No such line means the preserved old path. A URL requires its actual document with
+the terminal `mono-brief` block bound to this project; missing/unreadable/wrong
+binding is FAIL → Idea, never a substitute Brief or silent fallback. Format and
+consent rules live in `references/brief.md`.
 
 ## Tech Evaluation
 
-The intended order is Discovery → Tech Evaluation → Handoff for ordinary and
-large Projects; tiny work goes directly to Handoff. Route by records, not dates:
-`next=tech-evaluation|handoff` in `mono-prd: approved`. A PRD approval without
-`next=` is the **Tech Evaluation old path**; the router is unchanged. Handoff
-verifies any effective `mono-tech` for the current PRD: a valid record is consumed
-without another offer. Without one, ordinary/large PRD requires a text question about starting Tech Evaluation. Owner/delegated consent is the request opening that route; without
-it no package or continuation. Tiny work may skip. This differs from Discovery's
-no-PRD old path. Existing tech is consumed even on the Design old path.
-Discovery first decides design at every approval, then size: needed goes to
-Design; its approval routes ordinary/large to Tech Evaluation and tiny to
-Handoff. Not-needed goes there directly. Reapproval recomputes the route by
-size; only not-needed with a previously absent `next=` preserves absence.
-The requested old-path deferred-item callback records `next=tech-evaluation`.
-Changed routes invalidate lower approvals; same route allows renewal without
-showing only when that stage itself confirms unchanged screens/page.
-
-Tech Evaluation owns the technical decision and new Tech Spec. Owner-led: show
-one page with a position and contextual question as the final message per `references/owner-dialog.md`,
-on that exact version, `by=owner`. Orchestrator-led:
-the stage agent runs the same stage; orchestrator approves `by=orchestrator`
-with a reason, including irreversible decisions, a deferred PRD item and a
-line against an earlier owner decision. No owner window or escalation inside
-that stage; owner receives its result immediately with approval reason.
-Ordinary work starts `by=owner`; delegated work allows `by=orchestrator` with reason. This is a stage decision, not permission for
-external writes, spending or production actions.
-
-### Tech approval record
-
-One Project comment: first a `text` fence with the exact first line
-`mono-tech: approved project=<uuid> prd=<uuid PRD> prd-updatedAt=<ISO> spec=<uuid Tech Spec> spec-sha256=<sha256> page-sha256=<sha256> by=owner|orchestrator design=<latest mono-design id>|none`,
-then a `mono-tech-page` fence with the exact approved page, then the approval
-provenance/reason outside the fences. Hash the page's lines between fences as
-UTF-8 with final LF. Hash the Spec's exact body returned by fresh Linear read-back.
-
-Order: approve the shown page; apply any deferral through Discovery below;
-write and read back Tech Spec; write the record; read it back and verify.
-Before writing, re-read PRD: a version different from the shown page requires
-a new page. Exceptions are precisely the approved deferred item and the Handoff
-reentry with an unchanged page described below; the first approval never reuses
-a page across PRD versions. The record is effective
-while `prd-updatedAt` equals the latest PRD approval (and its fresh document)
-and `spec-sha256` equals the fresh Spec body. Spec `updatedAt` is deliberately
-ignored because a document comment changes it. Latest means comment `createdAt`,
-not edit time. Never fall back from a damaged newer approval to an older one.
-
-Save raw Linear responses unchanged to `project.json`, every `comments-N.json`
-and `comments-N.request.json` ({} first, then the actual previous cursor),
-`prd.json`, `tech-spec.json`. Document fields: `id`, `content`, `project.id`
-(or `projectId`), PRD `updatedAt`. Run
-`node <pack-root>/scripts/idea-gate.mjs tech --mode fresh --dump <dir> --config <path>`.
-Require exit 0, «Готово» and JSON code `pass`; failure codes are `no-record`,
-`stale-prd`, `stale-spec`, `stale-design`, `bad-record`, with «Стоп: <причина>». Reading instead
-of running the command cannot authorize the step.
-
-Handoff verifies at entry and before recording the start every stage named by
-`route.requiredRecords`, in order: Design then Tech Evaluation when required.
-Missing/stale approval returns to its stage. The old path without a required
-record keeps its exemptions, only after route validation. Before start,
-a PRD edit calls Tech Evaluation in the same touch. Only that stage decides
-whether a page line changes: unchanged renews the record with the new PRD
-version without showing the page again; changed requires a new page. This
-exception is only for Handoff reentry before start, never a PRD version change
-during the first approval. After start, repair and accepted
-pre-ship drift own Spec changes, not a routine approval-freshness recheck.
-
-### Deferred PRD item
-
-Approval of a page with «предлагаю отложить» is the decision; no second stop.
-Tech Evaluation calls Discovery in the same touch. Only Discovery moves that
-item into «Что не входит в MVP», records a new `mono-prd: approved`, deciding design then size again
-(on the owner-requested old path without mockups, `next=tech-evaluation`), and appends a
-line to its closed stage task's decision comment without reopening the task.
-Owner-led: `by=owner` and «Владелец: ответил «<verbatim reply to the tech page>»».
-Orchestrator-led: `by=orchestrator` with the reason. Then Tech Evaluation writes
-the Spec and `mono-tech` with the new PRD version and latest design id. It never edits PRD itself.
+`mono:tech-evaluation` (`skills/tech-evaluation/SKILL.md`): for PRD
+`next=tech-evaluation` (or the owner-requested Tech Evaluation old path, PRD
+without `next=`), chooses one technical solution, gets the page approved and
+writes the Tech Spec and its `mono-tech: approved` record. Next: Handoff. Gate:
+`mono:check tech`.
 
 ## Задачи этапов
 
@@ -322,7 +101,7 @@ Implementation — инженер.
 целиком: `Research: <проект>`, `Discovery: <проект>` и так же для остальных.
 Открытую берёт, закрытую при повторном входе открывает. Исключение для Discovery:
 перенос отложенного пункта по утверждённой странице техлида дописывает комментарий
-решений закрытой задачи без открытия (Tech Evaluation, «Deferred PRD item» выше).
+решений закрытой задачи без открытия (`skills/discovery/references/prd.md`).
 Другое исключение: отложенная,
 у которой условие возврата не наступило и владелец её не вернул; этап говорит,
 до чего отложено, и останавливается, задачу не открывает. Нет задачи: заводит по
@@ -339,38 +118,11 @@ Research проверяет вход до любых записей и при о
 
 ## Handoff
 
-The team lead reconciles the approved inputs and slices the work; it writes no PRD
-or Tech Spec.
-
-Required:
-
-- Entry through `mono:check discovery`: approved idea, Research, PRD approved on its
-  current version. Otherwise the Project returns to the owner stage of what is missing.
-- Reconciliation of Project, Research, PRD and, when they exist, Tech Spec and design.
-- Owner questions only for choices that change what the user gets or what is out of
-  scope, or that are irreversible, lose data or cost money; a PRD change goes to
-  Discovery in the same touch.
-- One look at the product code before slicing.
-- One execution Issue by default; a second and third by a recorded reason; more only
-  with the owner's answer.
-- `mono:review handoff` and a second voice on another model, both before the first
-  Linear write, each finding fixed or declined with a reason (tiny: advisory).
-- One package record as a Project comment, then execution Issues, `mono:check handoff`,
-  and Ready set and read back. If Ready is absent from the workspace, keep Discovery;
-  the check reports that fallback.
-- Final message, the summary, position and one contextual text question as the final message.
-- Authorized start written/read back: ordinary `by=owner` after clear agreement in words or a historical button press;
-  delegated `by=orchestrator` with reason/countercheck per PC-019.
-
-Forbidden:
-
-- Writing or changing PRD or Tech Spec.
-- Code changes or PR creation during handoff.
-- Starting ordinary work without owner start, or orchestrator start without delegation.
-- Moving the Project to Delivery from `mono:handoff`; Delivery Start belongs to `mono:implement`.
-
-A legacy package (approved by the earlier Handoff, no package record) keeps its
-Tech Spec, approval and repair rules.
+`mono:handoff` (`skills/handoff/SKILL.md`): reconciles the approved inputs, slices
+execution Issues, writes one package record, sets Ready and brings the owner one
+summary for the start. It writes no PRD or Tech Spec, changes no code and never moves
+the Project to Delivery. A legacy package (approved by the earlier Handoff, no
+package record) keeps its Tech Spec, approval and repair rules.
 
 Gate: `mono:review handoff` when required or advisory, then `mono:check handoff`.
 
@@ -435,26 +187,13 @@ Gate: `mono:check issue`.
 
 ## Delivery
 
-Prepare and run implementation from approved Linear Issue(s). Delivery starts through `mono:implement` only after execution Issue(s) exist and implementation is ready to begin. Start from Ready; Discovery is accepted for a legacy Project or any Project whose workspace has no Ready status, with package checks passed.
-
-Required:
-
-- Project in Delivery.
-- Current PRD.
-- Current package record (legacy: Tech Spec or explicit no-spec exception).
-- Execution Issue(s) from that package.
-- The authorized start record per PC-016/019 (legacy: package approval) covers the current Issue set and allows implementation start.
-- Required review findings resolved, accepted, or explicitly deferred.
-- Implementation starts from the approved Issue(s), not from raw discovery output.
-- `mono:implement` verifies or obtains implementation-start approval, moves the Project to Delivery, runs or reports `mono:check delivery`, records the start comment, and implements the Issue with its own engineering rules.
-- `mono:implement` exits as `implemented-needs-preflight`, `blocked`, `scope-drift-needs-handoff`, or `needs-human`.
-
-Forbidden:
-
-- Passing delivery readiness with only PRD and Tech Spec.
-- Moving to Delivery without authorized start per PC-016/019 (legacy: approval authorizing start).
-- Starting implementation from a raw `/office-hours`, `/brainstorming`, or review plan.
-- Creating PRs, running pre-ship review/check, deploy, or closeout from `mono:implement`.
+`mono:implement` (`skills/implement/SKILL.md`) starts Delivery from approved
+execution Issue(s) after the authorized start per PC-016/019 (legacy: package
+approval) covers the current Issue set. Start from Ready; Discovery is accepted for a
+legacy Project or a workspace without Ready, with package checks passed. It moves the
+Project to Delivery and never creates PRs, runs pre-ship review/check, deploys or
+closes out. Independent QA (`mono:qa`) and code review (`mono:code-review`) run
+before merge by their own rules.
 
 Gate: `mono:check delivery`.
 
@@ -484,27 +223,10 @@ Gate: `mono:preflight` certificate, then `mono:ship`.
 
 ## Ship
 
-Create, document, and stabilize a PR without losing Linear source of truth.
-
-Required:
-
-- Read the `mono:preflight` certificate when present. If no recoverable certificate exists, route to `mono:preflight` before continuing.
-- `mono:review pre-ship` when risk is standard, deep, risky, or implementation materially drifted from Linear artifacts.
-- `mono:check pre-ship`.
-- Delegate PR creation to configured ship workflow.
-- Issue moves to `In Review` after PR creation.
-- Run the configured Documentation workflow before final green when configured.
-- If documentation changes the PR head, rerun review/check stabilization on the new head.
-- If configured, delegate review feedback stabilization to the configured resolver.
-- Run installed gate.mjs ship on live checks, reviews, threads and Greptile until current-head evidence passes its configured pause or the hard deadline parks the delivery.
-- Record `mono-ship green certificate` with PR URL, head SHA, CI, Greptile, unresolved feedback count, merge state, checked/not-checked boundary, and next `mono:deploy`.
-
-Forbidden:
-
-- Merging or deploying.
-- Closing Linear Issues as shipped.
-- Running post-ship check.
-- Recording deploy evidence or operational learnings.
+`mono:ship` (`skills/ship/SKILL.md`) creates, documents and stabilizes the PR from a
+`mono:preflight` certificate, runs `mono:check pre-ship`, moves the Issue to
+`In Review` and records `mono-ship green certificate`. It never merges, deploys,
+closes Issues or records deploy evidence.
 
 Gate: `mono-ship green certificate`, then `mono:deploy`.
 
