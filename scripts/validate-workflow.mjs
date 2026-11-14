@@ -6048,6 +6048,7 @@ const STRING_PINS = [
   ["skills/issue/references/decisions.md","--issue <issue-body> --emit-fingerprint"],
   ["skills/issue/references/decisions.md","--issue <live-issue-body> --emit-fingerprint"],
   ["skills/issue/SKILL.md","--approval-verified"],
+  ["references/orchestration.md","mono:check issue"],
   ["skills/issue/SKILL.md","scripts/resolve-issue-context.mjs"],
   ["skills/issue/SKILL.md","issueOnlyLane.ownerPrincipal"],
   ["skills/issue/SKILL.md","route_revision"],
@@ -6513,7 +6514,12 @@ const ISSUE_RECOVERY_CASES = [
   "revoke-write-failed",
   "yes-later-label-removed-no-answer",
   "yes-stop-label-removed-no-answer",
-  "edit-label-removed-no-answer"
+  "edit-label-removed-no-answer",
+  "recovery-permit-superseded",
+  "recovery-new-yes-label",
+  "recovery-new-yes-label-no-answer",
+  "recovery-new-yes-comment-failed",
+  "recovery-new-yes-comment"
 ];
 
 const MACHINE_TOKENS = new Set([

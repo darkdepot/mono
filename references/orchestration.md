@@ -264,6 +264,10 @@ A fresh orchestrator session rebuilds state without loss:
    current verbatim owner answer. The stage completes that answer by its recovery
    rules; it never treats a fail-closed result as approval. If it cannot complete,
    tell the owner «старта нет». Deferred and revoked Issues never start autonomously.
+   Before starting a not-yet-started candidate, even one already read as
+   `approved-fresh`, run a separate `mono:check issue` in issue-only mode and
+   require `PASS`. The marker does not prove that this check ran before an
+   interruption; `mono:check delivery` does not replace it. On failure, «старта нет».
    Already-started Issues follow the existing Resume rules, not intake recovery;
    terminal Issues are excluded. Missing label is not discovered by this label
    search; a known in-session incomplete answer still belongs to the stage.
