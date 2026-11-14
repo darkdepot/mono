@@ -102,8 +102,8 @@ for (const [file, snippets] of [
   [
     "skills/check/SKILL.md",
     [
-      "Judge artifact shape by semantics before exact heading spelling",
-      "Do fail when a document has the wrong responsibility",
+      "Форму документа суди по смыслу, не по написанию заголовка",
+      "FAIL, когда у документа\n  чужая ответственность",
     ],
   ],
 ]) {
