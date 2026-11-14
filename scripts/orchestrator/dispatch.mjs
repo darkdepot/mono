@@ -43,7 +43,7 @@ export async function dispatch(args) {
 
 async function prepareDispatch(args) {
   allowedFlags(args, ["issue", "root", "config", "snapshot", "risk", "critical", "profile", "handshake", "role", "reason", "full-snapshot", "preapply",
-    "skills-root", "moves", "gates", "open-decisions", "verification", "review-dataset", "review-dataset-version", "worker-writable-roots", "release"]);
+    "skills-root", "moves", "gates", "open-decisions", "verification", "worker-writable-roots", "release"]);
   if (args.release !== undefined && !["true", "false"].includes(args.release)) throw new Error("--release must be true or false");
   const release = args.release === "true";
   const issue = args.issue;
@@ -122,10 +122,7 @@ async function prepareDispatch(args) {
   const modelFile = path.join(output, "model-request.json"); atomicJson(modelFile, { ...gate, role });
   const modelRoutes = JSON.parse(run("spawn.mjs", ["--pins", modelFile]));
   const pins = { ...gate, release, modelRoutes, shipBotChecks: shipBotChecks(baseConfig), product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
-    risk, critical, afk, openDecisions, workerWritableRoots: roots, packageKind: seam.package_kind,
-    reviewDataset: args["review-dataset"] ?? settings.reviewDataset ?? null, reviewDatasetVersion: Number(args["review-dataset-version"] ?? settings.reviewDatasetVersion ?? 0) };
-  // An explicit dataset stays bound and archived; none is created by default (reviewers never read it).
-  pins.reviewDatasetDigest = pins.reviewDataset ? sha256File(pins.reviewDataset) : null;
+    risk, critical, afk, openDecisions, workerWritableRoots: roots, packageKind: seam.package_kind };
   atomicJson(gateFile, gate); atomicJson(movesFile, moves);
   const snapshot = path.join(output, "snapshot"), preparedSnapshot = fs.mkdtempSync(path.join(output, "snapshot-"));
   let designSnapshot, chainSnapshot;
@@ -165,8 +162,7 @@ async function prepareDispatch(args) {
   const waitCommand = location => `node ${q(path.join(directory, "../delivery-state.mjs"))} wait-ack --root ${q(args.root)} --issue ${q(issue)} --attempt ${q(attempt)} --ack ${q(location)} --moves ${q(movesFile)} --config ${q(args.config)}`;
   const collectionRequest = { product, root: pins.root, worktree, head: "HEAD", collectionId: "preflight-collect:HEAD:1", packRoot, skillsRoot,
     baseRef: pins.baseRef, evidenceRoot, modelRoutes: pins.modelRoutes, verification: pins.verification, risk: pins.risk, critical: pins.critical,
-    workerWritableRoots: pins.workerWritableRoots, idea: pins.idea, ...(pins.reviewDataset ? { reviewDataset: pins.reviewDataset } : {}),
-    reviewDatasetVersion: pins.reviewDatasetVersion, pins: { file: pinsFile, digest: pinsDigest }, collect: false };
+    workerWritableRoots: pins.workerWritableRoots, idea: pins.idea, pins: { file: pinsFile, digest: pinsDigest }, collect: false };
   const values = { issue, title: body.split("\n")[0].replace(/^#+\s*/u, ""), attempt, handshake, profile, pins_file: pinsFile, pins_digest: pinsDigest,
     collection_request: JSON.stringify(collectionRequest, null, 2),
     gate_request: gateFile, runtime_scripts: path.resolve(directory, ".."), product, evidence_root: evidenceRoot, model_routes: JSON.stringify(modelRoutes),
@@ -220,7 +216,7 @@ async function prepareDispatch(args) {
 if (isMain(import.meta.url)) {
   try {
     const args = commandFlags(process.argv.slice(2), ["preapply", "full-snapshot"]);
-    if (args.help) console.log("Usage: dispatch.mjs --issue KEY --root DIR --config FILE --snapshot DIR [--risk tiny|standard|deep|risky] [--critical TEXT] [--profile short|full] [--handshake wait|resume] [--role worker-default|worker-complex|worker-claude --reason TEXT] [--preapply] [--full-snapshot] [--release true|false]\nExplicit facts: --moves JSON --open-decisions N --verification JSON [--gates JSON] [--skills-root DIR] [--worker-writable-roots JSON] [--review-dataset FILE --review-dataset-version N]. Facts may use orchestration.dispatch config defaults. --preapply applies approved .agents/ bytes under a configured mandate before start gates. Project repo derives from the config path; worktree .worktrees/KEY and branch mono/key start at origin/main. Issue-only uses issue-only.json with marker/label/fingerprint/config/ownerApproval/seam; no Project docs. Every pre-spawn refusal leaves attempts unregistered.");
+    if (args.help) console.log("Usage: dispatch.mjs --issue KEY --root DIR --config FILE --snapshot DIR [--risk tiny|standard|deep|risky] [--critical TEXT] [--profile short|full] [--handshake wait|resume] [--role worker-default|worker-complex|worker-claude --reason TEXT] [--preapply] [--full-snapshot] [--release true|false]\nExplicit facts: --moves JSON --open-decisions N --verification JSON [--gates JSON] [--skills-root DIR] [--worker-writable-roots JSON]. Facts may use orchestration.dispatch config defaults. --preapply applies approved .agents/ bytes under a configured mandate before start gates. Project repo derives from the config path; worktree .worktrees/KEY and branch mono/key start at origin/main. Issue-only uses issue-only.json with marker/label/fingerprint/config/ownerApproval/seam; no Project docs. Every pre-spawn refusal leaves attempts unregistered.");
     else console.log(JSON.stringify(await dispatch(args)));
   } catch (error) { console.error(`dispatch: ${error.message}`); process.exitCode = 1; }
 }

@@ -40,7 +40,7 @@ function installedAdmissionFixture(runtime, file, cwd, env) {
 import {atomicJson,packLayout} from ${JSON.stringify(pathToFileURL(path.join(runtime, 'runtime.mjs')).href)};
 import {admitCollection,sha256File} from ${JSON.stringify(pathToFileURL(path.join(runtime, 'orchestrator/command-state.mjs')).href)};
 import {ideaAttemptFixture} from ${JSON.stringify(pathToFileURL(path.join(runtime, 'fixtures/idea-dispatch.mjs')).href)};
-const request=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),root=request.root;delete request.pins;request.reviewDatasetVersion??=0;
+const request=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),root=request.root;delete request.pins;
 fs.mkdirSync(request.evidenceRoot,{recursive:true});
 const identity=packLayout(request.skillsRoot).identity(),pinsFile=path.join(root,'dispatch',request.issue+'-a1','pins.json');
 request.idea=ideaAttemptFixture(path.join(path.dirname(pinsFile),'snapshot'),request.issue);
@@ -65,6 +65,7 @@ await admitCollection(root,{...entry,phase:'preflight',sequence:1,kind:'confirma
     // Archive a legacy mutable fixture for old route/sandbox readback cases.
     // Keep the native pinned immutable history untouched for admission/counting.
     if(request.collect===true) {
+      fs.unlinkSync(path.join(request.root, "workers.json"));
       const receiptFile=path.join(request.evidenceRoot,request.head+'.json');
       if(fs.existsSync(receiptFile)) {
         const envelope=json(receiptFile);delete envelope.receipt.pins;delete envelope.receipt.idea;
@@ -268,46 +269,11 @@ process.exit(r.status===null?1:r.status);` });
 
     assert.equal(fs.existsSync(envelope.receipt.verification.sandbox.tempRoot), false);
     assert.equal(envelope.receipt.base, head);
-    const datasetFile = path.join(preflight.evidenceRoot, "datasets", "MONO-998-review-scope.md");
-    const datasetText = "Orchestrator-owned fixture scope decisions.\n";
-    write(path.join(repo, ".git/info/exclude"), ".orchestrator/\n");
-    write(datasetFile, datasetText);
-    const datasetRequest = { ...preflight, reviewDataset: datasetFile };
-    write(gateRequest, { ...datasetRequest, collect: true }); pass(preflightCall());
-    const datasetEnvelope = json(receiptFile), datasetReceipt = datasetEnvelope.receipt;
-    assert.equal(validateCollectionConfirmation(collectionReport, firstConfirmation), true, "later collection does not change earlier confirmation identity");
-    const datasetDigest = crypto.createHash("sha256").update(datasetText).digest("hex");
-    const datasetCopy = `.orchestrator/review-dataset-${datasetDigest.slice(0, 8)}.md`;
-    assert.deepEqual(datasetReceipt.reviewDataset, { source: datasetFile, digest: datasetDigest, copy: datasetCopy, version: 1, archive: path.join(fs.realpathSync(preflight.evidenceRoot), "datasets", "MONO-998-review-scope.v1.md") });
-    assert.equal(fs.existsSync(path.join(repo, datasetCopy)), false, "the dataset is bound, never copied into the worktree");
-    assert.equal(fs.readFileSync(datasetFile, "utf8"), datasetText, "orchestrator source is unchanged");
-    assert.equal(datasetReceipt.evidenceRoot, fs.realpathSync(preflight.evidenceRoot));
-    write(gateRequest, datasetRequest); pass(preflightCall());
-    const datasetEvidenceAlias = path.join(root, "dataset-evidence-alias");
-    fs.symlinkSync(preflight.evidenceRoot, datasetEvidenceAlias, "dir");
-    write(gateRequest, { ...datasetRequest, evidenceRoot: datasetEvidenceAlias }); pass(preflightCall());
-    write(gateRequest, { ...datasetRequest, evidenceRoot: fs.realpathSync(preflight.evidenceRoot) }); pass(preflightCall());
-
-    write(gateRequest, preflight); assert.match(preflightCall().stdout, /receipt reviewDataset differs/);
-    const otherDataset = path.join(preflight.evidenceRoot, "datasets", "other.md"); write(otherDataset, datasetText);
-    write(gateRequest, { ...datasetRequest, reviewDataset: otherDataset });
-    assert.match(preflightCall().stdout, /receipt reviewDataset differs/);
-    write(datasetFile, datasetText + "Changed decision.\n"); write(gateRequest, datasetRequest);
-    assert.match(preflightCall().stdout, /receipt reviewDataset differs/);
-    write(datasetFile, datasetText); pass(preflightCall());
+    assert.equal(validateCollectionConfirmation(collectionReport, firstConfirmation), true, "later collection preserves earlier confirmation identity");
     setReview(bin, { findings: blocking });
-    write(gateRequest, { ...datasetRequest, collect: true });
+    write(gateRequest, { ...preflight, collect: true });
     assert.match(preflightCall().stdout.trim(), /^gate preflight: fail: review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 tracked\.txt:1 Invalid input is accepted \(when: value is negative; why: The changed line accepts the value\.\)$/);
     setReview(bin, { findings: [] });
-    write(receiptFile, datasetEnvelope); write(gateRequest, datasetRequest); pass(preflightCall());
-    const outsideDataset = path.join(root, "outside.md"); write(outsideDataset, datasetText);
-    const aliasDataset = path.join(preflight.evidenceRoot, "datasets", "alias.md"); fs.symlinkSync(outsideDataset, aliasDataset);
-    for (const collect of [true, false]) {
-      for (const reviewDataset of ["relative.md", outsideDataset, aliasDataset]) {
-        write(gateRequest, { ...datasetRequest, reviewDataset, collect });
-        assert.match(preflightCall().stdout, /reviewDataset must be (an absolute path under|under) evidenceRoot/);
-      }
-    }
     write(receiptFile, envelope); write(gateRequest, preflight); pass(preflightCall());
     // Request pins describe the worker boundary; they never become collector grants.
     const broadRequest = { ...preflight, collect: true, workerWritableRoots: [repo, state, path.join(state, "confirmations")] };
@@ -484,14 +450,14 @@ console.log(JSON.stringify(result));
     const registryFile = path.join(state, "workers.json"), registryBefore = fs.existsSync(registryFile) ? fs.readFileSync(registryFile) : null;
     const launchPins = path.join(state, "dispatch/MONO-998-a1/pins.json");
     const idea = ideaAttemptFixture(path.join(path.dirname(launchPins), 'snapshot'), 'MONO-998');
-    const boundPins = { ...preflight, idea, reviewDataset: null, reviewDatasetVersion: 0, reviewDatasetDigest: null };
+    const boundPins = { ...preflight, idea };
     write(launchPins, boundPins);
     const pinsBinding = { file: launchPins, digest: crypto.createHash("sha256").update(fs.readFileSync(launchPins)).digest("hex") };
     write(registryFile, { "MONO-998": { ...pins, issue: "MONO-998", attempt: 1, stage: "mono-deliver", worktree: repo, pins: pinsBinding, pinsVersion: 0 } });
     const history = path.join(preflight.evidenceRoot, "history"), savedHistory = history + ".saved";
     fs.renameSync(history, savedHistory);
     try {
-      write(gateRequest, { ...proofRequest, preflight: { ...preflight, idea, pins: pinsBinding, reviewDatasetVersion: 0 } });
+      write(gateRequest, { ...proofRequest, preflight: { ...preflight, idea, pins: pinsBinding } });
       const missing = shipCall(); assert.equal(missing.status, 1); assert.match(missing.stdout, /missing or stale review receipt/u);
       assert.ok(!missing.stdout.includes("publishRequest") && !missing.stdout.includes("pending"));
     } finally {
@@ -527,6 +493,25 @@ console.log(JSON.stringify(result));
     assert.ok(greenShip.stdout.includes(`preflight receipt: ${fs.realpathSync(receiptFile)}`));
     assert.equal(json(shipRequest.stateFile).preflightReceipt.path, fs.realpathSync(receiptFile));
     assert.equal(json(shipRequest.stateFile).preflightReceipt.runId, envelope.receipt.runId);
+
+    // AC4: ship also reads both historical signed receipt shapes under registered pins.
+    for (const populated of [false, true]) {
+      const archive = path.join(preflight.evidenceRoot, "datasets/old.v1.md"); write(archive, "Old archived context.\n");
+      const legacyFields = { reviewDataset: populated ? archive : null, reviewDatasetVersion: populated ? 1 : 0,
+        reviewDatasetDigest: populated ? crypto.createHash("sha256").update(fs.readFileSync(archive)).digest("hex") : null };
+      write(launchPins, { ...boundPins, ...legacyFields });
+      const binding = { file: launchPins, digest: crypto.createHash("sha256").update(fs.readFileSync(launchPins)).digest("hex") };
+      write(registryFile, { "MONO-998": { ...pins, issue: "MONO-998", attempt: 1, stage: "mono-deliver", worktree: repo, pins: binding, pinsVersion: 0 } });
+      const oldReceipt = { ...envelope.receipt, idea, pins: binding, reviewDataset: populated ? { source: archive, archive,
+        version: 1, digest: legacyFields.reviewDatasetDigest, copy: ".orchestrator/review-dataset-old.md" } : null };
+      saveFixtureReceipt(oldReceipt);
+      const oldRequest = { ...preflight, idea, pins: binding, reviewDatasetVersion: legacyFields.reviewDatasetVersion,
+        ...(populated ? { reviewDataset: archive } : {}) };
+      const compatibilityShip = { ...shipRequest, preflight: oldRequest, stateFile: path.join(root, `old-shape-${populated}.json`) };
+      write(gateRequest, compatibilityShip); assert.match(pass(shipCall()).stdout, /^gate ship: pass:/);
+    }
+    if (registryBefore) fs.writeFileSync(registryFile, registryBefore); else fs.unlinkSync(registryFile);
+    write(receiptFile, envelope);
 
     for (const status of [403, 404]) {
       const unavailable = { ...shipRequest, stateFile: path.join(root, `rules-${status}.json`) };

@@ -332,8 +332,7 @@ after launch.lock verifies unchanged attempt/thread, current version, prior resu
 and wait record. Restore prior grants and keep the version prepared for retry
 after worker exit. Changed state, post-spawn refusal or ambiguous failure retains
 all evidence and refuses automatic restart; correlated delivery recovers forward.
-Risk/critical only escalate; dataset changes
-require a newer --review-dataset-version; --worker-writable-roots must be the
+Risk/critical only escalate; --worker-writable-roots must be the
 complete effective grants; --full-snapshot --snapshot DIR includes the full docs
 in the resume amendment. The document bytes participate in amendment identity;
 changed bytes require a new version even at the same source path. The version
@@ -354,12 +353,11 @@ provisional grant expansion from an interrupted resume cannot become its baselin
 canonical digest of launch pins overlaid with that amendment version. New bound requests
 derive their version from pins.file (pins.json = 0; pins.v<n>.json = n), require the
 current registry version, and match the full file path, digest and effective
-request/grant fields, including reviewDatasetVersion and dataset path. The stale
+request/grant fields. The stale
 version refusal names the full expected pins path; no report version is required.
-Previously admitted requests recover before new-request checks; legacy admission
-and U14 report-digest/registry-version bindings remain; attention also tracks current decision state. Omitted
-reviewDatasetVersion means version 0 only for an unversioned baseline; it cannot
-bypass a newer amendment. Identical previously admitted requests remain recoverable under their
+Previously admitted requests recover before new-request checks; U14 report-digest/registry-version
+bindings remain; attention also tracks current decision state. Registered launch pins
+require request pins. Identical previously admitted requests remain recoverable under their
 original version. MONO-96 owns receipt collection/recovery, not these commands.
 
 Validate identity/attempt/head/sequence and full queue, including comments and
@@ -384,7 +382,7 @@ Validate the single-item confirmation-request against dispatch product, pinned
 installed skillsRoot, risk/critical, verification command, worktree/head/base and
 evidenceRoot. On spawn, pin evidenceRoot and the complete workerWritableRoots in the request/registry. On resume, any extra grant requires an amended dispatch with the complete effective list; the runtime refuses evidence-root overlap and persists effective grants before launch. Build collection and worker verification requests from these current pins, never an earlier dispatch. Use ~/.mono-agent-workflow/evidence/<product>/ outside EVERY
 worker-writable root (including the orchestrator root and temporary grants).
-Only the orchestrator outside all worker sandboxes runs collect:true. An optional reviewDataset pin stays bound in the receipt as {source,digest,copy} and archived; reviewers do not receive it. The gate first runs the read-only review round ([Review rounds](#review-rounds)) on an export of the pinned tree; only after `clean` or `clean-with-successors` it
+Only the orchestrator outside all worker sandboxes runs collect:true. The gate first runs the read-only review round ([Review rounds](#review-rounds)) on an export of the pinned tree; only after `clean` or `clean-with-successors` it
 runs verification inside codex sandbox with the worktree and one private temp directory writable. On macOS verification also grants the realpath of `getconf DARWIN_USER_TEMP_DIR` when available: Apple tools write there independently of TMPDIR. Before sandbox launch reject overlap with evidenceRoot, orchestrator root, skillsRoot and packRoot; such a refusal is recorded in the signed receipt, so the completed round is kept. Unavailable Darwin temp leaves the existing verification grants; other platforms are unchanged. Keep TMPDIR/TMP/TEMP in the invocation's private directory. Never use workerWritableRoots as collector grants; keep all orchestrator control state read-only. Exclude skillsRoot/evidenceRoot; a denial probe fails closed if that
 boundary is missing. Record the probe independently of the command exit code. Pause the worker during collection. Repository-configured executable Git filters are unsupported by privileged gate reads: the gate refuses before execution. If a product requires such filters, obtain a trusted isolation policy instead of disabling this check. Reconcile
 an existing authenticated receipt matching request.collectionId and all pins before repeating collection; failed

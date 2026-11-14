@@ -76,6 +76,16 @@ const fixtureReady = child => new Promise((resolve, reject) => {
   child.once("message", ready); child.once("error", failed); child.once("close", closed);
 });
 
+test("removed review-dataset flags are unknown to dispatch and amend", () => {
+  for (const [script, prefix] of [["dispatch", []], ["accept", ["amend"]]]) {
+    for (const flag of ["--review-dataset", "--review-dataset-version"]) {
+      const result = spawnSync(process.execPath, [path.join(checkout, "scripts/orchestrator", script + ".mjs"), ...prefix, "--root", os.tmpdir(), flag, "1"], { encoding: "utf8" });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr + result.stdout, new RegExp("unknown.*" + flag.slice(2), "i"));
+    }
+  }
+});
+
 test("fixture cleanup waits for its own delayed child to exit", async () => {
   const child = spawn(process.execPath, ["-e", `
 process.on("SIGTERM", () => setTimeout(() => process.exit(0), 200));
@@ -101,7 +111,7 @@ test("amend collection pins-file contracts", async t => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-amend-admission-"));
   const root = path.join(scratch, "root"), issue = "MONO-999", head = "a".repeat(40);
   const file = path.join(root, "dispatch", `${issue}-a1`, "pins.json");
-  const pins = { product: "fixture", root, worktree: scratch, evidenceRoot: scratch, workerWritableRoots: [scratch], reviewDatasetDigest: null, reviewDatasetVersion: 0 };
+  const pins = { product: "fixture", root, worktree: scratch, evidenceRoot: scratch, workerWritableRoots: [scratch] };
   const entry = { issue, attempt: 1, stage: "mono-deliver", packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4,
     pins: { file, digest: null }, pinsVersion: 1 };
   const reportFor = number => {
@@ -624,13 +634,19 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
       assert.equal(fs.existsSync(path.join(repo, ".worktrees/MONO-998")), false, "incomplete lane refuses before worktree preparation");
     }
     write(path.join(laneSnapshot, "issue-only.json"), lane);
-    const launchDataset = path.join(scratch, "evidence/datasets/launch-fixture.md"); write(launchDataset, "Approved launch decisions.\n");
-    const laneLaunch = JSON.parse(pass(run(process.execPath, [command, ...laneOptions, "--review-dataset", launchDataset, "--review-dataset-version", "7"]))); livePid = processes.track(laneLaunch.pid);
+    // AC4 config compatibility: obsolete defaults are ignored even when unreadable.
+    const laneConfigFile = laneOptions[laneOptions.indexOf("--config") + 1], laneConfig = readJson(laneConfigFile);
+    laneConfig.orchestration.dispatch = { ...laneConfig.orchestration.dispatch, reviewDataset: "/missing/retired.md", reviewDatasetVersion: 7 };
+    atomicJson(laneConfigFile, laneConfig);
+    const laneLaunch = JSON.parse(pass(run(process.execPath, [command, ...laneOptions]))); livePid = processes.track(laneLaunch.pid);
     const lanePins = readJson(laneLaunch.pins.file);
     assert.equal(lanePins.idea.verdict, 'issue-only');
     assert.equal(fs.existsSync(path.join(laneLaunch.snapshot, 'research')), false, 'projectless dispatch succeeds without research/');
-    assert.equal(lanePins.reviewDataset, launchDataset); assert.equal(lanePins.reviewDatasetVersion, 7);
-    assert.equal(lanePins.reviewDatasetDigest, createHash("sha256").update(fs.readFileSync(launchDataset)).digest("hex"));
+    await t.test("AC4 new launch schema ignores old config defaults", () => {
+      const sample = JSON.parse(/## Запрос сбора[\s\S]*?```json\n([\s\S]*?)```/u.exec(fs.readFileSync(laneLaunch.dispatchFile, "utf8"))[1]);
+      for (const value of [lanePins, sample]) for (const field of ["reviewDataset", "reviewDatasetVersion", "reviewDatasetDigest"])
+        assert.equal(Object.hasOwn(value, field), false);
+    });
     const laneRendered = fs.readFileSync(laneLaunch.dispatchFile, "utf8");
     assert.ok(laneRendered.includes(fingerprint));
     assert.equal(fs.existsSync(path.join(laneLaunch.snapshot, "prd.md")), false); assert.equal(fs.existsSync(path.join(laneLaunch.snapshot, "tech-spec.md")), false);
@@ -643,8 +659,6 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     assert.equal(fs.existsSync(path.join(launched.snapshot, 'research')), false, 'pre-cutoff package dispatch succeeds without research/');
     assert.equal(launchedPins.idea.verdict, 'pass'); assert.equal(launchedPins.idea.projectId, ideaProjectId);
     assert.equal(readJson(path.join(launched.snapshot, 'idea/selected-record.json')).id, 'idea-1');
-    assert.equal(launchedPins.reviewDataset, null); assert.equal(launchedPins.reviewDatasetVersion, 0);
-    assert.equal(Object.hasOwn(launchedPins, "reviewDatasetDigest"), true); assert.equal(launchedPins.reviewDatasetDigest, null);
     assert.equal(readJson(launched.gateFile).worktree, worktree); assert.deepEqual(readJson(launched.spawnFile).gates, entry.gates);
     assert.deepEqual(readJson(launched.pins.file).shipBotChecks, ["Greptile Review"]);
     assert.ok(fs.readFileSync(launched.dispatchFile, "utf8").includes("Keep {{field_name}} literal.")); assert.match(fs.readFileSync(path.join(root, "ledger.md"), "utf8"), /\d{4}-\d\d-\d\dT.*Z DISPATCHED MONO-999/u);
@@ -657,8 +671,8 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     assert.ok(rendered.includes(`--ack '${path.join(root, "reports/MONO-999-gate-ack-a1.json")}'`));
     assert.ok(rendered.includes(`--ack '${path.join(worktree, ".orchestrator/MONO-999-gate-ack-a1.json")}'`), "wait instructions use the actual fallback ack location");
     const collectionSample = JSON.parse(/## Запрос сбора[\s\S]*?```json\n([\s\S]*?)```/u.exec(rendered)[1]);
-    assert.deepEqual(collectionSample.pins, entry.pins); assert.equal(collectionSample.reviewDatasetVersion, 0);
-    assert.equal(Object.hasOwn(collectionSample, "reviewDataset"), false); assert.equal(collectionSample.collect, false);
+    assert.deepEqual(collectionSample.pins, entry.pins);
+    assert.equal(collectionSample.collect, false);
     assert.throws(() => renderDispatch("{{collection_request}}", { collection_request: "" }), /unfilled dispatch placeholder/u);
     assert.ok(fs.existsSync(path.join(launched.snapshot, "prd-extract.md"))); assert.equal(fs.existsSync(path.join(launched.snapshot, "prd.md")), false);
     const baseline = JSON.parse(fixture("snapshot-u12-package-bytes.json")).find(item => item.coverage === "R4, U5");
@@ -791,24 +805,11 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
       assert.equal(changedSnapshot.pinsVersion, 2, "same snapshot path with changed bytes creates a new version");
       assert.equal(fs.readFileSync(amended.resumeFile, "utf8"), originalResume, "the already registered version is immutable");
       await processes.stop(livePid); livePid = null;
-      const dataset = path.join(scratch, "evidence/datasets/fixture.md"); write(dataset, "Approved review decisions.");
-      const laterAmendment = await acceptAmend({ root, issue: ack.issue, attempt: "1", text: "Resume after an independent dataset clarification.", "review-dataset": dataset, "review-dataset-version": "2" }); livePid = processes.track(laterAmendment.pid);
-      assert.equal(readJson(laterAmendment.pinsFile).reviewDatasetDigest, createHash("sha256").update(fs.readFileSync(dataset)).digest("hex"));
-      assert.equal(laterAmendment.pinsVersion, 3, "an independent amendment does not require resupplying the full snapshot");
-      assert.match(fs.readFileSync(laterAmendment.resumeFile, "utf8"), /Additional approved snapshot context/u, "persisted full documents are retained through later resumes");
+      const laterAmendment = await acceptAmend({ root, issue: ack.issue, attempt: "1", text: "Resume after an independent clarification." }); livePid = processes.track(laterAmendment.pid);
+      assert.equal(laterAmendment.pinsVersion, 3, "an independent amendment retains the full snapshot");
+      assert.match(fs.readFileSync(laterAmendment.resumeFile, "utf8"), /Additional approved snapshot context/u);
       const staleWrite = { ...collect, id: `preflight-collect:${head}:2`, payload: { request: { ...request, collectionId: `preflight-collect:${head}:2` } } };
       await assert.rejects(admitCollection(root, { ...collectReport, linear_mutations_pending: [staleWrite], capsule: { ...collectReport.capsule, open_queue: [staleWrite] } }), /stale pinsVersion/u);
-      const currentPins = effectivePins(readJson(path.join(root, "workers.json"))[ack.issue]);
-      const datasetVersionReport = (number, version) => {
-        const currentEntry = readJson(path.join(root, "workers.json"))[ack.issue];
-        const collectionId = `preflight-collect:${head}:${number}`, currentRequest = { ...currentPins, pins: collectionPinsBinding(currentEntry), head, collect: false, collectionId };
-        if (version === undefined) delete currentRequest.reviewDatasetVersion; else currentRequest.reviewDatasetVersion = version;
-        const currentWrite = { id: collectionId, operation: "preflight-collect", target: head, payload: { request: currentRequest } };
-        return { ...collectReport, pinsVersion: currentPins.pinsVersion, linear_mutations_pending: [currentWrite], capsule: { ...collectReport.capsule, open_queue: [currentWrite] } };
-      };
-      await assert.rejects(admitCollection(root, datasetVersionReport(3, 0)), /reviewDatasetVersion/u, "current pinsVersion cannot admit an older dataset at the same path");
-      await assert.rejects(admitCollection(root, datasetVersionReport(4, undefined)), /reviewDatasetVersion/u, "omitting the version cannot bypass an amended dataset pin");
-      assert.equal((await admitCollection(root, datasetVersionReport(5, 2)))[0].manifestDigest, digest(currentPins));
       assert.deepEqual((await admitCollection(root, collectReport))[0], admission, "prior admission is recoverable under its original version");
       await t.test("amend-resume-registration-recovery: finish a delivered amendment without a second launch", async () => {
         await processes.stop(livePid); livePid = null;
@@ -904,21 +905,106 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
         const blank = run(process.execPath, [...amendArgs("Invalid bot decision."), "--bot-unavailable", " "]);
         assert.notEqual(blank.status, 0); assert.match(blank.stderr, /nonempty reason/);
       }));
-      await t.test("amend-legacy-no-dataset-nonzero-version: preserve version across unrelated amendments", () => isolatedPreparation(async ({ registryFile, before }) => {
+      await t.test("AC4 old archive pins: new amendments retain full base and admit collection", () => isolatedPreparation(async ({ registryFile, before }) => {
         const launchFile = before[ack.issue].pins.file, launchBytes = fs.readFileSync(launchFile);
+        const priorFile = path.join(path.dirname(launchFile), "pins.v1.json"), priorBytes = fs.readFileSync(priorFile);
         try {
-          const legacy = readJson(launchFile); delete legacy.reviewDatasetDigest;
-          legacy.reviewDataset = null; legacy.reviewDatasetVersion = 7; atomicJson(launchFile, legacy);
+          const archive = path.join(scratch, "evidence/datasets/old.v7.md"); write(archive, "Old review context.\n");
+          const legacy = { ...readJson(launchFile), reviewDataset: archive, reviewDatasetVersion: 7,
+            reviewDatasetDigest: createHash("sha256").update(fs.readFileSync(archive)).digest("hex") }; atomicJson(launchFile, legacy);
           const registry = readJson(registryFile), worker = registry[ack.issue];
           worker.pins.digest = createHash("sha256").update(fs.readFileSync(launchFile)).digest("hex");
-          worker.pinsVersion = 0; delete worker.last_amendment; delete worker.completed_amendments; atomicJson(registryFile, registry);
+          const newerArchive = path.join(scratch, "evidence/datasets/newer.v8.md"); write(newerArchive, "Changed old review context.\n");
+          atomicJson(priorFile, { ...readJson(priorFile), reviewDataset: newerArchive, reviewDatasetVersion: 8,
+            reviewDatasetDigest: createHash("sha256").update(fs.readFileSync(newerArchive)).digest("hex") });
+          worker.pinsVersion = 1; delete worker.last_amendment; delete worker.completed_amendments; atomicJson(registryFile, registry);
           for (const text of ["Legacy unrelated amendment one.", "Legacy unrelated amendment two."]) {
             const result = JSON.parse(pass(run(process.execPath, amendArgs(text))));
             assert.equal(effectivePins(readJson(registryFile)[ack.issue]).reviewDatasetVersion, 7);
-            assert.equal(readJson(path.join(path.dirname(launchFile), `pins.v${result.pinsVersion}.json`)).reviewDatasetVersion, 7);
+            assert.equal(Object.hasOwn(readJson(result.pinsFile), "reviewDatasetVersion"), false);
+            const worker = readJson(registryFile)[ack.issue], current = effectivePins(worker);
+            const published = JSON.parse(/\n(\{[\s\S]*\})\nPreserve the full queue/u.exec(fs.readFileSync(result.resumeFile, "utf8"))[1]);
+            assert.deepEqual(published, current, "resume block must match registered pins after a prior old amendment");
+            assert.deepEqual(worker.last_amendment.effectiveInputs, current, "replay inputs use the same canonical overlay");
+            assert.equal(current.reviewDataset, archive); assert.equal(current.reviewDatasetDigest, legacy.reviewDatasetDigest);
+            const request = { ...published, pins: collectionPinsBinding(worker), head, collect: false, collectionId: `preflight-collect:${head}:${result.pinsVersion + 100}` };
+            const queue = [{ id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } }];
+            const report = { ...collectReport, linear_mutations_pending: queue, capsule: { ...collectReport.capsule, open_queue: queue } };
+            assert.equal((await admitCollection(root, report))[0].manifestDigest, digest(current));
+            assert.deepEqual(checkCollectionRequest(request), current);
             await processes.stop(processes.track(result.pid));
           }
-        } finally { fs.writeFileSync(launchFile, launchBytes); }
+        } finally { fs.writeFileSync(launchFile, launchBytes); fs.writeFileSync(priorFile, priorBytes); }
+      }));
+      for (const storage of ["completed", "last_amendment", "delivered"]) await t.test(`AC5 old dataset amendment replay: ${storage}`, () => isolatedPreparation(async ({ registryFile, before, output, resumeScript, resumeSource }) => {
+        const text = `Replay old dataset identity in ${storage}.`, args = amendArgs(text);
+        const original = JSON.parse(pass(run(process.execPath, args))); processes.track(original.pid);
+        const registry = readJson(registryFile), worker = registry[ack.issue];
+        const record = structuredClone(worker.last_amendment);
+        Object.assign(record.effectiveInputs, { reviewDataset: null, reviewDatasetVersion: 0, reviewDatasetDigest: null });
+        Object.assign(record.change, { reviewDataset: null, reviewDatasetVersion: 0 }); record.changeDigest = digest(record.change);
+        delete worker.completed_amendments;
+        if (storage === "completed") { worker.completed_amendments = { [record.changeDigest]: record }; delete worker.last_amendment; }
+        else if (storage === "last_amendment") worker.last_amendment = record;
+        else {
+          delete worker.last_amendment; worker.pinsVersion = record.currentVersion;
+          delete record.registeredResume; delete record.resumeResult;
+          atomicJson(path.join(output, "amendment.pending.json"), record);
+        }
+        atomicJson(registryFile, registry);
+        const names = fs.readdirSync(output).filter(name => /^pins\.v/.test(name));
+        write(resumeScript, 'console.error("old replay must not launch");process.exitCode=73;\n');
+        const recovered = JSON.parse(pass(run(process.execPath, args)));
+        assert.deepEqual(recovered, original);
+        assert.deepEqual(fs.readdirSync(output).filter(name => /^pins\.v/.test(name)), names);
+        assert.equal(readJson(registryFile)[ack.issue].pinsVersion, original.pinsVersion);
+      }));
+      for (const replayState of ["delivered", "registered", "prepared"]) await t.test(`AC5 ambiguous old dataset replay: ${replayState}`, () => isolatedPreparation(async ({ registryFile, output, resumeScript }) => {
+        const text = "Retry historical amendments with the same remaining arguments.";
+        const first = JSON.parse(pass(run(process.execPath, amendArgs(text))));
+        await processes.stop(processes.track(first.pid));
+        const second = JSON.parse(pass(run(process.execPath, amendArgs("Originally distinguished by the retired dataset."))));
+        processes.track(second.pid);
+        const registry = readJson(registryFile), worker = registry[ack.issue];
+        const earlier = worker.completed_amendments[first.pinsVersion], later = worker.last_amendment;
+        for (const [record, datasetVersion] of [[earlier, 1], [later, 2]]) {
+          Object.assign(record.effectiveInputs, { reviewDataset: `/old/archive.v${datasetVersion}.md`, reviewDatasetVersion: datasetVersion, reviewDatasetDigest: String(datasetVersion).repeat(64) });
+          Object.assign(record.change, { text, reviewDataset: record.effectiveInputs.reviewDataset, reviewDatasetVersion: datasetVersion });
+          record.changeDigest = digest(record.change);
+        }
+        worker.completed_amendments = { [earlier.pinsVersion]: earlier };
+        delete worker.last_amendment;
+        if (replayState !== "registered") {
+          worker.pinsVersion = later.currentVersion;
+          delete later.registeredResume; delete later.resumeResult;
+          if (replayState === "prepared") worker.last_resume = later.previousResume;
+          atomicJson(path.join(output, "amendment.pending.json"), later);
+        } else worker.completed_amendments[later.pinsVersion] = later;
+        atomicJson(registryFile, registry);
+        const names = fs.readdirSync(output).sort();
+        const files = new Map(names.filter(name => fs.statSync(path.join(output, name)).isFile()).map(name => [name, fs.readFileSync(path.join(output, name))]));
+        write(resumeScript, 'console.error("ambiguous replay must not launch");process.exitCode=73;\n');
+        const retried = run(process.execPath, amendArgs(text));
+        if (replayState === "delivered") {
+          assert.deepEqual(JSON.parse(pass(retried)), second);
+          const recovered = readJson(registryFile)[ack.issue];
+          assert.equal(recovered.pinsVersion, second.pinsVersion);
+          assert.deepEqual(recovered.last_resume, worker.last_resume);
+          assert.equal(fs.existsSync(path.join(output, "amendment.pending.json")), false);
+        } else if (replayState === "registered") {
+          assert.deepEqual(JSON.parse(pass(retried)), second);
+          assert.deepEqual(readJson(registryFile), registry, "completed replay only returns the latest matching record");
+          worker.completed_amendments = Object.fromEntries([later, earlier].map(record => [record.changeDigest, record]));
+          atomicJson(registryFile, registry);
+          assert.deepEqual(JSON.parse(pass(run(process.execPath, amendArgs(text)))), second);
+          assert.deepEqual(readJson(registryFile), registry, "maximum pinsVersion wins regardless of stored order");
+        } else {
+          assert.notEqual(retried.status, 0); assert.match(retried.stderr, /ambiguous amendment request/u);
+          assert.deepEqual(JSON.parse(retried.stdout).candidates, [first.pinsVersion, second.pinsVersion]);
+          assert.deepEqual(readJson(registryFile), registry);
+        }
+        for (const [name, bytes] of files) if (name !== "amendment.pending.json") assert.deepEqual(fs.readFileSync(path.join(output, name)), bytes);
+        assert.deepEqual(fs.readdirSync(output).sort(), names.filter(name => replayState !== "delivered" || name !== "amendment.pending.json"));
       }));
       await t.test("amend-live-wait-worker-proven-nondelivery", () => isolatedPreparation(async ({ registryFile, before }) => {
         const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
@@ -1050,22 +1136,20 @@ console.error("resume: worker process is still live; resume refused");process.ex
           for (const [file, bytes] of firstFiles) assert.equal(fs.readFileSync(file, "utf8"), bytes);
         } finally { write(resumeScript, source); }
       });
-      await t.test("amend-historical-omitted-pins-and-snapshot-ambiguity: candidates require distinguishing arguments", async () => {
+      await t.test("amend-historical-omitted-pins-and-snapshot-ambiguity: latest registered match wins, explicit arguments select history", async () => {
         const text = "Identical text with different saved effective inputs.", args = amendArgs(text);
         const first = JSON.parse(pass(run(process.execPath, args))); livePid = processes.track(first.pid);
         await processes.stop(livePid); livePid = null;
         const evolved = path.join(scratch, "evolved-snapshot"); fs.mkdirSync(evolved);
         for (const name of [`issue-${ack.issue}.md`, "approval.md", "project-brief.md", "prd.md", "tech-spec.md"]) fs.copyFileSync(path.join(snapshot, name), path.join(evolved, name));
         fs.appendFileSync(path.join(evolved, "prd.md"), "\nA later approved snapshot.\n");
-        const secondArgs = [...args, "--review-dataset-version", "3", "--full-snapshot", "--snapshot", evolved];
+        const secondArgs = [...args, "--full-snapshot", "--snapshot", evolved];
         const second = JSON.parse(pass(run(process.execPath, secondArgs))); livePid = processes.track(second.pid);
         assert.equal(second.version, first.version + 1);
         const registryFile = path.join(root, "workers.json"), registry = fs.readFileSync(registryFile), output = path.dirname(first.pinsFile), names = fs.readdirSync(output);
-        const ambiguous = run(process.execPath, args); assert.notEqual(ambiguous.status, 0);
-        const refusal = JSON.parse(ambiguous.stdout); assert.equal(refusal.version, null); assert.equal(refusal.outcome, "refused");
-        assert.deepEqual(refusal.candidates, [first.version, second.version]);
+        assert.deepEqual(JSON.parse(pass(run(process.execPath, args))), second);
         assert.deepEqual(fs.readFileSync(registryFile), registry); assert.deepEqual(fs.readdirSync(output), names);
-        assert.deepEqual(JSON.parse(pass(run(process.execPath, [...args, "--review-dataset-version", "2"]))), first, "resolve omissions using each candidate, even though current dataset is newer");
+        assert.deepEqual(JSON.parse(pass(run(process.execPath, [...args, "--full-snapshot", "--snapshot", snapshot]))), first, "resolve omissions using each candidate, using the supplied original snapshot");
         assert.deepEqual(JSON.parse(pass(run(process.execPath, secondArgs))), second);
         await processes.stop(livePid); livePid = null;
       });
@@ -1156,13 +1240,13 @@ async function collectorAttentionFixture(runFixture, plugin = false) {
   const issue = "MONO-999", head = "d".repeat(40), options = { root, issue, attempt: 1 };
   const identity = { packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4 };
   const pins = { ...(plugin ? { packRoot: path.join(scratch, "task-plugin") } : {}), product: "fixture", root, worktree: repo, skillsRoot, evidenceRoot, baseRef: "origin/main", risk: "standard", critical: null,
-    verification: { command: "node", args: ["verify.mjs"] }, workerWritableRoots: [repo], reviewDatasetVersion: 0 };
-  const pinsFile = path.join(scratch, "pins.json");
+    verification: { command: "node", args: ["verify.mjs"] }, workerWritableRoots: [repo] };
+  const pinsFile = path.join(root, "dispatch", `${issue}-a1`, "pins.json");
   const attention = path.join(root, "reports", `${issue}-collect-attention-a1.json`), log = path.join(root, "reports", `${issue}-collector-a1.log`);
   const reportFile = path.join(root, "reports", `${issue}-phase-preflight.json`), registry = path.join(root, "workers.json");
   const phase = (name, sequence, queue = []) => ({ ...identity, issue, stage: "mono-deliver", attempt: 1, phase: name, kind: "confirmation-request", sequence, head,
     publishedAt: new Date().toISOString(), linear_mutations_pending: queue, capsule: { phase: name, head, decisions: [], open_queue: queue, writable_roots: [repo] } });
-  const request = number => ({ ...pins, head, collect: false, collectionId: `preflight-collect:${head}:${number}` });
+  const request = number => ({ ...pins, pins: { file: pinsFile, digest: createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") }, head, collect: false, collectionId: `preflight-collect:${head}:${number}` });
   const report = (number, overrides = {}) => {
     const value = { ...request(number), ...overrides };
     return phase("preflight", number, [{ id: value.collectionId, operation: "preflight-collect", target: head, payload: { request: value } }]);
@@ -1186,7 +1270,7 @@ async function collectorAttentionFixture(runFixture, plugin = false) {
       const { createHmac, randomUUID } = await import("node:crypto"), { canonical } = await import("./runtime.mjs");
       const key = Buffer.alloc(32, 9); fs.writeFileSync(path.join(evidenceRoot, "receipt.key"), key);
       const receipt = { issue, ...value, root: fs.realpathSync(root), worktree: fs.realpathSync(repo), evidenceRoot: fs.realpathSync(evidenceRoot), workerWritableRoots: [fs.realpathSync(repo)],
-        producer: REVIEW_PRODUCER, runId: randomUUID(), reviewDataset: null, modelRoutes: null };
+        producer: REVIEW_PRODUCER, runId: randomUUID(), modelRoutes: null };
       const file = path.join(evidenceRoot, "history", `${receipt.runId}.json`);
       const envelope = { receipt, signature: createHmac("sha256", key).update(canonical(receipt)).digest("hex") };
       atomicJson(file, envelope);
@@ -1210,12 +1294,12 @@ test("plugin collector executes the task folder gate with a separate helper root
 
 test("collector admission refusal writes exactly one attention line and durable pair", async () => {
   await collectorAttentionFixture(async f => {
-    const report = f.report(1, { reviewDatasetVersion: 7 }); atomicJson(f.reportFile, report);
+    const report = f.report(1, { risk: "deep" }); atomicJson(f.reportFile, report);
     await f.poll();
     const value = readJson(f.attention);
     assert.deepEqual(Object.keys(value).sort(), ["at", "collectionId", "pinsVersion", "reason", "reportDigest"]);
     assert.equal(value.reportDigest, digest(report)); assert.equal(value.pinsVersion, 0);
-    assert.equal(value.collectionId, report.capsule.open_queue[0].id); assert.equal(value.reason, "collection pin mismatch: reviewDatasetVersion");
+    assert.equal(value.collectionId, report.capsule.open_queue[0].id); assert.equal(value.reason, "collection pin mismatch: risk");
     assert.ok(Number.isFinite(Date.parse(value.at))); assert.equal(f.lines().length, 1);
     assert.deepEqual(fs.readdirSync(path.dirname(f.attention)).filter(name => name.includes("collect-attention")), [path.basename(f.attention)]);
   });
@@ -1223,7 +1307,7 @@ test("collector admission refusal writes exactly one attention line and durable 
 
 test("collector skips the same refused pair on another poll and in a restarted process", async () => {
   await collectorAttentionFixture(async f => {
-    atomicJson(f.reportFile, f.report(1, { reviewDatasetVersion: 7 })); await f.poll();
+    atomicJson(f.reportFile, f.report(1, { risk: "deep" })); await f.poll();
     const before = fs.readFileSync(f.attention, "utf8"), logFile = f.attention.replace("collect-attention", "collector").replace(".json", ".log");
     const beforeLog = fs.readFileSync(logFile, "utf8"); await f.poll();
     const module = new URL("./orchestrator/collector.mjs", import.meta.url).href;
@@ -1235,17 +1319,17 @@ test("collector skips the same refused pair on another poll and in a restarted p
 
 test("collector retries identical report bytes after registry pinsVersion advances", async () => {
   await collectorAttentionFixture(async f => {
-    const report = f.report(1, { reviewDatasetVersion: 7 }); atomicJson(f.reportFile, report); await f.poll();
+    const report = f.report(1, { risk: "deep" }); atomicJson(f.reportFile, report); await f.poll();
     atomicJson(path.join(path.dirname(f.entry.pins.file), "pins.v1.json"), { pinsVersion: 1 });
     atomicJson(f.registry, { [f.options.issue]: { ...f.entry, pinsVersion: 1 } }); await f.poll();
     assert.equal(f.lines().length, 2); assert.equal(readJson(f.attention).reportDigest, digest(report));
-    assert.equal(readJson(f.attention).pinsVersion, 1); assert.equal(readJson(f.attention).reason, "new collection request uses stale pinsVersion");
+    assert.equal(readJson(f.attention).pinsVersion, 1); assert.equal(readJson(f.attention).reason, `new collection request uses stale pinsVersion; expected ${path.join(path.dirname(f.entry.pins.file), "pins.v1.json")}`);
   });
 });
 
 test("collector retries a new refused report and replaces the attention record", async () => {
   await collectorAttentionFixture(async f => {
-    atomicJson(f.reportFile, f.report(1, { reviewDatasetVersion: 7 })); await f.poll();
+    atomicJson(f.reportFile, f.report(1, { risk: "deep" })); await f.poll();
     const next = { ...f.report(2, { risk: "deep" }), sequence: 1 }; atomicJson(f.reportFile, next); await f.poll();
     assert.equal(f.lines().length, 2); assert.equal(readJson(f.attention).reportDigest, digest(next));
     assert.equal(readJson(f.attention).collectionId, next.capsule.open_queue[0].id); assert.equal(readJson(f.attention).reason, "collection pin mismatch: risk");
@@ -1266,7 +1350,7 @@ test("collector admitted current report clears only the exact attempt attention 
 
 test("collector corrected higher-sequence D2 admission clears the refused D1 attention", async () => {
   await collectorAttentionFixture(async f => {
-    const rejected = f.report(1, { reviewDatasetVersion: 7 }); atomicJson(f.reportFile, rejected); await f.poll();
+    const rejected = f.report(1, { risk: "deep" }); atomicJson(f.reportFile, rejected); await f.poll();
     // A later sequence still requires orchestrator reconciliation of D1.
     const evidence = await f.signedHistory(rejected.capsule.open_queue[0].payload.request);
     await confirmQueue(rejected, f.options.root, () => ({ state: "present", evidence }));
@@ -1279,7 +1363,7 @@ test("collector corrected higher-sequence D2 admission clears the refused D1 att
 
 test("collector confirmation of another phase leaves attention untouched", async () => {
   await collectorAttentionFixture(async f => {
-    atomicJson(f.reportFile, f.report(1, { reviewDatasetVersion: 7 })); await f.poll();
+    atomicJson(f.reportFile, f.report(1, { risk: "deep" })); await f.poll();
     const before = fs.readFileSync(f.attention, "utf8");
     atomicJson(path.join(f.options.root, "reports", `${f.options.issue}-phase-code.json`), f.phase("code", 2)); await f.poll();
     assert.equal(fs.readFileSync(f.attention, "utf8"), before); assert.equal(f.lines().length, 1);
@@ -1333,7 +1417,7 @@ if(!request.collect){if(readJson(${JSON.stringify(modeFile)}).holdValidation){at
 await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),async()=>{
  const countFile=${JSON.stringify(countFile)},mode=readJson(${JSON.stringify(modeFile)});const count=readJson(countFile);count.collections++;atomicJson(countFile,count);if(mode.noReceipt)process.exit(78);
  const receipt={issue:${JSON.stringify(issue)},producer:'gate-review-v3',runId:crypto.randomUUID(),head:request.head,base:request.head,collectionId:request.collectionId,product:request.product,skillsRoot:request.skillsRoot,
- root:fs.realpathSync(request.root),worktree:fs.realpathSync(request.worktree),evidenceRoot:fs.realpathSync(request.evidenceRoot),risk:request.risk,critical:request.critical,workerWritableRoots:request.workerWritableRoots.map(p=>fs.realpathSync(p)).sort(),reviewDataset:null,
+ root:fs.realpathSync(request.root),worktree:fs.realpathSync(request.worktree),evidenceRoot:fs.realpathSync(request.evidenceRoot),risk:request.risk,critical:request.critical,workerWritableRoots:request.workerWritableRoots.map(p=>fs.realpathSync(p)).sort(),
  ...(request.pins?{pins:request.pins}:{}),verification:{...request.verification,exitCode:mode.failed?1:0}};
  if(mode.corrupt) receipt[mode.corrupt]=mode.value;
  const envelope={receipt,signature:crypto.createHmac('sha256',fs.readFileSync(path.join(request.evidenceRoot,'receipt.key'))).update(canonical(receipt)).digest('hex')};
@@ -1345,7 +1429,7 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
 `);
     const pins = { product: "fixture", root, worktree: repo, skillsRoot: skills, baseRef: "origin/main", evidenceRoot: evidence,
       risk: "standard", critical: null, verification: { command: "node", args: ["verify.mjs"] }, workerWritableRoots: [repo] };
-    const pinsFile = path.join(scratch, "dispatch/pins.json"); atomicJson(pinsFile, pins);
+    const pinsFile = path.join(root, "dispatch", `${issue}-a1`, "pins.json"); atomicJson(pinsFile, pins);
     const identity = { packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4 };
     const entry = { ...identity, issue, stage: "mono-deliver", attempt, worktree: repo, pinsVersion: 0,
       pins: { file: pinsFile, digest: createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") }, spawned_at: new Date(Date.now() - 10000).toISOString() };
@@ -1357,7 +1441,7 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
     await assert.rejects(collectorStart(options), /locked/u);
     assert.equal(collectorStatus(options).status, "running-or-unverified");
     await waitUntil(() => fs.existsSync(path.join(root, "confirmations", `${issue}-phase-code-a1-s1.confirmed.json`)));
-    const request = { ...pins, head, collect: false, collectionId: `preflight-collect:${head}:1` };
+    const request = { ...pins, pins: collectionPinsBinding(entry), head, collect: false, collectionId: `preflight-collect:${head}:1` };
     const queued = { id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } };
     const report = phase("preflight", 1, [queued]), reportFile = path.join(root, "reports", `${issue}-phase-preflight.json`);
     atomicJson(modeFile, { crash: true }); atomicJson(reportFile, report);
@@ -1366,7 +1450,7 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
     assert.equal(fs.existsSync(lock), true); assert.equal(fs.existsSync(headLock), true); assert.equal(fs.existsSync(path.join(evidence, `${head}.json`)), false);
     const admissionFile = path.join(root, "consumed", `${issue}-a1/admissions`, `${queued.id}.json`);
     assert.equal(readJson(admissionFile).pinsVersion, 0);
-    entry.pinsVersion = 1; atomicJson(path.join(scratch, "dispatch/pins.v1.json"), { pinsVersion: 1, risk: "deep" }); atomicJson(path.join(root, "workers.json"), { [issue]: entry });
+    entry.pinsVersion = 1; atomicJson(path.join(path.dirname(pinsFile), "pins.v1.json"), { pinsVersion: 1, risk: "deep" }); atomicJson(path.join(root, "workers.json"), { [issue]: entry });
     atomicJson(modeFile, { holdValidation: true }); started = await collectorStart(options); processes.track(started.pid);
     await waitUntil(() => fs.existsSync(validationFile)); validatorPid = processes.track(readJson(validationFile).pid);
     const recoveryPid = started.pid; process.kill(recoveryPid, "SIGKILL"); started = null;
@@ -1403,12 +1487,12 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
     const stale = { ...request, collectionId: `preflight-collect:${head}:2` };
     atomicJson(reportFile, phase("preflight", 2, [{ ...queued, id: stale.collectionId, payload: { request: stale } }]));
     await collectOnce(options);
-    assert.equal(readJson(path.join(root, "reports", `${issue}-collect-attention-a1.json`)).reason, "new collection request uses stale pinsVersion");
+    assert.equal(readJson(path.join(root, "reports", `${issue}-collect-attention-a1.json`)).reason, `new collection request uses stale pinsVersion; expected ${path.join(path.dirname(pinsFile), "pins.v1.json")}`);
     assert.equal(readJson(countFile).collections, 1);
     await t.test("receipt actual binding rejects signed mismatches", async () => {
-      for (const [field, value] of [["risk", "standard"], ["critical", "wrong"], ["workerWritableRoots", []], ["verification", { command: "wrong", args: [] }], ["reviewDataset", { source: "wrong" }], ["pins", { file: "wrong", digest: "0".repeat(64) }]]) {
+      for (const [field, value] of [["risk", "standard"], ["critical", "wrong"], ["workerWritableRoots", []], ["verification", { command: "wrong", args: [] }], ["pins", { file: "wrong", digest: "0".repeat(64) }]]) {
         const number = readJson(countFile).collections + 1, id = `preflight-collect:${head}:${number}`;
-        const current = { ...request, risk: "deep", collectionId: id, ...(field === "pins" ? { pins: collectionPinsBinding(readJson(path.join(root, "workers.json"))[issue]), reviewDatasetVersion: 0 } : {}) }, next = { ...phase("preflight", 2, [{ ...queued, id, payload: { request: current } }]), pinsVersion: 1 };
+        const current = { ...request, risk: "deep", collectionId: id, pins: collectionPinsBinding(readJson(path.join(root, "workers.json"))[issue]) }, next = { ...phase("preflight", 2, [{ ...queued, id, payload: { request: current } }]), pinsVersion: 1 };
         // Each refusal is a separate scratch report; discard only its unconfirmed
         // admission/result, then use a fresh ID for the next recorded gate run.
         atomicJson(reportFile, next); atomicJson(modeFile, { corrupt: field, value });
@@ -1419,7 +1503,7 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
     });
     await t.test("failed signed collections are completed and never reviewed twice", async () => {
       const number = readJson(countFile).collections + 1, id = `preflight-collect:${head}:${number}`;
-      const current = { ...request, risk: "deep", collectionId: id };
+      const current = { ...request, risk: "deep", collectionId: id, pins: collectionPinsBinding(readJson(path.join(root, "workers.json"))[issue]) };
       const failed = { ...phase("preflight", 2, [{ ...queued, id, payload: { request: current } }]), pinsVersion: 1 };
       atomicJson(reportFile, failed); atomicJson(modeFile, { failed: true });
       await collectOnce(options);
@@ -1430,7 +1514,7 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
     });
     await t.test("a started run without a receipt retries only within its original allowance", async () => {
       const number = readJson(countFile).collections + 1, id = `preflight-collect:${head}:${number}`;
-      const current = { ...request, risk: "deep", collectionId: id };
+      const current = { ...request, risk: "deep", collectionId: id, pins: collectionPinsBinding(readJson(path.join(root, "workers.json"))[issue]) };
       const incomplete = { ...phase("preflight", 3, [{ ...queued, id, payload: { request: current } }]), pinsVersion: 1 };
       atomicJson(reportFile, incomplete); atomicJson(modeFile, { noReceipt: true });
       await collectOnce(options);
@@ -1453,52 +1537,37 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
   }
 });
 
-test("collector recovers a baseline dataset with a separately numbered signed archive", async () => {
-  const { collectOnce } = await import("./orchestrator/collector.mjs");
-  const { createHmac, randomUUID } = await import("node:crypto");
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-baseline-"));
-  const root = path.join(scratch, "root"), repo = path.join(scratch, "repo"), evidenceRoot = path.join(scratch, "evidence"), skillsRoot = path.join(scratch, "skills");
-  const issue = "MONO-999", head = "c".repeat(40), identity = { packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4 };
-  try {
-    for (const dir of [repo, evidenceRoot, skillsRoot]) fs.mkdirSync(dir, { recursive: true });
-    const reviewDataset = path.join(evidenceRoot, "datasets/scope.md"); write(reviewDataset, "# baseline dataset\n");
-    const datasetDigest = createHash("sha256").update(fs.readFileSync(reviewDataset)).digest("hex");
-    const pins = { root, worktree: repo, product: "fixture", skillsRoot, evidenceRoot, reviewDataset, risk: "standard", critical: null, baseRef: "origin/main",
-      verification: { command: "node", args: ["verify.mjs"] }, workerWritableRoots: [repo] };
-    const pinsFile = path.join(scratch, "pins.json"); atomicJson(pinsFile, pins);
-    const entry = { ...identity, issue, stage: "mono-deliver", attempt: 1, worktree: repo, pinsVersion: 0,
-      pins: { file: pinsFile, digest: createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") }, spawned_at: new Date(Date.now() - 10000).toISOString() };
-    atomicJson(path.join(root, "workers.json"), { [issue]: entry });
-    const phase = (name, queue) => ({ ...identity, issue, stage: "mono-deliver", attempt: 1, phase: name, kind: "confirmation-request", sequence: 1, head,
-      publishedAt: new Date().toISOString(), linear_mutations_pending: queue, capsule: { phase: name, head, decisions: [], open_queue: queue, writable_roots: [repo] } });
-    atomicJson(path.join(root, "reports", `${issue}-phase-code.json`), phase("code", [])); await collectOnce({ root, issue, attempt: 1 });
-    const request = { ...pins, head, collectionId: `preflight-collect:${head}:1`, collect: false };
-    const queued = { id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } };
-    atomicJson(path.join(root, "reports", `${issue}-phase-preflight.json`), phase("preflight", [queued]));
-    const key = Buffer.alloc(32, 8); fs.writeFileSync(path.join(evidenceRoot, "receipt.key"), key);
-    const archived = await (await import("./gate.mjs")).archiveReviewDataset(reviewDataset, evidenceRoot);
-    assert.equal(archived.version, 1);
-    const receipt = { ...pins, producer: REVIEW_PRODUCER, runId: randomUUID(), head, base: head, collectionId: request.collectionId,
-      root: fs.realpathSync(root), worktree: fs.realpathSync(repo), evidenceRoot: fs.realpathSync(evidenceRoot), workerWritableRoots: [fs.realpathSync(repo)],
-      reviewDataset: { source: reviewDataset, digest: datasetDigest, copy: `.orchestrator/review-dataset-${datasetDigest.slice(0, 8)}.md`, ...archived } };
-    const history = path.join(evidenceRoot, "history", `${receipt.runId}.json`);
-    const runtime = await import("./runtime.mjs");
-    const sign = receipt => ({ receipt, signature: createHmac("sha256", key).update(runtime.canonical(receipt)).digest("hex") });
-    atomicJson(history, sign({ ...receipt, reviewDataset: { ...receipt.reviewDataset, digest: "0".repeat(64) } }));
-    await assert.rejects(collectOnce({ root, issue, attempt: 1 }), /receipt binding mismatch: reviewDataset/u);
-    assert.equal(fs.existsSync(path.join(evidenceRoot, head + ".json")), false);
-    atomicJson(history, sign(receipt));
-    const bin = path.join(scratch, "bin"), oldPath = process.env.PATH;
-    write(path.join(bin, "ps"), "#!" + process.execPath + "\nconsole.log(process.argv.includes('-axo')?process.ppid+' 1 '+process.ppid+' S fixture-start':'fixture-start');\n"); fs.chmodSync(path.join(bin, "ps"), 0o700);
-    write(path.join(skillsRoot, "scripts/gate.mjs"), "console.log('gate preflight: pass: fixture baseline recovered');\n");
-    try {
-      process.env.PATH = `${bin}:${oldPath}`;
-      await collectOnce({ root, issue, attempt: 1 });
-    } finally { process.env.PATH = oldPath; }
-    const confirmation = readJson(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s1.confirmed.json`));
-    assert.equal(confirmation.status, "confirmed");
-    assert.equal(readJson(path.join(evidenceRoot, head + ".json")).receipt.reviewDataset.version, 1);
-  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+test("AC4 collector accepts old reviewDataset receipts and new receipts without the field", async t => {
+  for (const shape of ["new", "0.49.x", "before-0.49.0"]) await t.test(shape, async () => {
+    await collectorAttentionFixture(async f => {
+      const pinsFile = f.entry.pins.file, base = readJson(pinsFile);
+      const archive = path.join(f.scratch, "evidence/datasets/scope.v1.md"); write(archive, "Archived context.\n");
+      const hash = createHash("sha256").update(fs.readFileSync(archive)).digest("hex");
+      if (shape !== "new") Object.assign(base, { reviewDataset: shape === "0.49.x" ? null : archive,
+        reviewDatasetVersion: shape === "0.49.x" ? 0 : 1, reviewDatasetDigest: shape === "0.49.x" ? null : hash });
+      atomicJson(pinsFile, base);
+      const registry = readJson(f.registry); registry[f.entry.issue].pins.digest = createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex"); atomicJson(f.registry, registry);
+      const request = { ...f.request(1), ...(shape === "new" ? {} : { reviewDatasetVersion: base.reviewDatasetVersion }),
+        ...(shape === "before-0.49.0" ? { reviewDataset: archive } : {}) };
+      const report = f.report(1); report.capsule.open_queue[0].payload.request = request;
+      atomicJson(f.reportFile, report);
+      await admitCollection(f.options.root, report);
+      const admissionFile = path.join(f.options.root, "consumed/MONO-999-a1/admissions", request.collectionId + ".json");
+      assert.equal(readJson(admissionFile).manifestDigest, digest({ ...base, pinsVersion: 0 }));
+      const signed = await f.signedHistory(request), envelope = readJson(signed.receipt);
+      if (shape !== "new") envelope.receipt.reviewDataset = shape === "0.49.x" ? null : { source: archive,
+        archive, version: 1, digest: hash, copy: ".orchestrator/review-dataset-old.md" };
+      const { createHmac } = await import("node:crypto"), { canonical } = await import("./runtime.mjs");
+      envelope.signature = createHmac("sha256", fs.readFileSync(path.join(base.evidenceRoot, "receipt.key"))).update(canonical(envelope.receipt)).digest("hex");
+      atomicJson(signed.receipt, envelope); fs.unlinkSync(archive);
+      await f.poll();
+      const confirmation = readJson(path.join(f.options.root, "confirmations/MONO-999-phase-preflight-a1-s1.confirmed.json"));
+      assert.equal(confirmation.status, "confirmed");
+      const receipt = readJson(path.join(base.evidenceRoot, f.request(1).head + ".json")).receipt;
+      assert.equal(Object.hasOwn(receipt, "reviewDataset"), shape !== "new");
+      assert.deepEqual(readJson(admissionFile).manifestDigest, digest({ ...base, pinsVersion: 0 }));
+    });
+  });
 });
 
 test("collector startup timeout stops its detached child before reporting failure", async () => {
@@ -1796,22 +1865,18 @@ test("preapply-whitespace-blank-lines: surrounding whitespace and raw content su
   assert.equal(extractSnapshot(issue, prd, spec).spec, spec);
 });
 
-test('collection admission: unpinned collect:true is refused even with a registered admission',async()=>{
-  await collectorAttentionFixture(async f=>{
-    const request=f.request(1);
-    assert.equal(checkCollectionRequest(request),null,'legacy receipt reads remain compatible');
-    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/admission/);
-    await admitCollection(f.options.root,f.report(1));
-    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/pinned dispatch request/);
-    await f.signedHistory(request);
-    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/pinned dispatch request/);
-    assert.equal(checkCollectionRequest(request),null);
+test('collection admission: registered attempts require pins for reads and collection', async () => {
+  await collectorAttentionFixture(async f => {
+    const request = f.request(1); delete request.pins;
+    for (const collect of [false, true]) assert.throws(() => checkCollectionRequest({ ...request, collect }), /mismatch: pins;/);
+    const report = f.report(1); delete report.capsule.open_queue[0].payload.request.pins;
+    await assert.rejects(admitCollection(f.options.root, report), /mismatch: pins/);
   });
 });
 
 test('collection admission: unregistered and unbound direct collection cannot skip admission',async()=>{
   await collectorAttentionFixture(async f=>{
-    const request=f.request(1),registry=readJson(f.registry);
+    const request=f.request(1),registry=readJson(f.registry); delete request.pins;
     delete registry['MONO-999'].pins;atomicJson(f.registry,registry);
     assert.equal(checkCollectionRequest(request),null);
     assert.throws(()=>checkCollectionRequest({...request,collect:true}),/admission/);
@@ -2361,7 +2426,7 @@ test('ship-bot-policy: current pins override recovered admission; foreign attemp
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-ship-policy-'));
   const root = path.join(scratch, 'root'), issue = 'MONO-162', head = 'a'.repeat(40);
   const file = path.join(root, 'dispatch', `${issue}-a1`, 'pins.json');
-  const pins = { root, worktree: scratch, reviewDatasetDigest: null, reviewDatasetVersion: 0, workerWritableRoots: [scratch], shipBotChecks: ['Custom Review'] };
+  const pins = { root, worktree: scratch, workerWritableRoots: [scratch], shipBotChecks: ['Custom Review'] };
   const entry = { issue, worktree: scratch, attempt: 1, stage: 'mono-deliver', packVersion: 'test', surfaceRevision: 4, pins: { file }, pinsVersion: 0 };
   try {
     atomicJson(file, pins); entry.pins.digest = createHash('sha256').update(fs.readFileSync(file)).digest('hex');

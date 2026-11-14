@@ -27,11 +27,6 @@ function verifyReceipt(file, request) {
     modelRoutes: request.modelRoutes ?? null };
   for (const [name, value] of Object.entries(expected)) if (canonical(receipt[name] ?? null) !== canonical(value)) throw new Error(`receipt binding mismatch: ${name}`);
   if (canonical({ command: receipt.verification?.command, args: receipt.verification?.args }) !== canonical(request.verification)) throw new Error("receipt binding mismatch: verification");
-  // Admission binds the request version; gate archive numbering is independent.
-  if (request.reviewDataset) {
-    if (receipt.reviewDataset?.source !== request.reviewDataset || receipt.reviewDataset.digest !== sha256File(request.reviewDataset) ||
-        receipt.reviewDataset.copy !== `.orchestrator/review-dataset-${receipt.reviewDataset.digest.slice(0, 8)}.md`) throw new Error("receipt binding mismatch: reviewDataset");
-  } else if (receipt.reviewDataset !== null) throw new Error("receipt binding mismatch: reviewDataset");
   return envelope;
 }
 function historyReceipt(request) {

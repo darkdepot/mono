@@ -38,10 +38,10 @@ test("landing U2 named gate fixtures", async t => {
       if (scenario === "inherited-after-rebase") assert.ok(!changedPaths(repo, base, head).includes("CHANGELOG.md"));
       const pinsFile = path.join(root, "dispatch/MONO-999-a1/pins.json");
       const pins = { base: launchBase, release: scenario === "release", product: "fixture", root, worktree: repo, skillsRoot: skills, baseRef: "main", evidenceRoot: evidence,
-        risk: "deep", critical: null, verification: { command: process.execPath, args: ["-e", "process.exit(0)"] }, workerWritableRoots: [repo], reviewDataset: null, reviewDatasetVersion: 0, reviewDatasetDigest: null };
+        risk: "deep", critical: null, verification: { command: process.execPath, args: ["-e", "process.exit(0)"] }, workerWritableRoots: [repo] };
       atomicJson(pinsFile, pins); const binding = { file: pinsFile, digest: sha256File(pinsFile) };
       atomicJson(path.join(root, "workers.json"), { "MONO-999": { issue: "MONO-999", attempt: 1, stage: "mono-deliver", worktree: repo, packVersion: "fixture", sourceCommit: launchBase, surfaceRevision: 4, pins: binding, pinsVersion: 0 } });
-      const request = { ...pins, head, collectionId: `preflight-collect:${head}:1`, pins: binding, collect: false }; delete request.reviewDatasetDigest; delete request.reviewDataset;
+      const request = { ...pins, head, collectionId: `preflight-collect:${head}:1`, pins: binding, collect: false };
       if (scenario === "forged-release") request.release = true;
       if (scenario === "no-pins") delete request.pins;
       const file = path.join(scratch, "request.json");
@@ -56,7 +56,7 @@ test("landing U2 named gate fixtures", async t => {
         atomicJson(file, { ...request, collect });
         const r = spawnSync(process.execPath, ["scripts/gate.mjs", "preflight", "--request", file], { encoding: "utf8" });
         assert.equal(r.status, refused ? 1 : 2, r.stdout + r.stderr);
-        if (scenario === "no-pins") assert.match(r.stdout, /landing policy requires pinned dispatch/);
+        if (scenario === "no-pins") assert.match(r.stdout, /collection request mismatch: pins;/);
         else if (refused) {
           const touched = scenario === "prefix-edit" ? "shared/new.md" : "CHANGELOG.md";
           assert.ok(r.stdout.includes(`serial path touched: ${touched}`), r.stdout);

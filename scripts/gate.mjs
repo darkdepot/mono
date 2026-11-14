@@ -317,61 +317,6 @@ function preflightEvidenceRoot(request) {
 function regularEvidence(file) {
   requireThat(fs.lstatSync(file).isFile() && !fs.lstatSync(file).isSymbolicLink(), "evidence file must be a regular file in evidenceRoot");
 }
-const fileDigest = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-function reviewDatasetBinding(request, evidenceRoot) {
-  if (request.reviewDataset === undefined) return { reviewDataset: null };
-  const file = request.reviewDataset;
-  requireThat(typeof file === "string" && path.isAbsolute(file), "reviewDataset must be an absolute path under evidenceRoot");
-  requireThat(fs.realpathSync(file).startsWith(evidenceRoot + path.sep), "reviewDataset must be under evidenceRoot");
-  regularEvidence(file);
-  const digest = fileDigest(file);
-  return { reviewDataset: { source: file, digest, copy: `.orchestrator/review-dataset-${digest.slice(0, 8)}.md` } };
-}
-function publishImmutable(file, data) {
-  const staging = fs.mkdtempSync(path.join(path.dirname(file), ".dataset-stage-"));
-  const staged = path.join(staging, "content");
-  try {
-    const fd = fs.openSync(staged, "wx", 0o600);
-    try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    // Linking a completed file publishes it without replacing an existing version.
-    fs.linkSync(staged, file);
-  } finally { fs.rmSync(staging, { recursive: true, force: true }); }
-}
-export async function archiveReviewDataset(source, evidenceRoot) {
-  regularEvidence(source);
-  const name = path.basename(source);
-  const match = /^(.+?)(?:\.v([1-9][0-9]*))?\.md$/.exec(name);
-  requireThat(match && /^[A-Za-z0-9_-]+$/.test(match[1]), "invalid dataset archive name");
-  const directory = path.join(fs.realpathSync(evidenceRoot), "datasets");
-  fs.mkdirSync(directory, { recursive: true });
-  requireThat(fs.realpathSync(directory) === directory, "dataset archive directory must not be a symlink");
-  return withLock(path.join(directory, `${match[1]}.archive.lock`), () => {
-    const bytes = fs.readFileSync(source), hash = crypto.createHash("sha256").update(bytes).digest("hex");
-    let highest = 0, existing = null;
-    for (const file of fs.readdirSync(directory).sort()) {
-      if (!file.startsWith(`${match[1]}.v`) || !file.endsWith(".md")) continue;
-      const version = Number(file.slice(match[1].length + 2, -3));
-      if (!Number.isSafeInteger(version) || version < 1) continue;
-      const archive = path.join(directory, file); regularEvidence(archive);
-      const digest = fileDigest(archive);
-      if (!fs.existsSync(archive + ".sha256")) {
-        requireThat(digest === hash, "orphan dataset archive differs from source; digest recovery refused");
-        publishImmutable(archive + ".sha256", digest + "\n");
-      }
-      regularEvidence(archive + ".sha256");
-      requireThat(fs.readFileSync(archive + ".sha256", "utf8").trim() === digest, "immutable dataset archive digest mismatch");
-      highest = Math.max(highest, version);
-      if (digest === hash && (!match[2] || version === Number(match[2]))) existing = { version, digest, archive };
-      if (match[2] && version === Number(match[2])) requireThat(digest === hash, "immutable dataset version cannot be overwritten");
-    }
-    if (existing) return existing;
-    const version = match[2] ? Number(match[2]) : highest + 1;
-    const archive = path.join(directory, `${match[1]}.v${version}.md`);
-    publishImmutable(archive, bytes);
-    publishImmutable(archive + ".sha256", hash + "\n");
-    return { version, digest: hash, archive };
-  });
-}
 export async function preflightGate(request) {
   if (request.collect !== true) {
     const proof = await verifyPreflight(request, null, true);
@@ -447,8 +392,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     (!pinnedIssue || request.issue === pinnedIssue), "explicit Issue must match the pinned attempt");
   const idea = pins?.idea ? verifyIdeaArtifact(pins.idea, pinnedIssue ?? request.issue) : null;
   const receiptFile = path.join(evidenceRoot, `${head}.json`);
-  const dataset = reviewDatasetBinding(request, evidenceRoot);
-  const binding = { ...dataset, ...(idea ? { idea } : {}), ...(request.issue !== undefined ? { issue: request.issue } : {}), ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), ...(request.prRemarks?.length ? { prRemarks: request.prRemarks } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
+  const binding = { ...(idea ? { idea } : {}), ...(request.issue !== undefined ? { issue: request.issue } : {}), ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), ...(request.prRemarks?.length ? { prRemarks: request.prRemarks } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
     critical: request.critical, root: fs.realpathSync(request.root), worktree: repo, evidenceRoot,
     workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort() };
   // The task contract is the dispatch snapshot of the Issue (snapshot.vN after a full-snapshot amendment).
@@ -500,15 +444,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     requireThat(canonical(receipt.idea ?? null) === canonical(idea), 'receipt idea differs from dispatch pins');
     requireThat(canonical(receipt.prRemarks ?? null) === canonical(request.prRemarks?.length ? request.prRemarks : null), 'receipt prRemarks differ from the request');
     for (const [key, value] of Object.entries(binding)) {
-      const actual = key === "reviewDataset" && receipt[key] ? { source: receipt[key].source, digest: receipt[key].digest, copy: receipt[key].copy } : receipt[key];
-      requireThat(canonical(actual) === canonical(value), `receipt ${key} differs from dispatch request`);
-    }
-    if (receipt.reviewDataset?.version) {
-      const archived = receipt.reviewDataset;
-      requireThat(Number.isSafeInteger(archived.version) && archived.version > 0 && typeof archived.archive === "string" &&
-        path.basename(archived.archive).endsWith(`.v${archived.version}.md`) && fs.realpathSync(archived.archive).startsWith(fs.realpathSync(evidenceRoot) + path.sep), "dataset archive outside evidence root or invalid version");
-      regularEvidence(archived.archive); regularEvidence(archived.archive + ".sha256");
-      requireThat(fileDigest(archived.archive) === archived.digest && fs.readFileSync(archived.archive + ".sha256", "utf8").trim() === archived.digest, "dataset archive digest mismatch");
+      requireThat(canonical(receipt[key]) === canonical(value), `receipt ${key} differs from dispatch request`);
     }
     requireThat(canonical({ command: receipt.verification?.command, args: receipt.verification?.args }) === canonical(request.verification), "receipt verification differs from dispatch request");
   }
@@ -516,7 +452,6 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   validateEvidenceGrants(request.skillsRoot, [repo], "installed skillsRoot");
   const unchanged = () => {
     if (idea) verifyIdeaArtifact(idea, pinnedIssue ?? request.issue);
-    requireThat(canonical(reviewDatasetBinding(request, evidenceRoot)) === canonical(dataset), "review dataset changed during collection/verification");
     cleanTree(repo);
     requireThat(git(repo, "rev-parse", "HEAD") === head && git(repo, "merge-base", head, live?.baseRefOid ?? request.baseRef) === base,
       "head or base changed during verification");
@@ -524,8 +459,6 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   if (request.collect === true) {
     const recordedAt = new Date().toISOString();
     const protectedPaths = { "orchestrator root": request.root, skillsRoot: request.skillsRoot, packRoot: request.packRoot ?? request.skillsRoot };
-    const archive = dataset.reviewDataset ? await archiveReviewDataset(dataset.reviewDataset.source, evidenceRoot) : null;
-    if (archive) requireThat(archive.digest === dataset.reviewDataset.digest, "review dataset changed before archive");
     const prior = priorRounds();
     requireThat(prior, "review contract missing in the pinned dispatch snapshot (issue-<KEY>.md)");
     const consistency = { passed: true, error: null };
@@ -570,7 +503,6 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     }
     receipt = { producer: REVIEW_PRODUCER, recordedAt, ...binding, runId: crypto.randomUUID(), head, base, review,
       verification: verification ?? { command: request.verification.command, args: request.verification.args, exitCode: null }, consistency };
-    if (archive) receipt.reviewDataset = { ...receipt.reviewDataset, ...archive };
     if (fs.existsSync(path.join(evidenceRoot, "receipt.key"))) regularEvidence(path.join(evidenceRoot, "receipt.key"));
     const key = evidenceKey(evidenceRoot, true);
     atomicJson(path.join(evidenceRoot, "history", `${receipt.runId}.json`), { receipt, signature: sign(key, receipt) });
@@ -784,13 +716,13 @@ if (isMain(import.meta.url)) {
 start request: {worktree, branch, base, packRoot, skillsRoot, packVersion, sourceCommit, surfaceRevision}
   Generated dispatch adds {root,issue,attempt,risk,critical,pins:{file,digest}}; start verifies the active registered attempt and current pins before code.
   The orchestrator's locked pre-launch invocation uses --before-spawn true for the next unregistered attempt; worker invocation omits it.
-preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],reviewDataset?,reviewDatasetVersion?,pins?:{file,digest},modelRoutes?,prRemarks?:[{id,source:bot|ci|owner,file,line,title,body,urgent,head}],collect,verification:{command,args}}
+preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],pins?:{file,digest},modelRoutes?,prRemarks?:[{id,source:bot|ci|owner,file,line,title,body,urgent,head}],collect,verification:{command,args}}
   prRemarks: remarks from the draft PR the worker fixed (scripts/ship-pr.mjs remarks); they enter the round as open findings and close only when the checker verifies the fix.
   modelRoutes pins immutable base/configDigest/roles from resolveModelRoutes; overrides require pins.
   risk is the final approved/diff risk; critical is a concrete escalation reason or null.
   Pin every request field from dispatch. Orchestrator only: collect:true, outside worker sandboxes.
   Worker only: collect:false, reads <evidenceRoot>/<head>.json without creating files.
-  U13 attempts require registered pins and reviewDatasetVersion (0 without a dataset; omit reviewDataset).
+  Registered attempts require their dispatch pins in every collection request.
   Pending worker collection exits 2 with publishRequest; publish exactly that request. Pass exits 0; refusal exits 1.
   Use ~/.mono-agent-workflow/evidence/<product>/ outside EVERY worker-writable root,
   including worktree, orchestrator root and additional workerWritableRoots. Pin that list in dispatch.

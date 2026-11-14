@@ -55,7 +55,7 @@ For [execution Issues](lifecycle.md#задачи-этапов), installed comman
 --config FILE --snapshot DIR`. Optional risk/critical, profile, handshake and
 role/reason pin the attempt. --moves JSON, --open-decisions N, --verification JSON
 or `orchestration.dispatch` defaults are required; defaults also cover product,
-evidenceRoot, reviewDataset/reviewDatasetVersion, budget. --gates JSON overrides
+evidenceRoot, budget. --gates JSON overrides
 the four startup gates (issue-only adds delivery check). --worker-writable-roots
 JSON adds roots including temp; worktree/Git/mailbox roots are derived.
 --skills-root overrides the installed root for scratch tests.
