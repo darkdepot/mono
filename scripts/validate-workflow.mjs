@@ -6958,8 +6958,10 @@ function skillReferenceReachabilityErrors(base) {
       try { named = readingPaths(fs.readFileSync(path.join(base, from), "utf8"), { file: from }); }
       catch (error) { errors.push(error.message); continue; }
       for (const reference of named) {
-        if (!/^(?:<(?:корень|pack-root)>\/)?(?:skills|references|templates|scripts|evals)\//.test(reference)) continue;
-        const resolved = resolveSkillPath(base, from, reference);
+        // Inside a reference, a bare or ./ name is a sibling file.
+        const sibling = from !== entry && /^(?:\.\/)?[^/]+\.md$/.test(reference) && reference !== "AGENTS.md";
+        if (!sibling && !/^(?:<(?:корень|pack-root)>\/)?(?:skills|references|templates|scripts|evals)\//.test(reference)) continue;
+        const resolved = sibling ? path.resolve(path.dirname(path.join(base, from)), reference) : resolveSkillPath(base, from, reference);
         if (!fs.existsSync(resolved)) {
           if (from !== entry) errors.push(`${from}: reading path ${reference} does not exist`);
           continue;
@@ -6982,10 +6984,10 @@ function validateSkillReferenceReachabilityFixture() {
   const write = (name, text) => { fs.mkdirSync(path.dirname(path.join(scratch, name)), { recursive: true }); fs.writeFileSync(path.join(scratch, name), text); };
   const stage = "skills/design/SKILL.md", run = "skills/design/references/run.md";
   const stageText = "Прочитай сразу: `references/run.md`.\n\nПрочитай, когда:\n- `references/paper.md`: выбран paper.\n";
-  const runText = "Прочитай, когда:\n- `references/nested.md`: условие.\n";
+  const runText = "Прочитай, когда:\n- `references/nested.md`: условие.\n- `sibling.md`: условие.\n";
   try {
     write(stage, stageText); write(run, runText);
-    write("skills/design/references/paper.md", "paper\n"); write("skills/design/references/nested.md", "nested\n");
+    write("skills/design/references/paper.md", "paper\n"); write("skills/design/references/nested.md", "nested\n"); write("skills/design/references/sibling.md", "sibling\n");
     const errors = () => skillReferenceReachabilityErrors(scratch).join("\n");
     if (errors()) fail(`reference reachability fixture: clean tree must pass, got ${errors()}`);
     write(stage, stageText.replace("- `references/paper.md`: выбран paper.\n", ""));
