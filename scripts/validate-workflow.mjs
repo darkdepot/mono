@@ -5650,7 +5650,7 @@ const STRING_PINS = [
   ["templates/qa-output.md", "taskCriteria"],
   ["references/lifecycle.md", "mono-tech: approved"],
   ["references/lifecycle.md", "mono-tech-page"],
-  ["skills/check/SKILL.md", "next="],
+  ["skills/check/references/before-work.md", "next="],
   ["references/lifecycle.md", "Этап"],
   ["templates/stage-task.md", "Этап"],
   ["skills/idea/SKILL.md", "mono:idea"],
@@ -5669,7 +5669,7 @@ const STRING_PINS = [
   ["skills/handoff/references/record.md", "mono-package: recorded"],
   ["skills/handoff/references/record.md", "mono-package: start"],
   ["skills/handoff/references/record.md", "by=orchestrator"],
-  ["skills/check/SKILL.md", "mono-package: recorded"],
+  ["skills/check/references/before-work.md", "mono-package: recorded"],
   ["skills/handoff/SKILL.md", "too-big"],
   ["skills/handoff/SKILL.md", "shared-base"],
   ["skills/handoff/SKILL.md", "probe"],
@@ -6464,6 +6464,7 @@ const MACHINE_TOKENS = new Set([
   "Preflight: <ready/blocked/drift-candidate/needs-human/not run>",
   "Project update:",
   "Modes:",
+  "Режимы:",
   "Promotion mode:",
   "README.md",
   "Review timeline:",
@@ -6872,9 +6873,9 @@ function validateLandingBehavior() {
   catch (error) { fail(`landing named scratch fixtures: ${error.message}`); }
 }
 function validateCheckModeDeclaration() {
-  requireMachineToken("Modes:");
+  requireMachineToken("Режимы:");
   const lines = documentSection(read("skills/check/SKILL.md"), "Mono Check") || [];
-  const starts = lines.flatMap((line, index) => line === "Modes:" ? [index] : []);
+  const starts = lines.flatMap((line, index) => line === "Режимы:" ? [index] : []);
   const modes = [];
   if (starts.length === 1) for (const line of lines.slice(starts[0] + 1)) {
     if (!line.trim()) continue;
@@ -7051,12 +7052,12 @@ function validateAe6Fixtures() {
     if (listedBudget.files.some(entry => entry.path === "references/contracts/issue.md")) fail("listed Russian stage conditional contract leaked into mandatory read budget");
     restore(); check();
     console.log("PASS AE6 listed Russian stage: Russian tiers, no first AGENTS read, conditional contract and pack-root paths green");
-    negative("unlisted stage with Russian read tiers", () => change("skills/check/SKILL.md", text => text
+    negative("unlisted stage with Russian read tiers", () => change("skills/review/SKILL.md", text => text
       .replace(/^Read now.*$/m, "Прочитай сразу:")
       .replace(/^Read when.*$/m, "Прочитай, когда:")), "Russian read tiers require a listed Russian stage");
-    negative("unlisted stage without first AGENTS read", () => change("skills/check/SKILL.md", text => text.replace(/^1\. `AGENTS.md`\n/m, "")), "AGENTS.md must be the first eager read");
-    negative("unlisted stage with colon condition", () => change("skills/check/SKILL.md", text => text.replace(/^(- `[^`]+`) — /m, "$1: ")), "conditional read needs a path and a condition");
-    negative("unlisted stage with Russian pack-root path", () => change("skills/check/SKILL.md", text => text.replace("2. `references/readiness-gates.md`", "2. `<корень>/references/readiness-gates.md`")), "missing pack file <корень>/references/readiness-gates.md");
+    negative("unlisted stage without first AGENTS read", () => change("skills/review/SKILL.md", text => text.replace(/^1\. `AGENTS.md`\n/m, "")), "AGENTS.md must be the first eager read");
+    negative("unlisted stage with colon condition", () => change("skills/review/SKILL.md", text => text.replace(/^(- `[^`]+`) — /m, "$1: ")), "conditional read needs a path and a condition");
+    negative("unlisted stage with Russian pack-root path", () => change("skills/review/SKILL.md", text => text.replace("4. `references/readiness-gates.md`", "4. `<корень>/references/readiness-gates.md`")), "missing pack file <корень>/references/readiness-gates.md");
     negative("unlisted stage with conditional Issue contract", () => change("skills/issue/SKILL.md", text => text
       .replace(/^2\. `references\/contracts\/issue.md`\n/m, "")
       .replace(/^Read when.*$/m, "$&\n- `references/contracts/issue.md` — before fixture write.")), "must read references/contracts/issue.md as its normative artifact source");

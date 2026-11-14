@@ -385,6 +385,10 @@ Tech Evaluation uses the same three mandatory files and 20,480-byte ceiling;
 Design reads exactly its SKILL.md and references/run.md eagerly; drawing, memory and
 approval references are conditional. Measure with
 `node scripts/read-budget.mjs --skill design --mandatory`.
+`mono:check` is a listed Russian stage too: it reads its SKILL.md, the readiness
+gates and the check output template eagerly, then only the mode file it runs
+(`references/before-work.md` or `references/delivery.md`); measure with
+`node scripts/read-budget.mjs --skill check --mandatory`.
 Activation cases: [evals/tech-evaluation](evals/tech-evaluation/README.md).
 Claude validation, skill-doctor and host tests run on the preflight-ready head
 before ship; activation evals rerun only when skill descriptions or eval cases
