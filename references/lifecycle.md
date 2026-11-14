@@ -33,8 +33,8 @@ Project to Discovery and writes one «Исследование» document. Next:
 ## Discovery
 
 `mono:discovery` (`skills/discovery/SKILL.md`): finds the solution with the owner
-and writes the PRD with one `mono-prd: approved` record carrying `design=` and
-`next=`, or closes/defers the Project. The old path is decided by records, never
+and writes the PRD with one `mono-prd: approved` record that decides `design=`
+and the route, or closes/defers the Project. The old path is decided by records, never
 dates; product `discoveryGate.since` no longer changes routing. Its home is
 `skills/check/SKILL.md`, mode `discovery`, which is also the gate.
 
@@ -78,9 +78,9 @@ consent rules live in `references/brief.md`.
 
 ## Tech Evaluation
 
-`mono:tech-evaluation` (`skills/tech-evaluation/SKILL.md`): for PRD
-`next=tech-evaluation` (or the owner-requested Tech Evaluation old path, PRD
-without `next=`), chooses one technical solution, gets the page approved and
+`mono:tech-evaluation` (`skills/tech-evaluation/SKILL.md`): when the preceding PRD
+or valid Design record names `next=tech-evaluation` (or on the owner-requested
+Tech Evaluation old path, PRD without `next=`), chooses one technical solution, gets the page approved and
 writes the Tech Spec and its `mono-tech: approved` record. Next: Handoff. Gate:
 `mono:check tech`.
 
@@ -223,8 +223,8 @@ Gate: `mono:preflight` certificate, then `mono:ship`.
 
 ## Ship
 
-`mono:ship` (`skills/ship/SKILL.md`) creates, documents and stabilizes the PR from a
-`mono:preflight` certificate, runs `mono:check pre-ship`, moves the Issue to
+`mono:ship` (`skills/ship/SKILL.md`) takes the draft PR opened by `mono:preflight` out
+of draft against its certificate, documents and stabilizes it, runs `mono:check pre-ship`, moves the Issue to
 `In Review` and records `mono-ship green certificate`. It never merges, deploys,
 closes Issues or records deploy evidence.
 
