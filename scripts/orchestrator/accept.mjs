@@ -208,7 +208,8 @@ export async function acceptAmend(args) {
         }
         atomicJson(pinsFile, { pinsVersion: version, risk, critical, botUnavailable,
           workerWritableRoots, fullSnapshot });
-        text += `\n\n## Effective attempt pins\npinsVersion: ${version}\npins file: ${pinsFile}\nSHA-256: ${sha256File(pinsFile)}\n${JSON.stringify({ ...current, ...readJson(pinsFile) }, null, 2)}\nPreserve the full queue and wait for its confirmation before advancing. Risk determines required local review even when the immutable launch profile was short.`;
+        const updated = effectivePins({ ...entry, pinsVersion: version });
+        text += `\n\n## Effective attempt pins\npinsVersion: ${version}\npins file: ${pinsFile}\nSHA-256: ${sha256File(pinsFile)}\n${JSON.stringify(updated, null, 2)}\nPreserve the full queue and wait for its confirmation before advancing. Risk determines required local review even when the immutable launch profile was short.`;
         fs.writeFileSync(resumeFile, text + "\n");
         const previousLaunchGrants = { workerWritableRoots: entry.workerWritableRoots, writable_roots: entry.writable_roots,
           capsuleRoots: entry.capsule.writable_roots, network_access: entry.network_access };
@@ -216,7 +217,7 @@ export async function acceptAmend(args) {
         atomicJson(resumeRequest, { root, issue, resumeFile, extraWritable: workerWritableRoots.filter(value => !previousRoots.has(fs.realpathSync(value))), workerWritableRoots });
         const record = { issue, attempt, launchPinsDigest: entry.pins.digest, threadId: entry.thread_id, preparedAt: new Date().toISOString(),
           previousResume: entry.last_resume ?? null, previousLaunchGrants, pinsVersion: version, pinsFile, resumeFile, resumeRequest,
-          currentVersion: current.pinsVersion, effectiveInputs: { ...current, ...readJson(pinsFile) }, change, changeDigest: digest(change),
+          currentVersion: current.pinsVersion, effectiveInputs: updated, change, changeDigest: digest(change),
           pinsDigest: sha256File(pinsFile), resumeDigest: sha256File(resumeFile), requestDigest: sha256File(resumeRequest) };
         atomicJson(pendingFile, record);
         return { record, state, resumed: null, pendingFile };

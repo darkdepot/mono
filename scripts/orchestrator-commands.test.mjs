@@ -907,27 +907,34 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
       }));
       await t.test("AC4 old archive pins: new amendments retain full base and admit collection", () => isolatedPreparation(async ({ registryFile, before }) => {
         const launchFile = before[ack.issue].pins.file, launchBytes = fs.readFileSync(launchFile);
+        const priorFile = path.join(path.dirname(launchFile), "pins.v1.json"), priorBytes = fs.readFileSync(priorFile);
         try {
           const archive = path.join(scratch, "evidence/datasets/old.v7.md"); write(archive, "Old review context.\n");
           const legacy = { ...readJson(launchFile), reviewDataset: archive, reviewDatasetVersion: 7,
             reviewDatasetDigest: createHash("sha256").update(fs.readFileSync(archive)).digest("hex") }; atomicJson(launchFile, legacy);
           const registry = readJson(registryFile), worker = registry[ack.issue];
           worker.pins.digest = createHash("sha256").update(fs.readFileSync(launchFile)).digest("hex");
-          worker.pinsVersion = 0; delete worker.last_amendment; delete worker.completed_amendments; atomicJson(registryFile, registry);
+          const newerArchive = path.join(scratch, "evidence/datasets/newer.v8.md"); write(newerArchive, "Changed old review context.\n");
+          atomicJson(priorFile, { ...readJson(priorFile), reviewDataset: newerArchive, reviewDatasetVersion: 8,
+            reviewDatasetDigest: createHash("sha256").update(fs.readFileSync(newerArchive)).digest("hex") });
+          worker.pinsVersion = 1; delete worker.last_amendment; delete worker.completed_amendments; atomicJson(registryFile, registry);
           for (const text of ["Legacy unrelated amendment one.", "Legacy unrelated amendment two."]) {
             const result = JSON.parse(pass(run(process.execPath, amendArgs(text))));
             assert.equal(effectivePins(readJson(registryFile)[ack.issue]).reviewDatasetVersion, 7);
             assert.equal(Object.hasOwn(readJson(result.pinsFile), "reviewDatasetVersion"), false);
             const worker = readJson(registryFile)[ack.issue], current = effectivePins(worker);
+            const published = JSON.parse(/\n(\{[\s\S]*\})\nPreserve the full queue/u.exec(fs.readFileSync(result.resumeFile, "utf8"))[1]);
+            assert.deepEqual(published, current, "resume block must match registered pins after a prior old amendment");
+            assert.deepEqual(worker.last_amendment.effectiveInputs, current, "replay inputs use the same canonical overlay");
             assert.equal(current.reviewDataset, archive); assert.equal(current.reviewDatasetDigest, legacy.reviewDatasetDigest);
-            const request = { ...current, pins: collectionPinsBinding(worker), head, collect: false, collectionId: `preflight-collect:${head}:${result.pinsVersion + 100}` };
+            const request = { ...published, pins: collectionPinsBinding(worker), head, collect: false, collectionId: `preflight-collect:${head}:${result.pinsVersion + 100}` };
             const queue = [{ id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } }];
             const report = { ...collectReport, linear_mutations_pending: queue, capsule: { ...collectReport.capsule, open_queue: queue } };
             assert.equal((await admitCollection(root, report))[0].manifestDigest, digest(current));
             assert.deepEqual(checkCollectionRequest(request), current);
             await processes.stop(processes.track(result.pid));
           }
-        } finally { fs.writeFileSync(launchFile, launchBytes); }
+        } finally { fs.writeFileSync(launchFile, launchBytes); fs.writeFileSync(priorFile, priorBytes); }
       }));
       for (const storage of ["completed", "last_amendment", "delivered"]) await t.test(`AC5 old dataset amendment replay: ${storage}`, () => isolatedPreparation(async ({ registryFile, before, output, resumeScript, resumeSource }) => {
         const text = `Replay old dataset identity in ${storage}.`, args = amendArgs(text);
