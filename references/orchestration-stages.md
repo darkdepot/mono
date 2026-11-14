@@ -37,7 +37,7 @@ verbatim as the orchestrator's final message, relay the shown text, question and
 verbatim owner reply to the stage. The orchestrator never approves a projectless
 Issue, even under a Project delegation. The stage confirms the answer and returns
 the authorized transition; the orchestrator launches the worker only after that.
-Do not relay other stage questions to the owner. After every stage send the owner
+Do not relay other stage questions to the owner. After every other stage send the owner
 its R1 result (conclusion, decisions, exclusions/reason, next, link; 120 words,
 Handoff 150), plus «Утвердил сам, потому что…». Decisions on their behalf come first:
 «Решил за тебя: …, потому что …». Show exceptions and deferred/irreversible choices.

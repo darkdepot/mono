@@ -6404,7 +6404,10 @@ const ISSUE_RECOVERY_CASES = [
   "superseded-new-yes-marker",
   "edit-new-permit",
   "write-failed-after-retry",
-  "revoke-write-failed"
+  "revoke-write-failed",
+  "yes-later-label-removed-no-answer",
+  "yes-stop-label-removed-no-answer",
+  "edit-label-removed-no-answer"
 ];
 
 const MACHINE_TOKENS = new Set([
