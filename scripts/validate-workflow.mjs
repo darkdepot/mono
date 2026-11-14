@@ -474,6 +474,42 @@ function validateStageDialogueRules() {
     if (!read(`skills/${stage}/SKILL.md`).includes("owner-dialog.md"))
       fail(`stage dialogue reference missing: ${stage}`);
   }
+  requireMachineToken("Вопрос: «");
+  for (const error of labeledQuestionErrors(root)) fail(error);
+  validateLabeledQuestionFixture();
+}
+// A stage asks in plain text with its advice; the retired form was a
+// «Вопрос: «…»» line followed by a list of option labels «- label: gain / cost».
+function labeledQuestionErrors(base) {
+  const errors = [], walk = (directory) => fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry =>
+    entry.isDirectory() ? walk(path.join(directory, entry.name)) : entry.name.endsWith(".md") ? [path.join(directory, entry.name)] : []);
+  for (const stage of RUSSIAN_STAGES) {
+    const directory = path.join(base, "skills", stage);
+    if (!fs.existsSync(directory)) continue;
+    for (const file of walk(directory).sort()) {
+      const lines = fs.readFileSync(file, "utf8").split("\n"), name = path.relative(base, file).split(path.sep).join("/");
+      lines.forEach((line, index) => {
+        if (!/^\s*(?:>\s*)?Вопрос:\s*«/.test(line)) return;
+        const next = lines.slice(index + 1).find(candidate => candidate.replace(/^\s*>?\s*/, "").trim());
+        if (next && /^\s*(?:>\s*)?[-*] [^:]+: .*\/.*/.test(next)) errors.push(`${name}: stage question uses the retired «Вопрос: «…»» form with option labels`);
+      });
+    }
+  }
+  return errors;
+}
+function validateLabeledQuestionFixture() {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-labeled-question-"));
+  const file = path.join(scratch, "skills/idea/references/examples.md");
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "> Советую дополнить: тема та же. Куда запишем?\n\nВопрос: «Куда?» в прозе без списка.\n");
+    if (labeledQuestionErrors(scratch).length) fail("labeled question fixture: a plain question must pass");
+    fs.writeFileSync(file, "Вопрос: «Куда запишем?»\n- Дополнить: одна история / шире рамка\n- Новый: своя история / два проекта\n");
+    if (!labeledQuestionErrors(scratch).some(error => error.startsWith("skills/idea/references/examples.md:"))) fail("labeled question fixture: the retired form must fail with its file name");
+    console.log("PASS labeled question fixtures: plain question passes, retired label form fails");
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 function validatePluginAgents() {
@@ -6266,6 +6302,8 @@ const MACHINE_TOKENS = new Set([
   "head", "phase_result",
   // Shared dialogue path; no-window behavior is covered by native text fixtures.
   "owner-dialog.md",
+  // MONO-333: retired stage question form, a label line followed by option labels.
+  "Вопрос: «",
   // MONO-239: invocation flags, template fields/placeholders and dialogue skeleton.
   "--ignore-user-config", "--strict-mcp-config", "--disable apps", "-s read-only", "codex exec", "claude -p",
   "tools", "hooks", "PreToolUse", "Agent|Task", "command", "type",
