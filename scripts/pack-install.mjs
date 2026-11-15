@@ -220,6 +220,22 @@ export function verifyInstallQuiescence(root, roots, config, wave = false) {
   }
 }
 
+export async function recoverInstallWave(root, sha) {
+  for (const file of [path.join(root, 'landing/pending-install.json.lock'), path.join(root, 'landing/guard', `${sha}.json.lock`)]) {
+    await withLock(file, () => {}, { reclaim: true });
+  }
+}
+
+export async function replayClosedWave(args, places, close = closeDrain) {
+  const file = path.join(args.root, 'landing/installed', `${args['install-sha']}.json`);
+  if (!fs.existsSync(file)) return false;
+  if (places.some(place => !place.verified)) throw new Error('closed wave differs from installed places; use standalone repair');
+  const archive = readJson(file);
+  const result = await close({ ...args, evidence: archive.evidence ?? JSON.stringify(places) }, { underInstallLocks: true });
+  if (result.code !== 0) throw new Error('landing-drain close replay refused installation');
+  return true;
+}
+
 export async function installPack(input, overrides = {}) {
   const options = { home: os.homedir(), env: process.env, profiles: [], removePlaces: [], watcherConfigs: {}, ...input };
   const host = { processes: processTable, cwdOf, restartWatcher, verifyDrain, closeDrain, ...overrides };
@@ -255,6 +271,8 @@ export async function installPack(input, overrides = {}) {
         readJson(snapshot);
       }
       saved = readJson(control);
+      if (baseline && baseline.sha !== expected.sha) throw new Error('installation tag changed since the immutable record');
+      if (options.wave) await recoverInstallWave(root, expected.sha);
       for (const dir of roots) {
         const workers = readJson(path.join(dir, 'workers.json'));
         if (!workers || typeof workers !== 'object' || Array.isArray(workers)) throw new Error(`invalid product registry: ${dir}`);
@@ -273,6 +291,7 @@ export async function installPack(input, overrides = {}) {
       const removed = [...new Set([...(previousProgress.removedPlaces ?? []), ...(ownProgress.removedPlaces ?? []), ...options.removePlaces.map(value => path.resolve(value))])];
       result.removedPlaces = removed;
       places = places.filter(place => !removed.includes(place.place));
+      if (baseline && places.some(place => !baseline.places.some(prior => prior.place === place.place))) throw new Error('installation places changed since the immutable record');
       for (const place of places) if (!fs.existsSync(place.place) && (baseline?.places ?? history.at(-1)?.places ?? []).some(old => old.place === place.place)) throw new Error(`remembered place disappeared: ${place.place}; requires --remove-place`);
       function localCopies() {
         const copies = [];
@@ -311,6 +330,10 @@ export async function installPack(input, overrides = {}) {
       result.holders = [...new Map(result.holders.map(row => [canonical(row), row])).values()];
       result.places = places.map(place => inspect(place, expected, options.env));
       if (result.holders.some(row => row.state !== 'dead')) return { ...result, code: 2, outcome: 'waiting' };
+      const drainArgs = { root, config: options.config, 'install-sha': expected.sha, worktree: options.repo };
+      // close writes its archive before removing pending records. Finish that
+      // committed cleanup before quiescence counts the same landing twice.
+      const closedWave = options.wave && await replayClosedWave(drainArgs, result.places, host.closeDrain);
       const quiescence = () => verifyInstallQuiescence(root, roots, options.config, options.wave);
       if (options.breaking) quiescence();
       const watcherConfigs = roots.map(dir => {
@@ -351,7 +374,6 @@ export async function installPack(input, overrides = {}) {
         atomicJson(baselineFile, baseline);
         if (canonical(readJson(baselineFile)) !== canonical(baseline)) throw new Error('installation record read-back differs');
       }
-      if (baseline.sha !== expected.sha || places.some(place => !baseline.places.some(prior => prior.place === place.place))) throw new Error('installation places/tag changed since the immutable record');
       progress.removedPlaces = removed;
       if (progress.outcome === 'rolled-back') { progress.phase = 'install'; delete progress.reason; delete progress.outcome; }
       progress.pauseControl = saved; progress.pauseActive = true; persist();
@@ -406,16 +428,13 @@ export async function installPack(input, overrides = {}) {
       }
       let completed = false;
       try {
-        const drainArgs = { root, config: options.config, 'install-sha': expected.sha, worktree: options.repo };
-        const closedWave = options.wave && fs.existsSync(path.join(root, 'landing/installed', `${expected.sha}.json`));
-        if (closedWave && result.places.some(place => !place.verified)) throw new Error('closed wave differs from installed places; use standalone repair');
         if (options.wave && !closedWave && (await host.verifyDrain(drainArgs, { underInstallLocks: true })).code !== 0) throw new Error('landing-drain verify refused installation');
         if (progress.phase !== 'rollback') {
           try { await reconcile(false); await installedWatchers(false); }
           catch (error) { progress.phase = 'rollback'; progress.reason = error.message; persist(); }
         }
         if (progress.phase === 'rollback') { await reconcile(true); await installedWatchers(true); }
-        if (options.wave && progress.phase !== 'rollback' && (await host.closeDrain({ ...drainArgs, evidence: JSON.stringify(result.places) }, { underInstallLocks: true })).code !== 0) throw new Error('landing-drain close refused installation');
+        if (options.wave && !closedWave && progress.phase !== 'rollback' && (await host.closeDrain({ ...drainArgs, evidence: JSON.stringify(result.places) }, { underInstallLocks: true })).code !== 0) throw new Error('landing-drain close refused installation');
         result.restart = processPlaces(host).map(({ argv, ...row }) => row);
         result.localCopies = localCopies();
         Object.assign(result, { code: progress.phase === 'rollback' ? 1 : 0, outcome: progress.phase === 'rollback' ? 'rolled-back' : 'installed', ...(progress.reason ? { reason: progress.reason } : {}) });

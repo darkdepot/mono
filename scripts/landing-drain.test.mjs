@@ -325,6 +325,47 @@ test('landing breaking installation does not count a paused record as landed qui
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.root, 'workers.json')))[f.issue].pid, null);
 });
 
+test('landing installer recovers dead pending and guard locks left by a killed wave process', t => {
+  const f = fixture(t); atomicJson(f.pending, [f.record]); atomicJson(path.join(f.root, 'control.json'), { state: 'idle', halt: true });
+  const pendingLock = `${f.pending}.lock`, guardLock = path.join(f.root, `landing/guard/${f.tip}.json.lock`);
+  const writer = `import {withLock} from ${JSON.stringify(path.resolve('scripts/runtime.mjs'))};await withLock(${JSON.stringify(pendingLock)},()=>withLock(${JSON.stringify(guardLock)},()=>process.kill(process.pid,'SIGKILL')));`;
+  const killed = spawnSync(process.execPath, ['--input-type=module', '-e', writer], { cwd: f.repo, env: f.env, detached: true, encoding: 'utf8' });
+  assert.equal(killed.signal, 'SIGKILL'); assert.ok(fs.existsSync(pendingLock)); assert.ok(fs.existsSync(guardLock));
+  const args = { root: f.root, config: f.config, worktree: f.repo, 'install-sha': f.tip, evidence: 'all installed places verified' };
+  const recovery = `import {withLock} from ${JSON.stringify(path.resolve('scripts/runtime.mjs'))};import {recoverInstallWave,verifyInstallQuiescence} from ${JSON.stringify(path.resolve('scripts/pack-install.mjs'))};import {verify,close} from ${JSON.stringify(script)};const args=${JSON.stringify(args)};
+await withLock(args.root+'/dispatch.lock',()=>withLock(args.root+'/launch.lock',async()=>{await recoverInstallWave(args.root,args['install-sha']);verifyInstallQuiescence(args.root,[args.root],args.config,true);await verify(args,{underInstallLocks:true});await close(args,{underInstallLocks:true});}));`;
+  const recovered = spawnSync(process.execPath, ['--input-type=module', '-e', recovery], { cwd: f.repo, env: f.env, detached: true, encoding: 'utf8', timeout: 10_000 });
+  assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.pending)), []); assert.ok(!fs.existsSync(pendingLock)); assert.ok(!fs.existsSync(guardLock));
+  assert.ok(JSON.parse(fs.readFileSync(path.join(f.root, 'workers.json')))[f.issue]);
+});
+
+test('landing installer does not reclaim a live nested lock', t => {
+  const f = fixture(t), file = `${f.pending}.lock`;
+  const code = `import fs from 'node:fs';import {withLock} from ${JSON.stringify(path.resolve('scripts/runtime.mjs'))};import {recoverInstallWave} from ${JSON.stringify(path.resolve('scripts/pack-install.mjs'))};
+await withLock(${JSON.stringify(file)},async()=>{const before=fs.readFileSync(${JSON.stringify(file)});let refused=false;try{await recoverInstallWave(${JSON.stringify(f.root)},${JSON.stringify(f.tip)});}catch(error){refused=/live\\/unverified/.test(error.message);}if(!refused||!before.equals(fs.readFileSync(${JSON.stringify(file)})))throw new Error('live nested lock changed');});`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd: f.repo, env: f.env, detached: true, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
+test('landing breaking-wave recovery settles identical pending/archive overlap before proving quiescence', t => {
+  const f = fixture(t); atomicJson(f.pending, [f.record]); atomicJson(path.join(f.root, 'control.json'), { state: 'idle', halt: true });
+  assert.equal(f.run('verify', ['--install-sha', f.tip]).status, 0);
+  assert.equal(f.run('close', ['--install-sha', f.tip, '--evidence', 'all places verified']).status, 0);
+  atomicJson(f.pending, [f.record]);
+  const registry = fs.readFileSync(path.join(f.root, 'workers.json'));
+  const code = `import {withLock} from ${JSON.stringify(path.resolve('scripts/runtime.mjs'))};import {recoverInstallWave,replayClosedWave,verifyInstallQuiescence} from ${JSON.stringify(path.resolve('scripts/pack-install.mjs'))};
+const args=${JSON.stringify({ root: f.root, config: f.config, worktree: f.repo, 'install-sha': f.tip })};
+await withLock(args.root+'/dispatch.lock',()=>withLock(args.root+'/launch.lock',async()=>{await recoverInstallWave(args.root,args['install-sha']);if(!await replayClosedWave(args,[{verified:true}]))throw new Error('archive not observed');verifyInstallQuiescence(args.root,[args.root],args.config,true);}));`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd: f.repo, env: f.env, detached: true, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stdout + result.stderr); assert.deepEqual(JSON.parse(fs.readFileSync(f.pending)), []);
+  assert.deepEqual(fs.readFileSync(path.join(f.root, 'workers.json')), registry);
+  atomicJson(f.pending, [{ ...f.record, mergeSha: 'b'.repeat(40) }]);
+  const refused = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd: f.repo, env: f.env, detached: true, encoding: 'utf8' });
+  assert.equal(refused.status, 1); assert.match(refused.stderr, /pending batch changed/);
+  assert.equal(JSON.parse(fs.readFileSync(f.pending))[0].mergeSha, 'b'.repeat(40));
+});
+
 for (const scenario of ["no-halt", "active", "red-tip", "non-ancestor", "checkout-mismatch", "github-tip-mismatch"]) {
   test(`landing U7 verify rejects ${scenario} without moving records`, t => {
     const f = fixture(t); atomicJson(f.pending, [f.record]);

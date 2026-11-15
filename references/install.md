@@ -72,7 +72,11 @@ Intent and result read-backs live beside the record in `<tag>.progress.json`.
 A pause intent is saved before `halt`; only an unfinished pause restores its saved
 control. Repeating an already completed installation preserves current owner
 control changes. A wave interrupted after `close` observes its archive and replays
-the idempotent close only while all installed places still match.
+the idempotent close only while all installed places still match, before checking
+quiescence so the pending/archive overlap is settled canonically. Dead pending
+and current-tip guard locks are reclaimed only after the entire holder group is
+proven stopped; live or unverified locks are preserved. Worker records are never
+removed by this recovery.
 
 Claude permanently pins the same `ref` in `settings.json` /
 `extraKnownMarketplaces` and `plugins/known_marketplaces.json`, with atomic file
