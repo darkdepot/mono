@@ -13,7 +13,7 @@ Project policy:
 - Acme Notes' configured ship workflow is gstack `ship`.
 - Acme Notes' configured documentation workflow is gstack `document-release`.
 - Acme Notes' configured review feedback workflow is Compound `ce-resolve-pr-feedback`.
-- Acme Notes' configured deploy workflow is gstack `land-and-deploy`.
+- Acme Notes has an owner-approved deploy.targets block with version proof and rollback.
 
 Dogfood order:
 
@@ -28,7 +28,7 @@ Dogfood order:
 9. Use `mono:implement` to start Delivery and implement from the approved Issue(s).
 10. Use `mono:preflight` to prepare the local branch and produce a certificate.
 11. Use `mono:ship` for pre-ship review/check, PR creation, repo docs, review loop, and green certificate.
-12. Use `mono:deploy` for Deploy workflow, post-ship check, Linear closeout, and durable learnings.
+12. Use `mono:deploy` for guarded merge, version proof, checks, rollback and truthful closeout.
 13. Keep Project, PRD, Tech Spec, and Issue current in Linear.
 
 ## Correct Raw Idea Intake
@@ -126,7 +126,7 @@ Expected behavior:
 3. It chooses proof before editing, implements only the approved one-PR slice, and reports every acceptance criterion with done/confirmed, unverified or broken evidence. Only complete work without known breakage exits as `implemented-needs-preflight`; screen tasks explicitly report «экран в браузере не проверен».
 4. `mono:preflight` inspects branch/worktree/diff, classifies risk, runs targeted verification, commits, passes the collection's review round and verification, and emits a preflight certificate.
 5. `mono:ship` consumes the preflight certificate, owns formal `mono:review pre-ship`, owns `mono:check pre-ship`, delegates PR creation to the configured Ship workflow, runs repo docs before final green when configured, stabilizes review/CI, and emits a `mono-ship green certificate`.
-6. `mono:deploy` consumes the green certificate, verifies the current PR head SHA still matches, runs the configured Deploy workflow, runs/reports `mono:check post-ship`, closes Linear, and records durable learnings.
+6. `mono:deploy` consumes the green certificate, verifies the current PR head SHA still matches, uses its deploy targets, proves the delivered version, checks production and records truthful closeout.
 
 ### Correct Tiny Advisory Review
 
@@ -236,13 +236,13 @@ Why this fails:
 FAIL:
 
 1. `mono:ship` gets review and CI green.
-2. It merges/deploys through the configured Deploy workflow.
+2. It merges the pinned green head and proves delivery through its deploy targets.
 3. It moves Linear to `Done` and records release learnings.
 
 Why this fails:
 
 - `mono:ship` stops at a `mono-ship green certificate`.
-- Deploy workflow, post-ship check, Linear closeout, and learnings belong to `mono:deploy`.
+- Merge, version proof, rollback and Linear closeout belong to `mono:deploy`.
 - Repo documentation belongs before the green certificate so doc commits are reviewed before deploy.
 
 ## Anti-Example: Workflow Language In Linear Artifacts

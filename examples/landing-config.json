@@ -11,10 +11,9 @@
     "implementation": null,
     "ship": null,
     "documentation": null,
-    "reviewFeedback": null,
-    "deploy": null
+    "reviewFeedback": null
   },
-  "deployApproval": "always",
+  "deploy": { "targets": [{ "kind": "pack" }] },
   "landing": {
     "serialPaths": [
       "CHANGELOG.md",

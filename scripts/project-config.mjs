@@ -8,6 +8,7 @@ import { preapplyMandate } from "./orchestrator/preapply.mjs";
 import { validateIdeaGate, validateResearchGate } from "./idea-gate.mjs";
 
 import { validateQaConfig } from "./qa-recipe.mjs";
+import { validateDeployConfig } from './deploy-config.mjs';
 
 const CONFIG_RELATIVE_PATH = ".agents/mono-workflow.config.json";
 const LEGACY_CONFIG_RELATIVE_PATH = ".agents/mono-workflow.config.md";
@@ -117,9 +118,7 @@ function defaultConfig(projectName) {
       ship: null,
       documentation: null,
       reviewFeedback: null,
-      deploy: null,
     },
-    deployApproval: "always",
   };
 }
 
@@ -167,14 +166,12 @@ function configFromRepo(repo, projectName) {
     const failures = [];
     const config = readJsonConfig(jsonPath, failures);
     if (!config) throw new Error(failures.join("\n"));
-    if (!("deployApproval" in config)) config.deployApproval = "always";
     return config;
   }
   if (fs.existsSync(previousJsonPath)) {
     const failures = [];
     const config = readJsonConfig(previousJsonPath, failures);
     if (!config) throw new Error(failures.join("\n"));
-    if (!("deployApproval" in config)) config.deployApproval = "always";
     return config;
   }
   if (fs.existsSync(legacyPath)) {
@@ -221,7 +218,7 @@ function validateConfig(config, failures) {
   if (!config.workflows || typeof config.workflows !== "object") {
     failures.push("Project config missing workflows");
   } else {
-    for (const field of ["implementation", "ship", "documentation", "reviewFeedback", "deploy"]) {
+    for (const field of ["implementation", "ship", "documentation", "reviewFeedback"]) {
       if (!(field in config.workflows)) {
         failures.push(`Project config missing workflows.${field}`);
         continue;
@@ -241,12 +238,8 @@ function validateConfig(config, failures) {
     }
   }
   // prerequisites (the old review helper flag) is no longer required; an existing value is accepted silently.
-  if ("deployApproval" in config) {
-    const allowed = ["always", "risky-only", "never"];
-    if (!allowed.includes(config.deployApproval)) {
-      failures.push(`Project config deployApproval must be one of: ${allowed.join(", ")}`);
-    }
-  }
+  // Legacy workflows.deploy and deployApproval are accepted and ignored.
+  if ('deploy' in config) try { validateDeployConfig(config.deploy); } catch (error) { failures.push(error.message); }
   if ("design" in config) {
     const design = config.design;
     if (!design || typeof design !== "object" || Array.isArray(design)) {
@@ -307,7 +300,10 @@ function validateConfig(config, failures) {
       try { deliveryConfig(config); } catch (error) { failures.push(`Project config orchestration.delivery: ${error.message}`); }
     }
   }
-  if (hasPlaceholder(config)) {
+  const currentFields = structuredClone(config);
+  delete currentFields.deployApproval;
+  if (currentFields.workflows) delete currentFields.workflows.deploy;
+  if (hasPlaceholder(currentFields)) {
     failures.push("Project config contains unresolved <...> placeholder");
   }
   try { validateModels(config); } catch (error) { failures.push(error.message); }
@@ -316,7 +312,7 @@ function validateConfig(config, failures) {
   try { validateResearchGate(config.researchGate); } catch (error) { failures.push(error.message); }
   try { validateResearchGate(config.discoveryGate); } catch (error) { failures.push(`${error.code ? `${error.code}: ` : ""}${error.message.replaceAll("researchGate", "discoveryGate")}`); }
   if ("landWorkflow" in config || config.workflows?.land) {
-    failures.push("Project config must use workflows.deploy, not Land workflow compatibility fields");
+    failures.push("Project config must use deploy.targets, not Land workflow compatibility fields");
   }
 }
 

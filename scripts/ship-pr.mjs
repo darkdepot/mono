@@ -48,8 +48,13 @@ export function unpushedSecrets(worktree, remote) {
     });
   });
 }
-const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim();
+const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 120_000 }).trim();
 const ghJson = (...args) => JSON.parse(gh(...args) || 'null');
+export function readPrPublications(repo, number) {
+  return { issueComments: ghJson('api', '--paginate', '--slurp', `repos/${repo}/issues/${number}/comments`).flat(),
+    reviewComments: ghJson('api', '--paginate', '--slurp', `repos/${repo}/pulls/${number}/comments`).flat(),
+    pr: ghJson('api', `repos/${repo}/pulls/${number}`) };
+}
 // Where GitHub push protection is on, GitHub is the check; elsewhere (or unreadable) Ship scans first.
 // GitHub protection counts only when the remote really pushes to that repository.
 export function pushesTo(url, repo) {
@@ -261,10 +266,7 @@ async function main(argv) {
   if (!command || command === '--help') { console.log(usage); return; }
   const snapshotFor = () => {
     const snapshot = readShipSnapshot(args.repo, Number(args.pr));
-    const issueComments = ghJson('api', '--paginate', '--slurp', `repos/${args.repo}/issues/${args.pr}/comments`).flat();
-    const reviewComments = ghJson('api', '--paginate', '--slurp', `repos/${args.repo}/pulls/${args.pr}/comments`).flat();
-    const pr = ghJson('api', `repos/${args.repo}/pulls/${args.pr}`);
-    return { snapshot, issueComments, reviewComments, pr: { body: pr.body ?? '', created_at: pr.created_at } };
+    return { snapshot, ...readPrPublications(args.repo, Number(args.pr)) };
   };
   if (command === 'open') return console.log(JSON.stringify(openDraft({ worktree: args.worktree, repo: args.repo, remote: args.remote ?? 'origin', branch: args.branch,
     base: args.base ?? 'main', title: args.title, issue: args.issue, issueUrl: args['issue-url'] })));

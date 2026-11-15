@@ -58,6 +58,8 @@ function validateReadBudget() {
     for (const entry of budget.files) console.log(`read-budget ${entry.bytes} bytes ${entry.path}`);
     console.log(`Read budget: ${budget.bytes} bytes / ~${budget.approximate_tokens} tokens; ceiling ${READ_BUDGET_MAX_BYTES} bytes`);
     if (!budget.within_ceiling) fail("Delivery reading corpus exceeds the byte ceiling");
+    const deployBudget = measureReadBudget(root, { skills: ["deploy"] });
+    if (!deployBudget.within_ceiling) fail("Deploy reading corpus exceeds 13000 bytes");
     if (budget.files.some((entry) => entry.path.startsWith("references/rationale/"))) fail("Rationale entered delivery reading corpus");
     for (const stage of RUSSIAN_STAGES) {
       const budget = measureReadBudget(root, { skills: [stage], includeConditional: false });
@@ -1000,7 +1002,7 @@ function writeLegacyProjectConfig(repo) {
 - Ship workflow: gstack ship
 - Documentation workflow: None
 - Review feedback workflow: compound-engineering:ce-resolve-pr-feedback
-- Deploy workflow: gstack land-and-deploy
+- Deploy workflow: legacy deploy command
 `
   );
 }
@@ -1031,8 +1033,7 @@ function validateProjectConfigBehavior() {
       fail("project-config must migrate legacy Artifact roots");
     }
     if (config.workflows.ship !== "gstack ship") fail("project-config must migrate Ship workflow");
-    if (config.workflows.deploy !== "gstack land-and-deploy") fail("project-config must migrate Deploy workflow");
-    if (!("deployApproval" in config)) fail("project-config must write deployApproval field");
+    if (config.workflows.deploy !== "legacy deploy command") fail("project-config must migrate Deploy workflow");
 
     config.deployApproval = "risky-only";
     fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -1040,11 +1041,7 @@ function validateProjectConfigBehavior() {
 
     config.deployApproval = "monthly";
     fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-    expectCommandFailure(
-      "project-config --check invalid deployApproval fixture",
-      () => runNode(["scripts/project-config.mjs", "--repo", repo, "--check"]),
-      "deployApproval"
-    );
+    runNode(["scripts/project-config.mjs", "--repo", repo, "--check"]);
     config.deployApproval = "always";
     fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
@@ -1138,7 +1135,7 @@ function validateProjectConfigBehavior() {
         ship: "gstack ship",
         documentation: null,
         reviewFeedback: null,
-        deploy: "gstack land-and-deploy",
+        deploy: "legacy deploy command",
       },
       prerequisites: { autoreviewHelper: true },
       deployApproval: "risky-only",
@@ -4808,17 +4805,6 @@ function validateCompactionContract() {
 
 function costTemplateFieldFaults(surfaces) {
   const faults = [];
-  const deploySlice = boundedSlice(
-    "templates/deploy-output.md",
-    surfaces.deploy,
-    "Deploy status:",
-    "\nПроверено:",
-    "default deploy-status block"
-  );
-  if (deploySlice && !/^\s*- Cost:\s*\S/m.test(deploySlice)) {
-    faults.push("deploy-cost-field");
-  }
-
   const statusSlice = boundedSlice(
     "templates/orchestrator-brief.md",
     surfaces.brief,
@@ -4834,7 +4820,6 @@ function costTemplateFieldFaults(surfaces) {
 
 function validateCostTemplateFields() {
   const surfaces = {
-    deploy: read("templates/deploy-output.md"),
     brief: read("templates/orchestrator-brief.md"),
   };
   const faults = costTemplateFieldFaults(surfaces);
@@ -4843,7 +4828,6 @@ function validateCostTemplateFields() {
   }
 
   const negativeFixtures = [
-    ["deploy-cost-field", { ...surfaces, deploy: surfaces.deploy.replace(/^\s*- Cost:.*$/m, "") }],
     ["status-wave-cost-field", { ...surfaces, brief: surfaces.brief.replace(/^Цена волны:.*$/m, "") }],
   ];
   for (const [expectedFault, fixture] of negativeFixtures) {
@@ -5341,8 +5325,8 @@ function boundedSlice(relativePath, text, startMarker, endMarker, label) {
 
 function validateProjectUpdateSurface() {
   const { paths } = extractReadFirstEntries(read("skills/deploy/SKILL.md"));
-  if (!paths.includes("templates/project-update.md")) {
-    fail("skills/deploy/SKILL.md must read templates/project-update.md as its project-update source");
+  if (!paths.includes("references/project-update.md")) {
+    fail("skills/deploy/SKILL.md must read its short project-update reference");
   }
 
   // The orchestrator publishes project updates too, so the template must sit in
@@ -5848,7 +5832,6 @@ function validateModelPolicyFixtures() {
 const STRING_PINS = [
   ["skills/qa/SKILL.md", "references/qa-skills.md"],
   ["skills/orchestrate/SKILL.md", "mono:qa"],
-  ["skills/deploy/SKILL.md", "scripts/orchestrator/qa.mjs"],
   ["references/orchestration-delivery.md", "qa/state.json"],
   ["references/orchestration-delivery.md", "heldIssues"],
   ["references/orchestration-delivery.md", "finalIssue"],
@@ -5939,9 +5922,6 @@ const STRING_PINS = [
   ["templates/ship-output.md","Статус ревью:"],
   ["templates/ship-status-ux.md","Review timeline:"],
   ["references/orchestration-dispatch.md","orchestration.workerAudience"],
-  ["skills/deploy/SKILL.md","Project update:"],
-  ["templates/deploy-output.md","Project update:"],
-  ["skills/deploy/SKILL.md","Тематический проект:"],
   ["skills/issue/SKILL.md","Тематический проект:"],
   ["templates/issue.md","Тематический проект:"],
   ["templates/project-update.md","Тематический проект:"],
@@ -5952,10 +5932,6 @@ const STRING_PINS = [
   ["templates/review-output.md","К сведению:"],
   ["templates/ship-output.md","Preflight:"],
   ["templates/ship-output.md","Bug/perf proof:"],
-  ["templates/deploy-output.md","Deploy status:"],
-  ["templates/deploy-output.md","Ship certificate:"],
-  ["templates/deploy-output.md","Deploy workflow:"],
-  ["templates/deploy-output.md","Learnings recorded:"],
   ["templates/check-output.md","Смысл:"],
   ["templates/check-output.md","Чего не хватает:"],
   ["templates/check-output.md","Расхождения:"],
@@ -6077,7 +6053,6 @@ const STRING_PINS = [
   ["references/review-rubric.md","blocked"],
   ["references/install.md",".agents/mono-workflow.config.json"],
   ["references/orchestration-dispatch.md","claude-code-desktop"],
-  ["references/orchestration.md","deployApproval"],
   ["references/orchestration-dispatch.md","scope-drift-needs-handoff"],
   ["references/orchestration-dispatch.md","codex-cli"],
   ["references/orchestration-dispatch.md","codex exec resume"],
@@ -6114,13 +6089,10 @@ const STRING_PINS = [
   ["skills/orchestrate/SKILL.md","\"matcher\": \"auto\""],
   ["skills/orchestrate/SKILL.md","templates/orchestrator-compaction-hook.sh"],
   ["skills/orchestrate/SKILL.md",".claude/settings.json"],
-  ["skills/deploy/SKILL.md","workflows.qa"],
-  ["skills/deploy/SKILL.md","qaAuth"],
   ["HANDBOOK.md","\"qa\""],
   ["HANDBOOK.md","cookie-import"],
   ["HANDBOOK.md","test-account"],
   ["HANDBOOK.md","owner-session"],
-  ["templates/deploy-output.md","Live QA:"],
   ["references/worker-contract.md","pass | deferred | not-run"],
   ["templates/orchestrator-dispatch.md","references/orchestration-dispatch.md"],
   ["skills/implement/SKILL.md","references/worker-contract.md"],
@@ -6141,7 +6113,6 @@ const STRING_PINS = [
   ["templates/orchestrator-brief.md","Следующий контакт:"],
   ["templates/orchestrator-brief.md","Техника (можно не читать):"],
   ["templates/compact-instructions.md","product_name"],
-  ["skills/deploy/SKILL.md","git rev-parse HEAD"],
   ["references/install.md","git show"],
   ["skills/handoff/references/record.md","references/artifact-intake.md"],
   ["skills/implement/SKILL.md","implemented-needs-preflight"],
@@ -6161,24 +6132,16 @@ const STRING_PINS = [
   ["skills/ship/SKILL.md","Documentation workflow"],
   ["skills/ship/SKILL.md","mono-ship green certificate"],
   ["skills/ship/SKILL.md","Next: mono:deploy"],
-  ["skills/deploy/SKILL.md","Deploy workflow"],
-  ["skills/deploy/SKILL.md","mono:check post-ship"],
-  ["skills/deploy/SKILL.md","gstack-learnings-log"],
-  ["skills/deploy/SKILL.md","gstack-learnings-search"],
-  ["skills/deploy/SKILL.md","Learnings consulted:"],
   ["skills/deploy/SKILL.md","deployApproval"],
   ["templates/ship-output.md","mono-ship green certificate"],
   ["templates/ship-output.md","Documentation workflow"],
   ["templates/ship-output.md","Next:"],
-  ["templates/deploy-output.md","Deploy workflow"],
-  ["templates/deploy-output.md","Learnings recorded"],
   ["skills/check/SKILL.md","project-config"],
   ["skills/orchestrate/SKILL.md","scope-drift-needs-handoff"],
   ["skills/orchestrate/SKILL.md","references/orchestration.md"],
   ["skills/orchestrate/SKILL.md","templates/orchestrator-dispatch.md"],
   ["skills/orchestrate/SKILL.md","templates/orchestrator-brief.md"],
   ["skills/orchestrate/SKILL.md","templates/orchestrator-report.md"],
-  ["skills/orchestrate/SKILL.md","deployApproval"],
   ["skills/orchestrate/SKILL.md","Session verdicts:"],
   ["skills/orchestrate/SKILL.md","codex-cli"],
   ["skills/orchestrate/SKILL.md","workers.json"],
@@ -6187,7 +6150,6 @@ const STRING_PINS = [
   ["templates/review-output.md","Ревью Linear: <ready|advisory-ready|needs-fixes|blocked>"],
   ["templates/ship-output.md","Preflight: <ready/blocked/drift-candidate/needs-human/not run>"],
   ["templates/ship-output.md","Bug/perf proof: <not applicable or original symptom/baseline + fix proof + regression proof/gap>"],
-  ["templates/deploy-output.md","Ship certificate: <found/missing/stale>"],
   ["skills/handoff/SKILL.md","`mono:review artifact`"],
   ["skills/check/SKILL.md","`repair`"],
   ["skills/implement/SKILL.md","`lifecycle_state_entity=issue`"],
@@ -6453,7 +6415,6 @@ const REQUIRED_HEADINGS = [
   ["templates/orchestrator-report.md","Worker Report And Ledger Shapes"],
   ["references/readiness-gates.md","Readiness Gates"],
   ["references/human-friendly-output.md","Human-Friendly Workflow Output"],
-  ["templates/deploy-output.md","Deploy Output Template"],
   ["templates/project-update.md","Project Update Template"],
   ["templates/orchestrator-report.md","Model provenance"],
   ["references/lifecycle.md","Delivery"],
@@ -6523,6 +6484,11 @@ const ISSUE_RECOVERY_CASES = [
 ];
 
 const MACHINE_TOKENS = new Set([
+  "requireQaPassed",
+  "scripts/deploy.mjs",
+  "skills/deploy/references/output.md",
+  "references/project-update.md",
+  "references/output.md",
   // MONO-422: installer command/flags; installation behavior lives in its CLI fixtures.
   "scripts/pack-install.mjs", "scripts/pack-install.test.mjs", "--tag", "--profile", "--remove-place", "--watcher-config", "--breaking", "--wave",
   ...Object.values(ISSUE_STEP_INPUTS).flat(),
@@ -6846,7 +6812,6 @@ const MACHINE_TOKENS = new Set([
   "maxParallelWorkers",
   "model",
   "model_reasoning_effort",
-  "mono:check post-ship",
   "mono:deploy",
   "mono:handoff",
   "mono:handoff repair",
@@ -6952,7 +6917,7 @@ const MACHINE_TOKENS = new Set([
   "status",
   "surfaceRevision",
   "templates/compact-instructions.md",
-  "templates/deploy-output.md",
+  "skills/deploy/references/output.md",
   "templates/orchestrator-brief.md",
   "templates/orchestrator-compaction-hook.sh",
   "templates/orchestrator-dispatch.md",
@@ -7139,9 +7104,8 @@ function validateLandingSurface() {
     assertIncludes("references/landing.md", token);
   for (const token of ["landing-drain.mjs", "LANDED", "DRAIN-CLOSE", "--install-sha", "--evidence", "--attempt", "--pr"])
     assertIncludes("references/landing.md", token);
-  for (const [file, target] of [["skills/deploy/SKILL.md", "references/landing.md#merge-validation"], ["references/orchestration-delivery.md", "landing.md#merge-validation"]]) {
-    if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one merge validation reference`);
-  }
+  for (const token of ["landing-guard.mjs", "landing-drain.mjs", "requireQaPassed"])
+    assertIncludes("scripts/deploy.mjs", token);
   if (documentSection(read("references/orchestration-delivery.md"), "Deploy and closeout") === null) fail("orchestration: missing Deploy and closeout section");
   if (documentSection(read("AGENTS.md"), "Change Discipline") === null) fail("AGENTS: missing Change Discipline section");
   assertIncludes("AGENTS.md", "changelog.d/<ISSUE-KEY>.md");
@@ -7188,7 +7152,10 @@ function validateReadFirstTierContract() {
     if (!isRussianStage(file) && /^Прочитай(?: сразу|, когда)/m.test(text)) fail(`${file}: Russian read tiers require a listed Russian stage`);
     const tier = readTierBounds(text, file);
     if (!tier) { fail(`${file}: missing or unordered read tiers`); continue; }
-    if (!isRussianStage(file) && extractReadFirstEntries(text, file).paths[0] !== "AGENTS.md") fail(`${file}: AGENTS.md must be the first eager read`);
+    // U9: Deploy consumes the product instructions already loaded by its session;
+    // its complete dedicated reading union has the separate 13,000-byte ceiling.
+    const first = file === "skills/deploy/SKILL.md" ? "references/output.md" : "AGENTS.md";
+    if (!isRussianStage(file) && extractReadFirstEntries(text, file).paths[0] !== first) fail(`${file}: ${first} must be the first eager read`);
     const conditional = text.slice(tier.start, tier.end);
     for (const line of conditional.split("\n")) {
       if (/^\d+\.\s/.test(line.trim())) fail(`${file}: numbered conditional read`);
@@ -7440,9 +7407,6 @@ function validateAe6Fixtures() {
       "- `repair`\n", "")), "Modes: missing or duplicate repair declaration");
     negative("tech mode declaration removed with prose intact", () => change("skills/check/SKILL.md", (text) => text.replace(
       "- `tech`\n", "")), "Modes: missing or duplicate tech declaration");
-    change("skills/deploy/SKILL.md", (text) => text.replace(/^(\d+)(\. `cost`:)/m, (_, ordinal, suffix) => `${ordinal === "99" ? "98" : "99"}${suffix}`));
-    check(); restore(); check();
-    console.log("PASS AE6 cost step renumbering: green");
   } catch (error) {
     fail(`AE6 fixtures failed: ${error.message}\n${error.stdout || ""}\n${error.stderr || ""}`);
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
@@ -7460,9 +7424,8 @@ function namedWorkflowStep(text, id) {
   return count === 1 ? lines.slice(start, end).join("\n") : null;
 }
 function validateCostCommandStructure() {
-  const deploy = namedWorkflowStep(read("skills/deploy/SKILL.md"), "cost");
   const status = read("skills/orchestrate/SKILL.md");
-  for (const [label, text, field] of [["deploy cost step", deploy, "Cost:"], ["orchestrator status", status, "Цена волны:"]]) {
+  for (const [label, text, field] of [["orchestrator status", status, "Цена волны:"]]) {
     if (text === null) { fail(`${label}: missing or duplicate named step`); continue; }
     for (const token of ["scripts/wave-cost.mjs", field, "unavailable: <reason>"]) {
       requireMachineToken(token);

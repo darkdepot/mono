@@ -1,236 +1,50 @@
 ---
 name: deploy
-description: Use after mono:ship reports green to merge/deploy through the configured deploy workflow, verify delivery, close Linear, and record durable learnings.
+description: Use after green mono:ship, or when asked «выкати» / «выпусти», to merge, prove delivery, check production, roll back and close out.
 ---
 
 # Mono Deploy
 
-Find shared files here or at the pack root.
-
-Use this skill after `mono:ship` has created a deploy-ready PR and recorded a `mono-ship green certificate`.
-
-`mono:deploy` owns merge/deploy delegation, deploy evidence, post-ship Linear closeout, and durable operational learning capture. It must not create the PR, run local branch preflight, or perform initial implementation.
-
-`mono:deploy` is an orchestrator-owned stage, not a worker stage. The worker pack-identity gate applies to `mono:implement`, `mono:preflight`, and `mono:ship`; deploy consumes the accepted green certificate and the orchestrator retires the registry entry in this same session.
-
-Requires `mono-ship green certificate` before any merge or deploy action.
+Use the product instructions already loaded for this session.
+Run in the product's session, owner or orchestrator. Never in a delivery worker.
+Linear writes belong to this session; scripts decide from observed facts.
+No messages to people, live sends, production data writes or new bypass secrets.
 
 Read first:
 
-Read now — every run of this stage loads all of these:
+Read now:
+- `references/output.md` — exact owner lines and Issue closeout.
+- `references/project-update.md` — when delivery earns a project update.
 
-1. `AGENTS.md`
-2. `references/readiness-gates.md`
-3. `references/human-friendly-output.md`
-4. `templates/deploy-output.md`
-5. `templates/project-update.md`
+Read when:
+- `references/web.md` — affected vercel target.
+- `references/local.md` — affected local target.
+- `references/pack.md` — pack target or release.
 
-Read when — load the file only when its condition is true for this run:
+## Run
 
-- `references/install.md` — when the deployed change is a skill-pack delivery that installs or cuts over the pack.
-- `references/issue-only-lane.md` — when the resolved seam is `lifecycle_state_entity=issue`, or when a lane closeout decision is in play.
-- `skills/ship/SKILL.md` — when the recovered green certificate is missing, superseded, or not `green`.
-- `skills/check/SKILL.md` — when `mono:check post-ship` is run or reported from this stage.
-- `references/execution-quality.md` — when this run performs live verification against the Issue's acceptance IDs.
-- `references/artifact-rules.md` — when this run must decide where a Linear record belongs or which stage owns it.
-- `skills/design/references/memory.md` — when shipped screens have product design memory; apply only the main-file/service-record rules, never add taste rules from Deploy.
-
-Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
-
-Workflow:
-
-1. `prepare`: fetch current Issue, marker, verified labels, authenticated owner fingerprint, PR and config. Resolve five-field seam and emit live whole-body fingerprint before package-specific fetches. Project lane fetches Project/PRD/Spec; issue lane requires issue-only/approved-fresh, non-empty oracle and tiny|standard risk, with Project/docs `n/a`.
-2. `prepare`: recover latest green certificate from comments/resources; absent/superseded/non-green routes to ship. Require matching PR number/URL/current head; changed head routes back to stabilization. Confirm checks/Greptile/reviews/threads/merge remain certificate-compatible.
-3. `prepare`: consult `gstack-learnings-search --type operational --limit 10` if available; surface relevant deploy/queue quirks before delegation. Advisory only, record unavailable/none.
-
-   Before approval or merge, require independent QA. Run
-   `node '<pack-root>/scripts/orchestrator/qa.mjs' prepare --root <root> --config <config> --issue <KEY> --head <current-PR-head> --ship-report <read-back-ship.json>`.
-   Save the recovered green certificate as host JSON with issue, head and certificate.
-   The command consumes this read-back and host QA inputs; a missing, non-green,
-   ineligible or different-head certificate refuses preparation. The last
-   implementation also requires the current project composition certificate;
-   held predecessors require that same final pass. Short no-behavior certificates
-   still need a reason and independently expected kind. Refresh host state from
-   Linear/GitHub before this command and again immediately before merge and wave
-   installation. Changed head returns to ship, then the whole QA list. Changed
-   main alone retains QA. No recipe: record «тестировщик не подключён» in closeout
-   and continue the existing deploy path; recipe `beforeMerge: false` records
-   «тестировщик по запросу» the same way. This gate precedes deployment; Live QA
-   below remains required after delivery. Resolve no-recipe products before worker
-   state: `prepare --config <config>` returns the skip note without registry, pins
-   or local ship files. Connected standalone work supplies the read-back JSON and
-   host QA inputs directly; it needs no registered worker.
-
-   Host inputs are `<root>/qa/state.json` (`tasks` maps Issue to current head and
-   project/null; `projects` carries all Issues with source head, statusType and
-   label names, GitHub mergedAt/null and heldIssues in dependency order). Before QA save independent
-   `task-expected.json` with `{id, source, expectation}` entries. When `qa.skills`
-   is configured, run `scripts/skills-select.mjs` from that config before QA to append
-   scenario × host expectations; selected scenarios cannot use no-behavior/excluded.
-   After publication/read-back save `task-report.json` in
-   `<root>/qa/<KEY>/<head>/`. The final Issue/head also holds project-expected.json
-   and project-report.json. Use the certificate validator's expected input shape.
-   Refresh all paginated Project Issues and GitHub heads; never derive expected
-   IDs, kind or project composition from the completed certificate. Keep these
-   files outside worker grants. Default observers use the launch-recorded host
-   config path (legacy: correlated spawn.json), never a worker checkout fallback.
-   Unknown host config blocks; explicit config must agree with the recorded source.
-   Missing facts block; a main shift alone does not
-   change the tested base. Explicit registry product markers connect recipes;
-   examples and assignment files do not. The single unmerged implementation
-   without `Этап` needs final QA regardless of a previous held chain. Multiple
-   unmerged tasks with a hold must all belong to it, or preparation refuses;
-   a matching chain selects its last task, no hold requires task QA only.
-   After all PRs merge, the latest merged task (including held tasks) retains
-   the final hold through installation. Lifecycle status and saved finalIssue do not
-   select it; unknown merge progress or ambiguous order blocks. A final
-   bug successor branches from the held task and joins heldIssues, becomes
-   the last held successor and repeats full project QA; merge the held chain in order.
-4. `approve`: apply `deployApproval` (absent = `always`). `always` requires explicit approval bound to current PR/head; record in-session approval as a Russian Issue comment before deploy. Wrong PR/old head is stale. `risky-only` requires approval for standard/deep/risky or unknown risk; only tiny proceeds without it. `never` proceeds without asking and is reported. When needed, stop `needs-human` and present:
-
-```text
-Готов деплоить <Issue key>: PR #<n> merge в <target>.
-Что произойдёт: <merge/deploy путь, среда>. Откат: <как откатить>.
-1. Деплоим — рекомендую: ревью и CI зелёные.
-2. Подождать — PR останется готовым, ничего не произойдёт.
-```
-
-Record approval as `Деплой одобрен: <кем/когда>; PR #<n>, head <sha>`.
-
-5. `deploy`: apply [Merge validation](references/landing.md#merge-validation) before ordinary merge/install and on merge SHA; corrective requires its recorded exception. Delegate configured Deploy workflow; never invent a path or bypass the current green certificate/head match.
-6. `verify`: capture merged SHA, target URL/environment, deploy status/evidence.
-7. `live-qa`: execute the Live QA gate below after deploy verification and before closeout.
-8. `post-ship`: run/report `mono:check post-ship` after evidence exists.
-9. `mono-closeout`: set Issue Done only after verified deploy (or recorded policy accepting merge as delivery), plus green live QA for user-facing changes or explicit permitted not-run reason. Failed live QA is never excused as skipped.
-10. `project-update`: execute the update procedure below.
-11. `cost`: run `node '<pack-root>/scripts/wave-cost.mjs' <ISSUE-KEY>` after closeout evidence. Copy exact final Russian line into closeout/report `Cost:`. Unmeasurable script/component = `unavailable: <reason>`; telemetry never blocks/delays closeout.
-12. `learn`: record new durable operational discoveries via `gstack-learnings-log`.
-13. `retire`: after verified delivery and Linear closeout, synchronously remove Issue from `workers.json` in this orchestrator session before terminal closeout. No worker ack/intermediate status; keep reports/logs. Never retire blocked/needs-human/failed/timed-out work or leave a deployed worker active.
-14. Return `templates/deploy-output.md`.
-
-Project-update procedure:
-
-- Publish one update per deployed Issue. It is informational, never a gate or deploy-verdict input. Run batches in Issue-key order. Check/transition each Project once, before its last batch Issue, only after every batch Issue is Done.
-- Project-first uses Issue's Project. For issue-only/parentless, read exactly one `Тематический проект:` line and resolve exact name among unarchived configured-team Projects. Duplicate lines are malformed without lookup. One match proceeds only through idempotency/text/publication/reporting, never Project completion/status; even an already-Completed theme receives ordinary form. Zero/multiple/malformed = `Project update: not posted — тематический проект «<имя>» не найден / неоднозначен` (quote ambiguous field text). Absent legacy line = `Project update: n/a — тематический проект в Issue не назван`; explicit нет = `Project update: n/a — тематический проект: нет (<причина из Issue>)`. `Project:` is `n/a — тематический проект «<имя>», статус не меняется` or `n/a — тематического проекта нет`.
-- Read existing updates: matching Issue chip means `already posted`, no duplicate. On Project-first still perform completion check/transition; theme path never does.
-- Completion counts every attached task, including stage tasks (see [execution Issues](references/lifecycle.md#задачи-этапов) for package membership); stage tasks should be Done by closeout. Completion uses current Project Issues and status TYPE under `references/lifecycle.md` (Deploy): only completed/canceled/duplicate are non-blocking; every other/unknown type blocks. Only this shipment of the last open Issue can complete Project, never cancellation/hand-close or issue-only theme shipment.
-- If complete and not already Completed, write/read back Completed. Use final update form only when this closeout performed and confirmed that transition. Already-Completed/unconfirmed writes use ordinary form, no redundant status write. If replay confirms completion after update already exists, publish no second update; report completion through closeout/owner status.
-- Compose `templates/project-update.md` «Выкладка» (never orchestrator «Состояние») in the same pass as «Выкатили: …» lead, naming one result; use final prefix only under confirmed-transition condition. This is the single update form for all writers, with its stricter stop dictionary.
-- Publish `On track`, read back, record Project update/Project lines in Issue closeout and deploy report. Refused/unconfirmed publication = `not posted — <reason>`; refused/unconfirmed transition = `stays <status> — status write unconfirmed`. Record each failure or theme n/a in ledger under orchestration and next owner status in product language. Never change deploy verdict/block closeout; no update/status move for a non-deploy hand-closed tail.
-
-Deploy workflow config:
-
-Read `workflows.deploy` from `.agents/mono-workflow.config.json`. Missing/placeholder/None is blocked; `Land workflow` is not an alias. Never create/update PR outside configured Deploy workflow or run repo documentation here; ship owns docs-before-green.
-
-Wave installation:
-
-When `landing.install` is `wave-drain`, apply [Install](references/landing.md#install)
-after each merge and at wave end. Keep each Issue In Review until successful
-installation/read-back and batch `close`; include its per-task ancestry proof in
-Deploy verification before normal post-ship check, closeout and retirement.
-The linked rule owns halt, failure recovery and first application.
-
-Live QA gate:
-
-- Before sweep verify deployed version matches certified merged SHA via metadata/version marker/workflow evidence; for wave installation verify the installed version contains the task merge using its batch proof. Older content means unverified delivery: stop and resolve deploy before testing.
-- Immediately before sweep re-read Issue/marker/verified label/authenticated approval, resolve seam and emit whole-body fingerprint. Issue-only must retain prepare's approved-fresh package, fingerprint and non-empty oracle; never infer oracle outside resolver.
-- On actual deployed app with real data walk shipped Issue's PRD acceptance and inspect console errors. Issue-only instead walks every oracle `acceptance_ids` AC1..ACn using `verify_steps`, recording pass/fail per ID; no missing IDs/nonexistent PRD substitutes.
-- Broken/stale marker, lost issue-only/approved-fresh, or changed oracle IDs/steps/fingerprint fails live QA and stops closeout; never label drift skipped.
-- Live QA runs in the browser session, never the worker sandbox. Capture affected
-  screens and compare to the exact U2 approved PNG version and the owner/product
-  taste rules in the Issue context, plus the product design system. A task without
-  mockups uses taste rules alone; missing required images/rules blocks this check.
-  Differences follow the ordinary deploy-defect path: hotfix and verify before
-  showing completed work to the owner. Already-started projects with an approved
-  legacy UX-checkpoint prototype retain that comparison. Functional smoke still
-  follows its required checks and explicit permitted not-run reasons.
-- After verifying the delivered version and capturing the shipped screens above,
-  sync the product's main design file (one product file, not the task sandbox).
-  Obtain its tool/link and section pages from design memory; the task's tool does
-  not relocate it. This step never changes the deploy verdict or its required
-  functional/visual QA result. With the main-file tool connected, replace only
-  screens and states affected by this Issue using the verified live captures;
-  preserve neighboring screens and states. Compare with the exact approved PNGs,
-  record differences (or no approved mockup), update date/released version and
-  release evidence, then read back the changed page and service records. Do not
-  copy the approved proposal into the main file as if it shipped.
-  Advance a section's checked main-branch commit to the verified release commit
-  only when its whole contents remain accurate: inspect intervening released
-  screen changes. An existing stale mark, missing previous commit or unrelated
-  released changes not covered by this update retain the old checked boundary
-  and stale mark; Design refreshes the whole section next time. Record the new
-  release commit separately in its release evidence; a partial update never
-  certifies uninspected neighbors. On a section's first release (design memory
-  says «нет выпущенной основы»), create its main-file page from the verified
-  shipped screens and states under the same sync/read-back rules. Record its
-  first checked release boundary only after checking the whole new section;
-  proposed screens stay in the sandbox. For a previously released section with
-  a missing page, leave it stale for Design to assemble rather than rebuild it
-  wholesale during this targeted deploy step.
-  With the tool disconnected, tell the owner and write
-  «раздел устарел после выпуска <дата>» for every affected section, preserving
-  the previous checked commit/page and naming this release/version/evidence.
-  Failed update/read-back likewise retains or writes the stale mark and reports
-  the reason. If memory cannot be written, disclose the failed stale record in
-  closeout with section/release/reason and the next Design action; never claim
-  the file is current. These are service records without separate consent;
-  owner/product taste rules still require the designer and explicit consent.
-  Include the sync result or stale reason in closeout for the owner. The live
-  path is qualified by the first task after this pack release; scenario-stand
-  Design tests do not prove this Deploy step.
-- On defect file/dispatch immediate out-of-queue hotfix Issue with acting-user `assignee: "me"` at creation; preserve existing assignments. Hotfix doesn't itself block original Done, but original still needs its own green live pass; hotfix gets live QA on shipment. Consult original preflight route: standard-reviewed defect triggers standard re-tier review under `references/readiness-gates.md`.
-- Confirm on clean session/reload/transient state before classifying defect. Known flaky failure outside diff becomes separate tiny Issue, not gate failure.
-- Verify non-web artifacts where consumers use them. For a skill pack, select the live pass by its machine installation state, regardless of which product's orchestrator closes the deploy:
-  1. **Plugin installation:** Mono is installed in both Claude Code and Codex, and [handbook migration step 5](../../HANDBOOK.md#migrate-from-the-local-installer) proves no former installation remains in standard roots and every additional root named in the migration record. The installing orchestrator lists the checked roots. Use [Plugin installation proof](references/landing.md#plugin-installation-proof) for the live pass.
-  2. **Incomplete migration:** every other machine state, including any footprint found by that check, a plugin in only one tool, or an unknown additional-root list, fails the live pass and blocks closeout.
-  Not running plugin proof requires a recorded reason; failure never becomes a skip. Before installing compare `git rev-parse HEAD` with the GitHub source under `references/install.md`: PR merge SHA for per-merge, or T with every task's ancestry for wave-drain. Mismatch is DEPLOY BLOCKER.
-- Use configured `workflows.qa` or available browser automation when absent/null. Authenticate per `qaAuth` (`cookie-import`, `test-account`, `owner-session`); ask for owner-session, never assume it.
-- Record any not-run skip reason in closeout (e.g. no user-facing surface). Silent skip violates contract; failed sweep follows defect path, never converts to skip.
-
-Learning capture:
-
-Consult before recording; write only new durable deploy/queue/branch-cleanup/review/verification discoveries. Use operational `gstack-learnings-log`, never interactive `/learn` or automatic prune/export/stats. Record `Learnings recorded: <none|keys>` in report/Linear closeout.
-
-Deploy closeout shape:
-
-When recording this closeout as a Linear comment, open with the Russian human lead above the machine block. The first Russian sentence must state the shipped product outcome and verification environment. Post the comment once, after `project-update` and `cost` have produced their lines, so it is written complete instead of patched afterwards:
-
-```text
-Выкатили: <что получили пользователи>; проверено на <среда>.
-<опционально: одно дополнительное предложение — итог или следующий шаг>
-
-mono-deploy closeout
-Deploy: <deployed|blocked|needs-human|timed-out>
-Issue(s): <keys>
-PR: <number/url>
-Reviewed head SHA: <sha from mono-ship green certificate>
-Merged SHA: <sha or none>
-Deploy workflow: <name>
-Deploy target: <url/environment or none>
-Deploy verification: <passed/failed/unavailable + evidence>
-Live QA: <passed/failed/skipped + evidence or recorded skip reason>
-Post-ship check: <PASS/FAIL/BLOCKED + meaning>
-Linear closeout: <Done/not done + reason>
-Project update: <posted <url> | already posted <url> | not posted — <reason> | n/a — <reason>>
-Project: <Completed | stays <status>, open <N> | stays <status> — <reason> | n/a — <reason>>
-Cost: <exact Russian line from wave-cost.mjs | unavailable: <reason>>
-Learnings recorded: <none/list>
-Learnings consulted: <none/keys/helper unavailable>
-Checked: <states inspected>
-Not checked: <manual/browser/mobile/prod surfaces not inspected>
-```
-
-The Russian product-outcome lead is required in Linear; the machine core below the marker is never translated or summarized away.
-
-Verdicts:
-
-- `deployed`: deploy workflow completed, delivery evidence was captured, post-ship check ran or was reported, and Linear closeout completed.
-- `needs-human`: explicit deploy approval, product/risk acceptance, external access, or delivery policy decision is required.
-- `blocked`: required config, tools, auth, certificate, PR state, deploy target, or Linear context is unavailable.
-- `timed-out`: merge, deploy, or deploy verification did not settle within the configured wait.
-
-For `tiny` work, follow the Tiny Output Profile in references/readiness-gates.md.
-
-Keep Linear comments in configured language, Russian by default. Include full checked/not-checked boundaries; deploy success never implies unrun browser/mobile/prod checks. Updates and cost stay verdict-neutral. Do not report complete closeout before registry retirement.
-
-Final response includes verdict, PR/reviewed head/merged SHA, workflow/target, verification/live QA or skip, Linear closeout, Project update/completion, exact cost line/unavailable reason, learnings and boundary.
+1. Recover current green Ship certificate; changed head returns to mono:ship.
+   Configure deploy once in this product's session; owner says yes to shown block.
+   Mono alone may use delegated package approval with its reason. No block: no merge.
+   Legacy workflows.deploy / deployApproval are ignored.
+2. Request JSON outside checkout: absolute root/config/worktree, repo, issue, head,
+   certificate (full text); root is existing product state root. Run
+   `node <pack-root>/scripts/deploy.mjs merge --request <file>`.
+   Script locks product, rereads PR/head/checks/remarks/QA/landing, records previous
+   deployment before merge, resumes same run. With qa.beforeMerge, host tester must
+   pass on same head. No repeated preflight/review. Night: afk:true; destructive
+   migration or web without fresh signed-in browser mark waits, no outcome.
+3. Follow affected target references. Commands merge, prove, local, check, rollback,
+   return, outcome use same request plus target index. Inspect returned JSON;
+   acknowledgement is not proof. Model reports observations; script decides.
+   Affected none: show «не проверено: <reason>»; do not claim that part shipped.
+4. outcome closes/read-backs only a supported category. Worst first: rolled back,
+   failed, unverified, awaiting release, verified. No targets: Issue note, no outcome
+   or update. Stop: no outcome, run open, other PRs wait. Resume same head; keep state.
+5. Close Issue on confirmed merge; comment truth using output.md. Create/read back
+   returned followup Issues. Repair gets Прод на откате; unverified closed Issue
+   gets Не проверено, reason/checker/date. Resolve labels at first use. One recorded
+   repair only while rolled back; no second failed repair at night. Retire delivered
+   worker through orchestrator after closeout. No new registry.
+6. Show exact owner lines in product terms, no commit/build identifiers. Project
+   update only when result actually reached people.

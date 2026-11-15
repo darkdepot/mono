@@ -1,6 +1,6 @@
 # Ship Feedback Loop
 
-`mono:ship` takes the draft PR out of draft and stabilizes it; deploy owns merge/post-ship/closeout/learnings.
+`mono:ship` takes the draft PR out of draft and stabilizes it; deploy owns merge/version proof/checks/rollback/outcome and closeout.
 
 ## Inputs
 

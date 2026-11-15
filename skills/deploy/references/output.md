@@ -1,0 +1,80 @@
+# Deploy output
+
+## Строки владельцу
+
+Три–пять строк языком продукта, без номеров и коммитов; «От тебя» только когда без владельца нельзя, одно действие. Несколько целей: строка на каждую цель, первая строка по худшему исходу. В угловых скобках подставляется.
+
+Выкатили и проверили:
+
+```text
+Выкатили: <что изменилось для людей в продукте>.
+Потрогать: <где это увидеть>.
+Проверил на проде: <сценарий задачи>; <быстрая проверка> без ошибок.
+```
+
+Выкатили, не проверено (проверить нельзя):
+
+```text
+Выкатили: <что изменилось>.
+Проверил на проде: <что прошло>.
+Не проверено: <что>, потому что <причина>; проверит <кто> до <дата>.
+От тебя: <одно действие>, если проверить можешь только ты.
+```
+
+Та же категория, домен не прочитан:
+
+```text
+Влито: <что изменится>.
+На проде подтвердить не смог: <причина>; проверит <кто> до <дата>.
+От тебя: <одно действие>, если причина во входе или доступе.
+```
+
+Влито, ждёт выпуска:
+
+```text
+Влито: <что изменится>.
+До людей дойдёт с выпуском <чего>; напишу, когда выпущу.
+```
+
+Выкатка упала, прод на старой версии:
+
+```text
+Влито, но до прода не дошло: <что упало>.
+Прод работает на прошлой версии, проверил по домену.
+Починка идёт отдельной задачей.
+```
+
+Откатили:
+
+```text
+Откатил <продукт>: после выкатки <что сломалось>.
+Прод на прошлой версии, проверил: <что>.
+Новое в <продукт> не вливаю до починки, она идёт отдельной задачей.
+```
+
+Стоп до утра (исхода нет, сообщение сразу):
+
+```text
+Стоп в <продукт>: <что сломано>.
+Сделал: <откат или отмена возврата>; прод сейчас <на какой версии и проверено ли>.
+От тебя: <одно действие>.
+```
+
+## Closeout
+
+Close Issue at confirmed merge; keep truth in its comment. Record outcome, target
+proof ID/address, each check (kind/result/attempt), unverified reason/checker/date,
+rollback/repair Issue and project-update state. No target: note only, no category.
+Read back Issue/status/labels/comment. Repair label Прод на откате; unverified
+closed Issue label Не проверено. Original rolled-back Issue stays closed and links
+repair; update waits for real delivery. Post-merge state lives in same run.
+
+S19/U5 exception: domain red/own URL green is unverified, preserve red and create
+discrepancy Issue; do not emit a «Проверил» line. Without signed-in browser, Stop
+has no outcome and the run stays open. Replace ONLY the Сделал line above:
+```text
+Сделал: не откатывал, проверить <прошлую сборку | сборку починки> без браузера со входом Vercel не смог; прод сейчас <на какой версии>.
+От тебя: дай браузер со входом Vercel.
+```
+Autonomous night web requires this browser available BEFORE merge (S20), otherwise
+wait until morning without merge/outcome. Owner lines never expose commit/build IDs.

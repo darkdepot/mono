@@ -232,37 +232,32 @@ Gate: `mono-ship green certificate`, then `mono:deploy`.
 
 ## Deploy
 
-Merge/deploy a green PR and close out Linear only after delivery evidence exists.
+After `mono-ship green certificate`, `mono:deploy` runs in the product session.
+The configured `deploy.targets` block authorizes merge; absent block refuses.
+Check tester results before merge when qa.beforeMerge requires them. Script
+rereads head/checks/remarks and landing tip, saves rollback target, then squash
+merges that head. Night web requires a fresh signed-in browser readiness mark;
+destructive migrations wait until morning. No messages or live sends.
 
-Required:
+Close the Issue on confirmed merge with a truthful check comment. Prove production
+version before checking the Issue scenario and product quick check. New repeated
+browser failure versus green saved old build permits one platform rollback and
+one recorded repair. Stop without outcome when browser/action is unavailable;
+keep run open. Pack PR awaits release, installed pack proves every named place.
 
-- Read current `mono-ship green certificate` and connected-product QA; final task also needs project QA.
-- Verify current PR head SHA still matches the certificate head SHA.
-- Confirm the configured `Deploy workflow` exists and is not `None`.
-- Delegate merge/deploy to the configured Deploy workflow.
-- Capture merged SHA, deploy target, and deploy verification evidence.
-- With `landing.install: "wave-drain"`, follow [Install](landing.md#install): keep the Issue In Review until `close`, with proof the installed version contains its merge commit.
-- Before the live sweep, verify the deployed version matches the certified merged SHA; for wave installation, verify T and the task's merge ancestry through its batch proof.
-- Run Live QA in the browser session on the deployed app: functional smoke over shipped acceptance criteria plus comparison of changed screens to the exact U2 PNG version and textual taste rules. Without mockups compare taste rules alone; already-started projects with an approved legacy prototype retain it. Differences follow the ordinary deploy-defect/hotfix path before showing work to the owner.
-- Move a user-facing Issue to `Done` only after its own live pass is green.
-- On a live defect, file an immediate hotfix Issue out of queue and dispatch it (fix-forward); the defect Issue does not block the original Issue's `Done`.
-- Run or report `mono:check post-ship` after deploy evidence is known.
-- Move the Linear Issue to `Done` only after verified deploy or an explicit accepted delivery policy says merge is delivery for this repo.
-- Publish one project update per deployed Issue, out of that Issue's closeout, in the form and language of `templates/project-update.md`. On the Project-first path the update goes to the Issue's own project; on the issue-only path it goes to the theme project the Issue names in its `Тематический проект:` line, when it names one.
-- Complete the project when this delivery was its last, on the Project-first path only: an issue-only shipment publishes on a theme project it does not own and never writes a project status, so it completes no project. A project is complete when every Issue attached to it has a status whose TYPE is `completed`, `canceled`, or `duplicate`; any other type — `backlog`, `unstarted`, `started`, `triage`, and anything Linear adds later — blocks completion. The rule is judged by status type, never by status name, and `mono:deploy` owns the transition.
-- Keep the completion order: write the project's `Completed` status and confirm it by read-back FIRST, then publish the final update. The final form of the update is allowed only when this closeout performed and confirmed that transition.
-- Consult prior operational learnings through `gstack-learnings-search` before delegating merge/deploy, advisory only.
-- Record durable operational learnings through `gstack-learnings-log` when they would save future time.
+Only proven delivery earns an update; verified or explicitly unverified with
+reason/checker/date. A missing/failed update never changes delivery verdict.
+One Issue/result in product language: title at most 10 words, body at most 35,
+Issue chip last. Issue-only uses its named theme and never changes Project status.
+Only shipment of the last open Project Issue may complete the Project: every
+attached task has status TYPE completed, canceled or duplicate; other/unknown
+types block. Write/read back Completed before final prefix; already Completed or
+unconfirmed writes use ordinary form. No completion sweep after a hand-closed tail.
 
-Forbidden:
-
-- Deploying when the PR head SHA differs from the green certificate.
-- Closing an Issue as `Done` with a failed live pass on a user-facing change — a recorded reason may excuse only a sweep that did not run, never a failed one. A skipped sweep without an explicit recorded reason is equally forbidden.
-- Running repo documentation workflow; repo docs belong before ship green.
-- Running interactive `/learn prune`, `/learn export`, or `/learn stats` automatically.
-- Inventing a merge/deploy path when `Deploy workflow` is missing or `None`.
-- Blocking closeout, or changing the deploy verdict, because the project update or the project transition failed. Both are informational: the failure is recorded and visible, never a gate.
-- Completing a project that no shipment completed. A project left without open Issues by cancellation or by a hand-closed tail is the owner's to complete, and an Issue that was not deployed gets no update.
+Five outcomes, worst first: rolled back; deployment failed/production old;
+deployed unverified; merged awaiting release; deployed verified. No targets:
+Issue note only. Main design-file synchronization belongs to Design. Retire the
+worker after closeout; keep pending checks visible with label Не проверено.
 
 ## Orchestration
 

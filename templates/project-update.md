@@ -14,7 +14,7 @@ language requirement. The rules around them stay English like the rest of the
 repo: the file is mixed by design.
 
 Publication mechanics — when the update is posted, how project completion is
-decided, what the closeout records — live in `skills/deploy/SKILL.md`. This
+decided, what the closeout records — live in `skills/deploy/references/project-update.md`. This
 file governs the text only.
 
 Two forms, and only two. «Выкладка» reports a result that shipped, and it is the

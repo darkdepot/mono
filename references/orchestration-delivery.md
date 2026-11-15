@@ -114,18 +114,10 @@ Do not repair product code in the tester session or silently waive a disputed it
 
 ## Deploy and closeout
 
-The orchestrator applies [Merge validation](landing.md#merge-validation): ordinary
-merge and installation require a green current landing branch tip, and every
-merge requires checking its exact GitHub merge SHA before continuing. A named
-corrective Issue needs the recorded `corrective` exception before its merge;
-the resulting commit must pass before ordinary delivery resumes. Deploy and
-closeout retain their existing phase ownership and approval requirements.
-
-With `landing.install: "wave-drain"`, use [Install](landing.md#install) for batch
-installation, shared attempt state, halt and recovery. The orchestrator records
-landings, retains Issues In Review until batch close, then closes and retires each
-task with its proof. It owns first rollout from merged main and removes halt after
-close or failed installation; worker stages never perform these actions.
+After green Ship and Independent QA above, invoke `mono:deploy` in this product's
+session; its script owns the merge, version proof, checks, rollback and outcome.
+It closes the Issue on merge and publishes an update only after delivery; retain
+proof/queued writes and retire the worker after closeout. No deploy worker.
 
 ## Monitoring Protocol
 

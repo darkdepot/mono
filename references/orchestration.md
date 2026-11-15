@@ -59,7 +59,7 @@ The orchestrator's reply or bundled start cannot approve that Idea snapshot.
 Only delegated Projects with that current approval allow autonomous Research/work,
 write start `by=orchestrator` with a reason, answer and approve after Idea, including
 irreversible, deferred and contrary-to-owner decisions. Stage approval does not
-execute external writes or spending. Configured merge/release/deploy policy (`deployApproval`) stays.
+execute external writes or spending. Configured deploy targets and the owner-approved rollback remain required.
 
 Before each `by=orchestrator` record apply the Approval countercheck in
 `references/orchestration-stages.md`. The owner keeps

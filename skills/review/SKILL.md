@@ -43,7 +43,7 @@ Workflow:
 
 1. Fetch fresh Linear Project, PRD, Tech Spec, and Issue state relevant to the mode. In pre-write `handoff` mode the draft package supplied by `mono:handoff` is that state: review the draft bodies handed to you and read Linear only for the surrounding Project context.
 2. Fetch PR, branch, review, and merge state only when running `pre-ship`.
-3. Read project config for Linear-facing language and configured ship, documentation, review feedback, and deploy workflows.
+3. Read project config for Linear-facing language and configured ship, documentation, review feedback, and deploy targets.
 4. Classify risk using `references/readiness-gates.md`.
 5. Decide whether the review gate is `required` or `advisory`.
 6. Apply the rubric in `references/review-rubric.md`.
@@ -96,7 +96,7 @@ Owner workflows:
 - `mono:discovery`: PRD fixes; `mono:handoff`: package record, legacy Tech Spec and Issue fixes; accepted pre-ship drift stays with `mono:ship`.
 - `mono:issue`: applies accepted Issue-only fixes when explicitly invoked.
 - `mono:ship`: handles formal pre-ship review/check, accepted pre-ship drift sync, PR/review state, documentation-before-green, and green certificate.
-- `mono:deploy`: handles deploy workflow delegation, post-ship check, Linear closeout, and learning capture.
+- `mono:deploy`: handles guarded merge, version proof, production checks, rollback/return, outcome and Linear closeout.
 - Human decision: handles product, UX, business, or scope questions.
 
 Hard boundaries:

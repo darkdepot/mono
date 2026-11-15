@@ -62,7 +62,7 @@ Do not use:
 Inputs to gather:
 
 - Project config `.agents/mono-workflow.config.json`: product name,
-  configured workflows, `deployApproval`, and the optional `orchestration`
+  configured workflows, the `deploy` targets, and the optional `orchestration`
   block (`orchestration.transport`, `orchestration.maxParallelWorkers`).
 - Fresh Linear state: projects in flight, Issue statuses, latest comments and
   certificates.
@@ -274,45 +274,13 @@ Workflow states:
 6. `decide-or-escalate`
    - Technical questions: decide, record in the ledger under «Решил сам:»
      with a one-line reason, answer the worker.
-   - Always-ask questions (scope, first-product exemplars, product risk, deploy approval
-     per policy): escalate immediately and interactively with a decision
+   - Always-ask questions (scope, first-product exemplars, product risk, product deploy-block approval): escalate immediately and interactively with a decision
      brief. First-product exemplars carry proposed references and reasons.
 7. `deploy-and-closeout`
-   - After every green ship, including a ship-fix return, apply Independent QA
-     before merge in `references/orchestration-delivery.md`. Connected products run
-     `mono:qa` on the host before `mono:deploy`; workers never certify themselves.
-     A non-green result holds merge and installation. Bugs return as ship-fix;
-     new head repeats ship and the entire expectation list without an attempt
-     limit. Recheck disputed verdicts yourself and record reasons for removed
-     false alarms; changed user-visible behavior goes to the owner before rerun.
-     The sole unmerged implementation without `Этап` also needs final project
-     QA over all R/AE. Keep held tasks and bug successors blocked until that
-     composition passes; publish/read back its report in the Project. No recipe:
-     do not call QA, record «тестировщик не подключён» and continue normally.
-     Recipe `beforeMerge: false`: same path, record «тестировщик по запросу»;
-     QA runs on request and once before a release.
-   - When a worker reports `green` (mono-ship green certificate), run
-     `mono:deploy` from this session per the configured Deploy workflow
-     and `deployApproval` policy, including its mandatory Live QA gate
-     (`skills/deploy/SKILL.md`). The live sweep runs
-     orchestrator-side — workers have no browser.
-   - On a live defect, file an immediate hotfix Issue and dispatch it
-     out of queue ahead of queued work (fix-forward); the shipped Issue
-     moves to `Done` only after its own live pass is green, and the hotfix
-     Issue gets its own live verification.
-     Set the assignee of that hotfix Issue to the acting user
-     (`assignee: "me"` on the Linear connector) at creation; an Issue that
-     already exists keeps the assignee it has.
-   - Record ledger entries; verify Linear closeout happened per stage skill
-     contracts.
-   - Carry the closeout's `project-update` outcome into the next status: the
-     published update's URL and the project-completion result belong on the
-     «Linear:» line. Completion is a closeout effect only — `resume` never
-     sweeps projects for completion and never publishes an update that no
-     shipment produced.
-   - After successful deploy closeout, remove the Issue entry from
-     `workers.json`; this retirement is required before the wave can become
-     `idle`.
+   - Invoke `mono:deploy` in this product session after green Ship and independent
+     `mono:qa` per references/orchestration-delivery.md; it owns merge/proof/checks/
+     rollback/outcome, Linear closeout and project update. Retire the delivered
+     worker after closeout and carry its update/completion result to owner status.
 
 Rules:
 
