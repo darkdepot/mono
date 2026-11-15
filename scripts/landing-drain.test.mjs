@@ -296,6 +296,23 @@ test("landing U7 status lists every active attempt and excludes stopped landed",
   assert.ok(JSON.parse(r.stdout).blockers.every(row => row.reason));
 });
 
+test('landing pack installer reuses verify and close while holding dispatch and launch locks', t => {
+  const f = fixture(t); atomicJson(f.pending, [f.record]);
+  atomicJson(path.join(f.root, 'control.json'), { state: 'active', halt: true });
+  const args = { root: f.root, config: f.config, worktree: f.repo, 'install-sha': f.tip, evidence: 'all installed places and fresh sessions verified' };
+  const code = `import {withLock} from ${JSON.stringify(path.resolve('scripts/runtime.mjs'))};
+import {verify,close} from ${JSON.stringify(script)};
+const args=${JSON.stringify(args)};
+await withLock(args.root+'/dispatch.lock',()=>withLock(args.root+'/launch.lock',async()=>{
+  const verified=await verify(args,{underInstallLocks:true});if(verified.code!==0)throw new Error('verify failed');
+  const closed=await close(args,{underInstallLocks:true});if(closed.code!==0)throw new Error('close failed');
+}));`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd: f.repo, env: f.env, encoding: 'utf8', timeout: 10_000 });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.pending)), []);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.root, `landing/installed/${f.tip}.json`))).evidence, args.evidence);
+});
+
 for (const scenario of ["no-halt", "active", "red-tip", "non-ancestor", "checkout-mismatch", "github-tip-mismatch"]) {
   test(`landing U7 verify rejects ${scenario} without moving records`, t => {
     const f = fixture(t); atomicJson(f.pending, [f.record]);
