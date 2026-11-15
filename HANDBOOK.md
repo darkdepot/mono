@@ -829,135 +829,62 @@ For Design, connect the selected Paper or Wonder tools in the stage session;
 see [Design tool setup](references/install.md#design-tools-mono-319). Rebuild
 stage-agent allowlists and start fresh sessions after changes.
 
-### Users without an orchestrator
+### Install or update a release
 
-Use this setup on a user machine where no Mono orchestrator runs tasks. Both
-tools track the GitHub marketplace's main branch:
-
-```bash
-claude plugin marketplace add darkdepot/mono
-claude plugin install mono@mono-marketplace
-codex plugin marketplace add darkdepot/mono
-codex plugin add mono@mono-marketplace
-```
-
-In Claude Code, enable automatic updates for `mono-marketplace` through
-`/plugin` → Marketplaces, or set `"autoUpdate": true` on that marketplace in
-`extraKnownMarketplaces`. Alternatively, update the marketplace and plugin
-manually:
+Use `scripts/pack-install.mjs` from a verified release checkout. The same script
+handles owner “выпусти” and the orchestrator wave; add `--wave` only for the latter.
 
 ```bash
-claude plugin marketplace update mono-marketplace
-claude plugin update mono@mono-marketplace
+node scripts/pack-install.mjs --root /path/to/pack-state --repo /path/to/verified/checkout --tag v<VERSION> --config /path/to/product/.agents/mono-workflow.config.json --wave
 ```
 
-In Codex, update the marketplace snapshot, then install the plugin from it:
+A first run bootstraps missing `control.json` / `workers.json` only in its own
+pack-state root as idle / empty; existing or foreign state is never replaced.
+Corrupt own state and missing/corrupt foreign state stop installation.
 
-```bash
-codex plugin marketplace upgrade mono-marketplace
-codex plugin add mono@mono-marketplace
-```
+The script discovers installed `~/.claude*` profiles, adds the default Claude and
+Codex homes and remembers past places. Use repeated `--profile DIR` to include
+another profile, `--remove-place DIR` to explicitly retire a remembered place,
+and `--breaking` for an incompatible release. Permanent Claude pins update both
+profile records; Codex pins the release tag. Automatic updates remain disabled.
+The host probe verified update/downgrade commands, not session-start auto-update.
+After completion, rerunning the same tag may add profiles or a different
+`CODEX_HOME`: numbered records in `landing/install/<tag>.places/` retain their
+first recovery state without rewriting the original baseline or control snapshot.
+An interrupted installation resumes its recorded places before further additions.
+Canonical paths and the union of all past records retain older-tag extensions.
+A clean place recorded before its directory was created remains resumable;
+disappearance after a recorded creation, even before the whole run completes,
+still requires explicit removal. Remembered Claude and Codex directories cannot
+change type, including through symbolic links to the same physical directory.
 
-If your Codex marketplace was registered with `--ref v<VERSION>`, `upgrade`
-keeps it on that tag. Move it to main once, then use the two update commands
-above for future updates:
+All places must match the version, commit and Git tree, and each fresh CLI session
+must find `mono:ship`. Persistent mismatch or a failed skill probe triggers
+rollback to the immutable recorded versions. Same-version CLI updates may leave
+a corrupt tree untouched; retry then rolls back, or stops when no previous release
+exists. Both tool marketplace sources must be the canonical GitHub repository;
+rollback tags must still match the saved commits. Holders are rechecked before
+each replacement, including rollback, so late sessions leave a resumable wait.
+Unavailable process inventory or session directories also yield unknown holders.
+Live/unknown holders wait; dead
+records are named without removal. The original control snapshot survives retries
+and is restored on failure. Watcher restart from the verified version and a fresh
+pulse precede unhalt. Wave mode retains the existing verify → install → close
+cycle. A recorded rollback resumes without rechecking the outgoing wave's admission.
+A different tag stops at an unfinished installation and releases its recorded
+pause; resume the named tag first. Failed results include actual place versions
+even without a rollback target. Full procedure and JSON/exit meanings:
+[Plugin Updates](references/install.md#plugin-updates).
 
-```bash
-codex plugin marketplace remove mono-marketplace
-codex plugin marketplace add darkdepot/mono
-codex plugin add mono@mono-marketplace
-```
+Read the `places`, `holders`, `restart` and `localCopies` fields. Restart
+listed Claude/Codex sessions to load new rules; a product session owns updating
+its local plugin copies. The installer never updates them on its behalf.
+For isolated verification, run the fake-CLI fixtures with a temporary HOME:
+`node --test scripts/pack-install.test.mjs`; do not use owner profiles.
 
-Restart sessions after installation or an update so they load the installed
-skills. Follow the [GitHub release pages](https://github.com/darkdepot/mono/releases)
-for news about versions. A release page announces a release, but an update from
-main does **not** guarantee that the installed files match that release's tag:
-main may contain merged changes that have not yet been released.
-
-On a machine where an orchestrator runs tasks, use the procedure below instead:
-disable automatic updates, pin Codex to a release tag, check the update condition
-and compare the installed cache with the released Git tree.
-
-### Machines running an orchestrator
-
-Register [darkdepot/mono](https://github.com/darkdepot/mono) as the GitHub marketplace;
-no repository clone is needed to install. Replace `<VERSION>` below with the
-released `VERSION` whose tag points to the verified landing tip T. Claude Code
-uses the repository's main branch; Codex pins the marketplace to that version tag.
-Follow
-[source verification and update conditions](references/install.md#plugin-updates)
-for each installation. For machines moving to plugins, follow
-[the migration procedure](#migrate-from-the-local-installer).
-
-```bash
-claude plugin marketplace add darkdepot/mono
-claude plugin install mono@mono-marketplace
-codex plugin marketplace add darkdepot/mono --ref v<VERSION>
-codex plugin add mono@mono-marketplace
-```
-
-Do not register a local folder as the marketplace: Claude Code reads such a
-plugin in place without pinning its version, and both tools copy the entire
-local folder, including unrelated files.
-Immediately after each installation or update:
-
-Compare each tool's version cache with T's Git tree: paths, types, executable
-modes, content object hashes and symlink targets must match. Only extra service
-objects at these exact paths relative to the version-folder root are allowed:
-Codex directory `.git/` and regular file `.codex-marketplace-install.json`;
-Claude Code directory `.in_use/`. These tool-specific exceptions never exclude
-released files from comparison. The Codex file must be valid JSON with `revision`
-equal to the full tag commit; invalid JSON, absent/different revision or another
-object type fails. Every other extra, missing or changed object fails. Do not
-substitute clone proof.
-If either comparison differs, do not close the wave, release launch halts or
-start tasks from the new installation. The installing orchestrator records
-the mismatch, corrects the source and repeats the full verification of both tools.
-Only the installing orchestrator registers or updates the shared marketplaces.
-
-Restart sessions after installation. Model/effort come from pack policy. Pass the installed skills directory as
-`--skills-root` when dispatching. The plugin contains one copy of shared files:
-`skills/`, `references/`, `templates/` and `scripts/` have the repository layout.
-In Claude Code, invoke skills as `/mono:idea`, `/mono:handoff`, and so on; in Codex, run `/skills` and select the corresponding Mono skill.
-
-Do not enable automatic updates for Mono on a machine running an orchestrator.
-Update deliberately after a release.
-Before any install/update that replaces a plugin folder, have each affected
-product orchestrator pause new dispatch. Keep dispatch paused through the check
-and replacement. Check the folder against attempts of every product, including
-paused attempts:
-
-```bash
-node /path/to/current/mono/scripts/verify-pack-state.mjs before-update --folder /path/to/replaced/mono
-```
-
-A refusal names the product, Issue and attempt; wait for those attempts to finish
-and become landed and stopped. Do not remove their records to bypass the check.
-This check reads registries only. Entries without a pack root are listed as
-unknown and do not block the update.
-A new sibling folder does not replace the old folder. Attempts retain their
-original absolute `packRoot`; compatible newer scripts can resume them while that folder exists.
-If a task outlives the tool's retention of its version and the folder is gone,
-start a new attempt. Worker sandboxes protect both the pack
-folder and the external helper directory.
-
-For isolated installation verification, set `CLAUDE_CONFIG_DIR` to an empty
-temporary directory for Claude, and use a separate empty Codex home through
-`CODEX_HOME`, then run the same GitHub marketplace/install commands and cache-tree
-comparison. Locate the installed
-folder using `claude plugin list --json` or the JSON output captured during
-Codex installation (`codex plugin add --json mono@mono-marketplace`), and run:
-
-```bash
-node /path/to/installed/mono/scripts/verify-pack-state.mjs version
-```
-
-To try the checkout without installing, launch Claude from the repository with
-`claude --plugin-dir "$PWD"`. Launch `codex --cd "$PWD"` and open
-`skills/<skill>/SKILL.md` directly; shared files resolve from that repository.
-These sessions do not change the installed pack.
-See [Claude's manifest reference](https://code.claude.com/docs/en/plugins-reference)
-and [OpenAI's package documentation](https://developers.openai.com/plugins/build/plugins).
+To try unreleased code without installation, launch Claude from the checkout with
+`claude --plugin-dir "$PWD"`, or open `skills/<skill>/SKILL.md` from Codex in that
+checkout. These sessions do not change the installed pack.
 
 ## Migrate From the Local Installer
 
@@ -1412,6 +1339,8 @@ and observed boundary, including unknown observations. The [dataset instructions
 credential-read limitation and required live boundary tests.
 
 ## Validation
+
+Pack installation fixtures: `node --test scripts/pack-install.test.mjs` uses fake Claude/Codex CLIs and temporary profiles; it covers interrupted installation, immutable rollback targets, holders, dual-file pins, tree proof, fresh-session discovery and the wave cycle.
 
 The recorded [Claude PR publication probe](references/worker-contract.md#claude-pr-probe)
 on Claude Code 2.1.316 / pack 0.42.0 confirmed replies, thread resolution and PR

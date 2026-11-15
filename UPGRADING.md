@@ -116,7 +116,7 @@ Breaking change до 1.0: Design работает в Paper и Wonder, новые
 инструментах; его инструмент не меняется со сменой инструмента задачи.
 
 Установку, тег и сверку обоих кэшей выполняет оркестратор выпуска по
-[правилам установки](references/install.md#release-0440) и Landing; этот PR
+[правилам установки](references/install.md#plugin-updates) и Landing; этот PR
 их не выполняет. До установки — живые сценарии Design в Paper, включая
 `main-file`, на хосте оркестратора. Локальные фикстуры их не заменяют.
 Первая задача после выпуска проверит весь путь Wonder со снимками в Codex
@@ -150,7 +150,7 @@ Tech Evaluation → Handoff в Claude Code из версии 28f5de4: окон �
 ответ помощника), MONO-328 и MONO-312. Этот выпуск их не исправляет.
 Откат на 0.42.x возвращает окна; записи с «нажал» и «ответил» действительны
 в обе стороны, машинные строки одинаковые. Установка, обе версии и кэши,
-последующие проверки и откат — [Release 0.43.0](references/install.md#release-0430).
+последующие проверки и откат — [Release 0.43.0](references/install.md#plugin-updates).
 
 ## Обновление до 0.42.0
 
@@ -161,7 +161,7 @@ Tech Evaluation → Handoff в Claude Code из версии 28f5de4: окон �
 сертификата теперь только объекты `{id, source, expectation}`: строковые id 0.41.0
 не принимаются, незавершённую проверку QA проходят заново. Сами этапы не менялись,
 формат протокола прежний (surface revision 5), общий покой продуктов не нужен;
-установка обоих хостов — [Release 0.42.0](references/install.md#release-0420).
+установка обоих хостов — [Release 0.42.0](references/install.md#plugin-updates).
 
 ## Обновление до 0.41.0
 
@@ -171,7 +171,7 @@ Tech Evaluation → Handoff в Claude Code из версии 28f5de4: окон �
 ждёт проверку всего проекта. Продукты без рецепта вливаются как раньше, с
 пометкой, что тестировщик не подключён. Формат протокола прежний (surface
 revision 5), общий покой продуктов не нужен; установка обоих хостов —
-[Release 0.41.0](references/install.md#release-0410).
+[Release 0.41.0](references/install.md#plugin-updates).
 
 ## Обновление до 0.40.0
 
@@ -180,7 +180,7 @@ revision 5), общий покой продуктов не нужен; уста�
 перед вливанием и вызов тестировщика оркестратором ещё не включены: они придут
 после пилота. Формат протокола прежний (surface revision 5), общий покой
 продуктов не нужен; установка обоих хостов —
-[Release 0.40.0](references/install.md#release-0400).
+[Release 0.40.0](references/install.md#plugin-updates).
 
 ## Обновление до 0.39.1
 
@@ -192,7 +192,7 @@ revision 5), общий покой продуктов не нужен; уста�
 каждого продукта, включая приостановленные попытки, по
 [Quiescence](references/install.md#quiescence). Прежние попытки продолжаются
 только новыми, сессии этапов начинаются заново. Установка обоих хостов и
-проверка версии, тега и кэшей — [Release 0.39.1](references/install.md#release-0391).
+проверка версии, тега и кэшей — [Release 0.39.1](references/install.md#plugin-updates).
 Пилот на 3-5 задачах и замер после 10 задач делает оркестратор; при провале
 пилота ставится 0.38.2 по тем же правилам покоя.
 
@@ -208,7 +208,7 @@ Idea пишет файл показанной версии
 После установки сессии этапов начинаются заново: прежние держат старые правила.
 Формы записей и surface revision 4 сохраняются, текущие попытки завершаются на
 своём сохранённом packRoot. Установка обоих хостов и проверка версии, тега и
-кэшей — [Release 0.38.1](references/install.md#release-0381). Воркер готовит PR;
+кэшей — [Release 0.38.1](references/install.md#plugin-updates). Воркер готовит PR;
 тег, merge и установку один раз на волну выполняет оркестратор.
 
 После установки оркестратор проверяет Claude Desktop, терминал Claude Code,
@@ -246,7 +246,7 @@ implement/preflight/ship по-прежнему оркестратор.
 После установки сессии этапов начинаются заново: прежние держат старые правила.
 Формы записей сохраняются, контракт проекта явно уточнён для делегированного
 старта; surface revision 4 и текущие попытки на сохранённом packRoot совместимы.
-Установка обоих хостов и проверка версии/тега — [Release 0.37.0](references/install.md#release-0370).
+Установка обоих хостов и проверка версии/тега — [Release 0.37.0](references/install.md#plugin-updates).
 Воркер не устанавливает пак и не ставит тег.
 
 После установки оркестратор проводит живой прогон на трёх новых идеях
@@ -279,7 +279,7 @@ Tech Spec; Handoff переносит решения дизайнера и те�
 revision 4, текущие попытки продолжаются на своём packRoot. Новая цепь записей
 меняет совместимость отката: до первой записи нового формата возможен возврат
 к 0.35.1, после неё — только исправление вперёд. Форматы и порядок отката
-описаны в [Release 0.36.0](references/install.md#release-0360).
+описаны в [Release 0.36.0](references/install.md#plugin-updates).
 
 Обновление обоих хостов — по [Plugin Updates](references/install.md#plugin-updates).
 Перед ship оркестратор проверяет Claude; живой прогон всей цепочки с владельцем
@@ -297,7 +297,7 @@ revision 4, текущие попытки продолжаются на своё
 Обычные условия [Plugin Updates](references/install.md#plugin-updates) сохраняются:
 проверка before-update для заменяемого каталога, пауза затронутых запусков и проверка
 обоих кэшей. Текущие попытки продолжаются на сохранённом packRoot.
-Проверки выпуска в [Release 0.35.1](references/install.md#release-0351).
+Проверки выпуска в [Release 0.35.1](references/install.md#plugin-updates).
 
 ## Обновление до 0.35.0
 
@@ -328,7 +328,7 @@ Handoff больше не пишет PRD и Tech Spec и не просит от�
 запись старта на месте прежнего комментария одобрения.
 Выпуск совместим по форматам; общая quiescence не требуется. Сохраняются обычные условия Plugin Updates: before-update для удаляемого или заменяемого каталога, пауза затронутых запусков и проверка установки. Текущие попытки продолжаются только на сохранённом packRoot.
 Установка обоих хостов по [Plugin Updates](references/install.md#plugin-updates);
-проверки выпуска в [Release 0.35.0](references/install.md#release-0350).
+проверки выпуска в [Release 0.35.0](references/install.md#plugin-updates).
 
 ## Обновление до 0.34.1
 
@@ -351,7 +351,7 @@ PRD, одобрения пакета и записи «да», если теку
 
 Выпуск совместим по форматам; общая quiescence не требуется. Сохраняются обычные условия Plugin Updates: before-update для удаляемого или заменяемого каталога, пауза затронутых запусков и проверка установки. Текущие попытки продолжаются только на сохранённом packRoot.
 Установка обоих хостов — по [Plugin Updates](references/install.md#plugin-updates);
-проверки выпуска — в [Release 0.34.1](references/install.md#release-0341).
+проверки выпуска — в [Release 0.34.1](references/install.md#plugin-updates).
 
 ## Обновление до 0.33.0
 
@@ -375,7 +375,7 @@ PRD, одобрения пакета и записи «да», если теку
 Выпуск совместим по форматам; общая quiescence не требуется. Сохраняются обычные условия Plugin Updates: before-update для удаляемого или заменяемого каталога, пауза затронутых запусков и проверка установки. Текущие попытки продолжаются только на сохранённом packRoot.
 Порядок установки и проверки обоих хостов — существующий
 [Plugin Updates](references/install.md#plugin-updates); подробности —
-[Release 0.33.0](references/install.md#release-0330).
+[Release 0.33.0](references/install.md#plugin-updates).
 
 ## Обновление до 0.32.1
 
@@ -403,10 +403,10 @@ Idea ведёт идею от просьбы обычными словами д�
 Переопределение `models.roles.scout` добавляйте только после установки 0.32.1
 во всех затронутых продуктах и хостах. До этого используйте штатные модели нового
 пакета. Роль `idea-helper` пока сохранена; удаление отдельной задачей после 0.34.0.
-Для [отката на 0.32.0](references/install.md#roll-back-to-0320) сохраните и удалите
+Для [отката на 0.32.0](references/install.md#plugin-updates) сохраните и удалите
 переопределение `scout` во всех затронутых конфигах, проверьте штатные роли старым
 пакетом и установите закреплённый `v0.32.0` из маркетплейса.
-Порядок раскатки и проверка обеих установок — [в инструкции](references/install.md#release-0321).
+Порядок раскатки и проверка обеих установок — [в инструкции](references/install.md#plugin-updates).
 
 **Upgrading from 0.30.1 or earlier:** since 0.31.0, worker launch and resume require
 a live watcher. Use [cross-product quiescence](references/install.md#quiescence):
@@ -418,4 +418,4 @@ watcher from the new version before the first launch or resume. Missing, stale
 or dead watchers refuse with `watcher-required` without consuming an attempt.
 Signed receipts and surface revision 4 remain compatible with
 0.30.1; that version ignores watcher pulses and collection retry files.
-See [rollback to 0.30.1](references/install.md#roll-back-to-0301) after attempts drain.
+See [rollback to 0.30.1](references/install.md#plugin-updates) after attempts drain.

@@ -6523,6 +6523,8 @@ const ISSUE_RECOVERY_CASES = [
 ];
 
 const MACHINE_TOKENS = new Set([
+  // MONO-422: installer command/flags; installation behavior lives in its CLI fixtures.
+  "scripts/pack-install.mjs", "scripts/pack-install.test.mjs", "--tag", "--profile", "--remove-place", "--watcher-config", "--breaking", "--wave",
   ...Object.values(ISSUE_STEP_INPUTS).flat(),
   ...Object.values(ISSUE_STEP_COMMANDS).flat(),
   ...Object.entries(ISSUE_DECISION_STEPS).flatMap(([lane, names]) => names.map(name => `issue-${lane}:${name}`)),
@@ -7107,6 +7109,10 @@ function validateDocumentSkeleton() {
 }
 // Mode declarations are a machine dictionary, separate from explanatory prose.
 function validateLandingSurface() {
+  for (const token of ["scripts/pack-install.mjs", "--tag", "--profile", "--remove-place", "--watcher-config", "--breaking", "--wave"])
+    assertIncludes("references/install.md", token);
+  assertIncludes("HANDBOOK.md", "scripts/pack-install.mjs");
+  assertIncludes("scripts/verify.mjs", "scripts/pack-install.test.mjs");
   for (const file of ["references/worker-contract.md", "skills/implement/SKILL.md", "skills/preflight/SKILL.md", "skills/ship/SKILL.md"]) {
     const target = file.startsWith("references/") ? "landing.md" : "references/landing.md";
     requireMachineToken(target);

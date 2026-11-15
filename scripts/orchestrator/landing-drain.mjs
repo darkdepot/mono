@@ -104,10 +104,11 @@ function batchFile(root, sha) {
   if (!SHA.test(sha ?? "")) throw new Error("full 40-character --install-sha required");
   return path.join(root, "landing", `batch-${sha}.json`);
 }
-async function verify(args) {
+export async function verify(args, { underInstallLocks = false } = {}) {
   const file = batchFile(args.root, args["install-sha"]), installSha = args["install-sha"];
   requireHalt(args.root);
-  return locked(path.join(args.root, "launch.lock"), () => locked(`${pendingFile(args.root)}.lock`, async () => {
+  const holdLaunch = action => underInstallLocks ? action() : locked(path.join(args.root, "launch.lock"), action);
+  return holdLaunch(() => locked(`${pendingFile(args.root)}.lock`, async () => {
     requireHalt(args.root);
     const readiness = statusUnderLaunchLock(args.root, readJson(args.config));
     if (readiness.code !== 0) throw new Error(`active attempts block installation: ${readiness.blockers.map(row => `${row.issue}: ${row.reason}`).join("; ")}`);
@@ -143,10 +144,11 @@ async function verify(args) {
     return { code: 0, outcome: "verified", ...batch };
   }));
 }
-async function close(args) {
+export async function close(args, { underInstallLocks = false } = {}) {
   const file = batchFile(args.root, args["install-sha"]), installSha = args["install-sha"];
   if (typeof args.evidence !== "string" || !args.evidence.trim()) throw new Error("non-empty --evidence required after installation read-back");
-  return locked(path.join(args.root, "dispatch.lock"), () => locked(`${pendingFile(args.root)}.lock`, () => {
+  const holdDispatch = action => underInstallLocks ? action() : locked(path.join(args.root, "dispatch.lock"), action);
+  return holdDispatch(() => locked(`${pendingFile(args.root)}.lock`, () => {
     const batch = readJson(file);
     if (batch.installSha !== installSha || !Array.isArray(batch.records) || !batch.records.length || canonical(batch.proofs) !== canonical(proofs(batch.records, installSha)))
       throw new Error("invalid verified installation batch");
