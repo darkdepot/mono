@@ -854,7 +854,9 @@ first recovery state without rewriting the original baseline or control snapshot
 An interrupted installation resumes its recorded places before further additions.
 Canonical paths and the union of all past records retain older-tag extensions.
 A clean place recorded before its directory was created remains resumable;
-disappearance after completion still requires explicit removal.
+disappearance after a recorded creation, even before the whole run completes,
+still requires explicit removal. Remembered Claude and Codex directories cannot
+change type.
 
 All places must match the version, commit and Git tree, and each fresh CLI session
 must find `mono:ship`. Persistent mismatch or a failed skill probe triggers

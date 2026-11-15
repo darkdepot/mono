@@ -323,7 +323,9 @@ export async function installPack(input, overrides = {}) {
       if (places.some(place => place.place === places.at(-1).place && place.kind !== places.at(-1).kind)) throw new Error('Claude and Codex places must be separate directories');
       const remembered = [...history.flatMap(record => record.places), ...(baseline?.places ?? [])];
       for (const prior of remembered) {
-        if (!places.some(place => place.place === prior.place)) places.push({ kind: prior.kind, place: prior.place });
+        const current = places.find(place => place.place === prior.place);
+        if (current && current.kind !== prior.kind) throw new Error('Claude and Codex places must be separate directories');
+        if (!current) places.push({ kind: prior.kind, place: prior.place });
       }
       const retired = history.flatMap(record => optional(path.join(installDir, `${record.tag}.progress.json`), {}).removedPlaces ?? []);
       const removed = [...new Set([...retired, ...(progress.removedPlaces ?? []), ...options.removePlaces.map(value => path.resolve(value))])];
@@ -335,7 +337,8 @@ export async function installPack(input, overrides = {}) {
         throw new Error('finish the incomplete installation before adding places');
       for (const place of places) if (!fs.existsSync(place.place) && remembered.some(prior => prior.place === place.place)) {
         const pendingCreate = baseline?.places.some(prior => prior.place === place.place && prior.existed === false) &&
-          !progress.places?.some(prior => prior.place === place.place) && !history.some(record => record.tag !== expected.tag && record.places.some(prior => prior.place === place.place));
+          !progress.places?.some(prior => prior.place === place.place) &&
+          !progress.intents.some(intent => intent.place === place.place && intent.result?.folders?.length) && !history.some(record => record.tag !== expected.tag && record.places.some(prior => prior.place === place.place));
         if (!pendingCreate) throw new Error(`remembered place disappeared: ${place.place}; requires --remove-place`);
       }
       function localCopies() {

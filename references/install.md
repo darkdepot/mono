@@ -83,9 +83,11 @@ first recovery state is appended before replacement to numbered JSON records in
 `landing/install/<tag>.places/`; the original record, prior extensions and control
 snapshot are never overwritten. Added places remain remembered across retries
 and future releases, including extensions made to an older tag after a newer
-installation record exists. Paths are normalized before deduplication. An intended
+installation record exists. Paths are normalized before deduplication; a remembered Claude directory cannot
+be reused as a Codex home, or vice versa. An intended
 clean place not yet created when installation was interrupted can be resumed; a
-previously present or completed place that disappears still requires explicit removal. An unfinished installation must be resumed before adding
+previously present place or one whose creation was already recorded by an intent
+result still requires explicit removal if it disappears. An unfinished installation must be resumed before adding
 further places. An archived wave is closed idempotently before these additional
 places are installed. Only places whose proof differs are installed again.
 Intent and result read-backs live beside the record in `<tag>.progress.json`.

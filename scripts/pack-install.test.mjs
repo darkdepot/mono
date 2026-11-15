@@ -684,7 +684,9 @@ test('review regression: clean added place resumes before its directory exists b
   const extensionFile = path.join(f.root, 'landing/install/v1.1.0.places/000001.json'), bytes = fs.readFileSync(extensionFile);
   fs.rmSync(place, { recursive: true });
   const file = path.join(f.root, 'landing/install/v1.1.0.progress.json'), progress = read(file);
-  delete progress.outcome; progress.places = progress.places.filter(row => row.place !== place); progress.pauseActive = true; atomicJson(file, progress);
+  delete progress.outcome; progress.places = progress.places.filter(row => row.place !== place);
+  progress.intents = progress.intents.filter(row => row.place !== place); // interrupted before the first create
+  progress.pauseActive = true; atomicJson(file, progress);
   atomicJson(path.join(f.root, 'control.json'), { ...progress.pauseControl, halt: true });
   const result = await f.run(); assert.equal(result.outcome, 'installed', JSON.stringify(result));
   assert.equal(result.places.length, 4); assert.deepEqual(fs.readFileSync(extensionFile), bytes);
@@ -769,4 +771,45 @@ test('U8 quiescence applies to breaking rollback; compatible rollback still prot
     if (breaking) assert.match(result.reason, /not quiescent/);
     assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
   });
+});
+
+
+test('S8: historical places cannot change between Claude and Codex', async t => {
+  for (const direction of ['claude-to-codex', 'codex-to-claude']) await t.test(direction, async t => {
+    const f = fixture(t), place = direction === 'claude-to-codex' ? path.join(f.tmp, 'external-profile') : f.env.CODEX_HOME;
+    if (direction === 'claude-to-codex') addClaudeProfile(f, place);
+    assert.equal((await f.run({ profiles: direction === 'claude-to-codex' ? [place] : [] })).outcome, 'installed');
+    const registry = path.join(place, 'plugins/installed_plugins.json');
+    const bytes = fs.existsSync(registry) ? fs.readFileSync(registry) : null;
+    const cache = path.join(place, 'plugins/cache/mono-marketplace/mono/1.1.0/VERSION'), cached = fs.readFileSync(cache);
+    addRelease(f, '1.2.0');
+    if (direction === 'claude-to-codex') f.env.CODEX_HOME = place;
+    else f.env.CODEX_HOME = path.join(f.tmp, 'new-codex');
+    const offset = f.calls().length;
+    const result = await f.run({ tag: 'v1.2.0', profiles: direction === 'codex-to-claude' ? [place] : [] });
+    assert.equal(result.outcome, 'stopped', JSON.stringify(result)); assert.match(result.reason, /separate directories/);
+    assert.ok(f.calls().slice(offset).every(row => row.tool === 'codex' && row.args[1] === 'list'));
+    assert.deepEqual(fs.readFileSync(cache), cached);
+    if (bytes) assert.deepEqual(fs.readFileSync(registry), bytes);
+    assert.ok(!fs.existsSync(path.join(f.root, 'landing/install/v1.2.0.json')));
+    assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+  });
+});
+
+test('S8: created partial place disappearance requires explicit removal', async t => {
+  const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+  const place = path.join(f.tmp, 'external-profile'); assert.equal((await f.run({ profiles: [place] })).outcome, 'installed');
+  const extension = path.join(f.root, 'landing/install/v1.1.0.places/000001.json'), bytes = fs.readFileSync(extension);
+  const file = path.join(f.root, 'landing/install/v1.1.0.progress.json'), progress = read(file);
+  assert.ok(progress.intents.some(row => row.place === place && row.result?.verified));
+  delete progress.outcome; progress.places = progress.places.filter(row => row.place !== place);
+  atomicJson(file, progress); fs.rmSync(place, { recursive: true });
+  const offset = f.calls().length, result = await f.run();
+  assert.equal(result.outcome, 'stopped', JSON.stringify(result)); assert.match(result.reason, /remembered place disappeared/);
+  assert.ok(f.calls().slice(offset).every(row => row.tool === 'codex' && row.args[1] === 'list'));
+  assert.ok(!fs.existsSync(place));
+  assert.deepEqual(fs.readFileSync(extension), bytes);
+  const removed = await f.run({ removePlaces: [place] });
+  assert.equal(removed.outcome, 'installed', JSON.stringify(removed)); assert.equal(removed.places.length, 3);
+  assert.deepEqual(fs.readFileSync(extension), bytes); assert.ok(!fs.existsSync(place));
 });
