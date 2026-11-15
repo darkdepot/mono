@@ -683,6 +683,8 @@ test('review regression: clean added place resumes before its directory exists b
   const place = path.join(f.tmp, 'external-profile'); assert.equal((await f.run({ profiles: [place] })).outcome, 'installed');
   const extensionFile = path.join(f.root, 'landing/install/v1.1.0.places/000001.json'), bytes = fs.readFileSync(extensionFile);
   fs.rmSync(place, { recursive: true });
+  fs.rmSync(path.join(f.profiles[0], 'plugins/cache/mono-marketplace/mono/1.0.0'), { recursive: true });
+  addClaudeProfile(f, f.profiles[0]);
   const file = path.join(f.root, 'landing/install/v1.1.0.progress.json'), progress = read(file);
   delete progress.outcome; progress.places = progress.places.filter(row => row.place !== place);
   progress.intents = progress.intents.filter(row => row.place !== place); // interrupted before the first create
@@ -890,6 +892,8 @@ test('pins v1: resumed wave rollback skips outgoing verification and still waits
 
 test('pins v1: another tag stops and releases a recorded interrupted installation pause', async t => {
   const f = fixture(t); assert.equal((await f.run()).outcome, 'installed'); addRelease(f, '1.2.0');
+  fs.rmSync(path.join(f.profiles[0], 'plugins/cache/mono-marketplace/mono/1.0.0'), { recursive: true });
+  addClaudeProfile(f, f.profiles[0]);
   const file = path.join(f.root, 'landing/install/v1.1.0.progress.json'), progress = read(file);
   delete progress.outcome; progress.pauseActive = true; progress.pauseControl = { state: 'idle', custom: 'preserve' }; atomicJson(file, progress);
   atomicJson(path.join(f.root, 'control.json'), { ...progress.pauseControl, halt: true });
@@ -898,6 +902,8 @@ test('pins v1: another tag stops and releases a recorded interrupted installatio
   for (let n = 0; n < 2; n++) {
     const result = await f.run({ tag: 'v1.2.0' });
     assert.equal(result.outcome, 'stopped', JSON.stringify(result)); assert.match(result.reason, /unfinished installation.*v1\.1\.0/);
+    assert.deepEqual(result.places.map(row => row.actual), ['1.0.0', '1.1.0', '1.1.0']);
+    assert.ok(result.places.every(row => row.expected === '1.1.0' && row.folders.length === 1));
     assert.deepEqual(read(path.join(f.root, 'control.json')), progress.pauseControl);
     assert.ok(!fs.existsSync(path.join(f.root, 'landing/install/v1.2.0.json')));
     assert.ok(!f.calls().slice(offset).some(row => ['update', 'install', 'add'].includes(row.args[1])));
@@ -927,5 +933,26 @@ test('pins v1: late inventory failure stops further replacements and reports par
   assert.equal(f.calls().filter(row => row.tool === 'claude' && row.args[1] === 'update').length, 1);
   assert.ok(!f.calls().some(row => row.tool === 'codex' && row.args[1] === 'add'));
   assert.deepEqual(result.places.map(row => row.actual), ['1.1.0', '1.0.0', '1.0.0']);
+  assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+});
+
+
+test('round 3: archived outgoing wave does not block a partly completed rollback', async t => {
+  const f = fixture(t); let verifies = 0;
+  f.host.verifyDrain = async () => { verifies++; return { code: 0 }; };
+  f.host.closeDrain = async args => { atomicJson(path.join(f.root, 'landing/installed', args['install-sha'] + '.json'), { evidence: args.evidence }); return { code: 0 }; };
+  assert.equal((await f.run({ wave: true })).outcome, 'installed');
+  f.fault({ skill: true });
+  f.host.processes = () => f.calls().some(row => row.tool === 'claude' && row.args[1] === 'update' &&
+      read(path.join(f.profiles[0], 'plugins/installed_plugins.json')).plugins['mono@mono-marketplace'][0].version === '1.0.0')
+    ? [{ pid: 9323, command: 'codex', state: 'S' }] : [];
+  f.host.cwdOf = () => '/product';
+  const paused = await f.run({ wave: true }); assert.equal(paused.outcome, 'waiting', JSON.stringify(paused));
+  assert.deepEqual(paused.places.map(row => row.actual), ['1.0.0', '1.1.0', '1.1.0']);
+  f.host.processes = () => []; f.fault({});
+  f.host.verifyDrain = async () => { verifies++; return { code: 1 }; };
+  const result = await f.run({ wave: true });
+  assert.equal(result.outcome, 'rolled-back', JSON.stringify(result)); assert.equal(verifies, 1);
+  assert.ok(result.places.every(row => row.actual === '1.0.0' && row.verified));
   assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
 });

@@ -310,14 +310,18 @@ export async function installPack(input, overrides = {}) {
         if (['installed', 'rolled-back'].includes(unfinished.outcome)) continue;
         const recordFile = path.join(installDir, `${tag}.json`);
         if (!fs.existsSync(recordFile)) continue;
+        const record = readJson(recordFile);
         if (unfinished.pauseActive) {
-          const record = readJson(recordFile);
           saved = unfinished.pauseControl ?? readJson(record.snapshot);
           atomicJson(control, saved);
           unfinished.pauseActive = false;
           atomicJson(unfinishedFile, unfinished);
           if (canonical(readJson(unfinishedFile)) !== canonical(unfinished)) throw new Error('pause recovery read-back differs');
         }
+        places = installRecord(recordFile).places.filter(place => !unfinished.removedPlaces?.includes(place.place))
+          .map(({ kind, place }) => ({ kind, place }));
+        result.places = places.map(place => ({ ...inspect(place, expected, options.env), expected: record.version,
+          verified: false, error: `unfinished installation ${tag}` }));
         throw new Error(`unfinished installation ${tag}; resume that tag before installing ${expected.tag}`);
       }
       progressFile = path.join(installDir, `${expected.tag}.progress.json`);
@@ -416,7 +420,7 @@ export async function installPack(input, overrides = {}) {
       // An archived wave covers its original places. Additional profiles are
       // reconciled below without asking an already closed wave to verify again.
       const wavePlaces = baseline ? result.places.filter(place => readJson(baselineFile).places.some(prior => prior.place === place.place)) : result.places;
-      const closedWave = options.wave && await replayClosedWave(drainArgs, wavePlaces, host.closeDrain);
+      const closedWave = progress.phase !== 'rollback' && options.wave && await replayClosedWave(drainArgs, wavePlaces, host.closeDrain);
       const quiescence = () => verifyInstallQuiescence(root, roots, options.config, options.wave);
       if (options.breaking) quiescence();
       const watcherConfigs = roots.map(dir => {
