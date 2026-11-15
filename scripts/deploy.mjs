@@ -8,7 +8,7 @@ import { atomicJson, canonical, digest, readJson, flags, isMain, withLock } from
 import { validateDeployConfig, affected } from './deploy-config.mjs';
 import { validateShipCertificate } from './ship-certificate.mjs';
 import { readShipSnapshot } from './gate.mjs';
-import { readPrPublications, SHIP_MARKER } from './ship-pr.mjs';
+import { readPrPublications, SHIP_MARKER, authorPart } from './ship-pr.mjs';
 import { requireQaPassed } from './qa-gate.mjs';
 import { check as landingCheck } from './orchestrator/landing-guard.mjs';
 
@@ -31,13 +31,15 @@ const filesIn = directory => fs.existsSync(directory) ? fs.readdirSync(directory
 // Only the latest Ship publication on this head is the boundary. Resolved replies
 // and Ship's own publications are deliberately excluded from new remarks.
 export function afterShip({ snapshot, issueComments, reviewComments, pr }, head) {
-  const publications = [pr, ...issueComments, ...snapshot.reviews, ...reviewComments,
+  const body = authorPart(pr.body);
+  const bodyPublication = body?.head === head && body.publishedAt ? { ...pr, updated_at: body.publishedAt } : null;
+  const publications = [bodyPublication, ...issueComments, ...snapshot.reviews, ...reviewComments,
     ...snapshot.threads.flatMap(thread => thread.comments)].filter(Boolean);
   const onHead = comment => comment.body?.includes(SHIP_MARKER) &&
     (comment.commit_id === head || comment.body.includes(head));
   const time = comment => stamp(comment.updated_at ?? comment.updatedAt ?? comment.submitted_at ?? comment.publishedAt ?? comment.created_at);
   const boundary = Math.max(...publications.filter(onHead).map(time));
-  need(Number.isFinite(boundary), 'latest Ship publication on current head missing');
+  need(Number.isFinite(boundary), 'latest Ship publication time missing; republish Ship body');
   need(snapshot.threads.every(thread => thread.isResolved === true), 'unresolved review thread');
   const threadComments = new Set(snapshot.threads.flatMap(thread => thread.comments.map(comment => comment.id)));
   const comments = [...issueComments, ...snapshot.reviews, ...reviewComments.filter(comment => !threadComments.has(comment.node_id))];
@@ -149,6 +151,11 @@ export async function runDeploy(command, request, clock = {}) {
       if (request.afk && !pr.merged && files.some(file => /(^|\/)migrations\//.test(file.filename) && file.patch?.split('\n').some(line => /^\+[^+]/.test(line) && /\b(drop|rename|truncate)\b/i.test(line)))) return { state: 'waiting-morning', outcome: null, reason: 'destructive migration' };
       const other = filesIn(path.dirname(runFile)).map(readJson).find(row => row.head !== request.head && !row.closedAt);
       need(!other, 'another deploy run is open');
+      const browserReady = target => {
+        const current = domain(target), mark = Array.isArray(request.browserReady) ? request.browserReady.find(mark => mark.target === target.index) : request.browserReady;
+        if (!mark || mark.id !== current.id || !Number.isFinite(stamp(mark.at)) || now() - stamp(mark.at) > 600_000 || stamp(mark.at) > now()) return false;
+        target.browserReady = mark; return true;
+      };
       if (!run) {
         run = { head: request.head, repo: request.repo, issue: request.issue, pr: binding.pr, config: deploy, createdAt: now(), intents: {}, targets: deploy.targets.map((recipe, index) => ({ key: digest(recipe).slice(0, 16), index, recipe, checks: [] })).filter(target => affected(target.recipe, files.flatMap(file => [file.filename, file.previous_filename].filter(Boolean)))) };
         for (const target of run.targets) if (target.recipe.kind === 'vercel') {
@@ -162,11 +169,7 @@ export async function runDeploy(command, request, clock = {}) {
         const rb = rollback(target);
         if (target.recipe.kind === 'vercel') {
           await flagMatches(target, !rb || rb.phase === 'awaiting-prod');
-          if (request.afk && !pr.merged) {
-            const current = domain(target), mark = Array.isArray(request.browserReady) ? request.browserReady.find(mark => mark.target === target.index) : request.browserReady;
-            if (!mark || mark.id !== current.id || !Number.isFinite(stamp(mark.at)) || now() - stamp(mark.at) > 600_000 || stamp(mark.at) > now()) return { state: 'waiting-morning', outcome: null, reason: 'browser with Vercel login not ready' };
-            target.browserReady = mark;
-          }
+          if (request.afk && !pr.merged && !browserReady(target)) return { state: 'waiting-morning', outcome: null, reason: 'browser with Vercel login not ready' };
         }
         if (rb) {
           need(request.fix === rb.issue && request.issue === rb.issue, 'product on rollback; only recorded repair Issue allowed');
@@ -188,6 +191,7 @@ export async function runDeploy(command, request, clock = {}) {
           const record = readJson(path.join(request.root, 'landing/guard', `${tip}.json`));
           need(guard.code === 0 || (guard.code === 1 && record.corrective?.issue === request.issue), 'landing tip is red; corrective authorization required');
         }
+        if (request.afk && run.targets.some(target => target.recipe.kind === 'vercel' && !browserReady(target))) return { state: 'waiting-morning', outcome: null, reason: 'browser with Vercel login not ready' };
         persist(); // Immutable pre-merge rollback target is read back before gh writes.
         cli('gh', ['pr', 'merge', String(binding.pr), '--repo', request.repo, '--squash', '--match-head-commit', request.head]);
       }
@@ -211,6 +215,8 @@ export async function runDeploy(command, request, clock = {}) {
       return { state: 'repair-bound', outcome: 'откатили' };
     }
     if (run.closedAt) return { state: 'closed', ...run.outcome };
+    if (run.landing && run.landing.code !== 0 && ['local', 'prove', 'return', 'outcome'].includes(command))
+      return { state: 'waiting-validation', outcome: null, open: true, landing: run.landing };
     if (['prove', 'local', 'check', 'rollback', 'return'].includes(command)) need(target, 'affected target index required');
     const latest = (t, id, surface, kind) => t.checks.filter(check => check.id === id && check.surface === surface && check.kind === kind).at(-1);
     const green = (t, id, surface) => ['quick', 'scenario'].every(kind => latest(t, id, surface, kind)?.result === 'green');
@@ -311,7 +317,7 @@ export async function runDeploy(command, request, clock = {}) {
       if (request.result === 'unavailable') need(request.reason && request.who, 'unavailable check needs reason and who');
       need(!target.checks.some(check => check.id === request.id && check.kind === request.kind && check.surface === surface && check.attempt === request.attempt && check.result !== 'unavailable'), 'check attempt already recorded');
       target.checks.push({ id: request.id, url: request.url, kind: request.kind, result: request.result, reason: request.reason, who: request.who, browserAvailable: request.browserAvailable, attempt: request.attempt, surface, at: now() });
-      if (request.result !== 'unavailable' && run.stop?.browser && !browserMissing(target)) delete run.stop;
+      if ((request.result !== 'unavailable' || request.browserAvailable === true) && run.stop?.browser && !browserMissing(target)) delete run.stop;
       persist();
       if (surface === 'browser' && request.result === 'unavailable' && request.browserAvailable !== true) return stopped(request.reason, target, true);
       return { state: 'recorded' };
@@ -405,7 +411,6 @@ export async function runDeploy(command, request, clock = {}) {
     }
     if (command === 'outcome') {
       if (run.stop) return stopped(run.stop.reason, run.targets.find(t => t.key === run.stop.target), run.stop.browser);
-      if (run.landing && run.landing.code !== 0) return { state: 'waiting-validation', outcome: null, open: true, landing: run.landing };
       const order = ['откатили', 'выкатка упала, прод на старой версии', 'выкатили, не проверено', 'влито, ждёт выпуска', 'выкатили и проверили'];
       const rows = [];
       for (const t of run.targets) {
@@ -432,7 +437,8 @@ export async function runDeploy(command, request, clock = {}) {
           need(t.proof, 'version not proven');
           if (browserMissing(t)) return stopped('browser with Vercel login unavailable', t, true);
           const surface = t.recipe.kind === 'local' ? 'local' : 'domain';
-          const scenario = [latest(t, t.proof.id, surface, 'scenario'), t.recipe.kind === 'vercel' ? latest(t, t.proof.id, 'browser', 'scenario') : null].filter(Boolean).sort((a, b) => a.at - b.at).at(-1);
+          if (t.recipe.kind === 'vercel') need(latest(t, t.proof.id, 'browser', 'quick') && latest(t, t.proof.id, 'browser', 'scenario'), 'own URL browser quick and scenario results required');
+          const scenario = latest(t, t.proof.id, t.recipe.kind === 'vercel' ? 'browser' : surface, 'scenario');
           need(scenario, 'task scenario result or explicit unavailable reason/checker must be recorded');
           const checkFor = kind => kind === 'scenario' ? scenario : latest(t, t.proof.id, surface, 'quick');
           const reds = ['quick', 'scenario'].filter(kind => checkFor(kind)?.result === 'red' || latest(t, t.proof.id, surface, kind)?.result === 'red' || (t.recipe.kind === 'vercel' && latest(t, t.proof.id, 'browser', kind)?.result === 'red'));

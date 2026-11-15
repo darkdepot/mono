@@ -211,3 +211,11 @@ test('description: leaves draft only when the read-only pass found exactly this 
   assert.match(descriptionBlockers({ body, issue: 'MONO-324', head, checks, check: { ...judged('truthful'), head: older } })[0], /не проверено/);
   assert.match(descriptionBlockers({ body, issue: 'MONO-324', head, checks, check: null })[0], /не проверено/);
 });
+test('Ship body retains publication time independently of later PR activity',()=>{
+  const publishedAt='2026-11-15T10:00:00.000Z';
+  const body=composeBody({author:'summary',head,publishedAt});
+  assert.equal(authorPart(body).publishedAt,publishedAt);
+  assert.equal(authorPart(body).text,'summary');
+  assert.equal(authorPart(body).outside,'');
+  assert.equal(authorPart(`<!-- mono:ship body head=${head} -->\nlegacy\n<!-- /mono:ship body -->`).publishedAt,null);
+});

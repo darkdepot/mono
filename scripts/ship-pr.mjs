@@ -79,7 +79,7 @@ function push({ worktree, repo, remote, branch, protection }) {
 }
 // The author's part of the description sits between its own markers and names the head it describes;
 // anything outside them (a bot's block) is kept when the description is rewritten.
-const BODY_START = /<!-- mono:ship body head=([a-f0-9]{40}|none) -->\n?/, BODY_END = '<!-- /mono:ship body -->';
+const BODY_START = /<!-- mono:ship body head=([a-f0-9]{40}|none)(?: published=([^\s>]+))? -->\n?/, BODY_END = '<!-- /mono:ship body -->';
 const BODY_MARKERS = /<!-- mono:ship body head=[^>]*-->\n?|<!-- \/mono:ship body -->\n?/g;
 // Exactly one pair of markers; nested, repeated or unclosed ones mean there is no author part to trust.
 export function authorPart(body) {
@@ -87,15 +87,15 @@ export function authorPart(body) {
   if (!start || (text.match(BODY_MARKERS) ?? []).length !== 2) return null;
   const end = text.indexOf(BODY_END, start.index + start[0].length);
   if (end < 0) return null;
-  return { head: start[1] === 'none' ? null : start[1], text: text.slice(start.index + start[0].length, end).trim(),
+  return { head: start[1] === 'none' ? null : start[1], publishedAt: start[2] ?? null, text: text.slice(start.index + start[0].length, end).trim(),
     outside: (text.slice(0, start.index) + text.slice(end + BODY_END.length)).replace(SHIP_MARKER, '').trim() };
 }
 // A bot's block in the description is the one it marks itself (Greptile: <!-- greptile_comment --> … <!-- /greptile_comment -->).
 export const botBlocks = body => [...String(body ?? '').matchAll(/<!-- ([a-z][a-z0-9_]*)_comment -->[\s\S]*?<!-- \/\1_comment -->/g)].map(match => match[0]);
-export function composeBody({ author, head, current = '' }) {
+export function composeBody({ author, head, current = '', publishedAt = new Date().toISOString() }) {
   // Everything else of the old description is replaced: old author text never stays visible beside the new.
   const rest = botBlocks(current).join('\n\n');
-  return `${SHIP_MARKER}\n<!-- mono:ship body head=${head ?? 'none'} -->\n${author.trim()}\n${BODY_END}${rest ? `\n\n${rest}` : ''}\n`;
+  return `${SHIP_MARKER}\n<!-- mono:ship body head=${head ?? 'none'} published=${publishedAt} -->\n${author.trim()}\n${BODY_END}${rest ? `\n\n${rest}` : ''}\n`;
 }
 export function draftBody({ issue, issueUrl, title, head = null }) {
   return composeBody({ author: `${title}\n\nЗадача: [${issue}](${issueUrl})`, head });

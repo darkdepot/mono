@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { runDeploy, performIntent, afterShip } from './deploy.mjs';
 import { affected } from './deploy-config.mjs';
+import { composeBody } from './ship-pr.mjs';
 import { digest } from './runtime.mjs';
 
 const H = 'a'.repeat(40), M = 'b'.repeat(40), F = 'c'.repeat(40), FM = 'd'.repeat(40), OLD = 'e'.repeat(40);
@@ -37,6 +38,7 @@ if(name==='gh') {
  if(a[0]==='pr' && a[1]==='merge') { if(a.includes('--auto') || !a.includes('--squash') || a.at(-1)!==s.head) fail('unsafe merge'); s.merged=true; send({}); }
  const endpoint=a.find(x=>x.startsWith('repos/'));
  if(a[1]==='graphql') {
+  if(s.advanceOnSnapshot&&!s.advanced){s.clock+=600001;s.advanced=true;}
   const q=a.find(x=>x.startsWith('query='));
   if(q.includes('reviewThreads')) send({data:{repository:{pullRequest:{reviewThreads:conn(s.threads)}}}});
   if(q.includes('node(id:')) {const id=a.find(x=>x.startsWith('id=')).slice(3); send({data:{node:{comments:conn(s.threads.find(t=>t.id===id).comments)}}});}
@@ -132,10 +134,10 @@ test('proof accepts descendant deployment but never an unrelated commit',async t
  const f=fixture(t);await f.call('merge');f.mutate(s=>{s.domain={...s.deployments.new,meta:{githubCommitSha:F}};s.comparisons[`${M}...${F}`]={status:'ahead',files:[{filename:'stamp'}]};});assert.equal((await f.call('prove')).state,'proven');
 });
 test('AE1 old browser failure never triggers rollback; known breakage gets followup',async t=>{
- const f=fixture(t);await f.prove();f.mutate(s=>s.health=1);await f.call('prove');await f.check('quick','red','new','browser',1);await f.check('quick','red','new','browser',2);await f.check('quick','red','old');await assert.rejects(f.call('rollback'),/red twice/);await f.check('scenario','green','new','domain');const out=await f.call('outcome');assert.match(out.targets[0].reason,/известная/);assert.ok(out.followups.length);assert.equal(f.read().calls.some(c=>c[1]==='rollback'),false);
+ const f=fixture(t);await f.prove();f.mutate(s=>s.health=1);await f.call('prove');await f.check('quick','red','new','browser',1);await f.check('quick','red','new','browser',2);await f.check('quick','red','old');await assert.rejects(f.call('rollback'),/red twice/);await f.check('scenario');const out=await f.call('outcome');assert.match(out.targets[0].reason,/известная/);assert.ok(out.followups.length);assert.equal(f.read().calls.some(c=>c[1]==='rollback'),false);
 });
 test('S19 explicit U5 exception retains domain red, follows up discrepancy, forbids verified outcome',async t=>{
- const f=fixture(t);f.mutate(s=>s.health=1);await f.prove();await f.check('quick');await f.check('scenario','green','new','domain');const out=await f.call('outcome');assert.equal(out.outcome,'выкатили, не проверено');assert.match(out.targets[0].reason,/по домену красная, по адресу сборки зелёная/);assert.ok(f.savedRun().targets[0].checks.some(c=>c.surface==='domain'&&c.result==='red'));assert.equal(out.followups[0].kind,'discrepancy');
+ const f=fixture(t);f.mutate(s=>s.health=1);await f.prove();await f.check('quick');await f.check('scenario');const out=await f.call('outcome');assert.equal(out.outcome,'выкатили, не проверено');assert.match(out.targets[0].reason,/по домену красная, по адресу сборки зелёная/);assert.ok(f.savedRun().targets[0].checks.some(c=>c.surface==='domain'&&c.result==='red'));assert.equal(out.followups[0].kind,'discrepancy');
 });
 test('browser unavailable leaves run open, refuses rollback and return, Stop gives truthful action and resumes same check',async t=>{
  const f=fixture(t);await f.prove();const r=await f.check('quick','unavailable','old','browser',1,{reason:'no signed-in browser',who:'owner'});assert.equal(r.outcome,null);assert.match(r.lines[1],/Сделал: не откатывал/);assert.equal((await f.call('rollback')).state,'stopped');assert.equal((await f.call('outcome')).open,true);assert.equal(f.savedRun().closedAt,undefined);f.mutate(s=>s.clock++);await f.check('quick','green','old');assert.equal(f.savedRun().stop,undefined);
@@ -153,7 +155,7 @@ test('different repair head is never merged',async t=>{
  const f=fixture(t);await f.repair();f.request.head='f'.repeat(40);f.request.certificate=cert(f.request.head,'MONO-424');f.mutate(s=>{s.head=f.request.head;s.merged=false;});await assert.rejects(f.call('merge',{fix:'MONO-424'}),/another deploy run|another PR\/head/);
 });
 test('AE4 unavailable scenario names checker; multiple targets worst first; no affected target closes without outcome',async t=>{
- const f=fixture(t,[web,{kind:'none',paths:['src/**'],reason:'мобильное Deploy пока не смотрит'},{kind:'pack'}]);await f.prove();await f.check('scenario','unavailable','new','domain',1,{reason:'needs live call',who:'owner before 2026-11-16'});const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.match(r.targets.find(t=>t.target===0).reason,/owner/);assert.equal(r.targets.at(-1).outcome,'влито, ждёт выпуска');
+ const f=fixture(t,[web,{kind:'none',paths:['src/**'],reason:'мобильное Deploy пока не смотрит'},{kind:'pack'}]);await f.prove();await f.check('quick');await f.check('scenario','unavailable','new','browser',1,{reason:'needs live call',who:'owner before 2026-11-16',browserAvailable:true});const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.match(r.targets.find(t=>t.target===0).reason,/owner/);assert.equal(r.targets.at(-1).outcome,'влито, ждёт выпуска');
 });
 test('PR without targets closes with no outcome or project update',async t=>{
  const f=fixture(t);f.mutate(s=>s.files=[{filename:'docs/a.md'}]);await f.call('merge');const r=await f.call('outcome');assert.equal(r.outcome,null);assert.equal(r.noTargets,true);assert.equal(r.projectUpdateAllowed,false);assert.ok(f.savedRun().closedAt);
@@ -228,7 +230,7 @@ test('repair cannot close as deployed before domain return and production checks
  const f=fixture(t);await f.repair();await f.check('quick','green','fix');await f.check('scenario','green','fix');assert.equal((await f.call('outcome')).open,true);await f.call('return');await f.check('scenario','green','fix','domain');await f.call('return');assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
 });
 test('outcome waits for a scenario result or explicit unavailable reason and checker',async t=>{
- const f=fixture(t);await f.prove();await assert.rejects(f.call('outcome'),/scenario result/);assert.equal(f.savedRun().closedAt,undefined);await f.check('scenario','unavailable','new','domain',1,{reason:'real data requires owner',who:'owner by 2026-11-16'});assert.equal((await f.call('outcome')).outcome,'выкатили, не проверено');
+ const f=fixture(t);await f.prove();await assert.rejects(f.call('outcome'),/scenario result/);assert.equal(f.savedRun().closedAt,undefined);await f.check('quick');await f.check('scenario','unavailable','new','browser',1,{reason:'real data requires owner',who:'owner by 2026-11-16',browserAvailable:true});assert.equal((await f.call('outcome')).outcome,'выкатили, не проверено');
 });
 test('unaffected documentation PR cannot bypass a product rollback',async t=>{
  const f=fixture(t);await f.badNew();await f.call('rollback',{repairIssue:'MONO-424'});await f.call('outcome');f.request.head=F;f.request.certificate=cert(F);f.mutate(s=>{s.head=F;s.merged=false;s.files=[{filename:'docs/a.md'}];});await assert.rejects(f.call('merge'),/product on rollback/);
@@ -252,13 +254,13 @@ test('review: production return has no second scenario attempt to hide red',asyn
 });
 test('review: Ship boundary includes marked PR body and marked review replies',()=>{
  const at=offset=>new Date(T+offset).toISOString();const snapshot={reviews:[],threads:[]};
- assert.deepEqual(afterShip({snapshot,issueComments:[],reviewComments:[],pr:{body:`<!-- mono:ship --> ${H}`,updated_at:at(0)}},H),[]);
+ assert.deepEqual(afterShip({snapshot,issueComments:[],reviewComments:[],pr:{body:composeBody({author:'Ship body',head:H,publishedAt:at(0)}),updated_at:at(10)}},H),[]);
  const comments=[{body:'old remark',created_at:at(-10)},{body:'new remark',created_at:at(10)}];
- assert.equal(afterShip({snapshot,issueComments:comments,reviewComments:[],pr:{body:`<!-- mono:ship --> ${H}`,updated_at:at(0)}},H).length,1);
+ assert.equal(afterShip({snapshot,issueComments:comments,reviewComments:[],pr:{body:composeBody({author:'Ship body',head:H,publishedAt:at(0)}),updated_at:at(10)}},H).length,1);
  assert.deepEqual(afterShip({snapshot,issueComments:[{body:`<!-- mono:ship --> ${H}`,created_at:at(-100)},comments[0]],reviewComments:[{body:`<!-- mono:ship --> ${H}`,updated_at:at(0)}],pr:{}},H),[]);
 });
 test('review: successful proof clears stale stop and failure',async t=>{
- const f=fixture(t);await f.call('merge');f.mutate(s=>{s.main=F;s.comparisons[`${M}...${F}`]={status:'ahead',files:[{filename:'src/new.js'}]};});assert.equal((await f.call('prove')).state,'stopped');f.editRun(r=>r.targets[0].failed=true);f.mutate(s=>s.domain=s.deployments.new);await f.call('prove');await f.check('scenario','green','new','domain');assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
+ const f=fixture(t);await f.call('merge');f.mutate(s=>{s.main=F;s.comparisons[`${M}...${F}`]={status:'ahead',files:[{filename:'src/new.js'}]};});assert.equal((await f.call('prove')).state,'stopped');f.editRun(r=>r.targets[0].failed=true);f.mutate(s=>s.domain=s.deployments.new);await f.call('prove');await f.check('quick');await f.check('scenario');assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
 });
 test('review: renamed main path prevents replaying old code',async t=>{
  const f=fixture(t);await f.call('merge');f.mutate(s=>{s.main=F;s.comparisons[`${M}...${F}`]={status:'ahead',files:[{filename:'archive/a.js',previous_filename:'src/a.js'}]};});assert.equal((await f.call('prove')).state,'stopped');assert.equal(f.read().calls.filter(c=>c.includes('POST')).length,0);
@@ -295,4 +297,21 @@ test('local check contract: health command does not receive an empty deployment 
 });
 test('review: red domain task scenario remains unverified when own URL turns green',async t=>{
  const f=fixture(t);await f.prove();await f.check('scenario','red','new','domain');await f.check('quick');await f.check('scenario');const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.equal(r.followups[0].kind,'discrepancy');assert.ok(f.savedRun().targets[0].checks.some(c=>c.surface==='domain'&&c.kind==='scenario'&&c.result==='red'));
+});
+
+test('round3: a domain-only scenario cannot claim verified web delivery',async t=>{
+ const f=fixture(t);await f.prove();await f.check('scenario','green','new','domain');await assert.rejects(f.call('outcome'),/own URL|browser/);assert.equal(f.savedRun().closedAt,undefined);
+});
+test('round3: failed merge validation blocks local install before any command',async t=>{
+ const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);const c=JSON.parse(fs.readFileSync(f.config));c.landing={validation:{check:'validate',timeoutSec:1}};fs.writeFileSync(f.config,JSON.stringify(c));await f.call('merge');f.mutate(s=>s.landingRed=true);await f.call('merge');const count=f.read().calls.filter(call=>call[0]==='local').length;assert.equal((await f.call('local')).state,'waiting-validation');assert.equal(f.read().calls.filter(call=>call[0]==='local').length,count);
+});
+test('round3: restored browser with unavailable owner data clears only browser Stop',async t=>{
+ const f=fixture(t);await f.prove();await f.check('quick');await f.check('scenario','unavailable','new','browser',1,{reason:'browser absent',who:'owner'});await f.check('scenario','unavailable','new','browser',1,{reason:'owner data needed',who:'owner by tomorrow',browserAvailable:true});assert.equal(f.savedRun().stop,undefined);assert.equal((await f.call('outcome')).outcome,'выкатили, не проверено');
+});
+test('round3: PR activity timestamp cannot hide comments after actual Ship body publication',()=>{
+ const at=n=>new Date(T+n).toISOString();const data={snapshot:{reviews:[],threads:[]},issueComments:[{body:'new owner concern',created_at:at(100)}],reviewComments:[],pr:{body:`<!-- mono:ship -->\n<!-- mono:ship body head=${H} published=${at(0)} -->\nbody\n<!-- /mono:ship body -->`,updated_at:at(100)}};
+ assert.equal(afterShip(data,H).length,1);data.issueComments[0]={body:'edited concern',created_at:at(-100),updated_at:at(100)};assert.equal(afterShip(data,H).length,1);
+});
+test('round3: browser readiness is fresh at the actual merge after slow GitHub reads',async t=>{
+ const f=fixture(t);f.mutate(s=>s.advanceOnSnapshot=true);const r=await f.call('merge',{afk:true,browserReady:{id:'old',at:T}});assert.equal(r.state,'waiting-morning');assert.equal(f.read().merged,false);
 });
