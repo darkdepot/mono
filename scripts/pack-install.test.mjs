@@ -327,7 +327,7 @@ test('the default watcher adapter starts the verified installed script and obser
 test('live Codex from an outgoing folder waits and names its product directory for restart', async t => {
   const f = fixture(t), folder = path.join(f.env.CODEX_HOME, 'plugins/cache/mono-marketplace/mono/1.0.0');
   f.host.processes = () => [{ pid: 2468, command: '/tool/bin/codex exec', procStartEpoch: 100, state: 'S' }];
-  f.host.cwdOf = () => folder;
+  f.host.cwdOf = () => path.join(f.env.CODEX_HOME, 'plugins/cache/mono-marketplace/mono/1.0.0');
   let result = await installPack(f.options, f.host);
   assert.equal(result.outcome, 'waiting'); assert.equal(result.holders[0].pid, 2468);
   assert.deepEqual(result.restart, [{ pid: 2468, command: 'codex', cwd: folder, startedAt: 100 }]);
@@ -796,20 +796,44 @@ test('S8: historical places cannot change between Claude and Codex', async t => 
   });
 });
 
-test('S8: created partial place disappearance requires explicit removal', async t => {
-  const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
-  const place = path.join(f.tmp, 'external-profile'); assert.equal((await f.run({ profiles: [place] })).outcome, 'installed');
-  const extension = path.join(f.root, 'landing/install/v1.1.0.places/000001.json'), bytes = fs.readFileSync(extension);
-  const file = path.join(f.root, 'landing/install/v1.1.0.progress.json'), progress = read(file);
-  assert.ok(progress.intents.some(row => row.place === place && row.result?.verified));
-  delete progress.outcome; progress.places = progress.places.filter(row => row.place !== place);
-  atomicJson(file, progress); fs.rmSync(place, { recursive: true });
-  const offset = f.calls().length, result = await f.run();
-  assert.equal(result.outcome, 'stopped', JSON.stringify(result)); assert.match(result.reason, /remembered place disappeared/);
-  assert.ok(f.calls().slice(offset).every(row => row.tool === 'codex' && row.args[1] === 'list'));
-  assert.ok(!fs.existsSync(place));
-  assert.deepEqual(fs.readFileSync(extension), bytes);
-  const removed = await f.run({ removePlaces: [place] });
-  assert.equal(removed.outcome, 'installed', JSON.stringify(removed)); assert.equal(removed.places.length, 3);
-  assert.deepEqual(fs.readFileSync(extension), bytes); assert.ok(!fs.existsSync(place));
+test('S8: created partial place disappearance requires explicit removal even after failed inspection', async t => {
+  for (const verified of [true, false]) await t.test(String(verified), async t => {
+    const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+    const place = path.join(f.tmp, 'external-profile'); assert.equal((await f.run({ profiles: [place] })).outcome, 'installed');
+    const extension = path.join(f.root, 'landing/install/v1.1.0.places/000001.json'), bytes = fs.readFileSync(extension);
+    const file = path.join(f.root, 'landing/install/v1.1.0.progress.json'), progress = read(file);
+    const intent = progress.intents.find(row => row.place === place && row.result?.verified);
+    assert.ok(intent);
+    if (!verified) intent.result = { place, expected: '1.1.0', actual: '1.1.0', verified: false, error: 'tree differs' };
+    delete progress.outcome; progress.places = progress.places.filter(row => row.place !== place);
+    atomicJson(file, progress); fs.rmSync(place, { recursive: true });
+    const offset = f.calls().length, result = await f.run();
+    assert.equal(result.outcome, 'stopped', JSON.stringify(result)); assert.match(result.reason, /remembered place disappeared/);
+    assert.ok(f.calls().slice(offset).every(row => row.tool === 'codex' && row.args[1] === 'list'));
+    assert.ok(!fs.existsSync(place));
+    assert.deepEqual(fs.readFileSync(extension), bytes);
+    const removed = await f.run({ removePlaces: [place] });
+    assert.equal(removed.outcome, 'installed', JSON.stringify(removed)); assert.equal(removed.places.length, 3);
+    assert.deepEqual(fs.readFileSync(extension), bytes); assert.ok(!fs.existsSync(place));
+  });
+});
+
+
+test('compatible rollback waits for a live process in the replaced folder without replacing any place', async t => {
+  const f = fixture(t); f.fault({ skill: true });
+  const folder = path.join(f.env.CODEX_HOME, 'plugins/cache/mono-marketplace/mono/1.1.0');
+  f.host.cwdOf = () => path.join(f.env.CODEX_HOME, 'plugins/cache/mono-marketplace/mono/1.0.0');
+  f.host.processes = () => f.calls().some(row => row.args[0] === '-p')
+    ? [{ pid: 9214, command: 'codex', state: 'S' }] : [];
+  const result = await f.run();
+  assert.equal(result.outcome, 'waiting', JSON.stringify(result));
+  assert.equal(result.code, 2); assert.equal(result.holders[0].pid, 9214); assert.equal(result.holders[0].state, 'live');
+  const calls = f.calls(), fresh = calls.findIndex(row => row.args[0] === '-p');
+  assert.ok(fresh >= 0);
+  assert.ok(!calls.slice(fresh).some(row => ['update', 'install', 'add'].includes(row.args[1])), 'no replacements after the process appears');
+  for (const profile of f.profiles) assert.equal(read(path.join(profile, 'plugins/installed_plugins.json')).plugins['mono@mono-marketplace'][0].version, '1.1.0');
+  assert.equal(fs.readFileSync(path.join(folder, 'VERSION'), 'utf8').trim(), '1.1.0');
+  assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+  f.host.processes = () => []; f.fault({});
+  assert.equal((await f.run()).outcome, 'rolled-back');
 });

@@ -338,7 +338,7 @@ export async function installPack(input, overrides = {}) {
       for (const place of places) if (!fs.existsSync(place.place) && remembered.some(prior => prior.place === place.place)) {
         const pendingCreate = baseline?.places.some(prior => prior.place === place.place && prior.existed === false) &&
           !progress.places?.some(prior => prior.place === place.place) &&
-          !progress.intents.some(intent => intent.place === place.place && intent.result?.folders?.length) && !history.some(record => record.tag !== expected.tag && record.places.some(prior => prior.place === place.place));
+          !progress.intents.some(intent => intent.place === place.place && intent.result) && !history.some(record => record.tag !== expected.tag && record.places.some(prior => prior.place === place.place));
         if (!pendingCreate) throw new Error(`remembered place disappeared: ${place.place}; requires --remove-place`);
       }
       function localCopies() {
