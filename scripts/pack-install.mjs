@@ -7,6 +7,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { atomicJson, canonical, readJson, withLock, processTable, processStart, isMain } from './runtime.mjs';
 import { updateBlockers, verifyQuiescence } from './verify-pack-state.mjs';
 import { verify as verifyDrain, close as closeDrain } from './orchestrator/landing-drain.mjs';
+import { attemptState } from './orchestrator/command-state.mjs';
 
 const plugin = 'mono@mono-marketplace', marketplace = 'mono-marketplace';
 const optional = (file, fallback) => fs.existsSync(file) ? readJson(file) : fallback;
@@ -39,7 +40,7 @@ export function verifyTree(folder, expected, kind) {
       if (!wanted && !prefix && ((kind === 'codex' && name === '.git' || kind === 'claude' && name === '.in_use') && stat.isDirectory() ||
           kind === 'codex' && name === '.codex-marketplace-install.json' && stat.isFile())) continue;
       seen.add(file);
-      const mode = stat.isSymbolicLink() ? '120000' : stat.isDirectory() ? '040000' : stat.isFile() ? stat.mode & 0o111 ? '100755' : '100644' : 'unsupported';
+      const mode = stat.isSymbolicLink() ? '120000' : stat.isDirectory() ? '040000' : stat.isFile() ? stat.mode & 0o100 ? '100755' : '100644' : 'unsupported';
       if (!wanted || mode !== wanted.mode) errors.push(`${file}: type/mode or extra object`);
       if (mode === '040000') walk(absolute, file + '/');
       else if (wanted && ['100644', '100755', '120000'].includes(mode)) {
@@ -66,21 +67,29 @@ function codexRef(place) {
   if (refs.length !== 1) throw new Error('Codex marketplace requires a literal ref');
   return JSON.parse(refs[0][1]);
 }
-function installed(place, env) {
-  if (place.kind === 'claude') return claudeEntries(place).filter(row => !row.projectPath);
+function codexEntries(place, env) {
   const entries = JSON.parse(run('codex', ['plugin', 'list', '--json'], { env: { ...env, CODEX_HOME: place.place } })).installed;
   if (!Array.isArray(entries)) throw new Error('Codex installed list unavailable');
-  return entries.filter(row => row.pluginId === plugin).map(row => ({ version: row.version, installPath: row.source?.path,
-    gitCommitSha: readJson(path.join(row.source.path, '.codex-marketplace-install.json')).revision }));
+  return entries;
 }
-function inspect(place, expected, env) {
+function installed(place, env) {
+  if (place.kind === 'claude') return claudeEntries(place).filter(row => !row.projectPath);
+  return codexEntries(place, env).filter(row => row.pluginId === plugin).map(row => {
+    let metadata;
+    try { metadata = readJson(path.join(row.source.path, '.codex-marketplace-install.json')); }
+    catch { /* A partial write is a failed proof, not a missing installation. */ }
+    return { version: row.version, installPath: row.source?.path, gitCommitSha: metadata?.revision ?? null };
+  });
+}
+function inspect(place, expected, env, pins = true) {
   try {
     const entries = installed(place, env);
     if (!entries.length) throw new Error('plugin not installed');
-    if (place.kind === 'codex' && codexRef(place) !== expected.tag) throw new Error('Codex config ref differs');
-    if (place.kind === 'claude') {
+    if (pins && place.kind === 'codex' && codexRef(place) !== expected.tag) throw new Error('Codex config ref differs');
+    if (pins && place.kind === 'claude') {
       const settings = readJson(path.join(place.place, 'settings.json')), known = readJson(path.join(place.place, 'plugins/known_marketplaces.json'));
       if (settings.extraKnownMarketplaces?.[marketplace]?.source?.ref !== expected.tag || known[marketplace]?.source?.ref !== expected.tag) throw new Error('Claude profile refs differ');
+      if (settings.extraKnownMarketplaces[marketplace].autoUpdate === true) throw new Error('Claude automatic updates are enabled');
     }
     for (const row of entries) {
       if (row.version !== expected.version || row.gitCommitSha !== expected.sha) throw new Error('installed version/commit differs');
@@ -142,7 +151,7 @@ function put(place, expected, env, original) {
     if (!fs.existsSync(path.join(place.place, 'plugins/known_marketplaces.json'))) run('claude', ['plugin', 'marketplace', 'add', 'darkdepot/mono'], { env });
     pinClaude(place, expected.tag, env, original);
     run('claude', ['plugin', 'marketplace', 'update', marketplace], { env });
-    run('claude', ['plugin', claudeEntries(place).length ? 'update' : 'install', plugin], { env });
+    run('claude', ['plugin', installed(place, env).length ? 'update' : 'install', plugin], { env });
   } else {
     env = { ...env, CODEX_HOME: place.place };
     run('codex', ['plugin', 'marketplace', 'add', 'darkdepot/mono', '--ref', expected.tag], { env });
@@ -175,6 +184,7 @@ function processPlaces(host) {
 }
 async function restartWatcher(folder, options, expected) {
   const pulseFile = path.join(options.root, 'watcher.json'), old = optional(pulseFile, null);
+  if (old && (!Number.isSafeInteger(old.pid) || old.pid <= 0 || typeof old.procStart !== 'string' || !old.procStart.trim())) throw new Error('invalid watcher process identity');
   if (old && processStart(old.pid) === old.procStart) {
     process.kill(old.pid, 'SIGTERM');
     const until = Date.now() + 10_000;
@@ -200,54 +210,89 @@ async function locks(files, action, index = 0) {
   return index === files.length ? action() : withLock(files[index], () => locks(files, action, index + 1), { reclaim: true });
 }
 
+export function verifyInstallQuiescence(root, roots, config, wave = false) {
+  for (const dir of roots) {
+    const workers = readJson(path.join(dir, 'workers.json'));
+    // This wave must retain its landed/stopped provenance until close. These
+    // records are history, not active attempts; an unproven/paused one still blocks.
+    const active = dir === root && wave ? Object.fromEntries(Object.entries(workers).filter(([, entry]) => attemptState(dir, entry, readJson(config)).state !== 'landed')) : workers;
+    verifyQuiescence(readJson(path.join(dir, 'control.json')), active);
+  }
+}
+
 export async function installPack(input, overrides = {}) {
   const options = { home: os.homedir(), env: process.env, profiles: [], removePlaces: [], watcherConfigs: {}, ...input };
   const host = { processes: processTable, cwdOf, restartWatcher, verifyDrain, closeDrain, ...overrides };
   const result = { code: 1, outcome: 'stopped', places: [], holders: [], restart: [], localCopies: [] };
-  let saved, snapshot, baseline, places = [], expected, paused = false, root, progressFile;
+  let saved, snapshot, baseline, places = [], expected, paused = false, root, progressFile, progress;
   const releases = new Map();
   const target = tag => { if (!releases.has(tag)) releases.set(tag, release(options.repo, tag, options.env)); return releases.get(tag); };
   try {
-    for (const field of ['root', 'repo', 'config']) if (!path.isAbsolute(options[field] ?? '')) throw new Error(`absolute --${field} required`);
+    for (const field of ['root', 'repo', 'config']) {
+      if (!path.isAbsolute(options[field] ?? '')) throw new Error(`absolute --${field} required`);
+      options[field] = path.resolve(options[field]);
+    }
     root = options.root;
-    const products = options.productsRoot ?? path.dirname(root);
+    const products = path.resolve(options.productsRoot ?? path.dirname(root));
     expected = target(options.tag);
     const control = path.join(root, 'control.json'); readJson(control);
     const roots = fs.readdirSync(products, { withFileTypes: true }).filter(row => row.isDirectory() && ['workers.json', 'control.json'].some(file => fs.existsSync(path.join(products, row.name, file)))).map(row => path.join(products, row.name)).sort();
+    if (!roots.includes(root)) throw new Error('--root must be a product under --products-root');
     // Dispatch always precedes launch, matching orchestrator publication order.
     const lockFiles = ['dispatch.lock', 'launch.lock'].flatMap(name => roots.map(dir => path.join(dir, name)));
     return await withLock(path.join(products, 'pack-install.lock'), () => locks(lockFiles, async () => {
       const installDir = path.join(root, 'landing/install'), baselineFile = path.join(installDir, `${expected.tag}.json`);
       progressFile = path.join(installDir, `${expected.tag}.progress.json`);
       baseline = optional(baselineFile, null);
-      // Resume always restores the first snapshot, even if this run's discovery or
-      // holder checks stop before another replacement starts.
-      if (baseline) { snapshot = baseline.snapshot; saved = readJson(snapshot); atomicJson(control, saved); }
+      progress = optional(progressFile, { phase: 'install', intents: [] });
+      const persist = () => { atomicJson(progressFile, progress); if (canonical(readJson(progressFile)) !== canonical(progress)) throw new Error('intent read-back differs'); };
+      if (baseline) {
+        snapshot = baseline.snapshot;
+        if (progress.pauseActive) {
+          saved = progress.pauseControl ?? readJson(snapshot);
+          atomicJson(control, saved); progress.pauseActive = false; persist();
+        }
+        readJson(snapshot);
+      }
+      saved = readJson(control);
       for (const dir of roots) {
         const workers = readJson(path.join(dir, 'workers.json'));
         if (!workers || typeof workers !== 'object' || Array.isArray(workers)) throw new Error(`invalid product registry: ${dir}`);
         readJson(path.join(dir, 'control.json'));
       }
       const history = fs.existsSync(installDir) ? fs.readdirSync(installDir).filter(file => /^v.*\.json$/.test(file) && !file.endsWith('.progress.json')).map(file => readJson(path.join(installDir, file))).sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : [];
-      const discovered = [path.join(options.home, '.claude'), ...fs.readdirSync(options.home).filter(name => name.startsWith('.claude')).map(name => path.join(options.home, name)).filter(dir => fs.existsSync(path.join(dir, 'plugins/installed_plugins.json')) && claudeEntries({ place: dir }).length), ...options.profiles];
+      const profiles = fs.readdirSync(options.home).filter(name => name.startsWith('.claude')).map(name => path.join(options.home, name)).filter(dir => fs.existsSync(path.join(dir, 'plugins/installed_plugins.json')));
+      const discovered = [path.join(options.home, '.claude'), ...profiles.filter(dir => claudeEntries({ place: dir }).length), ...options.profiles];
       places = [...new Set(discovered)].map(place => ({ kind: 'claude', place: path.resolve(place) }));
       places.push({ kind: 'codex', place: path.resolve(options.env.CODEX_HOME || path.join(options.home, '.codex')) });
       for (const prior of [...(history.at(-1)?.places ?? []), ...(baseline?.places ?? [])]) {
         if (!places.some(place => place.place === prior.place)) places.push({ kind: prior.kind, place: prior.place });
       }
       const previousProgress = history.length ? optional(path.join(installDir, `${history.at(-1).tag}.progress.json`), {}) : {};
-      const ownProgress = optional(progressFile, {});
+      const ownProgress = progress;
       const removed = [...new Set([...(previousProgress.removedPlaces ?? []), ...(ownProgress.removedPlaces ?? []), ...options.removePlaces.map(value => path.resolve(value))])];
       result.removedPlaces = removed;
       places = places.filter(place => !removed.includes(place.place));
       for (const place of places) if (!fs.existsSync(place.place) && (baseline?.places ?? history.at(-1)?.places ?? []).some(old => old.place === place.place)) throw new Error(`remembered place disappeared: ${place.place}; requires --remove-place`);
-      for (const place of places.filter(place => place.kind === 'claude')) {
-        const entries = optional(registryFile(place), { plugins: {} }).plugins ?? {};
-        for (const [id, rows] of Object.entries(entries)) for (const row of rows) if (id === 'mono@mono-dev' || id === plugin && row.projectPath) result.localCopies.push({ place: place.place, plugin: id, ...row });
+      function localCopies() {
+        const copies = [];
+        for (const dir of [...new Set([...profiles, ...places.filter(place => place.kind === 'claude').map(place => place.place)])]) {
+          const entries = optional(registryFile({ place: dir }), { plugins: {} }).plugins ?? {};
+          for (const [id, rows] of Object.entries(entries)) for (const row of rows) if (id === 'mono@mono-dev' || id === plugin && row.projectPath) copies.push({ place: dir, plugin: id, ...row });
+        }
+        for (const place of places.filter(place => place.kind === 'codex')) for (const row of codexEntries(place, options.env)) if (row.pluginId === 'mono@mono-dev' || row.pluginId === plugin && row.projectPath) copies.push({ place: place.place, plugin: row.pluginId, ...row });
+        return copies;
       }
+      result.localCopies = localCopies();
       const before = places.map(place => ({ ...place, entries: installed(place, options.env) }));
-      const folders = [...new Set(before.flatMap(place => [...place.entries.map(row => row.installPath),
-        path.join(place.place, 'plugins/cache/mono-marketplace/mono', ...(place.kind === 'codex' ? [] : [expected.version]))]).filter(Boolean))];
+      // Protect the rollback targets too, including after a partial installation
+      // has already moved the current registry to the new version.
+      const folders = [...new Set(before.flatMap(place => {
+        const prior = baseline?.places.find(row => row.place === place.place)?.previous;
+        const cache = path.join(place.place, 'plugins/cache/mono-marketplace/mono');
+        return [...place.entries.map(row => row.installPath), ...(prior?.folders ?? []), ...(prior ? [path.join(cache, prior.version)] : []),
+          place.kind === 'codex' ? cache : path.join(cache, expected.version)];
+      }).filter(Boolean))];
       for (const folder of folders) {
         const found = updateBlockers(folder, products);
         for (const blocker of found.blockers) {
@@ -261,12 +306,12 @@ export async function installPack(input, overrides = {}) {
       }
       const sessions = processPlaces(host), codexFolders = before.filter(place => place.kind === 'codex').flatMap(place => place.entries.map(row => row.installPath));
       result.holders.push(...sessions.filter(row => codexFolders.some(folder => inside(row.cwd, folder) || row.argv.includes(folder))).map(row => ({ product: row.cwd, issue: null, pid: row.pid, state: 'live' })));
-      result.holders.push(...sessions.filter(row => row.command === 'codex' && row.cwd === null).map(row => ({ product: null, issue: null, pid: row.pid, state: 'unknown', reason: 'process cwd unavailable' })));
+      if (before.some(place => place.kind === 'codex')) result.holders.push(...sessions.filter(row => row.command === 'codex' && !codexFolders.some(folder => inside(row.cwd, folder) || row.argv.includes(folder))).map(row => ({ product: row.cwd, issue: null, pid: row.pid, state: 'unknown', reason: 'live Codex session may use the installed cache' })));
       result.restart = sessions.map(({ argv, ...row }) => row);
       result.holders = [...new Map(result.holders.map(row => [canonical(row), row])).values()];
       result.places = places.map(place => inspect(place, expected, options.env));
       if (result.holders.some(row => row.state !== 'dead')) return { ...result, code: 2, outcome: 'waiting' };
-      const quiescence = () => { for (const dir of roots) verifyQuiescence(readJson(path.join(dir, 'control.json')), readJson(path.join(dir, 'workers.json'))); };
+      const quiescence = () => verifyInstallQuiescence(root, roots, options.config, options.wave);
       if (options.breaking) quiescence();
       const watcherConfigs = roots.map(dir => {
         const configured = dir === root ? options.config : options.watcherConfigs[dir];
@@ -289,31 +334,41 @@ export async function installPack(input, overrides = {}) {
         if (errors.length) throw new Error(errors.join('; '));
       }
       if (!baseline) {
-        saved = readJson(control); snapshot = path.join(root, `control.json.pre-update-${expected.version}`);
-        if (fs.existsSync(snapshot)) saved = readJson(snapshot); else atomicJson(snapshot, saved);
-        if (canonical(readJson(snapshot)) !== canonical(saved)) throw new Error('control snapshot read-back differs');
+        snapshot = path.join(root, `control.json.pre-update-${expected.version}`);
+        const existed = fs.existsSync(snapshot);
+        if (!existed) atomicJson(snapshot, saved);
+        const snapshotControl = readJson(snapshot);
+        if (!existed && canonical(snapshotControl) !== canonical(saved)) throw new Error('control snapshot read-back differs');
         const previous = before.map(place => {
           const tags = [...new Set(place.entries.map(row => `v${row.version}`))];
           if (tags.length > 1) throw new Error(`multiple previous versions at ${place.place}`);
           const prior = tags.length ? target(tags[0]) : null;
           if (prior && place.entries.some(row => row.gitCommitSha !== prior.sha)) throw new Error(`previous commit differs from release tag: ${place.place}`);
           const profileRecords = place.kind === 'claude' ? profilePins(place) : undefined;
-          return { kind: place.kind, place: place.place, previous: prior ? { tag: prior.tag, version: prior.version, sha: prior.sha } : null, ...(profileRecords ? { profileRecords } : {}) };
+          return { kind: place.kind, place: place.place, previous: prior ? { tag: prior.tag, version: prior.version, sha: prior.sha, folders: place.entries.map(row => row.installPath) } : null, ...(profileRecords ? { profileRecords } : {}) };
         });
         baseline = { tag: expected.tag, sha: expected.sha, version: expected.version, createdAt: new Date().toISOString(), snapshot, places: previous };
         atomicJson(baselineFile, baseline);
         if (canonical(readJson(baselineFile)) !== canonical(baseline)) throw new Error('installation record read-back differs');
       }
       if (baseline.sha !== expected.sha || places.some(place => !baseline.places.some(prior => prior.place === place.place))) throw new Error('installation places/tag changed since the immutable record');
-      atomicJson(control, { ...saved, halt: true }); paused = true;
-      const progress = optional(progressFile, { phase: 'install', intents: [] });
       progress.removedPlaces = removed;
       if (progress.outcome === 'rolled-back') { progress.phase = 'install'; delete progress.reason; delete progress.outcome; }
-      const persist = () => { atomicJson(progressFile, progress); if (canonical(readJson(progressFile)) !== canonical(progress)) throw new Error('intent read-back differs'); };
+      progress.pauseControl = saved; progress.pauseActive = true; persist();
+      atomicJson(control, { ...saved, halt: true }); paused = true;
       const apply = (place, desired) => {
-        const intent = { place: place.place, action: progress.phase, tag: desired.tag, at: new Date().toISOString() };
+        const pinOnly = inspect(place, desired, options.env, false).verified;
+        const intent = { place: place.place, action: pinOnly ? 'pin' : progress.phase, tag: desired.tag, at: new Date().toISOString() };
         progress.intents.push(intent); persist();
-        try { put(place, desired, options.env, baseline.places.find(row => row.place === place.place).profileRecords); }
+        try {
+          const original = baseline.places.find(row => row.place === place.place).profileRecords;
+          if (!pinOnly) put(place, desired, options.env, original);
+          else if (place.kind === 'claude') {
+            const env = { ...options.env, CLAUDE_CONFIG_DIR: place.place };
+            pinClaude(place, desired.tag, env, original);
+            run('claude', ['plugin', 'marketplace', 'update', marketplace], { env });
+          } else run('codex', ['plugin', 'marketplace', 'add', 'darkdepot/mono', '--ref', desired.tag], { env: { ...options.env, CODEX_HOME: place.place } });
+        }
         catch (error) { intent.error = error.message; persist(); throw error; }
         return intent;
       };
@@ -344,19 +399,25 @@ export async function installPack(input, overrides = {}) {
         try { for (const place of result.places) fresh(place, place, options.env, cwd); }
         finally { fs.rmSync(cwd, { recursive: true, force: true }); }
       }
+      async function installedWatchers(rollback) {
+        const place = result.places.find(place => place.kind === 'codex') ?? result.places[0];
+        const desired = target(rollback ? baseline.places.find(row => row.place === place.place).previous.tag : expected.tag);
+        await watchers(place.folders[0], desired);
+      }
       let completed = false;
       try {
         const drainArgs = { root, config: options.config, 'install-sha': expected.sha, worktree: options.repo };
-        if (options.wave && (await host.verifyDrain(drainArgs, { underInstallLocks: true })).code !== 0) throw new Error('landing-drain verify refused installation');
+        const closedWave = options.wave && fs.existsSync(path.join(root, 'landing/installed', `${expected.sha}.json`));
+        if (closedWave && result.places.some(place => !place.verified)) throw new Error('closed wave differs from installed places; use standalone repair');
+        if (options.wave && !closedWave && (await host.verifyDrain(drainArgs, { underInstallLocks: true })).code !== 0) throw new Error('landing-drain verify refused installation');
         if (progress.phase !== 'rollback') {
-          try { await reconcile(false); }
+          try { await reconcile(false); await installedWatchers(false); }
           catch (error) { progress.phase = 'rollback'; progress.reason = error.message; persist(); }
         }
-        if (progress.phase === 'rollback') await reconcile(true);
-        const watcherPlace = result.places.find(place => place.kind === 'codex') ?? result.places[0];
-        const watcherRelease = target(progress.phase === 'rollback' ? baseline.places.find(place => place.place === watcherPlace.place).previous.tag : expected.tag);
-        await watchers(watcherPlace.folders[0], watcherRelease);
+        if (progress.phase === 'rollback') { await reconcile(true); await installedWatchers(true); }
         if (options.wave && progress.phase !== 'rollback' && (await host.closeDrain({ ...drainArgs, evidence: JSON.stringify(result.places) }, { underInstallLocks: true })).code !== 0) throw new Error('landing-drain close refused installation');
+        result.restart = processPlaces(host).map(({ argv, ...row }) => row);
+        result.localCopies = localCopies();
         Object.assign(result, { code: progress.phase === 'rollback' ? 1 : 0, outcome: progress.phase === 'rollback' ? 'rolled-back' : 'installed', ...(progress.reason ? { reason: progress.reason } : {}) });
         progress.outcome = result.outcome; progress.places = result.places; persist();
         completed = true;
@@ -375,7 +436,7 @@ export async function installPack(input, overrides = {}) {
             break;
           }
         }
-        atomicJson(control, saved); paused = false;
+        atomicJson(control, saved); paused = false; progress.pauseActive = false; persist();
       }
     }), { reclaim: true });
   } catch (error) {
@@ -389,7 +450,34 @@ export async function installPack(input, overrides = {}) {
   }
 }
 
-if (isMain(import.meta.url)) {
+// Lock recovery must not mistake the still-running caller's process group for
+// installer descendants. The public CLI always waits on its own isolated group.
+async function isolated(argv) {
+  return new Promise(resolve => {
+    const child = spawn(process.execPath, [path.resolve(process.argv[1]), ...argv], {
+      detached: true, env: { ...process.env, MONO_PACK_INSTALL_PARENT: String(process.pid) }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    child.stdout.on('data', chunk => { output += chunk; });
+    child.stderr.resume();
+    const forward = signal => { if (Number.isSafeInteger(child.pid) && child.pid > 0) { try { process.kill(-child.pid, signal); } catch { /* child already stopped */ } } };
+    const interrupt = () => forward('SIGINT'), terminate = () => forward('SIGTERM');
+    process.on('SIGINT', interrupt); process.on('SIGTERM', terminate);
+    child.on('error', error => resolve({ code: 1, outcome: 'stopped', reason: error.message, places: [], holders: [], restart: [], localCopies: [] }));
+    child.on('close', (code, signal) => {
+      process.off('SIGINT', interrupt); process.off('SIGTERM', terminate);
+      try {
+        const result = JSON.parse(output);
+        if (signal || code !== result.code) throw new Error('incomplete installer result');
+        resolve(result);
+      } catch { resolve({ code: 1, outcome: 'stopped', reason: `installer interrupted (${signal ?? code}); rerun to recover its recorded pause`, places: [], holders: [], restart: [], localCopies: [] }); }
+    });
+  });
+}
+
+if (isMain(import.meta.url) && !process.argv.includes('--help') && Number(process.env.MONO_PACK_INSTALL_PARENT) !== process.ppid) {
+  const result = await isolated(process.argv.slice(2)); console.log(JSON.stringify(result)); process.exitCode = result.code;
+} else if (isMain(import.meta.url)) {
   const args = process.argv.slice(2), options = { profiles: [], removePlaces: [], watcherConfigs: {} };
   try {
     if (args.includes('--help')) console.log('pack-install.mjs --root STATE --repo CHECKOUT --tag v<VERSION> --config FILE [--profile DIR] [--remove-place DIR] [--products-root DIR] [--watcher-config ROOT=FILE] [--breaking] [--wave]');

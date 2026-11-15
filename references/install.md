@@ -56,14 +56,23 @@ The installer holds launch locks across product registries, calls
 `updateBlockers` for replaced folders and reports live, dead and unknown holders
 with product and Issue. Live/unknown holders yield `waiting` without installation.
 Dead records are named and never removed. Live Codex processes using its outgoing
-folder also wait. Use `--breaking` for an incompatible release: every product
-must pass `verifyQuiescence`, including before rollback.
+folder also wait. An ordinary Codex session in a product folder is an unknown
+holder unless its exclusion from the updated home is proven; the installer does
+not overwrite its cache. Use `--breaking` for an incompatible release: every product
+must pass `verifyQuiescence`, including before rollback. The installing wave
+retains its provenance: only records proven landed and stopped by `attemptState`
+are excluded from its active-worker view. Paused/unproven attempts still block;
+other product registries must be empty, and all controls must be idle.
 
 Before replacement, `landing/install/<tag>.json` records every place's previous
 version/commit and `control.json.pre-update-<version>` saves the original control.
 Both are written once and read back. Retry retains them even after an interruption
 with `halt` already set. Only places whose proof differs are installed again.
 Intent and result read-backs live beside the record in `<tag>.progress.json`.
+A pause intent is saved before `halt`; only an unfinished pause restores its saved
+control. Repeating an already completed installation preserves current owner
+control changes. A wave interrupted after `close` observes its archive and replays
+the idempotent close only while all installed places still match.
 
 Claude permanently pins the same `ref` in `settings.json` /
 `extraKnownMarketplaces` and `plugins/known_marketplaces.json`, with atomic file
@@ -79,7 +88,7 @@ Only tool service objects absent from the release are excluded: Claude's
 `.in_use/`, Codex's `.git/` and `.codex-marketplace-install.json`; the latter
 must contain the expected `revision`. Codex's persistent config `ref` is checked.
 A fresh session in each profile must find `mono:ship` in the verified folder.
-A mismatch after one retry or missing fresh-session skill restores every place's
+A mismatch after one retry, missing fresh-session skill, or failed new watcher restores every place's
 recorded previous tag and verifies again. A clean place with no preceding release
 has no rollback target; failed initial installation is reported as `stopped`.
 
@@ -91,6 +100,11 @@ Missing or ambiguous config stops before installation. Every caught failure
 restores the original `control.json`; other products' controls, registries,
 configs and local plugin copies are never rewritten. `mono@mono-dev` and foreign
 `projectPath` copies are listed for their owning product sessions.
+
+The CLI runs in a dedicated process group and waits in the caller, so crash
+recovery does not confuse a live caller with installer descendants. The watcher
+PID/start identity is validated before signalling. The final restart inventory
+also includes sessions started during installation.
 
 Stdout is one JSON line: `outcome` is `installed`, `rolled-back`, `waiting` or
 `stopped`; `places` names expected/actual versions and proof, `holders` names
@@ -173,4 +187,4 @@ sandbox.
 ## Release Policy
 
 Use SemVer; pre-1.0 breaking minors require clear release notes. Plugin versions
-equal `VERSION`; only release tasks change them. Try unreleased code per the [handbook](../HANDBOOK.md#machines-running-an-orchestrator).
+equal `VERSION`; only release tasks change them. Try unreleased code per the [handbook](../HANDBOOK.md#install-or-update-a-release).

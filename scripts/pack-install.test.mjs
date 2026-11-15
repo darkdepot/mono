@@ -12,7 +12,10 @@ function fixture(t) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-pack-install-'));
   t.after(() => {
     const pulse = path.join(tmp, 'products/mono/watcher.json');
-    if (fs.existsSync(pulse)) { try { process.kill(read(pulse).pid, 'SIGTERM'); } catch { /* already exited */ } }
+    if (fs.existsSync(pulse)) {
+      const pid = read(pulse).pid;
+      if (Number.isSafeInteger(pid) && pid > 0) { try { process.kill(pid, 'SIGTERM'); } catch { /* already exited */ } }
+    }
     fs.rmSync(tmp, { recursive: true, force: true });
   });
   const home = path.join(tmp, 'home'), repo = path.join(tmp, 'repo'), root = path.join(tmp, 'products/mono'), bin = path.join(tmp, 'bin');
@@ -67,6 +70,8 @@ if(tool==='claude') {
  if(args[1]==='list'){console.log('{}');process.exit(0)}
  if(args[1]==='marketplace'){process.exit(0)}
  if(!['update','install'].includes(args[1]))process.exit(12);
+ const priorPlugins=fs.existsSync(path.join(profile,'plugins/installed_plugins.json'))?read(path.join(profile,'plugins/installed_plugins.json')).plugins:{};
+ if(args[1]==='update'&&!(priorPlugins['mono@mono-marketplace']||[]).some(row=>!row.projectPath))process.exit(18);
  const r=releases[a],dest=path.join(profile,'plugins/cache/mono-marketplace/mono',r.version);
  fs.rmSync(dest,{recursive:true,force:true});fs.mkdirSync(path.dirname(dest),{recursive:true,verbatimSymlinks:true});fs.cpSync(r.folder,dest,{recursive:true,verbatimSymlinks:true});
  if(fault.tree&&a==='v1.1.0'&&profile.endsWith('.claude-second'))fs.writeFileSync(path.join(dest,'VERSION'),'broken');
@@ -80,6 +85,7 @@ if(tool==='claude') {
  }
  if(args[1]==='list'){
   let list=[];if(fs.existsSync(path.join(profile,'config.toml'))){const folder=installed();if(fs.existsSync(folder))list=[{pluginId:'mono@mono-marketplace',enabled:true,version:fs.readFileSync(path.join(folder,'VERSION'),'utf8').trim(),source:{source:'local',path:folder}}]}
+  if(fault.codexLocal)list.push({pluginId:'mono@mono-dev',version:'0.0.0',source:{source:'local',path:'/local/codex-mono'}});
   console.log(JSON.stringify({installed:list}));process.exit(0);
  }
  if(args[1]!=='add')process.exit(13);
@@ -92,7 +98,7 @@ if(tool==='claude') {
   for (const tool of ['claude', 'codex']) { fs.writeFileSync(path.join(bin, tool), fake); fs.chmodSync(path.join(bin, tool), 0o755); }
   const profiles = ['.claude', '.claude-second'].map(name => path.join(home, name));
   for (const profile of profiles) {
-    atomicJson(path.join(profile, 'settings.json'), { custom: 'keep', extraKnownMarketplaces: { 'mono-marketplace': { source: { source: 'github', repo: 'darkdepot/mono', ref: 'v1.0.0' } } } });
+    atomicJson(path.join(profile, 'settings.json'), { custom: 'keep', extraKnownMarketplaces: { 'mono-marketplace': { autoUpdate: false, source: { source: 'github', repo: 'darkdepot/mono', ref: 'v1.0.0' } } } });
     atomicJson(path.join(profile, 'plugins/known_marketplaces.json'), { 'mono-marketplace': { source: { source: 'github', repo: 'darkdepot/mono', ref: 'v1.0.0' } } });
     const dest = path.join(profile, 'plugins/cache/mono-marketplace/mono/1.0.0');
     fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.cpSync(releases['v1.0.0'].folder, dest, { recursive: true, verbatimSymlinks: true });
@@ -107,8 +113,9 @@ if(tool==='claude') {
   const host = { processes: () => [], restartWatcher: async folder => { events.push(folder); assert.equal(read(path.join(root, 'control.json')).halt, true); } };
   const ps = `#!${process.execPath}
 const a=process.argv.slice(2),stamp='Mon Jan  1 00:00:00 2024';
+const group=process.env.PACK_REAL_GROUPS?require('child_process').execFileSync('/usr/bin/python3',['-I','-S','-c','import os,sys; print(os.getpgid(int(sys.argv[1])))',String(process.ppid)],{encoding:'utf8'}).trim():process.ppid;
 if(a.includes('-p')) {try{process.kill(Number(a[a.indexOf('-p')+1]),0);console.log(stamp)}catch{process.exit(1)}}
-else if(a.join(' ').includes('ppid='))console.log(process.ppid+' 1 '+process.ppid+' S '+stamp);
+else if(a.join(' ').includes('ppid='))console.log(process.ppid+' 1 '+group+' S '+stamp);
 else if(a.join(' ').includes('lstart='))console.log(process.ppid+' '+stamp);
 else console.log(process.ppid+' node');
 `;
@@ -159,6 +166,8 @@ test('resume from partial install uses the original baseline and only delivers m
   const prior = f.releases['v1.0.0'], dest = path.join(f.profiles[1], 'plugins/cache/mono-marketplace/mono/1.0.0');
   atomicJson(path.join(f.profiles[1], 'plugins/installed_plugins.json'), { plugins: { 'mono@mono-marketplace': [{ scope: 'user', version: prior.version, gitCommitSha: prior.sha, installPath: dest }] } });
   atomicJson(path.join(f.root, 'control.json'), { state: 'idle', custom: 'preserve', halt: true });
+  const progressFile = path.join(f.root, 'landing/install/v1.1.0.progress.json'), progress = read(progressFile);
+  progress.pauseActive = true; progress.pauseControl = read(snapshot); delete progress.outcome; atomicJson(progressFile, progress);
   const offset = f.calls().length, result = await f.run();
   assert.equal(result.outcome, 'installed', JSON.stringify(result));
   const installs = f.calls().slice(offset).filter(c => c.args[0] === 'plugin' && ['update', 'add'].includes(c.args[1]));
@@ -185,7 +194,7 @@ test('live or paused holders wait without installing; dead entries are named and
 test('breaking installation requires every product idle with an empty registry', async t => {
   const f = fixture(t), other = path.join(f.tmp, 'products/other');
   atomicJson(path.join(other, 'control.json'), { state: 'active' }); atomicJson(path.join(other, 'workers.json'), {});
-  const result = await f.run({ breaking: true });
+  const result = await f.run({ breaking: true, watcherConfigs: { [other]: f.options.config } });
   assert.equal(result.outcome, 'stopped'); assert.match(result.reason, /not quiescent/);
   assert.ok(!f.calls().some(c => ['update', 'add'].includes(c.args[1])));
   assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
@@ -368,4 +377,157 @@ test('every product watcher is restarted before pause release; missing config st
   assert.deepEqual(observed, [f.root, other]); assert.equal(result.watchers.length, 2);
   assert.deepEqual(read(path.join(other, 'control.json')), { state: 'idle' });
   assert.deepEqual(read(path.join(other, 'workers.json')), {});
+});
+
+test('a completed installation never restores historical control over later owner changes, including while waiting', async t => {
+  const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+  const current = { state: 'draining', halt: true, owner: 'new decision' }, control = path.join(f.root, 'control.json');
+  atomicJson(control, current);
+  assert.equal((await f.run()).outcome, 'installed'); assert.deepEqual(read(control), current);
+  f.host.processes = () => [{ pid: 3456, command: 'codex --cd /product', state: 'S' }]; f.host.cwdOf = () => '/product';
+  assert.equal((await installPack(f.options, f.host)).outcome, 'waiting'); assert.deepEqual(read(control), current);
+});
+
+test('interactive Codex in a product directory protects the shared cache even without a registry or cache argument', async t => {
+  const f = fixture(t); f.host.processes = () => [{ pid: 3456, command: '/tool/bin/codex --cd /product', state: 'S' }]; f.host.cwdOf = () => '/product';
+  const result = await installPack(f.options, f.host);
+  assert.equal(result.outcome, 'waiting'); assert.equal(result.holders[0].pid, 3456);
+  assert.ok(!f.calls().some(row => ['update', 'add'].includes(row.args[1])));
+});
+
+test('an interrupted Codex metadata write is repaired from the immutable baseline', async t => {
+  for (const damaged of ['missing', 'truncated']) await t.test(damaged, async t => {
+    const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+    const baseline = path.join(f.root, 'landing/install/v1.1.0.json'), bytes = fs.readFileSync(baseline);
+    const file = path.join(f.env.CODEX_HOME, 'plugins/cache/mono-marketplace/mono/1.1.0/.codex-marketplace-install.json');
+    if (damaged === 'missing') fs.rmSync(file); else fs.writeFileSync(file, '{');
+    const offset = f.calls().length, result = await f.run();
+    assert.equal(result.outcome, 'installed', JSON.stringify(result)); assert.equal(read(file).revision, f.releases['v1.1.0'].sha);
+    assert.equal(f.calls().slice(offset).filter(row => row.tool === 'codex' && row.args[1] === 'add').length, 1);
+    assert.deepEqual(fs.readFileSync(baseline), bytes);
+  });
+});
+
+test('an already matching Claude place disables auto-update without reinstalling its verified plugin', async t => {
+  const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+  const file = path.join(f.profiles[0], 'settings.json'), settings = read(file); settings.extraKnownMarketplaces['mono-marketplace'].autoUpdate = true; atomicJson(file, settings);
+  const offset = f.calls().length, result = await f.run();
+  assert.equal(result.outcome, 'installed', JSON.stringify(result)); assert.equal(read(file).extraKnownMarketplaces['mono-marketplace'].autoUpdate, false);
+  assert.ok(!f.calls().slice(offset).some(row => ['update', 'add', 'install'].includes(row.args[1])));
+});
+
+test('root paths from shell completion accept a trailing separator', async t => {
+  const f = fixture(t), result = await f.run({ root: f.root + path.sep });
+  assert.equal(result.outcome, 'installed', JSON.stringify(result));
+});
+
+test('a release executable must be executable by its owner, not only by other users', async t => {
+  const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+  const file = path.join(f.profiles[0], 'plugins/cache/mono-marketplace/mono/1.1.0/executable'); fs.chmodSync(file, 0o641);
+  const offset = f.calls().length; assert.equal((await f.run()).outcome, 'installed');
+  assert.equal(f.calls().slice(offset).filter(row => row.args[1] === 'update').length, 1);
+  assert.ok(fs.statSync(file).mode & 0o100);
+});
+
+test('local-only Claude profiles and Codex local copies are listed without being installed or changed', async t => {
+  const f = fixture(t), profile = path.join(f.home, '.claude-dev'), local = { installPath: '/local/mono', projectPath: '/product', version: '0.0.0' };
+  const file = path.join(profile, 'plugins/installed_plugins.json'); atomicJson(file, { plugins: { 'mono@mono-dev': [local] } });
+  const bytes = fs.readFileSync(file); f.fault({ codexLocal: true });
+  const result = await f.run(); assert.equal(result.outcome, 'installed', JSON.stringify(result));
+  assert.equal(result.localCopies.length, 2); assert.ok(result.localCopies.some(row => row.place === profile));
+  assert.ok(result.localCopies.some(row => row.pluginId === 'mono@mono-dev' && row.source.path === '/local/codex-mono'));
+  assert.deepEqual(fs.readFileSync(file), bytes); assert.ok(!f.calls().some(row => row.profile === profile));
+});
+
+test('a Claude profile with only a foreign project copy installs the user scope and preserves the local copy', async t => {
+  const f = fixture(t), file = path.join(f.profiles[1], 'plugins/installed_plugins.json'), local = { scope: 'project', projectPath: '/product', installPath: '/local/mono', version: '0.0.0' };
+  atomicJson(file, { plugins: { 'mono@mono-marketplace': [local] } });
+  const result = await f.run(); assert.equal(result.outcome, 'installed', JSON.stringify(result));
+  assert.ok(f.calls().some(row => row.profile === f.profiles[1] && row.args[1] === 'install'));
+  assert.deepEqual(read(file).plugins['mono@mono-marketplace'].filter(row => row.projectPath), [local]);
+});
+
+test('watcher failure returns every place to the previous release and starts the previous watcher before unhalt', async t => {
+  const f = fixture(t), versions = [];
+  f.host.restartWatcher = async (folder, options, expected) => {
+    assert.equal(read(path.join(f.root, 'control.json')).halt, true); versions.push(expected.version);
+    if (expected.version === '1.1.0') throw new Error('new watcher died');
+  };
+  const result = await installPack(f.options, f.host);
+  assert.equal(result.outcome, 'rolled-back', JSON.stringify(result)); assert.deepEqual(versions, ['1.1.0', '1.0.0']);
+  assert.ok(result.places.every(place => place.verified && place.actual === '1.0.0'));
+  assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+});
+
+test('recovery after close observes the archived wave and replays close without re-verifying empty pending records', async t => {
+  const f = fixture(t), archive = path.join(f.root, `landing/installed/${f.releases['v1.1.0'].sha}.json`);
+  let verifies = 0, closes = 0;
+  f.host.verifyDrain = async () => { verifies++; return { code: 0 }; };
+  f.host.closeDrain = async () => { closes++; atomicJson(archive, { closed: true }); if (closes === 1) throw new Error('interrupted after close'); return { code: 0 }; };
+  const first = await installPack({ ...f.options, wave: true }, f.host); assert.equal(first.outcome, 'stopped');
+  const offset = f.calls().length, second = await installPack({ ...f.options, wave: true }, f.host);
+  assert.equal(second.outcome, 'installed', JSON.stringify(second)); assert.equal(verifies, 1); assert.equal(closes, 2);
+  assert.ok(!f.calls().slice(offset).some(row => ['add', 'update', 'install'].includes(row.args[1])));
+  assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+});
+
+test('the CLI isolates its lock group from a live caller and recovers after the installer child is killed', t => {
+  const f = fixture(t), args = [path.resolve('scripts/pack-install.mjs'), '--root', f.root, '--repo', f.repo, '--tag', 'v1.1.0', '--config', f.options.config];
+  f.fault({ crash: true });
+  const first = spawnSync(process.execPath, args, { env: { ...f.env, PACK_REAL_GROUPS: '1' }, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(first.status, 1, first.stdout + first.stderr); assert.equal(JSON.parse(first.stdout).outcome, 'stopped');
+  const holder = read(path.join(f.tmp, 'products/pack-install.lock')); assert.equal(holder.processGroup, holder.pid, 'actual kernel process group is isolated from this still-live test caller');
+  assert.equal(read(path.join(f.root, 'control.json')).halt, true);
+  const second = spawnSync(process.execPath, args, { env: { ...f.env, PACK_REAL_GROUPS: '1' }, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(second.status, 0, second.stdout + second.stderr); assert.equal(JSON.parse(second.stdout).outcome, 'installed');
+  assert.equal(second.stdout.trim().split('\n').length, 1);
+  assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+});
+
+test('invalid watcher PID never reaches process-group signalling', t => {
+  const f = fixture(t); atomicJson(path.join(f.root, 'watcher.json'), { pid: 0, procStart: null });
+  const result = spawnSync(process.execPath, [f.runner], { env: { ...f.env, PACK_REAL_WATCHER: '1' }, encoding: 'utf8', detached: true, timeout: 30_000 });
+  assert.equal(result.signal, null, result.stdout + result.stderr); assert.equal(result.status, 1);
+  assert.match(JSON.parse(result.stdout).reason, /invalid watcher process identity/);
+  assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+});
+
+test('the final restart inventory includes a session opened while the watcher was restarting', async t => {
+  const f = fixture(t); let sessions = [];
+  f.host.processes = () => sessions; f.host.cwdOf = () => '/product';
+  f.host.restartWatcher = async () => { sessions = [{ pid: 5432, command: 'claude --continue', state: 'S', procStartEpoch: Date.now() }]; };
+  const result = await installPack(f.options, f.host);
+  assert.equal(result.outcome, 'installed'); assert.equal(result.restart[0].pid, 5432); assert.equal(result.restart[0].cwd, '/product');
+});
+
+test('each missing file, unexpected directory and changed symlink independently invalidates a matching version', async t => {
+  for (const change of ['missing', 'extra', 'symlink']) await t.test(change, async t => {
+    const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+    const folder = path.join(f.profiles[0], 'plugins/cache/mono-marketplace/mono/1.1.0');
+    if (change === 'missing') fs.rmSync(path.join(folder, 'executable'));
+    if (change === 'extra') fs.mkdirSync(path.join(folder, 'unexpected'));
+    if (change === 'symlink') { fs.unlinkSync(path.join(folder, 'version-link')); fs.symlinkSync('elsewhere', path.join(folder, 'version-link')); }
+    const offset = f.calls().length, result = await f.run();
+    assert.equal(result.outcome, 'installed', JSON.stringify(result));
+    assert.equal(f.calls().slice(offset).filter(row => row.args[1] === 'update').length, 1);
+    assert.equal(fs.existsSync(path.join(folder, 'executable')), true); assert.equal(fs.existsSync(path.join(folder, 'unexpected')), false);
+    assert.equal(fs.readlinkSync(path.join(folder, 'version-link')), 'VERSION');
+  });
+});
+
+test('a resumed installation protects its recorded rollback folder even after the current profile points to the new version', async t => {
+  const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+  const old = path.join(f.profiles[0], 'plugins/cache/mono-marketplace/mono/1.0.0');
+  atomicJson(path.join(f.root, 'workers.json'), { 'MONO-901': { issue: 'MONO-901', attempt: 1, pid: 4567, packRoot: old } });
+  f.host.processes = () => [{ pid: 4567, command: 'worker', state: 'S' }];
+  const offset = f.calls().length, result = await installPack(f.options, f.host);
+  assert.equal(result.outcome, 'waiting', JSON.stringify(result)); assert.equal(result.holders[0].issue, 'MONO-901');
+  assert.ok(!f.calls().slice(offset).some(row => ['update', 'add', 'install'].includes(row.args[1])));
+});
+
+test('an unrelated products root cannot exclude the installing product from holder checks and locks', async t => {
+  const f = fixture(t), productsRoot = path.join(f.tmp, 'unrelated-products'); fs.mkdirSync(productsRoot);
+  const result = await f.run({ productsRoot });
+  assert.equal(result.outcome, 'stopped'); assert.match(result.reason, /--root must be a product/);
+  assert.equal(f.calls().length, 0); assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
 });

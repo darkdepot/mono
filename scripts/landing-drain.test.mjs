@@ -298,12 +298,14 @@ test("landing U7 status lists every active attempt and excludes stopped landed",
 
 test('landing pack installer reuses verify and close while holding dispatch and launch locks', t => {
   const f = fixture(t); atomicJson(f.pending, [f.record]);
-  atomicJson(path.join(f.root, 'control.json'), { state: 'active', halt: true });
+  atomicJson(path.join(f.root, 'control.json'), { state: 'idle', halt: true });
   const args = { root: f.root, config: f.config, worktree: f.repo, 'install-sha': f.tip, evidence: 'all installed places and fresh sessions verified' };
   const code = `import {withLock} from ${JSON.stringify(path.resolve('scripts/runtime.mjs'))};
 import {verify,close} from ${JSON.stringify(script)};
+import {verifyInstallQuiescence} from ${JSON.stringify(path.resolve('scripts/pack-install.mjs'))};
 const args=${JSON.stringify(args)};
 await withLock(args.root+'/dispatch.lock',()=>withLock(args.root+'/launch.lock',async()=>{
+  verifyInstallQuiescence(args.root,[args.root],args.config,true);
   const verified=await verify(args,{underInstallLocks:true});if(verified.code!==0)throw new Error('verify failed');
   const closed=await close(args,{underInstallLocks:true});if(closed.code!==0)throw new Error('close failed');
 }));`;
@@ -311,6 +313,16 @@ await withLock(args.root+'/dispatch.lock',()=>withLock(args.root+'/launch.lock',
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.deepEqual(JSON.parse(fs.readFileSync(f.pending)), []);
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.root, `landing/installed/${f.tip}.json`))).evidence, args.evidence);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(f.root, 'workers.json')))[f.issue], 'landed provenance remains intact');
+});
+
+test('landing breaking installation does not count a paused record as landed quiescence', t => {
+  const f = fixture(t); atomicJson(f.pending, [f.record]); f.entry.pid = null; f.registry();
+  atomicJson(path.join(f.root, 'control.json'), { state: 'idle', halt: true });
+  const code = `import {verifyInstallQuiescence} from ${JSON.stringify(path.resolve('scripts/pack-install.mjs'))};verifyInstallQuiescence(${JSON.stringify(f.root)},[${JSON.stringify(f.root)}],${JSON.stringify(f.config)},true);`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd: f.repo, env: f.env, encoding: 'utf8' });
+  assert.equal(result.status, 1); assert.match(result.stderr, /not quiescent/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.root, 'workers.json')))[f.issue].pid, null);
 });
 
 for (const scenario of ["no-halt", "active", "red-tip", "non-ancestor", "checkout-mismatch", "github-tip-mismatch"]) {

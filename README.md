@@ -104,23 +104,22 @@ examples/     примеры настроек и разборы
 
 ## Установка
 
-Claude Code:
+Установку и обновление выпуска выполняет одна команда из проверенной копии
+репозитория с тегом выпуска. Укажите корень состояния Mono и конфиг своего
+продукта; для волны оркестратора добавьте `--wave`.
 
 ```bash
-claude plugin marketplace add darkdepot/mono
-claude plugin install mono@mono-marketplace
+node scripts/pack-install.mjs --root /path/to/pack-state --repo /path/to/verified/checkout --tag v<VERSION> --config /path/to/product/.agents/mono-workflow.config.json
 ```
 
-Codex:
-
-```bash
-codex plugin marketplace add darkdepot/mono
-codex plugin add mono@mono-marketplace
-```
-
-После установки перезапустите сессии, чтобы они загрузили скиллы.
-
-Обновление и автообновление описаны в [справочнике](HANDBOOK.md#users-without-an-orchestrator). Для машин, где работает оркестратор, нужна [закреплённая установка](references/install.md#plugin-updates).
+Скрипт находит профили Claude и Codex, сверяет установленную версию и файлы,
+проверяет скилл в свежей сессии и при сбое возвращает прежнюю версию. Итог называет
+держателей, отдельные локальные копии и сессии для перезапуска. Автообновление не
+используется. Условия первого запуска и восстановления — в
+[инструкции установки](references/install.md#plugin-updates).
+Для знакомства без установки можно запустить Claude с `--plugin-dir` из копии
+репозитория или читать `skills/<skill>/SKILL.md` в Codex; см.
+[справочник](HANDBOOK.md#install-or-update-a-release).
 
 ## Быстрый старт
 
