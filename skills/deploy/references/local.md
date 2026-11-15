@@ -9,8 +9,9 @@ New files alone prove nothing.
 
 local runs install/status/health; red repeated once restores saved build, checks
 status/health, records rollback. Create repair Issue with Прод на откате; pass key
-as repairIssue. Only recorded repair installs while rolled back. Green archives
-rollback; red twice restores rollback build and stops until morning.
+as repairIssue. Only recorded repair installs while rolled back. Health green waits for its task
+scenario: check it, then local again; green archives, red twice restores/Stops.
+Repeated red task scenario also restores the saved build on an ordinary install.
 
 Issue scenario: check surface local, id processCommit, kind scenario. Owner-only
 live call/send: unavailable with reason/who/date; «выкатили, не проверено», one

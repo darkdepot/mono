@@ -49,6 +49,7 @@ if(name==='gh') {
  if(endpoint?.endsWith('/comments')) send([endpoint.includes('/issues/')?s.comments:s.reviewComments]);
  if(endpoint?.endsWith('/files')) send([s.files]);
  if(endpoint?.endsWith('/commits/main')) send({sha:s.main});
+ if(endpoint?.includes('/commits/v')) send({sha:s.tags?.[endpoint.split('/').at(-1)]||'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'});
  if(endpoint?.includes('/compare/')) { const pair=endpoint.split('/compare/')[1]; send(s.comparisons[pair]||{status:pair.split('...')[0]===pair.split('...')[1]?'identical':'behind',files:[]}); }
  if(endpoint?.includes('/check-runs')) send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'completed',conclusion:s.landingRed?'failure':'success',completed_at:new Date(s.clock).toISOString()}]});
  if(endpoint?.endsWith('/pulls/1')) send({number:1,head:{sha:s.head},base:{ref:'main',repo:{full_name:'test/product'}},state:s.merged?'closed':'open',merged:s.merged,mergeable_state:s.mergeState==='BLOCKED'?'blocked':'clean',merged_at:s.merged?new Date(s.clock- (s.mergeAge||0)).toISOString():null,merge_commit_sha:s.merge});
@@ -60,12 +61,13 @@ if(name==='vercel') {
  if(endpoint==='/v13/deployments' && a.includes('POST')) { s.retryBody=JSON.parse(fs.readFileSync(a[a.indexOf('--input')+1])); const d={...s.deployments.new,id:'repeated',createdAt:s.clock,readyState:s.repeatState||'READY'}; s.deployments.repeated=d; s.project.latestDeployments=[d]; if(s.repeatDomain) s.domain=d; send(d); }
  if(endpoint.startsWith('/v9/projects/')) {if(s.flagSequence?.length) s.project.autoAssignCustomDomains=s.flagSequence.shift(); send(s.project);}
  if(endpoint.includes('/v13/deployments/probe.vercel.app')) {if(s.unread)fail('login expired'); send(s.domain);}
+ if(endpoint.includes('/v13/deployments/second.vercel.app')) send(s.secondDomain);
  const id=endpoint.split('/').at(-1); if(s.deployments[id]) send(s.deployments[id]);
  fail('unexpected vercel '+JSON.stringify(a));
 }
 `;
   for (const name of ['gh', 'vercel']) { fs.writeFileSync(path.join(root, name), fake); fs.chmodSync(path.join(root, name), 0o755); }
-  fs.writeFileSync(path.join(root, 'health.mjs'), `import fs from 'node:fs';const p=process.env.MONO_DEPLOY_FIXTURE,s=JSON.parse(fs.readFileSync(p));s.calls.push(['health',...process.argv.slice(2)]);fs.writeFileSync(p,JSON.stringify(s));process.exit(s.healthByCommit?.[s.local.processCommit]??s.health);`);
+  fs.writeFileSync(path.join(root, 'health.mjs'), `import fs from 'node:fs';const p=process.env.MONO_DEPLOY_FIXTURE,s=JSON.parse(fs.readFileSync(p));s.calls.push(['health',...process.argv.slice(2)]);fs.writeFileSync(p,JSON.stringify(s));process.exit(s.rejectHealthArgs&&process.argv.length>2?1:(s.healthByCommit?.[s.local.processCommit]??s.health));`);
   fs.writeFileSync(path.join(root, 'local.mjs'), `import fs from 'node:fs';const p=process.env.MONO_DEPLOY_FIXTURE,s=JSON.parse(fs.readFileSync(p)),[verb,sha]=process.argv.slice(2);s.calls.push(['local',verb,sha]);if(verb==='status'){console.log(JSON.stringify(s.local));}else if(!s.localUnknown){if(verb==='install')s.saved=s.local.processCommit;s.local={copyCommit:sha,processCommit:sha,startedAt:s.clock,installing:false,restoring:false};}fs.writeFileSync(p,JSON.stringify(s));`);
   const env = { PATH: process.env.PATH, MONO_DEPLOY_FIXTURE: process.env.MONO_DEPLOY_FIXTURE };
   process.env.PATH = root + path.delimiter + env.PATH; process.env.MONO_DEPLOY_FIXTURE = file;
@@ -167,7 +169,7 @@ for(const verb of ['repeat','rollback','promote','install','restore'])for(const 
 });
 test('local install proves running process; red health restores; repair installs and archives rollback',async t=>{
  const local={kind:'local',command:'node local.mjs',check:'node health.mjs'};const f=fixture(t,[local]);await f.call('merge');f.mutate(s=>s.healthByCommit={[M]:1,[OLD]:0});assert.equal((await f.call('local',{repairIssue:'MONO-424'})).outcome,'откатили');assert.equal(f.read().local.processCommit,OLD);await f.call('outcome');
- f.request.head=F;f.request.issue='MONO-424';f.request.certificate=cert(F,'MONO-424');f.mutate(s=>{s.head=F;s.merge=FM;s.main=FM;s.merged=false;s.health=0;s.checks[0].checkSuite.commit.oid=F;s.comments=[{body:`<!-- mono:ship --> ${F}`,created_at:new Date(s.clock).toISOString()}];});await f.call('merge',{fix:'MONO-424'});assert.equal((await f.call('local')).state,'proven');assert.equal(f.read().local.processCommit,FM);assert.equal(fs.existsSync(f.rbFile()),false);
+ f.request.head=F;f.request.issue='MONO-424';f.request.certificate=cert(F,'MONO-424');f.mutate(s=>{s.head=F;s.merge=FM;s.main=FM;s.merged=false;s.health=0;s.checks[0].checkSuite.commit.oid=F;s.comments=[{body:`<!-- mono:ship --> ${F}`,created_at:new Date(s.clock).toISOString()}];});await f.call('merge',{fix:'MONO-424'});assert.equal((await f.call('local')).state,'awaiting-local-scenario');assert.equal(fs.existsSync(f.rbFile()),true);await f.check('scenario','green',FM,'local');assert.equal((await f.call('local')).state,'proven');assert.equal(f.read().local.processCommit,FM);assert.equal(fs.existsSync(f.rbFile()),false);
 });
 
 test('landing red tip requires explicit corrective authorization and still checks merge SHA',async t=>{
@@ -185,10 +187,10 @@ test('repair absence after one repeat stops until morning on rollback',async t=>
 test('return refuses unavailable own-url check and keeps repair open',async t=>{
  const f=fixture(t);await f.repair();await f.check('quick','unavailable','fix','browser',1,{reason:'browser disconnected',who:'owner'});const r=await f.call('return');assert.equal(r.state,'stopped');assert.equal(r.outcome,null);assert.match(r.lines[1],/сборку починки/);assert.equal(f.read().calls.some(c=>c[1]==='promote'),false);assert.equal(f.savedRun().closedAt,undefined);
 });
-for(const fact of ['occurred','not-executed','unknown'])test(`U7 real fake Vercel repeat recovers ${fact}`,async t=>{
+for(const fact of ['occurred','not-executed','unknown'])test(`U7 real fake Vercel repeat: ${fact==='not-executed'?'summary absence stays unknown':fact}`,async t=>{
  const f=fixture(t);await f.call('merge');f.editRun(run=>{run.intents[`${run.targets[0].key}:retry`]={action:'repeat',target:M,at:T-20000};});
  if(fact!=='not-executed')f.mutate(s=>{s.project.latestDeployments=[{...s.deployments.new,readyState:fact==='unknown'?'BUILDING':'READY'}];s.deployments.new.readyState=fact==='unknown'?'BUILDING':'READY';if(fact==='occurred')s.domain=s.deployments.new;});
- const r=await f.call('prove');assert.equal(f.read().calls.filter(c=>c.includes('POST')).length,fact==='not-executed'?1:0);assert.equal(r.state,fact==='occurred'?'proven':fact==='unknown'?'stopped':'failed');
+ const r=await f.call('prove');assert.equal(f.read().calls.filter(c=>c.includes('POST')).length,0);assert.equal(r.state,fact==='occurred'?'proven':'stopped');
 });
 for(const fact of ['occurred','unknown'])test(`U7 web rollback interrupted ${fact} never repeats without positive non-execution proof`,async t=>{
  const f=fixture(t);await f.badNew();f.editRun(run=>{run.intents[`${run.targets[0].key}:rollback`]={action:'rollback',target:'old',at:T};});f.mutate(s=>{if(fact==='occurred'){s.domain=s.deployments.old;s.project.autoAssignCustomDomains=false;}});const r=await f.call('rollback',{repairIssue:'MONO-424'});assert.equal(r.state,fact==='occurred'?'rolled-back':'stopped');assert.equal(f.read().calls.filter(c=>c[1]==='rollback').length,0);
@@ -197,7 +199,7 @@ for(const fact of ['occurred','not-executed','unknown'])test(`U7 actual local pe
  const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);await f.call('merge');f.editRun(run=>{run.targets[0].baseline={...f.read().local,id:OLD};run.intents[`${run.targets[0].key}:install`]={action:'install',target:M,at:T};});f.mutate(s=>{if(fact==='occurred')s.local={copyCommit:M,processCommit:M,startedAt:T,installing:false,restoring:false};if(fact==='unknown'){s.local.installing=true;s.localUnknown=true;}});const r=await f.call('local');assert.equal(r.state,fact==='unknown'?'stopped':'proven');assert.equal(f.read().calls.filter(c=>c[0]==='local'&&c[1]==='install').length,fact==='not-executed'?1:0);
 });
 for(const installed of ['installed','rolled-back','waiting','stopped'])test(`pack result ${installed} translates without inventing outcome`,async t=>{
- const f=fixture(t,[{kind:'pack'}]);await f.call('merge');const r=await f.call('outcome',{packResult:{outcome:installed,places:[{place:'test-profile',verified:true}],holders:installed==='waiting'?[{pid:123,reason:'active'}]:[]}});assert.equal(r.outcome,installed==='installed'?'выкатили и проверили':installed==='rolled-back'?'откатили':null);assert.equal(!!f.savedRun().closedAt,!['waiting','stopped'].includes(installed));
+ const f=fixture(t,[{kind:'pack'}]);await f.call('merge');f.mutate(s=>s.tags={'v0.2.0':M});const r=await f.call('outcome',{packResult:{outcome:installed,places:[{place:'test-profile',verified:true,expected:'0.2.0',actual:'0.2.0'}],holders:installed==='waiting'?[{pid:123,reason:'active'}]:[]}});assert.equal(r.outcome,installed==='installed'?'выкатили и проверили':installed==='rolled-back'?'откатили':null);assert.equal(!!f.savedRun().closedAt,!['waiting','stopped'].includes(installed));
 });
 test('CLI request surface returns JSON and does not merge when block is missing', t=>{
  const f=fixture(t);fs.writeFileSync(f.config,JSON.stringify({projectName:'test'}));const input=path.join(f.root,'request.json');fs.writeFileSync(input,JSON.stringify(f.request));const result=spawnSync(process.execPath,['scripts/deploy.mjs','merge','--request',input],{encoding:'utf8'});assert.equal(result.status,1);assert.match(result.stderr,/deploy:/);assert.equal(f.read().calls.length,0);
@@ -230,4 +232,67 @@ test('outcome waits for a scenario result or explicit unavailable reason and che
 });
 test('unaffected documentation PR cannot bypass a product rollback',async t=>{
  const f=fixture(t);await f.badNew();await f.call('rollback',{repairIssue:'MONO-424'});await f.call('outcome');f.request.head=F;f.request.certificate=cert(F);f.mutate(s=>{s.head=F;s.merged=false;s.files=[{filename:'docs/a.md'}];});await assert.rejects(f.call('merge'),/product on rollback/);
+});
+
+// Regression cases from the first admitted review round.
+test('review: normal browser scenario and quick check complete proven web delivery',async t=>{
+ const f=fixture(t);await f.prove();await f.check('quick');await f.check('scenario');assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
+});
+test('review: an installed old pack release cannot prove the current merge',async t=>{
+ const f=fixture(t,[{kind:'pack'}]);await f.call('merge');await assert.rejects(f.call('outcome',{packResult:{outcome:'installed',sha:OLD,tag:'v0.1.0',places:[{verified:true,expected:'0.1.0',actual:'0.1.0'}]}}),/contain|merge|release/);assert.equal(f.savedRun().closedAt,undefined);
+});
+test('review: fix parameter cannot impersonate the recorded repair Issue',async t=>{
+ const f=fixture(t);await f.badNew();await f.call('rollback',{repairIssue:'MONO-424'});await f.call('outcome');f.request.issue='MONO-425';f.request.head=F;f.request.certificate=cert(F,'MONO-425');f.mutate(s=>{s.head=F;s.merge=FM;s.main=FM;s.merged=false;s.checks[0].checkSuite.commit.oid=F;s.comments=[{body:`<!-- mono:ship --> ${F}`,created_at:new Date(s.clock).toISOString()}];});await assert.rejects(f.call('merge',{fix:'MONO-424'}),/recorded repair|repair Issue/);
+});
+test('review: repair Issue can be bound after rollback and closed original run',async t=>{
+ const f=fixture(t);await f.badNew();await f.call('rollback');await f.call('outcome');assert.equal((await f.call('rollback',{repairIssue:'MONO-424'})).state,'repair-bound');assert.equal(JSON.parse(fs.readFileSync(f.rbFile())).issue,'MONO-424');assert.equal(f.read().calls.filter(c=>c[1]==='rollback').length,1);
+});
+test('review: production return has no second scenario attempt to hide red',async t=>{
+ const f=fixture(t);await f.repair();await f.check('quick','green','fix');await f.check('scenario','green','fix');await f.call('return');await f.check('scenario','red','fix','domain');await assert.rejects(f.check('scenario','green','fix','domain',2),/no repeat/);assert.equal((await f.call('return')).state,'stopped');assert.equal(f.read().domain.id,'old');
+});
+test('review: Ship boundary includes marked PR body and marked review replies',()=>{
+ const at=offset=>new Date(T+offset).toISOString();const snapshot={reviews:[],threads:[]};
+ assert.deepEqual(afterShip({snapshot,issueComments:[],reviewComments:[],pr:{body:`<!-- mono:ship --> ${H}`,updated_at:at(0)}},H),[]);
+ const comments=[{body:'old remark',created_at:at(-10)},{body:'new remark',created_at:at(10)}];
+ assert.equal(afterShip({snapshot,issueComments:comments,reviewComments:[],pr:{body:`<!-- mono:ship --> ${H}`,updated_at:at(0)}},H).length,1);
+ assert.deepEqual(afterShip({snapshot,issueComments:[{body:`<!-- mono:ship --> ${H}`,created_at:at(-100)},comments[0]],reviewComments:[{body:`<!-- mono:ship --> ${H}`,updated_at:at(0)}],pr:{}},H),[]);
+});
+test('review: successful proof clears stale stop and failure',async t=>{
+ const f=fixture(t);await f.call('merge');f.mutate(s=>{s.main=F;s.comparisons[`${M}...${F}`]={status:'ahead',files:[{filename:'src/new.js'}]};});assert.equal((await f.call('prove')).state,'stopped');f.editRun(r=>r.targets[0].failed=true);f.mutate(s=>s.domain=s.deployments.new);await f.call('prove');await f.check('scenario','green','new','domain');assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
+});
+test('review: renamed main path prevents replaying old code',async t=>{
+ const f=fixture(t);await f.call('merge');f.mutate(s=>{s.main=F;s.comparisons[`${M}...${F}`]={status:'ahead',files:[{filename:'archive/a.js',previous_filename:'src/a.js'}]};});assert.equal((await f.call('prove')).state,'stopped');assert.equal(f.read().calls.filter(c=>c.includes('POST')).length,0);
+});
+test('review: unreadable domain invalidates old proof for project update',async t=>{
+ const f=fixture(t);await f.prove();f.mutate(s=>s.unread=true);await f.call('prove');const r=await f.call('outcome');assert.equal(r.targets[0].versionProven,false);assert.equal(r.projectUpdateAllowed,false);
+});
+test('review: discrepancy still requires a task scenario or explicit unavailable result',async t=>{
+ const f=fixture(t);f.mutate(s=>s.health=1);await f.prove();await f.check('quick');await assert.rejects(f.call('outcome'),/scenario/);assert.equal(f.savedRun().closedAt,undefined);
+});
+test('review: STAGED repair is not described as production in browser Stop',async t=>{
+ const f=fixture(t);await f.repair();const r=await f.check('quick','unavailable','fix','browser',1,{reason:'browser lost',who:'owner'});assert.match(r.lines[1],/прод сейчас на прошлой версии/);
+});
+test('review: local scenario repeated red restores the saved running version',async t=>{
+ const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);await f.call('merge');await f.call('local');for(const attempt of [1,2])await f.check('scenario','red',M,'local',attempt);assert.equal((await f.call('local',{repairIssue:'MONO-424'})).state,'rolled-back');assert.equal(f.read().local.processCommit,OLD);
+});
+test('review: unavailable real-data scenario with available browser is unverified, not a missing-browser Stop',async t=>{
+ const f=fixture(t);await f.prove();await f.check('quick');await f.check('scenario','unavailable','new','browser',1,{reason:'real data needs owner',who:'owner by 2026-11-16',browserAvailable:true});assert.equal((await f.call('outcome')).outcome,'выкатили, не проверено');
+});
+test('review: two affected web targets accept two fresh browser marks',async t=>{
+ const f=fixture(t,[web,{...web,domain:'second.vercel.app'}]);f.mutate(s=>{s.secondDomain={...s.domain,id:'old2',url:'old2.vercel.app'};s.deployments.old2=s.secondDomain;});assert.equal((await f.call('merge',{afk:true,browserReady:[{target:0,id:'old',at:T},{target:1,id:'old2',at:T}]})).state,'merged');
+});
+test('review: local target also waits for landing validation of its exact merge commit',async t=>{
+ const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);const c=JSON.parse(fs.readFileSync(f.config));c.landing={validation:{check:'validate',timeoutSec:1}};fs.writeFileSync(f.config,JSON.stringify(c));await f.call('merge');assert.ok(f.savedRun().landing);assert.ok(f.read().calls.some(call=>call.some(arg=>arg.includes(`/commits/${M}/check-runs`))));
+});
+test('review: local repair retains rollback until its scenario and restores on repeated red',async t=>{
+ const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);await f.call('merge');f.mutate(s=>s.healthByCommit={[M]:1,[OLD]:0});await f.call('local',{repairIssue:'MONO-424'});await f.call('outcome');f.request.head=F;f.request.issue='MONO-424';f.request.certificate=cert(F,'MONO-424');f.mutate(s=>{s.head=F;s.merge=FM;s.main=FM;s.merged=false;s.checks[0].checkSuite.commit.oid=F;s.comments=[{body:`<!-- mono:ship --> ${F}`,created_at:new Date(s.clock).toISOString()}];});await f.call('merge',{fix:'MONO-424'});assert.equal((await f.call('local')).state,'awaiting-local-scenario');assert.ok(fs.existsSync(f.rbFile()));await f.check('scenario','red',FM,'local',1);assert.equal((await f.call('local')).state,'awaiting-local-scenario-repeat');await f.check('scenario','red',FM,'local',2);assert.equal((await f.call('local')).state,'stopped');assert.equal(f.read().local.processCommit,OLD);assert.ok(fs.existsSync(f.rbFile()));
+});
+test('U4 literal: missing original build permits immediate one repeat',async t=>{
+ const f=fixture(t);await f.call('merge');await f.call('prove');const run=f.savedRun();assert.equal(run.intents[`${run.targets[0].key}:retry`].at,run.mergedAt);
+});
+test('local check contract: health command does not receive an empty deployment URL',async t=>{
+ const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);f.mutate(s=>s.rejectHealthArgs=true);await f.call('merge');assert.equal((await f.call('local')).state,'proven');
+});
+test('review: red domain task scenario remains unverified when own URL turns green',async t=>{
+ const f=fixture(t);await f.prove();await f.check('scenario','red','new','domain');await f.check('quick');await f.check('scenario');const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.equal(r.followups[0].kind,'discrepancy');assert.ok(f.savedRun().targets[0].checks.some(c=>c.surface==='domain'&&c.kind==='scenario'&&c.result==='red'));
 });

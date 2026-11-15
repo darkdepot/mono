@@ -31,15 +31,16 @@ const filesIn = directory => fs.existsSync(directory) ? fs.readdirSync(directory
 // Only the latest Ship publication on this head is the boundary. Resolved replies
 // and Ship's own publications are deliberately excluded from new remarks.
 export function afterShip({ snapshot, issueComments, reviewComments, pr }, head) {
-  const publications = [...issueComments, ...snapshot.reviews];
+  const publications = [pr, ...issueComments, ...snapshot.reviews, ...reviewComments,
+    ...snapshot.threads.flatMap(thread => thread.comments)].filter(Boolean);
   const onHead = comment => comment.body?.includes(SHIP_MARKER) &&
     (comment.commit_id === head || comment.body.includes(head));
-  const time = comment => stamp(comment.updated_at ?? comment.submitted_at ?? comment.created_at);
+  const time = comment => stamp(comment.updated_at ?? comment.updatedAt ?? comment.submitted_at ?? comment.publishedAt ?? comment.created_at);
   const boundary = Math.max(...publications.filter(onHead).map(time));
   need(Number.isFinite(boundary), 'latest Ship publication on current head missing');
   need(snapshot.threads.every(thread => thread.isResolved === true), 'unresolved review thread');
   const threadComments = new Set(snapshot.threads.flatMap(thread => thread.comments.map(comment => comment.id)));
-  const comments = [...publications, ...reviewComments.filter(comment => !threadComments.has(comment.node_id))];
+  const comments = [...issueComments, ...snapshot.reviews, ...reviewComments.filter(comment => !threadComments.has(comment.node_id))];
   if (pr.body && !pr.body.includes(SHIP_MARKER)) comments.push(pr);
   return comments.filter(comment => comment.body?.trim() && !comment.body.includes(SHIP_MARKER) && time(comment) > boundary);
 }
@@ -99,7 +100,10 @@ export async function runDeploy(command, request, clock = {}) {
     const follows = (base, actual) => SHA.test(actual ?? '') && (actual === base || ['identical', 'ahead'].includes(gh(`repos/${run?.repo ?? request.repo}/compare/${base}...${actual}`).status));
     const quick = (target, address) => {
       let result = 'green', reason = '';
-      try { cli('sh', ['-c', `${target.recipe.check} "$1"`, 'deploy-check', address], { cwd: request.worktree }); }
+      try {
+        const args = target.recipe.kind === 'local' ? ['-c', target.recipe.check] : ['-c', `${target.recipe.check} "$1"`, 'deploy-check', address];
+        cli('sh', args, { cwd: request.worktree });
+      }
       catch (error) { result = 'red'; reason = String(error.stderr ?? error.message).slice(0, 1500); }
       const check = { id: target.proof.id, url: address, kind: 'quick', surface: target.recipe.kind === 'local' ? 'local' : 'domain', result, reason, attempt: target.checks.filter(c => c.id === target.proof.id && c.kind === 'quick' && c.surface === 'domain').length + 1, at: now() };
       target.checks.push(check); persist(); return check;
@@ -115,9 +119,15 @@ export async function runDeploy(command, request, clock = {}) {
     };
     const stopped = (reason, target, browser = false) => {
       run.stop = { reason, target: target?.key, browser, at: now() }; persist();
+      let production = 'не подтверждён';
+      if (browser && target?.recipe.kind === 'vercel') try {
+        const current = domain(target), rb = rollback(target);
+        if (ready(current)) production = current.id === (rb?.rollback.id ?? target.baseline?.id) ? 'на прошлой версии'
+          : current.id === target.proof?.id ? 'на новой версии' : 'на версии, которую этот запуск не подтвердил';
+      } catch { /* The owner line must preserve unavailable production identity. */ }
       return { state: 'stopped', outcome: null, open: true, reason, followups: run.followups ?? [], lines: browser ? [
         `Стоп в ${config.projectName}: проверка недоступна.`,
-        `Сделал: не откатывал, проверить ${rollback(target)?.fix ? 'сборку починки' : 'прошлую сборку'} без браузера со входом Vercel не смог; прод сейчас ${target.proof?.id === target.baseline?.id ? 'на прошлой версии' : target.proof ? 'на новой версии' : 'не подтверждён'}.`,
+        `Сделал: не откатывал, проверить ${rollback(target)?.fix ? 'сборку починки' : 'прошлую сборку'} без браузера со входом Vercel не смог; прод сейчас ${production}.`,
         'От тебя: дай браузер со входом Vercel.'
       ] : [`Стоп в ${config.projectName}: ${reason}.`] };
     };
@@ -153,13 +163,13 @@ export async function runDeploy(command, request, clock = {}) {
         if (target.recipe.kind === 'vercel') {
           await flagMatches(target, !rb || rb.phase === 'awaiting-prod');
           if (request.afk && !pr.merged) {
-            const current = domain(target), mark = request.browserReady;
+            const current = domain(target), mark = Array.isArray(request.browserReady) ? request.browserReady.find(mark => mark.target === target.index) : request.browserReady;
             if (!mark || mark.id !== current.id || !Number.isFinite(stamp(mark.at)) || now() - stamp(mark.at) > 600_000 || stamp(mark.at) > now()) return { state: 'waiting-morning', outcome: null, reason: 'browser with Vercel login not ready' };
             target.browserReady = mark;
           }
         }
         if (rb) {
-          need(request.fix === rb.issue, 'product on rollback; only recorded repair allowed');
+          need(request.fix === rb.issue && request.issue === rb.issue, 'product on rollback; only recorded repair Issue allowed');
           const attempt = { issue: request.issue, pr: binding.pr, head: request.head };
           need(!rb.fix || canonical(rb.fix) === canonical(attempt), 'repair attempt belongs to another PR/head');
           if (!rb.fix) { rb.fix = attempt; save(rollbackFile(target), rb); }
@@ -188,18 +198,23 @@ export async function runDeploy(command, request, clock = {}) {
         const registryFile = path.join(request.root, 'workers.json');
         const entry = fs.existsSync(registryFile) ? readJson(registryFile)[request.issue] : null;
         if (entry?.attempt) cli(process.execPath, [path.join(scripts, 'orchestrator/landing-drain.mjs'), 'record', '--root', request.root, '--issue', request.issue, '--attempt', String(entry.attempt), '--pr', String(binding.pr), '--repo', request.repo, '--config', request.config]);
-        run.landing = await landingCheck({ root: request.root, repo: request.repo, sha: run.merge, config: request.config });
-        persist();
       }
+      if (config.landing?.validation) { run.landing = await landingCheck({ root: request.root, repo: request.repo, sha: run.merge, config: request.config }); persist(); }
       return { state: run.landing && run.landing.code !== 0 ? 'waiting-validation' : 'merged', head: run.head, merge: run.merge, landing: run.landing, targets: run.targets.map(target => target.index) };
     }
     need(run?.merge, 'merged run required');
-    if (run.closedAt) return { state: 'closed', ...run.outcome };
     const target = run.targets.find(row => row.index === Number(request.target));
+    if (command === 'rollback' && request.repairIssue && target?.rolledBack) {
+      const rb = rollback(target);
+      need(/^[A-Z][A-Z0-9]*-\d+$/.test(request.repairIssue) && rb?.head === run.head && (!rb.issue || rb.issue === request.repairIssue), 'repair Issue binding conflicts');
+      rb.issue = request.repairIssue; save(rollbackFile(target), rb); persist();
+      return { state: 'repair-bound', outcome: 'откатили' };
+    }
+    if (run.closedAt) return { state: 'closed', ...run.outcome };
     if (['prove', 'local', 'check', 'rollback', 'return'].includes(command)) need(target, 'affected target index required');
     const latest = (t, id, surface, kind) => t.checks.filter(check => check.id === id && check.surface === surface && check.kind === kind).at(-1);
     const green = (t, id, surface) => ['quick', 'scenario'].every(kind => latest(t, id, surface, kind)?.result === 'green');
-    const browserMissing = t => t.checks.some(check => check.surface === 'browser' && check.result === 'unavailable' && !t.checks.some(next => next.id === check.id && next.kind === check.kind && next.surface === 'browser' && next.at > check.at && next.result !== 'unavailable'));
+    const browserMissing = t => t.checks.some((check, index) => check.surface === 'browser' && check.result === 'unavailable' && check.browserAvailable !== true && !t.checks.slice(index + 1).some(next => next.id === check.id && next.kind === check.kind && next.surface === 'browser' && (next.result !== 'unavailable' || next.browserAvailable === true)));
     const deploymentFor = t => {
       const p = project(t);
       const found = [...(p.latestDeployments ?? []), p.targets?.production].filter(Boolean).find(item => commit(item) === run.merge && item.target === 'production');
@@ -210,14 +225,16 @@ export async function runDeploy(command, request, clock = {}) {
       const main = gh(`repos/${run.repo}/commits/main`).sha;
       if (main !== run.merge) {
         const comparison = gh(`repos/${run.repo}/compare/${run.merge}...${main}`);
-        if (!['ahead', 'identical'].includes(comparison.status) || affected(target.recipe, (comparison.files ?? []).map(file => file.filename))) return false;
+        if (!['ahead', 'identical'].includes(comparison.status) || affected(target.recipe, (comparison.files ?? []).flatMap(file => [file.filename, file.previous_filename].filter(Boolean)))) return false;
       }
       const p = project(target);
       need(p.link?.repoId && p.id && p.name, 'project GitHub repoId required for repeat');
       await intent('retry', 'repeat', run.merge, async recorded => {
         try {
           const d = deploymentFor(target);
-          if (!d || stamp(d.createdAt) < recorded.at) return { state: 'not-executed' };
+          // Project latestDeployments is a summary, not an authoritative negative
+          // receipt. An interrupted POST with no visible build stays unknown.
+          if (!d || stamp(d.createdAt) < recorded.at) return { state: 'unknown' };
           if (['INITIALIZING', 'BUILDING', 'QUEUED'].includes(d.readyState)) return { state: 'unknown' };
           return { state: 'occurred', value: { id: d.id, at: recorded.at } };
         } catch { return { state: 'unknown' }; }
@@ -254,7 +271,8 @@ export async function runDeploy(command, request, clock = {}) {
         try { d = repair ? deploymentFor(target) : domain(target); }
         catch (error) { target.unread = error.message; persist(); return { state: 'unverified', outcome: 'выкатили, не проверено', versionProven: false }; }
         if (ready(d) && follows(run.merge, commit(d))) {
-          delete target.unread; target.proof = d;
+          delete target.unread; delete target.failed; target.proof = d;
+          if (run.stop?.target === target.key && !run.stop.browser) delete run.stop;
           if (repair) { rb.deployment = d; save(rollbackFile(target), rb); }
           persist();
           if (!repair) quick(target, url(target.recipe.domain));
@@ -287,21 +305,22 @@ export async function runDeploy(command, request, clock = {}) {
       need(['domain', 'browser', 'local'].includes(surface), 'check surface required');
       need(surface === 'local' ? target.recipe.kind === 'local' : target.recipe.kind === 'vercel', 'check surface mismatches target');
       need(request.kind === 'scenario' || surface === 'browser', 'only browser quick checks are model observations');
+      if (rb?.phase === 'awaiting-prod' && surface === 'domain') need(request.attempt === 1, 'production return check has no repeat');
       if (surface === 'domain') need(domain(target).id === request.id && url(request.url) === url(target.recipe.domain), 'domain/id mismatch');
       if (surface === 'browser') need(url(request.url) === url(d.url), 'own deployment URL mismatch');
       if (request.result === 'unavailable') need(request.reason && request.who, 'unavailable check needs reason and who');
       need(!target.checks.some(check => check.id === request.id && check.kind === request.kind && check.surface === surface && check.attempt === request.attempt && check.result !== 'unavailable'), 'check attempt already recorded');
-      target.checks.push({ id: request.id, url: request.url, kind: request.kind, result: request.result, reason: request.reason, who: request.who, attempt: request.attempt, surface, at: now() });
+      target.checks.push({ id: request.id, url: request.url, kind: request.kind, result: request.result, reason: request.reason, who: request.who, browserAvailable: request.browserAvailable, attempt: request.attempt, surface, at: now() });
       if (request.result !== 'unavailable' && run.stop?.browser && !browserMissing(target)) delete run.stop;
       persist();
-      if (surface === 'browser' && request.result === 'unavailable') return stopped(request.reason, target, true);
+      if (surface === 'browser' && request.result === 'unavailable' && request.browserAvailable !== true) return stopped(request.reason, target, true);
       return { state: 'recorded' };
     }
     if (command === 'rollback') {
       need(target.recipe.kind === 'vercel' && target.proof && target.baseline, 'proven vercel deployment required');
       if (browserMissing(target)) return stopped('browser with Vercel login unavailable', target, true);
       const id = (target.rollbackFrom ?? target.proof).id;
-      const failing = ['quick', 'scenario'].filter(kind => latest(target, id, 'domain', kind)?.result === 'red' && [1, 2].every(attempt => target.checks.some(check => check.id === id && check.surface === 'browser' && check.kind === kind && check.attempt === attempt && check.result === 'red')) && latest(target, target.baseline.id, 'browser', kind)?.result === 'green');
+      const failing = ['quick', 'scenario'].filter(kind => (kind === 'scenario' || latest(target, id, 'domain', kind)?.result === 'red') && [1, 2].every(attempt => target.checks.some(check => check.id === id && check.surface === 'browser' && check.kind === kind && check.attempt === attempt && check.result === 'red')) && latest(target, target.baseline.id, 'browser', kind)?.result === 'green');
       need(failing.length, 'rollback requires browser red twice on new and green on recorded rollback target');
       try {
         const before = target.rollbackFrom ?? target.proof;
@@ -319,19 +338,21 @@ export async function runDeploy(command, request, clock = {}) {
       if (browserMissing(target)) return stopped('browser with Vercel login unavailable', target, true);
       need(rb.deployment && green(target, rb.deployment.id, 'browser'), 'repair own URL scenario and quick checks must be green');
       if (rb.phase !== 'awaiting-prod') {
+        rb.prodChecksFrom ??= target.checks.length; save(rollbackFile(target), rb);
         try { await webAction('promote', rb.deployment); await flagMatches(target, true); }
         catch (error) { return stopped(error.message, target); }
         rb.phase = 'awaiting-prod'; save(rollbackFile(target), rb); quick(target, url(target.recipe.domain));
         return { state: 'awaiting-prod-check', outcome: null };
       }
-      if (run.intents[`${target.key}:cancel-return`] || ['quick', 'scenario'].some(kind => latest(target, rb.deployment.id, 'domain', kind)?.result === 'red')) {
+      const productionChecks = target.checks.slice(rb.prodChecksFrom).filter(check => check.id === rb.deployment.id && check.surface === 'domain');
+      if (run.intents[`${target.key}:cancel-return`] || productionChecks.some(check => check.result === 'red')) {
         try { await webAction('rollback', rb.rollback, 'cancel-return'); health(target); await flagMatches(target, false); }
         catch (error) { return stopped(error.message, target); }
         rb.phase = 'return-canceled'; save(rollbackFile(target), rb);
         return stopped('repair return canceled; production stays on rollback until morning', target);
       }
       need(domain(target).id === rb.deployment.id, 'repair is not on production domain');
-      need(green(target, rb.deployment.id, 'domain'), 'return awaits production scenario and quick checks');
+      need(['quick', 'scenario'].every(kind => productionChecks.filter(check => check.kind === kind).at(-1)?.result === 'green'), 'return awaits production scenario and quick checks');
       archive(target); target.returned = true;
       if (run.stop?.target === target.key) delete run.stop;
       persist(); return { state: 'returned', outcome: 'выкатили и проверили' };
@@ -369,6 +390,12 @@ export async function runDeploy(command, request, clock = {}) {
         target.proof = { ...s, id: s.processCommit }; persist();
         const first = quick(target, '');
         if (first.result === 'green' || quick(target, '').result === 'green') {
+          const scenario = latest(target, target.proof.id, 'local', 'scenario');
+          if (scenario?.result === 'red') {
+            const twice = [1, 2].every(attempt => target.checks.some(c => c.id === target.proof.id && c.surface === 'local' && c.kind === 'scenario' && c.result === 'red' && c.attempt === attempt));
+            return twice ? await restore(s) : { state: 'awaiting-local-scenario-repeat', outcome: null };
+          }
+          if (rb && scenario?.result !== 'green') return { state: 'awaiting-local-scenario', outcome: null };
           if (rb) archive(target); target.returned = !!rb;
           if (run.stop?.target === target.key) delete run.stop;
           persist(); return { state: 'proven' };
@@ -392,33 +419,43 @@ export async function runDeploy(command, request, clock = {}) {
           if (installed && ['waiting', 'stopped'].includes(installed.outcome)) return { state: installed.outcome, outcome: null, open: true, detail: installed };
           need(!installed || ['installed', 'rolled-back'].includes(installed.outcome), 'invalid pack install result');
           outcome = !installed ? order[3] : installed.outcome === 'installed' ? order[4] : order[0];
-          if (installed) { t.proof = { id: installed.installSha ?? installed.tag ?? run.merge, places: installed.places }; persist(); }
+          if (installed?.outcome === 'installed') {
+            const version = installed.places?.[0]?.expected;
+            need(/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(version ?? '') && installed.places.every(place => place.verified && place.expected === version && place.actual === version), 'release places must verify one installed version');
+            const sha = gh(`repos/${run.repo}/commits/v${version}`).sha;
+            need(follows(run.merge, sha), 'installed release does not contain this merge');
+            t.proof = { id: sha, places: installed.places }; persist();
+          } else if (installed) { t.proof = { id: installed.places?.map(place => place.actual).join(','), places: installed.places }; persist(); }
         } else if (t.recipe.kind === 'none') { outcome = order[2]; reason = t.recipe.reason; }
         else if (t.unread) { outcome = order[2]; reason = `На проде подтвердить не смог: ${t.unread}`; }
         else {
           need(t.proof, 'version not proven');
           if (browserMissing(t)) return stopped('browser with Vercel login unavailable', t, true);
           const surface = t.recipe.kind === 'local' ? 'local' : 'domain';
-          const reds = ['quick', 'scenario'].filter(kind => latest(t, t.proof.id, surface, kind)?.result === 'red');
+          const scenario = [latest(t, t.proof.id, surface, 'scenario'), t.recipe.kind === 'vercel' ? latest(t, t.proof.id, 'browser', 'scenario') : null].filter(Boolean).sort((a, b) => a.at - b.at).at(-1);
+          need(scenario, 'task scenario result or explicit unavailable reason/checker must be recorded');
+          const checkFor = kind => kind === 'scenario' ? scenario : latest(t, t.proof.id, surface, 'quick');
+          const reds = ['quick', 'scenario'].filter(kind => checkFor(kind)?.result === 'red' || latest(t, t.proof.id, surface, kind)?.result === 'red' || (t.recipe.kind === 'vercel' && latest(t, t.proof.id, 'browser', kind)?.result === 'red'));
           const discrepancy = reds.length && reds.every(kind => latest(t, t.proof.id, 'browser', kind)?.result === 'green');
           const known = reds.length && reds.every(kind => latest(t, t.baseline.id, 'browser', kind)?.result === 'red');
           if (discrepancy) { // S19 is the explicit U5 exception; preserve the red domain result.
             outcome = order[2]; reason = 'проверка по домену красная, по адресу сборки зелёная'; followup(t, reason, 'discrepancy');
           } else if (known) {
             const otherKinds = ['quick', 'scenario'].filter(kind => !reds.includes(kind));
-            need(otherKinds.every(kind => latest(t, t.proof.id, surface, kind)), 'remaining scenario/check must be recorded');
-            outcome = otherKinds.every(kind => latest(t, t.proof.id, surface, kind).result === 'green') ? order[4] : order[2];
+            need(otherKinds.every(checkFor), 'remaining scenario/check must be recorded');
+            outcome = otherKinds.every(kind => checkFor(kind).result === 'green') ? order[4] : order[2];
             reason = 'известная поломка на прошлой сборке'; followup(t, reason);
           }
           else {
             need(!reds.length, 'red check unresolved; compare in browser before outcome');
-            const unavailable = t.checks.find(c => c.id === t.proof.id && c.result === 'unavailable');
-            need(green(t, t.proof.id, surface) || unavailable, 'scenario result or unavailable reason/checker must be recorded');
-            outcome = green(t, t.proof.id, surface) ? order[4] : order[2];
+            const unavailable = [scenario, latest(t, t.proof.id, 'browser', 'quick')].find(c => c?.result === 'unavailable');
+            const checked = scenario.result === 'green' && checkFor('quick')?.result === 'green' && (scenario.surface !== 'browser' || latest(t, t.proof.id, 'browser', 'quick')?.result === 'green');
+            need(checked || unavailable, 'scenario result or unavailable reason/checker must be recorded');
+            outcome = checked ? order[4] : order[2];
             reason = unavailable ? `${unavailable.reason}; проверит ${unavailable.who}` : outcome === order[2] ? 'сценарий задачи ещё не проверен; модель должна назвать проверяющего и дату' : null;
           }
         }
-        rows.push({ target: t.index, outcome, reason, versionProven: !!t.proof, proof: t.proof?.id });
+        rows.push({ target: t.index, outcome, reason, versionProven: !!t.proof && !t.unread, proof: t.proof?.id });
       }
       rows.sort((a, b) => order.indexOf(a.outcome) - order.indexOf(b.outcome));
       const result = { outcome: rows[0]?.outcome ?? null, targets: rows, followups: run.followups ?? [], noTargets: !rows.length, projectUpdateAllowed: rows.length > 0 && rows.every(row => row.versionProven && ['выкатили и проверили', 'выкатили, не проверено'].includes(row.outcome)) };

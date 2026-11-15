@@ -62,12 +62,10 @@
 
 ## Closeout
 
-Close Issue at confirmed merge; keep truth in its comment. Record outcome, target
-proof ID/address, each check (kind/result/attempt), unverified reason/checker/date,
-rollback/repair Issue and project-update state. No target: note only, no category.
-Read back Issue/status/labels/comment. Repair label Прод на откате; unverified
-closed Issue label Не проверено. Original rolled-back Issue stays closed and links
-repair; update waits for real delivery. Post-merge state lives in same run.
+Close at confirmed merge; comment outcome, version ID/address, each check,
+unverified reason/checker/date, rollback/repair and project update; read back.
+No targets: note only. Repair label Прод на откате; unverified label Не проверено.
+Original rolled-back Issue stays closed and links repair; update awaits delivery.
 
 S19/U5 exception: domain red/own URL green is unverified, preserve red and create
 discrepancy Issue; do not emit a «Проверил» line. Without signed-in browser, Stop

@@ -24,27 +24,26 @@ Read when:
 ## Run
 
 1. Recover current green Ship certificate; changed head returns to mono:ship.
-   Configure deploy once in this product's session; owner says yes to shown block.
-   Mono alone may use delegated package approval with its reason. No block: no merge.
+   Owner approves this product's block once; Mono alone may use delegated package
+   approval with its reason. No block: no merge.
    Legacy workflows.deploy / deployApproval are ignored.
 2. Request JSON outside checkout: absolute root/config/worktree, repo, issue, head,
    certificate (full text); root is existing product state root. Run
    `node <pack-root>/scripts/deploy.mjs merge --request <file>`.
-   Script locks product, rereads PR/head/checks/remarks/QA/landing, records previous
-   deployment before merge, resumes same run. With qa.beforeMerge, host tester must
-   pass on same head. No repeated preflight/review. Night: afk:true; destructive
+   Script locks/rereads PR/head/checks/remarks/QA/landing and records previous
+   deployment. qa.beforeMerge needs host tester on same head. Night: afk:true; destructive
    migration or web without fresh signed-in browser mark waits, no outcome.
 3. Follow affected target references. Commands merge, prove, local, check, rollback,
    return, outcome use same request plus target index. Inspect returned JSON;
    acknowledgement is not proof. Model reports observations; script decides.
    Affected none: show «не проверено: <reason>»; do not claim that part shipped.
-4. outcome closes/read-backs only a supported category. Worst first: rolled back,
-   failed, unverified, awaiting release, verified. No targets: Issue note, no outcome
-   or update. Stop: no outcome, run open, other PRs wait. Resume same head; keep state.
+4. outcome closes/read-backs supported categories, worst first. No targets: note,
+   no outcome/update. Stop: no outcome, run open, other PRs wait. Keep state.
 5. Close Issue on confirmed merge; comment truth using output.md. Create/read back
    returned followup Issues. Repair gets Прод на откате; unverified closed Issue
    gets Не проверено, reason/checker/date. Resolve labels at first use. One recorded
    repair only while rolled back; no second failed repair at night. Retire delivered
    worker through orchestrator after closeout. No new registry.
+   After creating repair Issue, bind repairIssue via rollback, even on a closed run.
 6. Show exact owner lines in product terms, no commit/build identifiers. Project
    update only when result actually reached people.

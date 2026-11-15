@@ -19,9 +19,10 @@ do not remove them. Live holders wait. Product copies listed, not silently updat
 Pass installer JSON as packResult to outcome. Its outcome installed means
 «выкатили и проверили»; rolled-back «откатили»; waiting/stopped NO outcome, name
 holders/failure. Show places, sessions to restart, local copies still old.
-Acknowledged install alone is insufficient.
+Installed places must share verified expected/actual version; its v<VERSION>
+commit must contain this PR merge. An old release cannot prove new delivery.
 
 Transition: each product session gets owner yes and writes block; CallCatch/Red
 need working rollback first. Mono alone removes legacy fields. Project closes
 after Mono/Zeni web/CallCatch/Red blocks, next verified pack-install release and
-Mono probe cleanup/archive. Autonomous night web requires available Vercel browser.
+Mono probe cleanup/archive.
