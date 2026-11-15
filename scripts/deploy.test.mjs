@@ -399,3 +399,23 @@ test('round2-a2: local rollback outcome requires the restored process still runn
 test('round2-a2: failed outcome records the freshly confirmed old build without new-version proof',async t=>{
  const f=fixture(t);await f.call('merge');await f.call('prove');const r=await f.call('outcome');assert.equal(r.outcome,'выкатка упала, прод на старой версии');assert.equal(r.targets[0].proof,'old');assert.equal(r.targets[0].versionProven,false);
 });
+
+for(const result of ['green','red'])test(`F7: awaiting-prod resumes missing ${result} quick without another promote`,async t=>{
+ const f=fixture(t);await f.repair();await f.check('quick','green','fix');await f.check('scenario','green','fix');
+ assert.equal((await f.call('return')).state,'awaiting-prod-check');
+ f.editRun(run=>{run.targets[0].checks=run.targets[0].checks.filter(check=>!(check.id==='fix'&&check.surface==='domain'));});
+ const rb=JSON.parse(fs.readFileSync(f.rbFile()));assert.equal(rb.phase,'awaiting-prod');
+ assert.equal((await f.call('outcome')).outcome,null);assert.equal(f.savedRun().closedAt,undefined);
+ f.mutate(s=>s.health=result==='green'?0:1);
+ const before=f.read().calls.filter(call=>call[0]==='health').length;
+ if(result==='green'){
+  await assert.rejects(f.call('return'),/awaits production/);
+  assert.equal(f.savedRun().targets[0].checks.slice(rb.prodChecksFrom).find(check=>check.kind==='quick'&&check.surface==='domain')?.result,'green');
+  await f.check('scenario','green','fix','domain');assert.equal((await f.call('return')).state,'returned');
+  assert.equal(f.read().calls.filter(call=>call[0]==='health').length,before+1);
+ }else{
+  assert.equal((await f.call('return')).state,'stopped');assert.equal(f.read().domain.id,'old');
+  assert.equal(f.savedRun().targets[0].checks.slice(rb.prodChecksFrom).find(check=>check.kind==='quick'&&check.id==='fix'&&check.surface==='domain')?.result,'red');
+ }
+ assert.equal(f.read().calls.filter(call=>call[1]==='promote').length,1);
+});

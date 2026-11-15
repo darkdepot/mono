@@ -363,6 +363,11 @@ export async function runDeploy(command, request, clock = {}) {
         return { state: 'awaiting-prod-check', outcome: null };
       }
       const productionChecks = target.checks.slice(rb.prodChecksFrom).filter(check => check.id === rb.deployment.id && check.surface === 'domain');
+      if (!run.intents[`${target.key}:cancel-return`] && !productionChecks.some(check => check.kind === 'quick')) {
+        const current = domain(target);
+        need(ready(current) && current.id === rb.deployment.id, 'repair is not on production domain');
+        productionChecks.push(quick(target, url(target.recipe.domain)));
+      }
       if (run.intents[`${target.key}:cancel-return`] || productionChecks.some(check => check.result === 'red')) {
         try { await webAction('rollback', rb.rollback, 'cancel-return'); health(target); await flagMatches(target, false); }
         catch (error) { return stopped(error.message, target); }
