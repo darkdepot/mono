@@ -45,6 +45,13 @@ The installing Mono session owns this command. Manual “выпусти” uses 
 command without `--wave`; wave mode performs `landing-drain verify` → installation
 → `close`. It never closes a wave after rollback or a failed check.
 
+For a first installation the command creates its own `--root` if needed. Missing
+`control.json` means `{"state":"idle"}` and missing `workers.json` means `{}`;
+these defaults are saved atomically under the install/launch locks and read back.
+Existing files are preserved, and corrupt state stops the command. Missing or
+corrupt state in another product stops installation; it is never bootstrapped.
+Use a dedicated pack-state directory directly under the products directory.
+
 All `~/.claude*` profiles with `mono@mono-marketplace` are discovered, alongside
 `~/.claude`, the current `CODEX_HOME` (default `~/.codex`) and places retained
 from the previous installation record. Repeat `--profile /path/to/profile` for
@@ -67,7 +74,14 @@ other product registries must be empty, and all controls must be idle.
 Before replacement, `landing/install/<tag>.json` records every place's previous
 version/commit and `control.json.pre-update-<version>` saves the original control.
 Both are written once and read back. Retry retains them even after an interruption
-with `halt` already set. Only places whose proof differs are installed again.
+with `halt` already set. Once an installation completes, the same tag can add
+explicit or newly discovered Claude profiles and a changed `CODEX_HOME`. Their
+first recovery state is appended before replacement to numbered JSON records in
+`landing/install/<tag>.places/`; the original record, prior extensions and control
+snapshot are never overwritten. Added places remain remembered across retries
+and future releases. An unfinished installation must be resumed before adding
+further places. An archived wave is closed idempotently before these additional
+places are installed. Only places whose proof differs are installed again.
 Intent and result read-backs live beside the record in `<tag>.progress.json`.
 A pause intent is saved before `halt`; only an unfinished pause restores its saved
 control. Repeating an already completed installation preserves current owner
@@ -84,6 +98,8 @@ replacement and paired read-back before any CLI update. One-sided pinning breaks
 the catalog; catalog refusal restores both preceding records. Session-start
 `autoUpdate` behavior is unverified, so automatic updates stay disabled.
 Downgrade uses marketplace update + plugin update, without uninstall/reinstall.
+A same-version plugin update may be a no-op: a corrupt tree that still differs
+after retry triggers rollback, or `stopped` if no previous release can be restored.
 Codex registers the release with `marketplace add --ref` and `plugin add`.
 
 Each managed place is checked by installed version, tag commit and complete Git

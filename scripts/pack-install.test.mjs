@@ -73,6 +73,7 @@ if(tool==='claude') {
  const priorPlugins=fs.existsSync(path.join(profile,'plugins/installed_plugins.json'))?read(path.join(profile,'plugins/installed_plugins.json')).plugins:{};
  if(args[1]==='update'&&!(priorPlugins['mono@mono-marketplace']||[]).some(row=>!row.projectPath))process.exit(18);
  const r=releases[a],dest=path.join(profile,'plugins/cache/mono-marketplace/mono',r.version);
+ if(args[1]==='update'&&(priorPlugins['mono@mono-marketplace']||[]).some(row=>!row.projectPath&&row.version===r.version)){console.log('Already at version '+r.version);process.exit(0)}
  fs.rmSync(dest,{recursive:true,force:true});fs.mkdirSync(path.dirname(dest),{recursive:true,verbatimSymlinks:true});fs.cpSync(r.folder,dest,{recursive:true,verbatimSymlinks:true});
  if(fault.tree&&a==='v1.1.0'&&profile.endsWith('.claude-second'))fs.writeFileSync(path.join(dest,'VERSION'),'broken');
  const old=fs.existsSync(path.join(profile,'plugins/installed_plugins.json'))?read(path.join(profile,'plugins/installed_plugins.json')).plugins:{};
@@ -129,6 +130,15 @@ console.log(JSON.stringify(result));process.exitCode=result.code;`);
     run: extra => installPack({ ...options, ...extra }, host),
     fault: value => atomicJson(path.join(tmp, 'fault.json'), value),
     calls: () => fs.existsSync(path.join(tmp, 'calls.jsonl')) ? fs.readFileSync(path.join(tmp, 'calls.jsonl'), 'utf8').trim().split('\n').map(JSON.parse) : [] };
+}
+
+function addClaudeProfile(f, place) {
+  const prior = f.releases['v1.0.0'], folder = path.join(place, 'plugins/cache/mono-marketplace/mono/1.0.0');
+  fs.mkdirSync(path.dirname(folder), { recursive: true }); fs.cpSync(prior.folder, folder, { recursive: true, verbatimSymlinks: true });
+  const entry = { source: { source: 'github', repo: 'darkdepot/mono', ref: prior.tag ?? 'v1.0.0' } };
+  atomicJson(path.join(place, 'settings.json'), { extraKnownMarketplaces: { 'mono-marketplace': { ...entry, autoUpdate: false } } });
+  atomicJson(path.join(place, 'plugins/known_marketplaces.json'), { 'mono-marketplace': entry });
+  atomicJson(path.join(place, 'plugins/installed_plugins.json'), { plugins: { 'mono@mono-marketplace': [{ scope: 'user', installPath: folder, version: prior.version, gitCommitSha: prior.sha }] } });
 }
 
 test('installs the released version in every auto-discovered profile and Codex; verifies fresh sessions before unhalt', async t => {
@@ -244,11 +254,13 @@ test('tree verification catches modes, links, missing and extra files independen
   fs.unlinkSync(path.join(folder, 'version-link')); fs.symlinkSync('wrong', path.join(folder, 'version-link'));
   fs.writeFileSync(path.join(folder, 'extra'), 'unexpected'); fs.rmSync(path.join(folder, 'skills/ship/SKILL.md'));
   const offset = f.calls().length;
-  assert.equal((await f.run()).outcome, 'installed');
-  assert.equal(f.calls().slice(offset).filter(c => c.args[1] === 'update').length, 1);
-  assert.equal(fs.statSync(path.join(folder, 'executable')).mode & 0o111, 0o111);
-  assert.equal(fs.readlinkSync(path.join(folder, 'version-link')), 'VERSION');
-  assert.equal(fs.existsSync(path.join(folder, 'extra')), false);
+  const result = await f.run();
+  assert.equal(result.outcome, 'rolled-back', JSON.stringify(result));
+  assert.ok(result.places.every(place => place.actual === '1.0.0' && place.verified));
+  assert.equal(f.calls().slice(offset).filter(c => c.profile === f.profiles[0] && c.args[1] === 'update').length, 3, 'two no-op repair attempts then downgrade');
+  assert.equal(fs.statSync(path.join(folder, 'executable')).mode & 0o111, 0);
+  assert.equal(fs.readlinkSync(path.join(folder, 'version-link')), 'wrong');
+  assert.equal(fs.existsSync(path.join(folder, 'extra')), true);
 });
 
 test('a killed installer resumes after halt and first place replacement without losing rollback targets or original control', t => {
@@ -424,9 +436,12 @@ test('root paths from shell completion accept a trailing separator', async t => 
 test('a release executable must be executable by its owner, not only by other users', async t => {
   const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
   const file = path.join(f.profiles[0], 'plugins/cache/mono-marketplace/mono/1.1.0/executable'); fs.chmodSync(file, 0o641);
-  const offset = f.calls().length; assert.equal((await f.run()).outcome, 'installed');
-  assert.equal(f.calls().slice(offset).filter(row => row.args[1] === 'update').length, 1);
-  assert.ok(fs.statSync(file).mode & 0o100);
+  const offset = f.calls().length, result = await f.run();
+  assert.equal(result.outcome, 'rolled-back', JSON.stringify(result));
+  assert.ok(result.places.every(place => place.actual === '1.0.0' && place.verified));
+  assert.equal(f.calls().slice(offset).filter(row => row.profile === f.profiles[0] && row.args[1] === 'update').length, 3);
+  assert.equal(fs.statSync(file).mode & 0o100, 0, 'same-version update does not replace the corrupt executable');
+  assert.ok(fs.statSync(path.join(result.places[0].folders[0], 'executable')).mode & 0o100);
 });
 
 test('local-only Claude profiles and Codex local copies are listed without being installed or changed', async t => {
@@ -500,7 +515,7 @@ test('the final restart inventory includes a session opened while the watcher wa
   assert.equal(result.outcome, 'installed'); assert.equal(result.restart[0].pid, 5432); assert.equal(result.restart[0].cwd, '/product');
 });
 
-test('each missing file, unexpected directory and changed symlink independently invalidates a matching version', async t => {
+test('same-version no-op update cannot repair missing files, extra directories or changed symlinks; rollback is verified', async t => {
   for (const change of ['missing', 'extra', 'symlink']) await t.test(change, async t => {
     const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
     const folder = path.join(f.profiles[0], 'plugins/cache/mono-marketplace/mono/1.1.0');
@@ -508,10 +523,10 @@ test('each missing file, unexpected directory and changed symlink independently 
     if (change === 'extra') fs.mkdirSync(path.join(folder, 'unexpected'));
     if (change === 'symlink') { fs.unlinkSync(path.join(folder, 'version-link')); fs.symlinkSync('elsewhere', path.join(folder, 'version-link')); }
     const offset = f.calls().length, result = await f.run();
-    assert.equal(result.outcome, 'installed', JSON.stringify(result));
-    assert.equal(f.calls().slice(offset).filter(row => row.args[1] === 'update').length, 1);
-    assert.equal(fs.existsSync(path.join(folder, 'executable')), true); assert.equal(fs.existsSync(path.join(folder, 'unexpected')), false);
-    assert.equal(fs.readlinkSync(path.join(folder, 'version-link')), 'VERSION');
+    assert.equal(result.outcome, 'rolled-back', JSON.stringify(result));
+    assert.ok(result.places.every(place => place.actual === '1.0.0' && place.verified));
+    assert.equal(f.calls().slice(offset).filter(row => row.profile === f.profiles[0] && row.args[1] === 'update').length, 3);
+    assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
   });
 });
 
@@ -530,4 +545,99 @@ test('an unrelated products root cannot exclude the installing product from hold
   const result = await f.run({ productsRoot });
   assert.equal(result.outcome, 'stopped'); assert.match(result.reason, /--root must be a product/);
   assert.equal(f.calls().length, 0); assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+});
+
+
+test('the public CLI bootstraps absent own state, including a missing products directory', t => {
+  for (const missing of ['control', 'workers', 'products']) {
+    const f = fixture(t);
+    if (missing === 'products') fs.rmSync(path.dirname(f.root), { recursive: true });
+    else fs.rmSync(path.join(f.root, missing + '.json'));
+    const result = spawnSync(process.execPath, [path.resolve('scripts/pack-install.mjs'), '--root', f.root, '--repo', f.repo, '--tag', 'v1.1.0', '--config', f.options.config, '--breaking'], { env: f.env, encoding: 'utf8', timeout: 30_000 });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(JSON.parse(result.stdout).outcome, 'installed');
+    assert.deepEqual(read(path.join(f.root, 'workers.json')), {});
+    assert.deepEqual(read(path.join(f.root, 'control.json')), missing === 'workers' ? { state: 'idle', custom: 'preserve' } : { state: 'idle' });
+  }
+});
+
+test('bootstrap never repairs missing or corrupt state in another product', async t => {
+  for (const missing of ['control', 'workers', 'corrupt']) await t.test(missing, async t => {
+    const f = fixture(t), other = path.join(f.tmp, 'products/other');
+    atomicJson(path.join(other, 'control.json'), { state: 'idle' }); atomicJson(path.join(other, 'workers.json'), {});
+    if (missing === 'corrupt') fs.writeFileSync(path.join(other, 'workers.json'), '{');
+    else fs.rmSync(path.join(other, missing + '.json'));
+    const result = await f.run();
+    assert.equal(result.outcome, 'stopped');
+    if (missing === 'corrupt') assert.equal(fs.readFileSync(path.join(other, 'workers.json'), 'utf8'), '{');
+    else assert.equal(fs.existsSync(path.join(other, missing + '.json')), false);
+    assert.equal(f.calls().length, 0);
+  });
+});
+
+test('completed same-tag installation extends explicit, discovered and Codex places without overwriting recovery', async t => {
+  for (const kind of ['explicit', 'discovered', 'codex']) await t.test(kind, async t => {
+    const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+    const baseline = path.join(f.root, 'landing/install/v1.1.0.json'), snapshot = path.join(f.root, 'control.json.pre-update-1.1.0');
+    const bytes = [fs.readFileSync(baseline), fs.readFileSync(snapshot)];
+    const place = path.join(f.home, kind === 'codex' ? '.codex-other' : '.claude-extra');
+    if (kind === 'discovered') addClaudeProfile(f, place);
+    const extra = kind === 'codex' ? { env: { ...f.env, CODEX_HOME: place } } : kind === 'explicit' ? { profiles: [place] } : {};
+    const offset = f.calls().length, result = await f.run(extra);
+    assert.equal(result.outcome, 'installed', JSON.stringify(result));
+    assert.equal(result.places.length, 4); assert.ok(result.places.every(row => row.verified));
+    assert.deepEqual(fs.readFileSync(baseline), bytes[0]); assert.deepEqual(fs.readFileSync(snapshot), bytes[1]);
+    assert.ok(!f.calls().slice(offset).some(row => row.profile !== place && ['add', 'update', 'install'].includes(row.args[1])), 'matching existing places are not replaced');
+    const retry = await f.run(); assert.equal(retry.outcome, 'installed', JSON.stringify(retry));
+    assert.ok(retry.places.some(row => row.place === place), 'added place is remembered without flag or env');
+  });
+});
+
+test('same-version no-op corruption without a preceding release stops and restores control', async t => {
+  const f = fixture(t); fs.rmSync(f.home, { recursive: true }); fs.mkdirSync(f.home);
+  assert.equal((await f.run()).outcome, 'installed');
+  fs.writeFileSync(path.join(f.profiles[0], 'plugins/cache/mono-marketplace/mono/1.1.0/executable'), 'corrupt');
+  const result = await f.run();
+  assert.equal(result.outcome, 'stopped', JSON.stringify(result)); assert.match(result.reason, /no previous release/);
+  assert.ok(result.places.some(row => row.place === f.profiles[0] && !row.verified));
+  assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+});
+
+
+test('added-place recovery survives an interrupted extension and rolls every place back using its first record', async t => {
+  const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+  const baseline = path.join(f.root, 'landing/install/v1.1.0.json'), snapshot = path.join(f.root, 'control.json.pre-update-1.1.0');
+  const bytes = [fs.readFileSync(baseline), fs.readFileSync(snapshot)];
+  const place = path.join(f.home, '.claude-extra'); addClaudeProfile(f, place);
+  f.fault({ crash: true });
+  const first = spawnSync(process.execPath, [f.runner], { env: f.env, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(first.signal, 'SIGKILL', first.stdout + first.stderr);
+  const extensionFile = path.join(f.root, 'landing/install/v1.1.0.places/000001.json'), extension = fs.readFileSync(extensionFile);
+  assert.equal(read(extensionFile).places[0].previous.tag, 'v1.0.0');
+  assert.equal(read(path.join(f.root, 'control.json')).halt, true);
+  const another = path.join(f.home, '.claude-another'); addClaudeProfile(f, another);
+  const rejection = spawnSync(process.execPath, [f.runner], { env: f.env, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(rejection.status, 1, rejection.stdout + rejection.stderr);
+  const rejected = JSON.parse(rejection.stdout); assert.equal(rejected.outcome, 'stopped'); assert.match(rejected.reason, /incomplete installation/);
+  fs.rmSync(another, { recursive: true });
+  f.fault({ skill: true });
+  const resumed = await f.run(); assert.equal(resumed.outcome, 'rolled-back', JSON.stringify(resumed));
+  assert.equal(resumed.places.length, 4); assert.ok(resumed.places.every(row => row.actual === '1.0.0' && row.verified));
+  assert.deepEqual(fs.readFileSync(baseline), bytes[0]); assert.deepEqual(fs.readFileSync(snapshot), bytes[1]); assert.deepEqual(fs.readFileSync(extensionFile), extension);
+  assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+  f.fault({}); assert.equal((await f.run()).outcome, 'installed'); assert.deepEqual(fs.readFileSync(extensionFile), extension);
+  fs.rmSync(place, { recursive: true }); assert.match((await f.run()).reason, /remembered place disappeared/);
+  assert.equal((await f.run({ removePlaces: [place] })).outcome, 'installed');
+});
+
+test('completed wave permits a new profile without re-verifying an already archived wave', async t => {
+  const f = fixture(t); let verifies = 0, closes = 0;
+  const archive = path.join(f.root, 'landing/installed', `${f.releases['v1.1.0'].sha}.json`);
+  f.host.verifyDrain = () => { verifies++; return { code: 0 }; };
+  f.host.closeDrain = () => { closes++; atomicJson(archive, { closed: true }); return { code: 0 }; };
+  assert.equal((await f.run({ wave: true })).outcome, 'installed');
+  const place = path.join(f.home, '.claude-extra'); addClaudeProfile(f, place);
+  const result = await f.run({ wave: true });
+  assert.equal(result.outcome, 'installed', JSON.stringify(result)); assert.equal(result.places.length, 4);
+  assert.equal(verifies, 1); assert.equal(closes, 2);
 });

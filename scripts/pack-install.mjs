@@ -236,6 +236,23 @@ export async function replayClosedWave(args, places, close = closeDrain) {
   return true;
 }
 
+// The first release record and control snapshot never change. Later completed
+// runs may append first-seen recovery records for additional places.
+function installRecord(file) {
+  const record = readJson(file), directory = file.replace(/\.json$/, '.places');
+  const places = [...record.places];
+  if (fs.existsSync(directory)) for (const name of fs.readdirSync(directory).sort()) {
+    if (!/^\d{6}\.json$/.test(name)) throw new Error(`unexpected place recovery record: ${name}`);
+    const extension = readJson(path.join(directory, name));
+    if (extension.tag !== record.tag || extension.sha !== record.sha || !Array.isArray(extension.places)) throw new Error('place recovery record differs from release');
+    for (const place of extension.places) {
+      if (places.some(prior => prior.place === place.place)) throw new Error('duplicate place recovery record');
+      places.push(place);
+    }
+  }
+  return { ...record, places };
+}
+
 export async function installPack(input, overrides = {}) {
   const options = { home: os.homedir(), env: process.env, profiles: [], removePlaces: [], watcherConfigs: {}, ...input };
   const host = { processes: processTable, cwdOf, restartWatcher, verifyDrain, closeDrain, ...overrides };
@@ -251,15 +268,24 @@ export async function installPack(input, overrides = {}) {
     root = options.root;
     const products = path.resolve(options.productsRoot ?? path.dirname(root));
     expected = target(options.tag);
-    const control = path.join(root, 'control.json'); readJson(control);
-    const roots = fs.readdirSync(products, { withFileTypes: true }).filter(row => row.isDirectory() && ['workers.json', 'control.json'].some(file => fs.existsSync(path.join(products, row.name, file)))).map(row => path.join(products, row.name)).sort();
-    if (!roots.includes(root)) throw new Error('--root must be a product under --products-root');
+    if (path.dirname(root) !== products) throw new Error('--root must be a product under --products-root');
+    const control = path.join(root, 'control.json');
+    const roots = [...new Set([root, ...(fs.existsSync(products) ? fs.readdirSync(products, { withFileTypes: true }) : [])
+      .filter(row => row.isDirectory() && ['workers.json', 'control.json'].some(file => fs.existsSync(path.join(products, row.name, file))))
+      .map(row => path.join(products, row.name))])].sort();
     // Dispatch always precedes launch, matching orchestrator publication order.
     const lockFiles = ['dispatch.lock', 'launch.lock'].flatMap(name => roots.map(dir => path.join(dir, name)));
     return await withLock(path.join(products, 'pack-install.lock'), () => locks(lockFiles, async () => {
+      // Only the installing product may bootstrap. Other products remain strict.
+      for (const [file, empty] of [[control, { state: 'idle' }], [path.join(root, 'workers.json'), {}]]) {
+        if (!fs.existsSync(file)) {
+          atomicJson(file, empty);
+          if (canonical(readJson(file)) !== canonical(empty)) throw new Error('bootstrap read-back differs');
+        }
+      }
       const installDir = path.join(root, 'landing/install'), baselineFile = path.join(installDir, `${expected.tag}.json`);
       progressFile = path.join(installDir, `${expected.tag}.progress.json`);
-      baseline = optional(baselineFile, null);
+      baseline = fs.existsSync(baselineFile) ? installRecord(baselineFile) : null;
       progress = optional(progressFile, { phase: 'install', intents: [] });
       const persist = () => { atomicJson(progressFile, progress); if (canonical(readJson(progressFile)) !== canonical(progress)) throw new Error('intent read-back differs'); };
       if (baseline) {
@@ -278,7 +304,7 @@ export async function installPack(input, overrides = {}) {
         if (!workers || typeof workers !== 'object' || Array.isArray(workers)) throw new Error(`invalid product registry: ${dir}`);
         readJson(path.join(dir, 'control.json'));
       }
-      const history = fs.existsSync(installDir) ? fs.readdirSync(installDir).filter(file => /^v.*\.json$/.test(file) && !file.endsWith('.progress.json')).map(file => readJson(path.join(installDir, file))).sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : [];
+      const history = fs.existsSync(installDir) ? fs.readdirSync(installDir).filter(file => /^v.*\.json$/.test(file) && !file.endsWith('.progress.json')).map(file => installRecord(path.join(installDir, file))).sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : [];
       const profiles = fs.readdirSync(options.home).filter(name => name.startsWith('.claude')).map(name => path.join(options.home, name)).filter(dir => fs.existsSync(path.join(dir, 'plugins/installed_plugins.json')));
       const discovered = [path.join(options.home, '.claude'), ...profiles.filter(dir => claudeEntries({ place: dir }).length), ...options.profiles];
       places = [...new Set(discovered)].map(place => ({ kind: 'claude', place: path.resolve(place) }));
@@ -291,7 +317,10 @@ export async function installPack(input, overrides = {}) {
       const removed = [...new Set([...(previousProgress.removedPlaces ?? []), ...(ownProgress.removedPlaces ?? []), ...options.removePlaces.map(value => path.resolve(value))])];
       result.removedPlaces = removed;
       places = places.filter(place => !removed.includes(place.place));
-      if (baseline && places.some(place => !baseline.places.some(prior => prior.place === place.place))) throw new Error('installation places changed since the immutable record');
+      const additions = baseline ? places.filter(place => !baseline.places.some(prior => prior.place === place.place)) : [];
+      if (additions.length && (!['installed', 'rolled-back'].includes(progress.outcome) ||
+          baseline.places.some(prior => !removed.includes(prior.place) && !progress.places?.some(place => place.place === prior.place))))
+        throw new Error('finish the incomplete installation before adding places');
       for (const place of places) if (!fs.existsSync(place.place) && (baseline?.places ?? history.at(-1)?.places ?? []).some(old => old.place === place.place)) throw new Error(`remembered place disappeared: ${place.place}; requires --remove-place`);
       function localCopies() {
         const copies = [];
@@ -333,7 +362,10 @@ export async function installPack(input, overrides = {}) {
       const drainArgs = { root, config: options.config, 'install-sha': expected.sha, worktree: options.repo };
       // close writes its archive before removing pending records. Finish that
       // committed cleanup before quiescence counts the same landing twice.
-      const closedWave = options.wave && await replayClosedWave(drainArgs, result.places, host.closeDrain);
+      // An archived wave covers its original places. Additional profiles are
+      // reconciled below without asking an already closed wave to verify again.
+      const wavePlaces = baseline ? result.places.filter(place => readJson(baselineFile).places.some(prior => prior.place === place.place)) : result.places;
+      const closedWave = options.wave && await replayClosedWave(drainArgs, wavePlaces, host.closeDrain);
       const quiescence = () => verifyInstallQuiescence(root, roots, options.config, options.wave);
       if (options.breaking) quiescence();
       const watcherConfigs = roots.map(dir => {
@@ -356,26 +388,38 @@ export async function installPack(input, overrides = {}) {
         }
         if (errors.length) throw new Error(errors.join('; '));
       }
+      const previousState = place => {
+        const tags = [...new Set(place.entries.map(row => `v${row.version}`))];
+        if (tags.length > 1) throw new Error(`multiple previous versions at ${place.place}`);
+        const prior = tags.length ? target(tags[0]) : null;
+        if (prior && place.entries.some(row => row.gitCommitSha !== prior.sha)) throw new Error(`previous commit differs from release tag: ${place.place}`);
+        const profileRecords = place.kind === 'claude' ? profilePins(place) : undefined;
+        return { kind: place.kind, place: place.place, previous: prior ? { tag: prior.tag, version: prior.version, sha: prior.sha, folders: place.entries.map(row => row.installPath) } : null, ...(profileRecords ? { profileRecords } : {}) };
+      };
       if (!baseline) {
         snapshot = path.join(root, `control.json.pre-update-${expected.version}`);
         const existed = fs.existsSync(snapshot);
         if (!existed) atomicJson(snapshot, saved);
         const snapshotControl = readJson(snapshot);
         if (!existed && canonical(snapshotControl) !== canonical(saved)) throw new Error('control snapshot read-back differs');
-        const previous = before.map(place => {
-          const tags = [...new Set(place.entries.map(row => `v${row.version}`))];
-          if (tags.length > 1) throw new Error(`multiple previous versions at ${place.place}`);
-          const prior = tags.length ? target(tags[0]) : null;
-          if (prior && place.entries.some(row => row.gitCommitSha !== prior.sha)) throw new Error(`previous commit differs from release tag: ${place.place}`);
-          const profileRecords = place.kind === 'claude' ? profilePins(place) : undefined;
-          return { kind: place.kind, place: place.place, previous: prior ? { tag: prior.tag, version: prior.version, sha: prior.sha, folders: place.entries.map(row => row.installPath) } : null, ...(profileRecords ? { profileRecords } : {}) };
-        });
+        const previous = before.map(previousState);
         baseline = { tag: expected.tag, sha: expected.sha, version: expected.version, createdAt: new Date().toISOString(), snapshot, places: previous };
         atomicJson(baselineFile, baseline);
         if (canonical(readJson(baselineFile)) !== canonical(baseline)) throw new Error('installation record read-back differs');
       }
+      if (additions.length) {
+        const directory = baselineFile.replace(/\.json$/, '.places');
+        const number = fs.existsSync(directory) ? fs.readdirSync(directory).length + 1 : 1;
+        const file = path.join(directory, `${String(number).padStart(6, '0')}.json`);
+        const extension = { tag: expected.tag, sha: expected.sha, createdAt: new Date().toISOString(), places: before.filter(place => additions.some(row => row.place === place.place)).map(previousState) };
+        if (fs.existsSync(file)) throw new Error('place recovery record already exists');
+        atomicJson(file, extension);
+        if (canonical(readJson(file)) !== canonical(extension)) throw new Error('place recovery read-back differs');
+        baseline = installRecord(baselineFile);
+      }
       progress.removedPlaces = removed;
-      if (progress.outcome === 'rolled-back') { progress.phase = 'install'; delete progress.reason; delete progress.outcome; }
+      if (progress.outcome === 'rolled-back') { progress.phase = 'install'; delete progress.reason; }
+      delete progress.outcome;
       progress.pauseControl = saved; progress.pauseActive = true; persist();
       atomicJson(control, { ...saved, halt: true }); paused = true;
       const apply = (place, desired) => {
