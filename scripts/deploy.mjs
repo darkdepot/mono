@@ -228,11 +228,14 @@ export async function runDeploy(command, request, clock = {}) {
     };
     const intent = (key, action, destination, observe, execute, deadline) => performIntent({ state: run, key: `${target.key}:${key}`, action, target: destination, persist, observe, execute, now, sleep, deadline });
     const retry = async deadline => {
-      const main = gh(`repos/${run.repo}/commits/main`).sha;
-      if (main !== run.merge) {
-        const comparison = gh(`repos/${run.repo}/compare/${run.merge}...${main}`);
-        need(Array.isArray(comparison.files) && comparison.files.length < 300, 'main comparison incomplete; no repeat');
-        if (!['ahead', 'identical'].includes(comparison.status) || affected(target.recipe, (comparison.files ?? []).flatMap(file => [file.filename, file.previous_filename].filter(Boolean)))) return false;
+      // Admission governs a new POST, not observation of a recorded action.
+      if (!run.intents[`${target.key}:retry`]) {
+        const main = gh(`repos/${run.repo}/commits/main`).sha;
+        if (main !== run.merge) {
+          const comparison = gh(`repos/${run.repo}/compare/${run.merge}...${main}`);
+          need(Array.isArray(comparison.files) && comparison.files.length < 300, 'main comparison incomplete; no repeat');
+          if (!['ahead', 'identical'].includes(comparison.status) || affected(target.recipe, (comparison.files ?? []).flatMap(file => [file.filename, file.previous_filename].filter(Boolean)))) return false;
+        }
       }
       const p = project(target);
       need(p.link?.repoId && p.id && p.name, 'project GitHub repoId required for repeat');
@@ -299,7 +302,7 @@ export async function runDeploy(command, request, clock = {}) {
         if (now() >= deadline) {
           if (repair) return stopped('repair deployment is not READY; production stays on rollback', target);
           if (repeated && d && ready(d) && !follows(run.merge, commit(d))) {
-            target.failed = true; followup(target, 'deployment failed; production remains on previous version'); persist();
+            target.failed = true; target.failureProof = d; followup(target, 'deployment failed; production remains on previous version'); persist();
             return { state: 'failed', outcome: 'выкатка упала, прод на старой версии' };
           }
           return stopped('deployment not confirmed before deadline', target);
@@ -426,17 +429,19 @@ export async function runDeploy(command, request, clock = {}) {
         let outcome, reason;
         const activeRollback = rollback(t);
         if (activeRollback?.fix?.head === run.head && !t.returned) return stopped('repair awaits verified return', t);
-        if (t.proof && !t.rolledBack && !t.failed && t.recipe.kind === 'vercel') {
+        const expectedWeb = t.failed ? t.failureProof ?? t.baseline : t.proof;
+        if (expectedWeb && t.recipe.kind === 'vercel') {
           let current;
           try { current = domain(t); delete t.unread; } catch (error) { t.unread = error.message; }
-          if (current) need(ready(current) && current.id === t.proof.id, 'current production version changed; rerun prove');
+          if (current) need(ready(current) && current.id === expectedWeb.id, 'current production version changed; rerun prove');
           persist();
         }
-        if (t.proof && !t.rolledBack && t.recipe.kind === 'local') {
+        if (t.proof && t.recipe.kind === 'local') {
           const current = JSON.parse(cli('sh', ['-c', `${t.recipe.command} status`], { cwd: request.worktree }));
           need(current.copyCommit === t.proof.copyCommit && current.processCommit === t.proof.id && stamp(current.startedAt) === stamp(t.proof.startedAt) && !current.installing && !current.restoring, 'current local version changed; rerun local');
         }
-        if (t.rolledBack) outcome = order[0];
+        if (t.unread) { outcome = order[2]; reason = `На проде подтвердить не смог: ${t.unread}`; }
+        else if (t.rolledBack) outcome = order[0];
         else if (t.failed) outcome = order[1];
         else if (t.recipe.kind === 'pack') {
           const installed = request.packResult;
@@ -451,7 +456,6 @@ export async function runDeploy(command, request, clock = {}) {
             t.proof = { id: sha, places: installed.places }; persist();
           } else if (installed) { t.proof = { id: installed.places?.map(place => place.actual).join(','), places: installed.places }; persist(); }
         } else if (t.recipe.kind === 'none') { outcome = order[2]; reason = t.recipe.reason; }
-        else if (t.unread) { outcome = order[2]; reason = `На проде подтвердить не смог: ${t.unread}`; }
         else {
           need(t.proof, 'version not proven');
           if (browserMissing(t)) return stopped('browser with Vercel login unavailable', t, true);
@@ -481,7 +485,7 @@ export async function runDeploy(command, request, clock = {}) {
           }
           if (unavailable.length) reason = [reason, ...unavailable.map(check => `${check.reason}; проверит ${check.who}`)].filter(Boolean).join('; ');
         }
-        rows.push({ target: t.index, outcome, reason, versionProven: !!t.proof && !t.unread, proof: t.proof?.id });
+        rows.push({ target: t.index, outcome, reason, versionProven: !!t.proof && !t.unread && !t.failed, proof: (t.failed ? expectedWeb : t.proof)?.id });
       }
       rows.sort((a, b) => order.indexOf(a.outcome) - order.indexOf(b.outcome));
       const result = { outcome: rows[0]?.outcome ?? null, targets: rows, followups: run.followups ?? [], noTargets: !rows.length, projectUpdateAllowed: rows.length > 0 && rows.every(row => row.versionProven && ['выкатили и проверили', 'выкатили, не проверено'].includes(row.outcome)) };

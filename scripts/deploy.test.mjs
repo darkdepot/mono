@@ -383,3 +383,19 @@ test('round1-a2: review update on second page blocks merge; missing update time 
 test('round1-a2: failed live domain read at outcome cannot reuse prior green proof',async t=>{
  const f=fixture(t);await f.prove();await f.check('quick');await f.check('scenario');f.mutate(s=>s.unread=true);const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.equal(r.targets[0].versionProven,false);assert.equal(r.projectUpdateAllowed,false);assert.match(r.targets[0].reason,/На проде подтвердить не смог/);
 });
+for(const fact of ['unknown','occurred'])test(`round2-a2: pending repeat observes ${fact} after touched main changes`,async t=>{
+ const f=fixture(t);await f.call('merge');f.editRun(run=>run.intents[`${run.targets[0].key}:retry`]={action:'repeat',target:M,at:T});f.mutate(s=>{s.main=F;s.comparisons[`${M}...${F}`]={status:'ahead',files:[{filename:'src/a.js'}]};s.clock=T+600001;if(fact==='occurred'){s.domain=s.deployments.new;s.project.latestDeployments=[s.deployments.new];}});
+ const r=await f.call('prove');assert.equal(r.state,fact==='unknown'?'stopped':'proven');assert.equal(f.read().calls.some(c=>c.includes('POST')),false);assert.equal(f.savedRun().closedAt,undefined);if(fact==='unknown'){assert.equal(r.outcome,null);assert.equal(f.savedRun().targets[0].failed,undefined);}else assert.ok(Object.values(f.savedRun().intents)[0].result);
+});
+for(const state of ['changed','unreadable'])test(`round2-a2: failed outcome refuses ${state} production`,async t=>{
+ const f=fixture(t);await f.call('merge');assert.equal((await f.call('prove')).state,'failed');f.mutate(s=>{if(state==='changed')s.domain=s.deployments.new;else s.unread=true;});if(state==='changed'){await assert.rejects(f.call('outcome'),/current production version/);assert.equal(f.savedRun().closedAt,undefined);}else{const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.equal(r.targets[0].versionProven,false);assert.match(r.targets[0].reason,/На проде подтвердить не смог/);assert.equal(r.projectUpdateAllowed,false);}
+});
+for(const state of ['changed','unreadable'])test(`round2-a2: rollback outcome refuses ${state} production`,async t=>{
+ const f=fixture(t);await f.badNew();await f.call('rollback',{repairIssue:'MONO-424'});f.mutate(s=>{if(state==='changed')s.domain=s.deployments.new;else s.unread=true;});if(state==='changed'){await assert.rejects(f.call('outcome'),/current production version/);assert.equal(f.savedRun().closedAt,undefined);}else{const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.equal(r.targets[0].versionProven,false);assert.match(r.targets[0].reason,/На проде подтвердить не смог/);assert.equal(r.projectUpdateAllowed,false);}
+});
+test('round2-a2: local rollback outcome requires the restored process still running',async t=>{
+ const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);await f.call('merge');f.mutate(s=>s.healthByCommit={[M]:1,[OLD]:0});assert.equal((await f.call('local')).state,'rolled-back');f.mutate(s=>s.local.processCommit=M);await assert.rejects(f.call('outcome'),/current local version/);assert.equal(f.savedRun().closedAt,undefined);
+});
+test('round2-a2: failed outcome records the freshly confirmed old build without new-version proof',async t=>{
+ const f=fixture(t);await f.call('merge');await f.call('prove');const r=await f.call('outcome');assert.equal(r.outcome,'выкатка упала, прод на старой версии');assert.equal(r.targets[0].proof,'old');assert.equal(r.targets[0].versionProven,false);
+});
