@@ -148,8 +148,17 @@ export async function runDeploy(command, request, clock = {}) {
       need(pr.head?.sha === request.head, 'head changed; back to Ship');
       need(pr.state === 'open' || pr.merged === true, 'PR is not open');
       if (run) need(run.pr === binding.pr, 'run belongs to another PR');
-      const files = pages(`repos/${request.repo}/pulls/${binding.pr}/files`);
-      if (request.afk && !pr.merged && files.some(file => /(^|\/)migrations\//.test(file.filename) && file.patch?.split('\n').some(line => /^\+[^+]/.test(line) && /\b(drop|rename|truncate)\b/i.test(line)))) return { state: 'waiting-morning', outcome: null, reason: 'destructive migration' };
+      let files, fileError;
+      try { files = pages(`repos/${request.repo}/pulls/${binding.pr}/files`); }
+      catch (error) { fileError = error.message; }
+      const complete = Number.isSafeInteger(pr.changed_files) && pr.changed_files >= 0 && Array.isArray(files) &&
+        files.length === pr.changed_files && files.every(file => typeof file?.filename === 'string' && file.filename.length);
+      if (!complete) {
+        const reason = `PR file list ${fileError ? `unavailable: ${fileError}` : `incomplete: expected ${pr.changed_files}, read ${files?.length ?? 0}`}`;
+        return { state: 'blocked', outcome: null, targets: deploy.targets.map((_, index) => index), reason, lines: [`Не вливаю: ${reason}.`] };
+      }
+      if (request.afk && !pr.merged && files.some(file => /(^|\/)migrations\//.test(file.filename) &&
+        (typeof file.patch !== 'string' || !file.patch.trim() || file.patch.split('\n').some(line => /^\+[^+]/.test(line) && /\b(drop|rename|truncate)\b/i.test(line))))) return { state: 'waiting-morning', outcome: null, reason: 'destructive migration' };
       const other = filesIn(path.dirname(runFile)).map(readJson).find(row => row.head !== request.head && !row.closedAt);
       need(!other, 'another deploy run is open');
       const browserReady = target => {
@@ -219,7 +228,8 @@ export async function runDeploy(command, request, clock = {}) {
     if (config.landing?.validation && (run.landing?.code !== 0 || run.landing.sha !== run.merge) && ['local', 'prove', 'return', 'outcome'].includes(command))
       return { state: 'waiting-validation', outcome: null, open: true, reason: 'green landing-guard check on merge commit not recorded; resume merge', landing: run.landing ?? null };
     if (['prove', 'local', 'check', 'rollback', 'return'].includes(command)) need(target, 'affected target index required');
-    const latest = (t, id, surface, kind) => t.checks.filter(check => check.id === id && check.surface === surface && check.kind === kind).at(-1);
+    const currentChecks = t => t.recipe.kind === 'local' ? t.checks.slice(t.proof?.checksFrom ?? 0) : t.checks;
+    const latest = (t, id, surface, kind) => currentChecks(t).filter(check => check.id === id && check.surface === surface && check.kind === kind).at(-1);
     const green = (t, id, surface) => ['quick', 'scenario'].every(kind => latest(t, id, surface, kind)?.result === 'green');
     const browserMissing = t => t.checks.some((check, index) => check.surface === 'browser' && check.result === 'unavailable' && check.browserAvailable !== true && !t.checks.slice(index + 1).some(next => next.id === check.id && next.kind === check.kind && next.surface === 'browser' && (next.result !== 'unavailable' || next.browserAvailable === true)));
     const deploymentFor = t => {
@@ -324,7 +334,7 @@ export async function runDeploy(command, request, clock = {}) {
       if (surface === 'domain') need(domain(target).id === request.id && url(request.url) === url(target.recipe.domain), 'domain/id mismatch');
       if (surface === 'browser') need(url(request.url) === url(d.url), 'own deployment URL mismatch');
       if (request.result === 'unavailable') need(request.reason && request.who, 'unavailable check needs reason and who');
-      need(!target.checks.some(check => check.id === request.id && check.kind === request.kind && check.surface === surface && check.attempt === request.attempt && check.result !== 'unavailable'), 'check attempt already recorded');
+      need(!currentChecks(target).some(check => check.id === request.id && check.kind === request.kind && check.surface === surface && check.attempt === request.attempt && check.result !== 'unavailable'), 'check attempt already recorded');
       target.checks.push({ id: request.id, url: request.url, kind: request.kind, result: request.result, reason: request.reason, who: request.who, browserAvailable: request.browserAvailable, attempt: request.attempt, surface, at: now() });
       if ((request.result !== 'unavailable' || request.browserAvailable === true) && run.stop?.browser && !browserMissing(target)) delete run.stop;
       persist();
@@ -397,6 +407,11 @@ export async function runDeploy(command, request, clock = {}) {
       need(target.recipe.kind === 'local', 'local target required');
       const status = () => JSON.parse(cli('sh', ['-c', `${target.recipe.command} status`], { cwd: request.worktree }));
       const current = () => { const s = status(); need(SHA.test(s.copyCommit) && SHA.test(s.processCommit) && Number.isFinite(stamp(s.startedAt)), 'local status invalid'); return s; };
+      const proveProcess = s => {
+        const previous = target.proof;
+        const same = previous?.copyCommit === s.copyCommit && previous.id === s.processCommit && stamp(previous.startedAt) === stamp(s.startedAt);
+        target.proof = { ...s, id: s.processCommit, checksFrom: same ? previous.checksFrom ?? 0 : target.checks.length }; persist();
+      };
       const rb = rollback(target), desired = run.merge;
       if (!target.baseline) { target.baseline = current(); target.baseline.id = target.baseline.processCommit; persist(); }
       const action = async (verb, sha, key, previous) => {
@@ -414,7 +429,7 @@ export async function runDeploy(command, request, clock = {}) {
         const destination = rb?.rollback ?? target.baseline;
         target.restoreFrom = before; persist();
         await action('restore', destination.processCommit, 'restore', before);
-        target.proof = { ...current(), id: destination.processCommit }; persist(); health(target);
+        proveProcess(current()); health(target);
         if (!rb) save(rollbackFile(target), { head: run.head, issue: request.repairIssue ?? null, rollback: destination, before, fix: null, phase: 'rolled-back' });
         target.rolledBack = true; delete run.stop; persist();
         return rb ? stopped('local repair failed; restored rollback version until morning', target) : { state: 'rolled-back', outcome: 'откатили' };
@@ -423,12 +438,12 @@ export async function runDeploy(command, request, clock = {}) {
         if (run.intents[`${target.key}:restore`]) return await restore(target.restoreFrom ?? target.proof);
         await action('install', desired, 'install', target.baseline);
         const s = current(); need(follows(desired, s.copyCommit) && follows(desired, s.processCommit), 'local process version not proven');
-        target.proof = { ...s, id: s.processCommit }; persist();
+        proveProcess(s);
         const first = quick(target, '');
         if (first.result === 'green' || quick(target, '').result === 'green') {
           const scenario = latest(target, target.proof.id, 'local', 'scenario');
           if (scenario?.result === 'red') {
-            const twice = [1, 2].every(attempt => target.checks.some(c => c.id === target.proof.id && c.surface === 'local' && c.kind === 'scenario' && c.result === 'red' && c.attempt === attempt));
+            const twice = [1, 2].every(attempt => currentChecks(target).some(c => c.id === target.proof.id && c.surface === 'local' && c.kind === 'scenario' && c.result === 'red' && c.attempt === attempt));
             return twice ? await restore(s) : { state: 'awaiting-local-scenario-repeat', outcome: null };
           }
           if (rb && scenario?.result !== 'green') return { state: 'awaiting-local-scenario', outcome: null };

@@ -50,12 +50,12 @@ if(name==='gh') {
  if(endpoint?.includes('/rules/')) send([]);
  if(endpoint?.endsWith('/reviews')) send([s.reviews]);
  if(endpoint?.endsWith('/comments')) send([endpoint.includes('/issues/')?s.comments:s.reviewComments]);
- if(endpoint?.endsWith('/files')) send([s.files]);
+ if(endpoint?.endsWith('/files')) { if(s.filesError) fail('PR file list unavailable'); send([s.files]); }
  if(endpoint?.endsWith('/commits/main')) send({sha:s.main});
  if(endpoint?.includes('/commits/v')) send({sha:s.tags?.[endpoint.split('/').at(-1)]||'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'});
  if(endpoint?.includes('/compare/')) { const pair=endpoint.split('/compare/')[1]; send(s.comparisons[pair]||{status:pair.split('...')[0]===pair.split('...')[1]?'identical':'behind',files:[]}); }
  if(endpoint?.includes('/check-runs')) send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'completed',conclusion:s.landingRed?'failure':'success',completed_at:new Date(s.clock).toISOString()}]});
- if(endpoint?.endsWith('/pulls/1')) send({number:1,user:{login:'owner'},head:{sha:s.head},base:{ref:'main',repo:{full_name:'test/product'}},state:s.merged?'closed':'open',merged:s.merged,mergeable_state:s.mergeState==='BLOCKED'?'blocked':'clean',merged_at:s.merged?new Date(s.clock- (s.mergeAge||0)).toISOString():null,merge_commit_sha:s.merge});
+ if(endpoint?.endsWith('/pulls/1')) send({number:1,changed_files:Object.hasOwn(s,'changedFiles')?s.changedFiles:s.files.length,user:{login:'owner'},head:{sha:s.head},base:{ref:'main',repo:{full_name:'test/product'}},state:s.merged?'closed':'open',merged:s.merged,mergeable_state:s.mergeState==='BLOCKED'?'blocked':'clean',merged_at:s.merged?new Date(s.clock- (s.mergeAge||0)).toISOString():null,merge_commit_sha:s.merge});
  fail('unexpected gh '+JSON.stringify(a));
 }
 if(name==='vercel') {
@@ -468,4 +468,36 @@ for(const action of ['promote','cancel-return'])for(const occurred of [true,fals
  const r=await f.call('return');assert.equal(r.state,occurred&&action==='promote'?'awaiting-prod-check':'stopped');
  assert.equal(f.read().calls.filter(c=>['promote','rollback'].includes(c[1])).length,before);
  assert.equal(!!f.savedRun().intents[`${f.savedRun().targets[0].key}:${action}`].result,occurred);
+});
+
+for(const patch of [undefined,null,''])test(`a3-r2 F4/F8: missing migration patch ${String(patch)} holds AFK merge`,async t=>{
+ const f=fixture(t);f.mutate(s=>s.files=[{filename:'db/migrations/001.sql',patch}]);
+ const result=await f.call('merge',{afk:true,browserReady:{id:'old',at:T}});
+ assert.equal(result.state,'waiting-morning');assert.match(result.reason,/migration/i);
+ assert.equal(f.read().calls.some(c=>c[1]==='pr'&&c[2]==='merge'),false);
+});
+for(const failure of ['truncated','unreadable','invalid'])test(`a3-r2 F5: ${failure} PR file list considers all targets and refuses merge`,async t=>{
+ const targets=[{...web,paths:['web/**']},{kind:'none',paths:['mobile/**'],reason:'mobile unverified'},{kind:'local',paths:['desktop/**'],command:'node local.mjs',check:'node health.mjs'}];
+ const f=fixture(t,targets);f.mutate(s=>{s.files=[{filename:'docs/readme.md',patch:'+doc'}];if(failure==='truncated')s.changedFiles=3001;if(failure==='unreadable')s.filesError=true;if(failure==='invalid')s.files=[{patch:'+unknown path'}];});
+ const result=await f.call('merge');assert.equal(result.state,'blocked');assert.equal(result.outcome,null);
+ assert.deepEqual(result.targets,[0,1,2]);assert.match(result.reason,/file list.*(incomplete|unavailable)/i);assert.ok(result.lines.some(line=>line.includes(result.reason)));
+ assert.equal(f.read().calls.some(c=>c[1]==='pr'&&c[2]==='merge'),false);
+ assert.equal(f.read().calls.some(c=>c[0]==='vercel'||c[0]==='local'),false);
+});
+for(const change of ['restart','new-build'])test(`a3-r2 F10: local ${change} needs a fresh scenario and accepts new attempt one`,async t=>{
+ const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);await f.call('merge');await f.call('local');await f.check('scenario','green',M,'local');
+ const next=change==='restart'?M:F;f.mutate(s=>{s.clock++;s.local={...s.local,copyCommit:next,processCommit:next,startedAt:s.clock};if(next!==M)s.comparisons[`${M}...${next}`]={status:'ahead',files:[]};});
+ await assert.rejects(f.call('outcome'),/current local version/);await f.call('local');
+ await assert.rejects(f.call('outcome'),/scenario/);assert.equal(f.savedRun().closedAt,undefined);
+ assert.ok(f.savedRun().targets[0].checks.some(c=>c.kind==='scenario'&&c.id===M&&c.result==='green'));
+ await f.check('scenario','green',next,'local',1);assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
+ assert.equal(f.read().calls.filter(c=>c[0]==='local'&&c[1]==='install').length,1);
+});
+test('a3-r2 F10: rerunning local for the same process retains its scenario',async t=>{
+ const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);await f.call('merge');await f.call('local');await f.check('scenario','green',M,'local');await f.call('local');assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
+});
+test('a3-r2 F10: old red attempt cannot combine with one red on restarted process',async t=>{
+ const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);await f.call('merge');await f.call('local');await f.check('scenario','red',M,'local',2);
+ f.mutate(s=>{s.clock++;s.local.startedAt=s.clock;});await f.call('local');await f.check('scenario','red',M,'local',1);
+ assert.equal((await f.call('local')).state,'awaiting-local-scenario-repeat');assert.equal(f.read().calls.some(c=>c[0]==='local'&&c[1]==='restore'),false);
 });
