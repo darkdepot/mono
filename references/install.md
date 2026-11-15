@@ -61,7 +61,10 @@ immutable first record retains its previous version for recovery.
 
 The installer holds launch locks across product registries, calls
 `updateBlockers` for replaced folders and reports live, dead and unknown holders
-with product and Issue. Live/unknown holders yield `waiting` without installation.
+with product and Issue. Live/unknown holders found before installation yield `waiting` without replacement.
+Holders are checked again before each replacement, including rollback: a newly
+opened session stops further changes with `waiting`, restores the pause and lists
+the actual places already changed for the next resume.
 Dead records are named and never removed. Live Codex processes using its outgoing
 folder also wait. An ordinary Codex session in a product folder is an unknown
 holder unless its exclusion from the updated home is proven; the installer does
@@ -79,7 +82,10 @@ explicit or newly discovered Claude profiles and a changed `CODEX_HOME`. Their
 first recovery state is appended before replacement to numbered JSON records in
 `landing/install/<tag>.places/`; the original record, prior extensions and control
 snapshot are never overwritten. Added places remain remembered across retries
-and future releases. An unfinished installation must be resumed before adding
+and future releases, including extensions made to an older tag after a newer
+installation record exists. Paths are normalized before deduplication. An intended
+clean place not yet created when installation was interrupted can be resumed; a
+previously present or completed place that disappears still requires explicit removal. An unfinished installation must be resumed before adding
 further places. An archived wave is closed idempotently before these additional
 places are installed. Only places whose proof differs are installed again.
 Intent and result read-backs live beside the record in `<tag>.progress.json`.
@@ -106,10 +112,12 @@ Each managed place is checked by installed version, tag commit and complete Git
 tree (paths, types, executable modes, content hashes and symlink targets).
 Only tool service objects absent from the release are excluded: Claude's
 `.in_use/`, Codex's `.git/` and `.codex-marketplace-install.json`; the latter
-must contain the expected `revision`. Codex's persistent config `ref` is checked.
+must contain the expected `revision`. Codex's persistent config `ref` and GitHub source are checked, as are both Claude
+marketplace sources. Matching files alone cannot prove a foreign marketplace.
 A fresh session in each profile must find `mono:ship` in the verified folder.
 A mismatch after one retry, missing fresh-session skill, or failed new watcher restores every place's
-recorded previous tag and verifies again. A clean place with no preceding release
+recorded previous tag and verifies again. Each resolved rollback tag must still
+match its recorded previous commit; a moved tag stops restoration. A clean place with no preceding release
 has no rollback target; failed initial installation is reported as `stopped`.
 
 Before removing the pause, the installer restarts each product's watcher from

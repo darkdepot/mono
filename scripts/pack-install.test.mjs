@@ -641,3 +641,132 @@ test('completed wave permits a new profile without re-verifying an already archi
   assert.equal(result.outcome, 'installed', JSON.stringify(result)); assert.equal(result.places.length, 4);
   assert.equal(verifies, 1); assert.equal(closes, 2);
 });
+
+test('review regression: Codex remains a holder when its arguments contain claude', async t => {
+  const f = fixture(t); f.host.processes = () => [{ pid: 9211, command: 'codex --cd /work/claude-demo', state: 'S' }];
+  f.host.cwdOf = () => '/work/claude-demo';
+  const result = await f.run(); assert.equal(result.outcome, 'waiting', JSON.stringify(result));
+  assert.equal(result.restart[0].command, 'codex'); assert.equal(result.holders[0].pid, 9211);
+  assert.ok(!f.calls().some(row => ['add', 'update', 'install'].includes(row.args[1])));
+});
+
+test('review regression: zombie workers are dead holders and their records survive', async t => {
+  const f = fixture(t), file = path.join(f.root, 'workers.json');
+  atomicJson(file, { 'MONO-902': { issue: 'MONO-902', attempt: 1, pid: 9212, packRoot: path.join(f.env.CODEX_HOME, 'plugins/cache/mono-marketplace/mono/1.0.0') } });
+  const bytes = fs.readFileSync(file); f.host.processes = () => [{ pid: 9212, command: 'worker', state: 'Z' }];
+  const result = await f.run(); assert.equal(result.outcome, 'installed', JSON.stringify(result));
+  assert.equal(result.holders[0].state, 'dead'); assert.deepEqual(fs.readFileSync(file), bytes);
+});
+
+test('review regression: compatible installs reject structurally invalid own and foreign controls', async t => {
+  for (const own of [true, false]) for (const value of [null, [], {}, { state: 'broken' }, { state: 'idle', halt: 'yes' }]) {
+    const f = fixture(t), dir = own ? f.root : path.join(f.tmp, 'products/other');
+    atomicJson(path.join(dir, 'workers.json'), {}); atomicJson(path.join(dir, 'control.json'), value);
+    const bytes = fs.readFileSync(path.join(dir, 'control.json')), result = await f.run();
+    assert.equal(result.outcome, 'stopped', JSON.stringify({ value, result }));
+    assert.deepEqual(fs.readFileSync(path.join(dir, 'control.json')), bytes);
+    assert.equal(f.calls().length, 0);
+  }
+});
+
+test('review regression: canonical profile aliases create one immutable added-place record', async t => {
+  const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+  const place = path.join(f.home, '.claude-extra'); addClaudeProfile(f, place);
+  const result = await f.run({ profiles: [place + '/', place + '/.'] });
+  assert.equal(result.outcome, 'installed', JSON.stringify(result)); assert.equal(result.places.length, 4);
+  const extension = read(path.join(f.root, 'landing/install/v1.1.0.places/000001.json'));
+  assert.equal(extension.places.length, 1); assert.equal((await f.run()).outcome, 'installed');
+});
+
+test('review regression: clean added place resumes before its directory exists but completed disappearance stops', async t => {
+  const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+  const place = path.join(f.tmp, 'external-profile'); assert.equal((await f.run({ profiles: [place] })).outcome, 'installed');
+  const extensionFile = path.join(f.root, 'landing/install/v1.1.0.places/000001.json'), bytes = fs.readFileSync(extensionFile);
+  fs.rmSync(place, { recursive: true });
+  const file = path.join(f.root, 'landing/install/v1.1.0.progress.json'), progress = read(file);
+  delete progress.outcome; progress.places = progress.places.filter(row => row.place !== place); progress.pauseActive = true; atomicJson(file, progress);
+  atomicJson(path.join(f.root, 'control.json'), { ...progress.pauseControl, halt: true });
+  const result = await f.run(); assert.equal(result.outcome, 'installed', JSON.stringify(result));
+  assert.equal(result.places.length, 4); assert.deepEqual(fs.readFileSync(extensionFile), bytes);
+  fs.rmSync(place, { recursive: true }); assert.match((await f.run()).reason, /remembered place disappeared/);
+});
+
+function addRelease(f, version) {
+  const git = (...args) => execFileSync('git', ['-C', f.repo, ...args], { env: f.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  fs.writeFileSync(path.join(f.repo, 'VERSION'), version + '\n'); git('add', '.'); git('commit', '-qm', version); git('tag', '-f', 'v' + version);
+  const folder = path.join(f.tmp, version + '-extra'); fs.mkdirSync(folder);
+  execFileSync('tar', ['-xf', '-', '-C', folder], { input: execFileSync('git', ['-C', f.repo, 'archive', 'v' + version], { env: f.env }) });
+  f.releases['v' + version] = { version, folder, sha: git('rev-parse', 'HEAD') }; atomicJson(path.join(f.tmp, 'releases.json'), f.releases);
+}
+
+test('review regression: older-tag extensions survive newer records and absent historical places stop', async t => {
+  const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+  addRelease(f, '1.2.0'); assert.equal((await f.run({ tag: 'v1.2.0' })).outcome, 'installed');
+  const place = path.join(f.tmp, 'external-profile'); assert.equal((await f.run({ profiles: [place] })).outcome, 'installed');
+  addRelease(f, '1.3.0'); const result = await f.run({ tag: 'v1.3.0' });
+  assert.equal(result.outcome, 'installed', JSON.stringify(result)); assert.ok(result.places.some(row => row.place === place && row.actual === '1.3.0'));
+  fs.rmSync(place, { recursive: true });
+  const missing = await f.run(); assert.equal(missing.outcome, 'stopped'); assert.match(missing.reason, /remembered place disappeared/);
+  assert.equal((await f.run({ removePlaces: [place] })).outcome, 'installed');
+  assert.equal((await f.run({ tag: 'v1.3.0' })).outcome, 'installed', 'retirement survives changing tags');
+});
+
+test('review regression: a moved previous tag is refused before rollback installs different recorded bytes', async t => {
+  const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+  addRelease(f, '1.0.0'); f.fault({ skill: true });
+  const offset = f.calls().length, result = await f.run();
+  assert.equal(result.outcome, 'stopped', JSON.stringify(result)); assert.match(result.reason, /previous.*commit|rollback.*commit/);
+  assert.ok(!f.calls().slice(offset).some(row => row.args[1] === 'update'), 'no rollback from the moved tag');
+  assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+});
+
+test('review regression: matching bytes cannot prove an installation from a fork marketplace', async t => {
+  for (const tool of ['claude', 'codex']) await t.test(tool, async t => {
+    const f = fixture(t); assert.equal((await f.run()).outcome, 'installed');
+    if (tool === 'claude') {
+      for (const name of ['settings.json', 'plugins/known_marketplaces.json']) {
+        const file = path.join(f.profiles[0], name), doc = read(file), entries = name === 'settings.json' ? doc.extraKnownMarketplaces : doc;
+        entries['mono-marketplace'].source.repo = 'elsewhere/mono'; atomicJson(file, doc);
+      }
+    } else {
+      const file = path.join(f.env.CODEX_HOME, 'config.toml'); fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('darkdepot/mono', 'elsewhere/mono'));
+    }
+    const offset = f.calls().length, result = await f.run();
+    assert.ok(result.outcome !== 'installed' || f.calls().slice(offset).some(row => row.tool === 'codex' && row.args[1] === 'marketplace'), JSON.stringify(result));
+    if (tool === 'claude') assert.equal(result.outcome, 'stopped');
+    else assert.match(fs.readFileSync(path.join(f.env.CODEX_HOME, 'config.toml'), 'utf8'), /darkdepot\/mono/);
+  });
+});
+
+test('review regression: late Codex holders stop destructive installation and rollback, leaving a resumable pause', async t => {
+  for (const rollback of [false, true]) await t.test(String(rollback), async t => {
+    const f = fixture(t); if (rollback) f.fault({ skill: true });
+    f.host.cwdOf = () => '/work/claude-demo';
+    f.host.processes = () => {
+      const rows = f.calls(), appeared = rollback ? rows.some(row => row.args[0] === '-p') : rows.some(row => row.tool === 'claude' && row.args[1] === 'update');
+      return appeared ? [{ pid: 9213, command: 'codex --cd /work/claude-demo', state: 'S' }] : [];
+    };
+    const result = await f.run(); assert.equal(result.outcome, 'waiting', JSON.stringify(result));
+    const puts = f.calls().filter(row => row.args[1] === 'add' && row.tool === 'codex'); assert.equal(puts.length, rollback ? 1 : 0);
+    assert.equal(result.holders[0].pid, 9213);
+    assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+    f.host.processes = () => []; f.fault({}); const resumed = await f.run();
+    assert.equal(resumed.outcome, rollback ? 'rolled-back' : 'installed', JSON.stringify(resumed));
+  });
+});
+
+test('U8 quiescence applies to breaking rollback; compatible rollback still protects replaced folders', async t => {
+  for (const breaking of [false, true]) await t.test(String(breaking), async t => {
+    const f = fixture(t), other = path.join(f.tmp, 'products/other');
+    atomicJson(path.join(other, 'control.json'), { state: breaking ? 'idle' : 'active' }); atomicJson(path.join(other, 'workers.json'), {});
+    f.fault({ skill: true });
+    if (breaking) f.host.processes = () => {
+      if (f.calls().some(row => row.args[0] === '-p')) atomicJson(path.join(other, 'control.json'), { state: 'active' });
+      return [];
+    };
+    const result = await f.run({ breaking, watcherConfigs: { [other]: f.options.config } });
+    assert.equal(result.outcome, breaking ? 'stopped' : 'rolled-back', JSON.stringify(result));
+    if (breaking) assert.match(result.reason, /not quiescent/);
+    assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+  });
+});

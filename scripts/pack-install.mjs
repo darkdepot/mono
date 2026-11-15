@@ -65,6 +65,10 @@ function codexRef(place) {
   if (sections.length !== 1) throw new Error('ambiguous Codex marketplace table');
   const refs = [...sections[0][1].matchAll(/^ref\s*=\s*("[^"\n]+")\s*$/gm)];
   if (refs.length !== 1) throw new Error('Codex marketplace requires a literal ref');
+  for (const [key, wanted] of [['source_type', 'git'], ['source', 'https://github.com/darkdepot/mono.git']]) {
+    const values = [...sections[0][1].matchAll(new RegExp('^' + key + '\\s*=\\s*("[^"\\n]+")\\s*$', 'gm'))];
+    if (values.length !== 1 || JSON.parse(values[0][1]) !== wanted) throw new Error('Codex marketplace source differs');
+  }
   return JSON.parse(refs[0][1]);
 }
 function codexEntries(place, env) {
@@ -89,6 +93,8 @@ function inspect(place, expected, env, pins = true) {
     if (pins && place.kind === 'claude') {
       const settings = readJson(path.join(place.place, 'settings.json')), known = readJson(path.join(place.place, 'plugins/known_marketplaces.json'));
       if (settings.extraKnownMarketplaces?.[marketplace]?.source?.ref !== expected.tag || known[marketplace]?.source?.ref !== expected.tag) throw new Error('Claude profile refs differ');
+      for (const source of [settings.extraKnownMarketplaces[marketplace].source, known[marketplace].source])
+        if (source.source !== 'github' || source.repo !== 'darkdepot/mono') throw new Error('Claude marketplace source differs');
       if (settings.extraKnownMarketplaces[marketplace].autoUpdate === true) throw new Error('Claude automatic updates are enabled');
     }
     for (const row of entries) {
@@ -177,9 +183,12 @@ function cwdOf(pid) {
   return value.slice(1);
 }
 function processPlaces(host) {
-  return host.processes().filter(row => !row.state?.startsWith('Z') && /(?:^|[\s/])(claude|codex)(?:\.(?:js|mjs))?(?:\s|$)/.test(row.command)).map(row => {
-    try { return { pid: row.pid, command: /claude/.test(row.command) ? 'claude' : 'codex', cwd: host.cwdOf(row.pid), startedAt: row.procStartEpoch, argv: row.command }; }
-    catch { return { pid: row.pid, command: /claude/.test(row.command) ? 'claude' : 'codex', cwd: null, startedAt: row.procStartEpoch, argv: row.command }; }
+  return host.processes().flatMap(row => {
+    const command = /(?:^|[\s/])(claude|codex)(?:\.(?:js|mjs))?(?:\s|$)/.exec(row.command)?.[1];
+    if (!command || row.state?.startsWith('Z')) return [];
+    let cwd = null;
+    try { cwd = host.cwdOf(row.pid); } catch { /* unknown cwd remains a holder */ }
+    return [{ pid: row.pid, command, cwd, startedAt: row.procStartEpoch, argv: row.command }];
   });
 }
 async function restartWatcher(folder, options, expected) {
@@ -302,26 +311,33 @@ export async function installPack(input, overrides = {}) {
       for (const dir of roots) {
         const workers = readJson(path.join(dir, 'workers.json'));
         if (!workers || typeof workers !== 'object' || Array.isArray(workers)) throw new Error(`invalid product registry: ${dir}`);
-        readJson(path.join(dir, 'control.json'));
+        const value = readJson(path.join(dir, 'control.json'));
+        if (!value || typeof value !== 'object' || Array.isArray(value) || !['active', 'draining', 'idle'].includes(value.state) ||
+            value.halt !== undefined && typeof value.halt !== 'boolean') throw new Error(`invalid product control: ${dir}`);
       }
       const history = fs.existsSync(installDir) ? fs.readdirSync(installDir).filter(file => /^v.*\.json$/.test(file) && !file.endsWith('.progress.json')).map(file => installRecord(path.join(installDir, file))).sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : [];
       const profiles = fs.readdirSync(options.home).filter(name => name.startsWith('.claude')).map(name => path.join(options.home, name)).filter(dir => fs.existsSync(path.join(dir, 'plugins/installed_plugins.json')));
       const discovered = [path.join(options.home, '.claude'), ...profiles.filter(dir => claudeEntries({ place: dir }).length), ...options.profiles];
-      places = [...new Set(discovered)].map(place => ({ kind: 'claude', place: path.resolve(place) }));
+      places = [...new Set(discovered.map(place => path.resolve(place)))].map(place => ({ kind: 'claude', place }));
       places.push({ kind: 'codex', place: path.resolve(options.env.CODEX_HOME || path.join(options.home, '.codex')) });
-      for (const prior of [...(history.at(-1)?.places ?? []), ...(baseline?.places ?? [])]) {
+      if (places.some(place => place.place === places.at(-1).place && place.kind !== places.at(-1).kind)) throw new Error('Claude and Codex places must be separate directories');
+      const remembered = [...history.flatMap(record => record.places), ...(baseline?.places ?? [])];
+      for (const prior of remembered) {
         if (!places.some(place => place.place === prior.place)) places.push({ kind: prior.kind, place: prior.place });
       }
-      const previousProgress = history.length ? optional(path.join(installDir, `${history.at(-1).tag}.progress.json`), {}) : {};
-      const ownProgress = progress;
-      const removed = [...new Set([...(previousProgress.removedPlaces ?? []), ...(ownProgress.removedPlaces ?? []), ...options.removePlaces.map(value => path.resolve(value))])];
+      const retired = history.flatMap(record => optional(path.join(installDir, `${record.tag}.progress.json`), {}).removedPlaces ?? []);
+      const removed = [...new Set([...retired, ...(progress.removedPlaces ?? []), ...options.removePlaces.map(value => path.resolve(value))])];
       result.removedPlaces = removed;
       places = places.filter(place => !removed.includes(place.place));
       const additions = baseline ? places.filter(place => !baseline.places.some(prior => prior.place === place.place)) : [];
       if (additions.length && (!['installed', 'rolled-back'].includes(progress.outcome) ||
           baseline.places.some(prior => !removed.includes(prior.place) && !progress.places?.some(place => place.place === prior.place))))
         throw new Error('finish the incomplete installation before adding places');
-      for (const place of places) if (!fs.existsSync(place.place) && (baseline?.places ?? history.at(-1)?.places ?? []).some(old => old.place === place.place)) throw new Error(`remembered place disappeared: ${place.place}; requires --remove-place`);
+      for (const place of places) if (!fs.existsSync(place.place) && remembered.some(prior => prior.place === place.place)) {
+        const pendingCreate = baseline?.places.some(prior => prior.place === place.place && prior.existed === false) &&
+          !progress.places?.some(prior => prior.place === place.place) && !history.some(record => record.tag !== expected.tag && record.places.some(prior => prior.place === place.place));
+        if (!pendingCreate) throw new Error(`remembered place disappeared: ${place.place}; requires --remove-place`);
+      }
       function localCopies() {
         const copies = [];
         for (const dir of [...new Set([...profiles, ...places.filter(place => place.kind === 'claude').map(place => place.place)])]) {
@@ -341,22 +357,26 @@ export async function installPack(input, overrides = {}) {
         return [...place.entries.map(row => row.installPath), ...(prior?.folders ?? []), ...(prior ? [path.join(cache, prior.version)] : []),
           place.kind === 'codex' ? cache : path.join(cache, expected.version)];
       }).filter(Boolean))];
-      for (const folder of folders) {
-        const found = updateBlockers(folder, products);
-        for (const blocker of found.blockers) {
-          const workers = readJson(path.join(products, blocker.product, 'workers.json'));
-          const entry = Object.values(workers).find(row => row.issue === blocker.issue && row.attempt === blocker.attempt);
-          const pid = entry?.pid;
-          const live = Number.isSafeInteger(pid) && pid > 0 ? host.processes().some(row => row.pid === pid && (!entry.procStart || row.procStart === entry.procStart) || row.ppid === pid || entry.processGroup && row.group === entry.processGroup && row.pid !== pid) : null;
-          result.holders.push({ ...blocker, state: live === true ? 'live' : live === false ? 'dead' : 'unknown' });
+      function refreshHolders() {
+        result.holders = [];
+        for (const folder of folders) {
+          const found = updateBlockers(folder, products);
+          for (const blocker of found.blockers) {
+            const workers = readJson(path.join(products, blocker.product, 'workers.json'));
+            const entry = Object.values(workers).find(row => row.issue === blocker.issue && row.attempt === blocker.attempt);
+            const pid = entry?.pid;
+            const live = Number.isSafeInteger(pid) && pid > 0 ? host.processes().some(row => !row.state?.startsWith('Z') && (row.pid === pid && (!entry.procStart || row.procStart === entry.procStart) || row.ppid === pid || entry.processGroup && row.group === entry.processGroup && row.pid !== pid)) : null;
+            result.holders.push({ ...blocker, state: live === true ? 'live' : live === false ? 'dead' : 'unknown' });
+          }
+          result.holders.push(...found.unknown.map(row => ({ ...row, issue: row.key, state: 'unknown' })));
         }
-        result.holders.push(...found.unknown.map(row => ({ ...row, issue: row.key, state: 'unknown' })));
+        const sessions = processPlaces(host), codexFolders = before.filter(place => place.kind === 'codex').flatMap(place => place.entries.map(row => row.installPath));
+        result.holders.push(...sessions.filter(row => codexFolders.some(folder => inside(row.cwd, folder) || row.argv.includes(folder))).map(row => ({ product: row.cwd, issue: null, pid: row.pid, state: 'live' })));
+        if (before.some(place => place.kind === 'codex')) result.holders.push(...sessions.filter(row => row.command === 'codex' && !codexFolders.some(folder => inside(row.cwd, folder) || row.argv.includes(folder))).map(row => ({ product: row.cwd, issue: null, pid: row.pid, state: 'unknown', reason: 'live Codex session may use the installed cache' })));
+        result.restart = sessions.map(({ argv, ...row }) => row);
+        result.holders = [...new Map(result.holders.map(row => [canonical(row), row])).values()];
       }
-      const sessions = processPlaces(host), codexFolders = before.filter(place => place.kind === 'codex').flatMap(place => place.entries.map(row => row.installPath));
-      result.holders.push(...sessions.filter(row => codexFolders.some(folder => inside(row.cwd, folder) || row.argv.includes(folder))).map(row => ({ product: row.cwd, issue: null, pid: row.pid, state: 'live' })));
-      if (before.some(place => place.kind === 'codex')) result.holders.push(...sessions.filter(row => row.command === 'codex' && !codexFolders.some(folder => inside(row.cwd, folder) || row.argv.includes(folder))).map(row => ({ product: row.cwd, issue: null, pid: row.pid, state: 'unknown', reason: 'live Codex session may use the installed cache' })));
-      result.restart = sessions.map(({ argv, ...row }) => row);
-      result.holders = [...new Map(result.holders.map(row => [canonical(row), row])).values()];
+      refreshHolders();
       result.places = places.map(place => inspect(place, expected, options.env));
       if (result.holders.some(row => row.state !== 'dead')) return { ...result, code: 2, outcome: 'waiting' };
       const drainArgs = { root, config: options.config, 'install-sha': expected.sha, worktree: options.repo };
@@ -394,7 +414,7 @@ export async function installPack(input, overrides = {}) {
         const prior = tags.length ? target(tags[0]) : null;
         if (prior && place.entries.some(row => row.gitCommitSha !== prior.sha)) throw new Error(`previous commit differs from release tag: ${place.place}`);
         const profileRecords = place.kind === 'claude' ? profilePins(place) : undefined;
-        return { kind: place.kind, place: place.place, previous: prior ? { tag: prior.tag, version: prior.version, sha: prior.sha, folders: place.entries.map(row => row.installPath) } : null, ...(profileRecords ? { profileRecords } : {}) };
+        return { kind: place.kind, place: place.place, existed: fs.existsSync(place.place), previous: prior ? { tag: prior.tag, version: prior.version, sha: prior.sha, folders: place.entries.map(row => row.installPath) } : null, ...(profileRecords ? { profileRecords } : {}) };
       };
       if (!baseline) {
         snapshot = path.join(root, `control.json.pre-update-${expected.version}`);
@@ -417,6 +437,13 @@ export async function installPack(input, overrides = {}) {
         if (canonical(readJson(file)) !== canonical(extension)) throw new Error('place recovery read-back differs');
         baseline = installRecord(baselineFile);
       }
+      const rollbackRelease = place => {
+        const prior = baseline.places.find(row => row.place === place.place).previous;
+        if (!prior) return null;
+        const desired = target(prior.tag);
+        if (desired.sha !== prior.sha) throw new Error(`previous release commit changed: ${place.place}`);
+        return desired;
+      };
       progress.removedPlaces = removed;
       if (progress.outcome === 'rolled-back') { progress.phase = 'install'; delete progress.reason; }
       delete progress.outcome;
@@ -428,7 +455,12 @@ export async function installPack(input, overrides = {}) {
         progress.intents.push(intent); persist();
         try {
           const original = baseline.places.find(row => row.place === place.place).profileRecords;
-          if (!pinOnly) put(place, desired, options.env, original);
+          if (!pinOnly) {
+            refreshHolders();
+            if (result.holders.some(row => row.state !== 'dead')) throw Object.assign(new Error('holders appeared before replacement'), { waiting: true });
+            if (progress.phase === 'rollback' && options.breaking) quiescence();
+            put(place, desired, options.env, original);
+          }
           else if (place.kind === 'claude') {
             const env = { ...options.env, CLAUDE_CONFIG_DIR: place.place };
             pinClaude(place, desired.tag, env, original);
@@ -439,10 +471,11 @@ export async function installPack(input, overrides = {}) {
         return intent;
       };
       async function reconcile(rollback) {
+        // U8: machine-wide quiescence applies to breaking rollback. Every
+        // compatible replacement still rechecks its live/unknown holders.
         if (rollback && options.breaking) quiescence();
         const plan = places.map(place => {
-          const prior = baseline.places.find(row => row.place === place.place).previous;
-          const desired = rollback ? prior ? target(prior.tag) : null : expected;
+          const desired = rollback ? rollbackRelease(place) : expected;
           return { place, desired, inspected: desired ? inspect(place, desired, options.env) : { ...place, expected: null, verified: false, error: 'no previous release to restore' } };
         });
         const errors = [];
@@ -456,7 +489,7 @@ export async function installPack(input, overrides = {}) {
               intent.result = item.inspected; persist();
             }
             if (!item.inspected.verified) throw new Error(item.inspected.error);
-          } catch (error) { if (!rollback) throw error; errors.push(`${place.place}: ${error.message}`); }
+          } catch (error) { if (!rollback || error.waiting) throw error; errors.push(`${place.place}: ${error.message}`); }
         }
         result.places = plan.map(({ place, desired, inspected }) => desired ? inspect(place, desired, options.env) : inspected);
         if (errors.length) throw new Error(errors.join('; '));
@@ -467,7 +500,7 @@ export async function installPack(input, overrides = {}) {
       }
       async function installedWatchers(rollback) {
         const place = result.places.find(place => place.kind === 'codex') ?? result.places[0];
-        const desired = target(rollback ? baseline.places.find(row => row.place === place.place).previous.tag : expected.tag);
+        const desired = rollback ? rollbackRelease(place) : expected;
         await watchers(place.folders[0], desired);
       }
       let completed = false;
@@ -475,7 +508,7 @@ export async function installPack(input, overrides = {}) {
         if (options.wave && !closedWave && (await host.verifyDrain(drainArgs, { underInstallLocks: true })).code !== 0) throw new Error('landing-drain verify refused installation');
         if (progress.phase !== 'rollback') {
           try { await reconcile(false); await installedWatchers(false); }
-          catch (error) { progress.phase = 'rollback'; progress.reason = error.message; persist(); }
+          catch (error) { if (error.waiting) throw error; progress.phase = 'rollback'; progress.reason = error.message; persist(); }
         }
         if (progress.phase === 'rollback') { await reconcile(true); await installedWatchers(true); }
         if (options.wave && !closedWave && progress.phase !== 'rollback' && (await host.closeDrain({ ...drainArgs, evidence: JSON.stringify(result.places) }, { underInstallLocks: true })).code !== 0) throw new Error('landing-drain close refused installation');
@@ -491,7 +524,9 @@ export async function installPack(input, overrides = {}) {
           for (const place of candidates) {
             const prior = baseline.places.find(row => row.place === place.place).previous;
             if (!prior) continue;
-            let desired = target(prior.tag), check = inspect(place, desired, options.env);
+            let desired;
+            try { desired = rollbackRelease(place); } catch { desired = expected; }
+            let check = inspect(place, desired, options.env);
             if (!check.verified) { desired = expected; check = inspect(place, desired, options.env); }
             if (!check.verified) continue;
             try { await watchers(check.folders[0], desired, true); }
@@ -508,8 +543,8 @@ export async function installPack(input, overrides = {}) {
       try { atomicJson(path.join(root, 'control.json'), saved); paused = false; }
       catch (cause) { restoreError = cause.message; }
     }
-    if (expected && !result.places.length) result.places = places.map(place => inspect(place, expected, options.env));
-    return { ...result, code: 1, outcome: 'stopped', reason: error.message, ...(restoreError ? { restoreError } : {}) };
+    if (expected && (!result.places.length || error.waiting)) result.places = places.map(place => inspect(place, expected, options.env));
+    return { ...result, code: error.waiting ? 2 : 1, outcome: error.waiting ? 'waiting' : 'stopped', reason: error.message, ...(restoreError ? { restoreError } : {}) };
   }
 }
 

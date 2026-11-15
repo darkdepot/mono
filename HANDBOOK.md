@@ -852,12 +852,18 @@ After completion, rerunning the same tag may add profiles or a different
 `CODEX_HOME`: numbered records in `landing/install/<tag>.places/` retain their
 first recovery state without rewriting the original baseline or control snapshot.
 An interrupted installation resumes its recorded places before further additions.
+Canonical paths and the union of all past records retain older-tag extensions.
+A clean place recorded before its directory was created remains resumable;
+disappearance after completion still requires explicit removal.
 
 All places must match the version, commit and Git tree, and each fresh CLI session
 must find `mono:ship`. Persistent mismatch or a failed skill probe triggers
 rollback to the immutable recorded versions. Same-version CLI updates may leave
 a corrupt tree untouched; retry then rolls back, or stops when no previous release
-exists. Live/unknown holders wait; dead
+exists. Both tool marketplace sources must be the canonical GitHub repository;
+rollback tags must still match the saved commits. Holders are rechecked before
+each replacement, including rollback, so late sessions leave a resumable wait.
+Live/unknown holders wait; dead
 records are named without removal. The original control snapshot survives retries
 and is restored on failure. Watcher restart from the verified version and a fresh
 pulse precede unhalt. Wave mode retains the existing verify → install → close
