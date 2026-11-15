@@ -20,7 +20,7 @@ left context after compaction is read again when its condition holds.
 
 ## Roles
 
-- Owner: always approves Idea, first-product exemplars and new taste-memory rules;
+- Owner: always approves Idea, projectless Issues through `mono:issue`, first-product exemplars and new taste-memory rules;
   may reopen any approval by speaking in the orchestrator chat.
 - Orchestrator: one product session; dispatch, monitoring, technical decisions,
   ledger and deploy. Single Linear writer only for implement/preflight/ship workers,
@@ -34,6 +34,7 @@ left context after compaction is read again when its condition holds.
 | Stage | Runs in |
 | --- | --- |
 | `mono:idea` | stage agent; orchestrator shows owner its description verbatim as its final message and relays the shown text, question and verbatim owner reply |
+| `mono:issue` | stage agent; orchestrator shows its result verbatim as final message and relays shown text, question and verbatim owner reply; only owner approves, then orchestrator launches worker |
 | `mono:research` | stage agent after authorized start; no owner questions or separate approval |
 | `mono:discovery` | stage agent; orchestrator answers with reasons and approves the shown PRD |
 | `mono:design` | stage agent when routed; first-product exemplars and taste consent remain with owner |
@@ -64,7 +65,7 @@ Before each `by=orchestrator` record apply the Approval countercheck in
 `references/orchestration-stages.md`. The owner keeps
 Idea approval, first-product exemplars and consent to new taste rules. Their words
 reopen any approval. Owner-led stage sessions never accept another agent's reply
-as approval; the sole exception is a stage launched by the orchestrator, never Idea.
+as approval; the sole exception is a stage launched by the orchestrator, never Idea or `mono:issue`.
 
 Narrow control-plane exception: an explicit owner mandate may permit operational
 and deploy-repair changes (scripts, infra config, docs sweeps), recorded in the ledger
@@ -251,15 +252,26 @@ A fresh orchestrator session rebuilds state without loss:
 
 1. Read the project config; locate the mailbox root.
 2. Scan Linear: projects in flight, Issue statuses, latest comments and
-   certificates. Separately query open parentless Issues carrying the verified `issue-only` label. For every returned candidate, re-read its body, current
-   marker comment, authenticated owner-approval comment, and project config,
-   then re-run the 5-field context seam with the freshly emitted whole-body
-   fingerprint. Only `package_kind=issue-only` plus `approval_status=approved-fresh` is resumable as an issue-only package.
-   Missing label or marker is not discovered as issue-only; a broken/stale
-   marker, missing authenticated approval, or closed status is excluded. Any
-   unverified reconstruction fails closed and is excluded from the issue-only queue. This
-   scan adds parentless issue-only discovery only; it does not change dependency
-   ordering or reclassify any fail-closed result.
+   certificates. Separately query open parentless Issues carrying the verified
+   `issue-only` label. Re-read each candidate's body, latest marker, owner decisions
+   in Linear write-time order, authenticated approval and config; emit the live
+   whole-body fingerprint and re-run the five-field context seam. Only
+   `package_kind=issue-only` plus `approval_status=approved-fresh` can authorize
+   issue-only delivery, and only when the last decision permits start.
+   For every not-yet-started candidate (state type `triage`, `backlog` or `unstarted`)
+   without `approved-fresh`, including a missing, stale or broken marker or missing
+   authenticated approval, re-enter `mono:issue` with the observed state and any
+   current verbatim owner answer. The stage completes that answer by its recovery
+   rules; it never treats a fail-closed result as approval. If it cannot complete,
+   tell the owner «старта нет». Deferred and revoked Issues never start autonomously.
+   Before starting a not-yet-started candidate, even one already read as
+   `approved-fresh`, run a separate `mono:check issue` in issue-only mode and
+   require `PASS`. The marker does not prove that this check ran before an
+   interruption; `mono:check delivery` does not replace it. On failure, «старта нет».
+   Already-started Issues follow the existing Resume rules, not intake recovery;
+   terminal Issues are excluded. Missing label is not discovered by this label
+   search; a known in-session incomplete answer still belongs to the stage.
+   Dependency order is unchanged; no unverified reconstruction enters delivery.
 3. Read ledger, phase capsules and mailbox reports; reconcile every queued write against Linear and apply only missing writes through Delivery Write Barriers. Never replay a queue from local receipts alone.
 4. Corroborate key ledger claims — dispatches, phase transitions, deploys —
    against worker log and report timestamps. A ledger line with no

@@ -562,7 +562,34 @@ Handoff counts a change expected to exceed roughly 1,000 lines in critical paths
 
 ### Issue-only work and repair
 
-Use `mono:issue` only when [all nine eligibility conditions](skills/issue/SKILL.md#when-issue-only-is-granted--the-nine-eligibility-conditions) hold: an enabled lane, a genuinely one-PR self-contained request, eligible risk, and authenticated owner approval are essential parts of that boundary. Create the non-startable Issue first, then approve its exact whole-body fingerprint. The five-field seam selects the lane; a marker is an approval receipt, never a routing shortcut. Missing, broken or stale trust evidence fails closed. Renew an edited issue-only body through `mono:issue`; park and restart Project-first when required, without inventing Project documents inside the lane.
+`mono:issue` ведёт маленькую самостоятельную задачу без проекта по-русски:
+один PR, риск tiny/standard, нет продуктовых вопросов и связей с Project/PRD/Spec.
+Иначе причина и Idea или Handoff, без создания задачи. Все
+[девять условий](skills/issue/references/run.md#девять-условий) сохраняются.
+Ревью standard до показа даёт ready; tiny допускает записанное исключение.
+Владелец видит до 120 слов: изменение, проверка, исключения и ссылка, затем
+позиция и один вопрос. «Да» утверждает и запускает, «да, но позже» ждёт «запускай».
+Отпечаток и прежние пять полей остаются внутри, автор проверяется по ownerPrincipal.
+Правка требует «Было / Стало» и нового согласия, отзыв блокирует старт;
+[порядок и таблица восстановления](skills/issue/references/decisions.md) задают
+шаги записи и сбои. После одобрения обязательны новое чтение задачи и комментариев
+из Linear, сверка автора и отпечаток перечитанного живого тела; после маркера
+отдельная `mono:check issue` до PASS. После правки новый отпечаток также берётся
+только из перечитанного тела. Скилл исполнения читается после записи старта,
+даты и «вчера»/«сегодня» владельцу по его часовому поясу, в итогах нет служебных слов. Справка даёт команды от сохранённого JSON get_issue до извлечения description и отпечатка
+именно этого тела; каждый разрешающий ответ, включая второй в сессии, проходит
+полный цикл с отдельной проверкой готовности. Оркестратор показывает итог дословно, передаёт вопрос и ответ,
+сам задачу не утверждает; после перезапуска возвращает в этап не начатые
+кандидаты с меткой issue-only без approved-fresh. Отложенные и отозванные не
+запускаются. Даже для approved-fresh перед стартом после Resume заново нужна
+отдельная mono:check issue до PASS. Если после снятия метки ответ потерян,
+до нового показа этап закрывает оставшийся разрешающий маркер через superseded;
+без подтверждённой записи новый показ не проводится. Заморозка начинается после
+сертификата mono:preflight ready, а ready ревью до показа ей не равен.
+В сессии владельца mono:implement идёт здесь, в оркестраторе он
+запускает исполнителя после подтверждения. Начатые по старым правилам задачи
+продолжаются без нового согласия. Формат и резолвер прежние. Окно перед стартом
+и неизвестный после перезапуска незаписанный отзыв остаются принятыми ограничениями.
 
 Use `mono:handoff` for [Project-first repair](references/repair-machine.md#classification-table): classify the exact proposed change, obtain report-only review, apply the class-specific worker, snapshot, approval and lifecycle effects, then check readiness. Risk growth or ambiguity raises the class. Review never repairs; `mono:check` never mutates. Accepted pre-ship drift belongs to `mono:ship`.
 
@@ -1187,8 +1214,8 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-17.** Have an independent cross-vendor Second Voice review the package draft before its first Linear write, so author and reviewer do not share the same blind spots — [Second Voice](references/orchestration-stages.md#second-voice).
 - **K-18.** Decide repository-, Linear- and config-derived implementation details, document structure and risk classification autonomously, but ask about scope, slicing, risk acceptance and design, so routine questions do not consume owner time or seize owner authority — [Autonomy Defaults](references/questioning.md#autonomy-defaults).
 - **K-19.** Apply the project's deploy-approval policy (always, all except tiny, or never) to the exact code head, so yesterday's approval cannot authorize different code — [Project Config](HANDBOOK.md#project-config).
-- **K-20.** Grant issue-only delivery only when all nine conditions hold and the owner approves the exact Issue fingerprint, falling back to Project-first on doubt, so the shortcut cannot bypass its boundary — [Nine eligibility conditions](skills/issue/SKILL.md#when-issue-only-is-granted--the-nine-eligibility-conditions) and [Trust boundary](references/issue-only-lane.md#trust-boundary).
-- **K-21.** Invalidate approval whenever an approved issue-only body changes and obtain new review and fingerprint approval, so the approved text remains the executed contract — [Renewal recovery](skills/issue/SKILL.md#renewal-recovery).
+- **K-20.** Grant issue-only delivery only when all nine conditions hold and the owner approves the exact Issue fingerprint, falling back to Project-first on doubt, so the shortcut cannot bypass its boundary — [Nine eligibility conditions](skills/issue/references/run.md#девять-условий) and [Trust boundary](references/issue-only-lane.md#trust-boundary).
+- **K-21.** Invalidate approval whenever an approved issue-only body changes and obtain new review and fingerprint approval, so the approved text remains the executed contract — [Renewal recovery](skills/issue/references/decisions.md#повторный-вход).
 - **K-22.** Run the code review round at every risk class with the policy's reviewer and checker from different model families, pinned at launch, so the reviewer has the capability and depth to challenge the author — [Roles](references/model-policy.md#roles) and [Review admission](references/review-admission.md#review-admission).
 - **K-23.** Classify work as tiny, standard, deep or risky to set artifact requirements and review depth, treating money, data, access, production and public interfaces as risky domains, so dangerous work cannot pass through a light process — [Risk Classification](references/readiness-gates.md#risk-classification).
 - **K-24.** Require package review before writing and formal pre-ship review for standard, deep and risky work, permitting only a recorded tiny advisory exception, so review can challenge decisions before they become accepted artifacts — [Review Gate Policy](references/readiness-gates.md#review-gate-policy).
@@ -1264,7 +1291,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | [mono:discovery](skills/discovery/SKILL.md) | Solution found with the owner in conversation, explicit choice and version-approved PRD; same stage for owner or delegated orchestrator |
 | [mono:design](skills/design/SKILL.md) | Designer stage after PRD routing, consented taste memory and immutable Paper/Wonder PNG approval; orchestrator chooses with reasons |
 | [mono:tech-evaluation](skills/tech-evaluation/SKILL.md) | One checked technical solution, one version-approved plain-language page, then a short Tech Spec; same stage for owner or delegated orchestrator |
-| [mono:issue](skills/issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |
+| [mono:issue](skills/issue/SKILL.md) | Одна задача без проекта: короткий итог, согласие со стартом или на потом, отзыв и восстановление |
 | [mono:handoff](skills/handoff/SKILL.md) | Team lead: reconciles approved inputs, slices (one Issue by default), one reviewed package record, Ready; work starts by owner or delegated orchestrator; repair by the record |
 | [mono:code-review](skills/code-review/SKILL.md) | Manual code report with an independent checker; delivery still uses Preflight |
 | [mono:review](skills/review/SKILL.md) | Report-only quality/risk review |

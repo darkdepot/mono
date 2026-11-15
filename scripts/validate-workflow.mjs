@@ -151,6 +151,14 @@ function validateReadBudgetFixtures() {
     const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
     require(budget.bytes === total && total <= 20_480, "Handoff actual mandatory total differs or exceeds 20 KB");
   });
+  fixture("Issue actual mandatory inputs and byte total", () => {
+    const expected = ["skills/issue/SKILL.md", "skills/issue/references/run.md"].sort();
+    const budget = measureReadBudget(root, { skills: ["issue"], includeConditional: false });
+    require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
+      "Issue mandatory file set differs from the stage and its entry reference");
+    const total = expected.reduce((sum, file) => sum + Buffer.byteLength(read(file)), 0);
+    require(budget.bytes === total && total <= 20_480, "Issue actual mandatory total differs or exceeds 20 KB");
+  });
   fixture("Implement actual mandatory inputs and byte total", () => {
     const expected = ["skills/implement/SKILL.md", "skills/implement/references/start.md", "references/execution-quality.md"].sort();
     const budget = measureReadBudget(root, { skills: ["implement"], includeConditional: false });
@@ -1168,6 +1176,172 @@ function validateProjectConfigBehavior() {
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
+}
+
+// Agent rules stay prose; only ordered step identities and their machine inputs
+// are pinned. Live execution is checked by review and the orchestrator's S5 run.
+const ISSUE_DECISION_STEPS = {
+  start: ["label", "approval-comment", "linear-readback", "owner-author", "live-fingerprint", "permit-marker", "readiness-check", "handoff"],
+  edit: ["body-write", "linear-readback", "live-fingerprint", "superseded-marker"],
+};
+const ISSUE_STEP_INPUTS = {
+  "issue-start:label": ["issue-only"],
+  "issue-start:linear-readback": ["get_issue", "<start-issue-response.json>"],
+  "issue-start:owner-author": ["issueOnlyLane.ownerPrincipal"],
+  "issue-start:live-fingerprint": ["--emit-fingerprint"],
+  "issue-start:readiness-check": ["mono:check issue", "PASS"],
+  "issue-edit:linear-readback": ["get_issue", "<edit-issue-response.json>"],
+  "issue-edit:live-fingerprint": ["--emit-fingerprint"],
+};
+
+
+const ISSUE_DESCRIPTION_EXTRACTOR = 'const fs=require("node:fs"); const issue=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(typeof issue.description!=="string") throw new Error("get_issue description missing"); fs.writeFileSync(process.argv[2],issue.description);';
+const ISSUE_STEP_COMMANDS = Object.fromEntries(["start", "edit"].map(lane => [
+  `issue-${lane}:live-fingerprint`, [
+    `node -e '${ISSUE_DESCRIPTION_EXTRACTOR}' '<${lane}-issue-response.json>' '<${lane}-live-issue.md>'`,
+    `node '<pack-root>/scripts/resolve-issue-context.mjs' --issue '<${lane}-live-issue.md>' --emit-fingerprint`,
+  ],
+]));
+
+function issueDecisionStepErrors(source) {
+  const errors = [];
+  const steps = [...source.matchAll(/^(\d+)\. `(issue-(start|edit):[^`]+)`([^]*?)(?=^\d+\. `issue-|^## |$(?![^]))/gm)];
+  for (const [lane, names] of Object.entries(ISSUE_DECISION_STEPS)) {
+    const expected = names.map(name => `issue-${lane}:${name}`);
+    const actual = steps.filter(step => step[3] === lane);
+    if (JSON.stringify(actual.map(step => step[2])) !== JSON.stringify(expected) || actual.some((step, index) => Number(step[1]) !== index + 1)) {
+      errors.push(`issue decision steps ${lane}: missing, duplicate or out-of-order step`);
+    }
+    for (const id of expected) {
+      requireMachineToken(id);
+      const step = actual.find(step => step[2] === id);
+      for (const token of ISSUE_STEP_INPUTS[id] ?? []) {
+        requireMachineToken(token);
+        if (!step?.[4].includes(`\`${token}\``)) errors.push(`issue decision steps ${id}: missing ${token}`);
+      }
+      let previous = -1;
+      for (const command of ISSUE_STEP_COMMANDS[id] ?? []) {
+        requireMachineToken(command);
+        const at = step?.[4].indexOf(command) ?? -1;
+        if (at < 0 || at <= previous) errors.push(`issue decision commands ${id}: missing or out-of-order ${command}`);
+        previous = at;
+      }
+    }
+  }
+  return errors;
+}
+
+function validateIssueDecisionSteps() {
+  const source = read("skills/issue/references/decisions.md");
+  failures.push(...issueDecisionStepErrors(source));
+  for (const [lane, names] of Object.entries(ISSUE_DECISION_STEPS)) {
+    for (const name of names) {
+      const id = `issue-${lane}:${name}`;
+      const missing = source.replace(new RegExp(`^\\d+\\. \x60${id}\x60`, "m"), "Removed step");
+      if (!issueDecisionStepErrors(missing).some(error => error.startsWith(`issue decision steps ${lane}:`))) fail(`issue decision fixture missing ${id}: accepted`);
+    }
+    const first = `issue-${lane}:${names[0]}`, last = `issue-${lane}:${names.at(-1)}`;
+    const swapped = source.replace(`\`${first}\``, "SWAP_STEP").replace(`\`${last}\``, `\`${first}\``).replace("SWAP_STEP", `\`${last}\``);
+    if (!issueDecisionStepErrors(swapped).some(error => error.startsWith(`issue decision steps ${lane}:`))) fail(`issue decision fixture reordered ${lane}: accepted`);
+  }
+  for (const [id, tokens] of Object.entries(ISSUE_STEP_INPUTS)) {
+    for (const token of tokens) {
+      const changed = source.replace(new RegExp(`(^\\d+\\. \x60${id}\x60[^]*?)(?=^\\d+\\. \x60issue-|^## |$(?![^]))`, "m"), step => step.replaceAll(`\`${token}\``, "omitted input"));
+      if (!issueDecisionStepErrors(changed).some(error => error.startsWith(`issue decision steps ${id}:`))) fail(`issue decision fixture ${id} without ${token}: accepted`);
+    }
+  }
+  for (const [id, commands] of Object.entries(ISSUE_STEP_COMMANDS)) {
+    for (const command of commands) {
+      const missing = source.replace(command, "omitted command");
+      if (!issueDecisionStepErrors(missing).some(error => error.startsWith(`issue decision commands ${id}:`))) fail(`issue decision fixture ${id} missing command: accepted`);
+      const wrongFile = source.replace(command, command.replace(/<(?:start|edit)-(?:issue-response\.json|live-issue\.md)>/g, "<old-local-file>"));
+      if (!issueDecisionStepErrors(wrongFile).some(error => error.startsWith(`issue decision commands ${id}:`))) fail(`issue decision fixture ${id} stale file: accepted`);
+    }
+    const reversed = source.replace(commands[0], "SWAP_COMMAND").replace(commands[1], commands[0]).replace("SWAP_COMMAND", commands[1]);
+    if (!issueDecisionStepErrors(reversed).some(error => error.startsWith(`issue decision commands ${id}:`))) fail(`issue decision fixture ${id} reversed commands: accepted`);
+  }
+  // Execute the documented extractor on JSON: preserve every byte of the body,
+  // including escapes/newlines; a missing description must not reuse an old file.
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-issue-live-body-"));
+  try {
+    const response = path.join(scratch, "response.json"), bodyFile = path.join(scratch, "body.md");
+    const body = JSON.parse(read("scripts/fixtures/issue-recovery.json"))[0].body;
+    fs.writeFileSync(response, JSON.stringify({ description: body }));
+    const result = spawnSync(process.execPath, ["-e", ISSUE_DESCRIPTION_EXTRACTOR, response, bodyFile], { encoding: "utf8" });
+    if (result.status !== 0 || fs.readFileSync(bodyFile, "utf8") !== body) fail("issue live description extractor: body changed");
+    const fingerprint = runNode(["scripts/resolve-issue-context.mjs", "--issue", bodyFile, "--emit-fingerprint"]).trim();
+    if (!/^[a-f0-9]{64}$/.test(fingerprint)) fail("issue live description extractor: resolver rejected body");
+    for (const invalid of [{}, { description: null }]) {
+      fs.writeFileSync(response, JSON.stringify(invalid));
+      const rejected = spawnSync(process.execPath, ["-e", ISSUE_DESCRIPTION_EXTRACTOR, response, bodyFile], { encoding: "utf8" });
+      if (rejected.status !== 1 || !rejected.stderr.includes("get_issue description missing")) fail("issue live description extractor: missing body accepted");
+    }
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+  // Semantic wording remains review-owned, not a literal pin.
+  const reworded = source.replace(/^(\d+\. `issue-(?:start|edit):[^`]+`)[^]*?(?=^\d+\. `issue-|^## |$(?![^]))/gm,
+    (_, heading) => `${heading} — reworded. ${Object.values(ISSUE_STEP_INPUTS).flat().map(token => `\`${token}\``).join(" ")}\n${Object.values(ISSUE_STEP_COMMANDS).flat().join("\n")}\n`);
+  if (issueDecisionStepErrors(reworded).length) fail("issue decision fixture free prose: rejected");
+  console.log("PASS issue decision step fixtures: required order, missing steps, machine inputs and free prose");
+}
+
+// State copies exercise the unchanged resolver, not an agent/recovery implementation.
+// Caller-authenticated inputs are explicit in each copy; time/author assertions
+// prevent accidentally passing an older, revoked or deferred approval to it.
+function validateIssueRecoveryStates() {
+  const copies = JSON.parse(read("scripts/fixtures/issue-recovery.json"));
+  const rows = read("skills/issue/references/decisions.md").split("\n")
+    .filter(line => /^\| `[^`]+` \|/.test(line))
+    .map(line => line.split("|").slice(1, -1).map(cell => cell.trim()));
+  const names = copies.map(copy => copy.name);
+  for (const name of ISSUE_RECOVERY_CASES) {
+    requireMachineToken(name);
+    if (names.filter(value => value === name).length !== 1) fail(`issue recovery ${name}: missing or duplicate state copy`);
+  }
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-issue-recovery-"));
+  try {
+    const issue = path.join(scratch, "issue.md"), marker = path.join(scratch, "marker.md"), config = path.join(scratch, "config.json");
+    fs.writeFileSync(config, JSON.stringify({ issueOnlyLane: { enabled: true, ownerPrincipal: "owner-fixture" } }));
+    for (const copy of copies) {
+      const before = failures.length;
+      const error = message => fail(`issue recovery ${copy.name}: ${message}`);
+      if (!ISSUE_RECOVERY_CASES.includes(copy.name)) error("unknown state copy");
+      requireMachineToken(copy.action);
+      if (!["дописать", "ждать", "старта нет"].includes(copy.action)) error("unknown action");
+      const matches = rows.filter(row => row[0] === `\`${copy.name}\``);
+      if (matches.length !== 1 || matches[0].length !== 3 || matches[0][2] !== `\`${copy.action}\``) error(`table action differs: expected ${copy.action}`);
+      if (!Array.isArray(copy.labels) || copy.labels.some(label => label !== "issue-only")) error("invalid label snapshot");
+      const comments = copy.comments;
+      for (const [index, comment] of comments.entries()) {
+        if (!comment.id || !comment.text || !Number.isFinite(Date.parse(comment.at)) ||
+            index && Date.parse(comment.at) <= Date.parse(comments[index - 1].at)) error("comments must retain strict Linear write-time order");
+      }
+      const markers = comments.filter(comment => comment.kind === "marker");
+      const approval = comments.find(comment => comment.id === copy.approvalComment);
+      if (copy.approvalComment) {
+        const superseded = markers.filter(comment => /Approval: superseded/.test(comment.text)).at(-1);
+        const decision = comments.filter(comment => ["approval", "revocation"].includes(comment.kind)).at(-1);
+        if (!approval || approval !== decision || approval.kind !== "approval" || approval.start !== "now" ||
+            approval.author !== "owner-fixture" || !approval.text.includes(approval.fingerprint) ||
+            superseded && Date.parse(approval.at) <= Date.parse(superseded.at)) error("trusted approval must be the latest start decision, owner-authored and newer than superseded");
+      }
+      fs.writeFileSync(issue, copy.body);
+      fs.writeFileSync(marker, markers.at(-1)?.text ?? "");
+      const args = [path.join(root, "scripts/resolve-issue-context.mjs"), "--issue", issue, "--marker", marker, "--config", config];
+      if (copy.labels.length) args.push("--label", copy.labels.join(","));
+      if (approval) args.push("--approval-verified", approval.fingerprint);
+      const result = spawnSync(process.execPath, args, { encoding: "utf8" });
+      if (["stale marker", "broken marker"].includes(copy.expected)) {
+        if (result.status !== 1 || !result.stderr.includes(`issue-only-lane: ${copy.expected}:`)) error(`expected exit 1 ${copy.expected}, got ${result.status}: ${result.stderr}`);
+      } else {
+        let seam;
+        try { seam = JSON.parse(result.stdout); } catch { /* diagnosed below */ }
+        const actual = seam?.package_kind === "issue-only" ? seam.approval_status : seam?.package_kind;
+        if (result.status !== 0 || actual !== copy.expected) error(`expected ${copy.expected}, got ${result.status} ${actual}: ${result.stderr}`);
+      }
+      if (failures.length === before) console.log(`PASS issue recovery: ${copy.name} → ${copy.expected} / ${copy.action}`);
+    }
+    for (const row of rows) if (!names.some(name => row[0] === `\`${name}\``)) fail(`issue recovery ${row[0]}: table row has no state copy`);
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 
 function validateIssueOnlyLaneBehavior() {
@@ -5871,9 +6045,10 @@ const STRING_PINS = [
   ["templates/orchestrator-dispatch.md","Context seam:"],
   ["skills/issue/SKILL.md","scripts/resolve-issue-context.mjs"],
   ["skills/issue/SKILL.md","--emit-fingerprint"],
-  ["skills/issue/SKILL.md","--issue <issue-body> --emit-fingerprint"],
-  ["skills/issue/SKILL.md","--issue <live-issue-body> --emit-fingerprint"],
+  ["skills/issue/references/decisions.md","--issue <issue-body> --emit-fingerprint"],
+  ["skills/issue/references/decisions.md","--issue <live-issue-body> --emit-fingerprint"],
   ["skills/issue/SKILL.md","--approval-verified"],
+  ["references/orchestration.md","mono:check issue"],
   ["skills/issue/SKILL.md","scripts/resolve-issue-context.mjs"],
   ["skills/issue/SKILL.md","issueOnlyLane.ownerPrincipal"],
   ["skills/issue/SKILL.md","route_revision"],
@@ -6145,7 +6320,6 @@ const REQUIRED_HEADINGS = [
   ["references/lifecycle.md","Artifact Repair"],
   ["references/issue-only-lane.md","Pre-code exit"],
   ["references/issue-only-lane.md","Post-`ready` exit"],
-  ["skills/issue/SKILL.md","Phase-1 go-live boundary"],
   ["references/contracts/issue.md","IS-005 — Issue-only branch"],
   ["references/contracts/issue.md","IS-008 — Project-first sources"],
   ["references/contracts/issue.md","IS-019 — Project-first chips"],
@@ -6209,7 +6383,7 @@ const REQUIRED_HEADINGS = [
   ["skills/check/SKILL.md","Mono Check"],
   ["skills/deploy/SKILL.md","Mono Deploy"],
   ["skills/handoff/SKILL.md","mono:handoff"],
-  ["skills/issue/SKILL.md","Mono Issue"],
+  ["skills/issue/SKILL.md","mono:issue"],
   ["skills/orchestrate/SKILL.md","Mono Orchestrate"],
   ["skills/preflight/SKILL.md","Mono Preflight"],
   ["skills/review/SKILL.md","Mono Review"],
@@ -6231,13 +6405,13 @@ const REQUIRED_HEADINGS = [
   ["references/issue-only-lane.md","The Resolver"],
   ["references/issue-only-lane.md","Trust boundary"],
   ["references/issue-only-lane.md","Deterministic Project-first fallback"],
-  ["skills/issue/SKILL.md","Create-then-approve intake and renewal transaction"],
+  ["skills/issue/references/decisions.md","Ответы по порядку"],
   ["references/artifact-rules.md","Linear Artifact Rules"],
-  ["skills/issue/SKILL.md","When issue-only is granted — the nine eligibility conditions"],
-  ["skills/issue/SKILL.md","Prequalification — judge on the raw request, before creating anything"],
-  ["skills/issue/SKILL.md","Established by the transaction, enforced by the resolver"],
-  ["skills/issue/SKILL.md","Renewal recovery"],
-  ["skills/issue/SKILL.md","Routing and fail-closed proof"],
+  ["skills/issue/references/run.md","Девять условий"],
+  ["skills/issue/SKILL.md","Право на путь"],
+  ["skills/issue/references/decisions.md","Запись и доверие"],
+  ["skills/issue/references/decisions.md","Повторный вход"],
+  ["skills/issue/SKILL.md","Подготовка и показ"],
   ["references/contracts/issue.md","IS-001 — Issue routing"],
   ["references/contracts/issue.md","IS-003 — Internal helper boundary"],
   ["references/contracts/issue.md","IS-004 — Targeted-use eligibility"],
@@ -6293,7 +6467,67 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Review timeline"],
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
+const ISSUE_RECOVERY_CASES = [
+  "yes-label",
+  "yes-label-no-answer",
+  "yes-comment",
+  "yes-readback",
+  "yes-marker",
+  "yes-check",
+  "later-initial",
+  "later-launch-label",
+  "later-launch-comment",
+  "later-launch-marker",
+  "yes-later-label-removed",
+  "yes-later-superseded",
+  "yes-later-comment",
+  "interrupted-yes-later-first",
+  "interrupted-yes-later-done",
+  "yes-stop-label-removed",
+  "yes-stop-superseded",
+  "yes-stop-comment",
+  "interrupted-yes-stop-first",
+  "interrupted-yes-stop-label-removed",
+  "interrupted-yes-stop-marker",
+  "later-stop-first",
+  "later-stop-label-absent",
+  "later-stop-marker",
+  "launch-after-revocation",
+  "superseded-no-answer",
+  "edit-label-removed",
+  "edit-old-superseded",
+  "interrupted-yes-edit-first",
+  "edit-body-stale",
+  "edit-body-broken-criteria",
+  "edit-body-broken-risk",
+  "edit-outside-lane",
+  "edit-new-superseded",
+  "edit-reviewed",
+  "edit-shown",
+  "edit-new-consent",
+  "superseded-new-yes-label",
+  "superseded-new-yes-comment",
+  "superseded-new-yes-readback",
+  "superseded-new-yes-marker",
+  "edit-new-permit",
+  "write-failed-after-retry",
+  "revoke-write-failed",
+  "yes-later-label-removed-no-answer",
+  "yes-stop-label-removed-no-answer",
+  "edit-label-removed-no-answer",
+  "recovery-permit-superseded",
+  "recovery-new-yes-label",
+  "recovery-new-yes-label-no-answer",
+  "recovery-new-yes-comment-failed",
+  "recovery-new-yes-comment"
+];
+
 const MACHINE_TOKENS = new Set([
+  ...Object.values(ISSUE_STEP_INPUTS).flat(),
+  ...Object.values(ISSUE_STEP_COMMANDS).flat(),
+  ...Object.entries(ISSUE_DECISION_STEPS).flatMap(([lane, names]) => names.map(name => `issue-${lane}:${name}`)),
+  "mono:check issue", "PASS", // Readiness invocation and closed verdict, not prose.
+  ...ISSUE_RECOVERY_CASES, "дописать", "ждать", "старта нет",
   "references/qa-skills.md",
   // QA routing, certificate fields and modes; behavior is tested in QA fixtures.
   "qa", "mono:qa", "mono-qa certificate", "given-version", "expectedItems", "taskCriteria",
@@ -7140,8 +7374,8 @@ function validateAe6Fixtures() {
     change("HANDBOOK.md", (text) => text.replace(/^(- \*\*K-31\.\*\* )/m, "$1In this pack, "));
     check(); restore(); check();
     console.log("PASS handbook rule prose rewording: green");
-    change("scripts/russian-stages.mjs", text => text.replace(/(export const RUSSIAN_STAGES = )\[[^\]]*\]/, `$1${JSON.stringify([...RUSSIAN_STAGES, "issue"])}`));
-    change("skills/issue/SKILL.md", text => text
+    change("scripts/russian-stages.mjs", text => text.replace(/(export const RUSSIAN_STAGES = )\[[^\]]*\]/, `$1${JSON.stringify([...RUSSIAN_STAGES, "review"])}`));
+    change("skills/review/SKILL.md", text => text
       .replace(/^Read first:\n/m, "")
       .replace(/^Read now.*$/m, "Прочитай сразу:")
       .replace(/^1\. `AGENTS.md`\n/m, "")
@@ -7152,7 +7386,7 @@ function validateAe6Fixtures() {
       .replace(/^(- `[^`]+`) — /gm, "$1: "));
     check();
     const listedBudget = JSON.parse(runNode(["--input-type=module", "-e",
-      `import { measureReadBudget } from ${JSON.stringify(file("scripts/read-budget.mjs"))}; console.log(JSON.stringify(measureReadBudget(${JSON.stringify(scratch)}, { skills: ["issue"], includeConditional: false })));`]));
+      `import { measureReadBudget } from ${JSON.stringify(file("scripts/read-budget.mjs"))}; console.log(JSON.stringify(measureReadBudget(${JSON.stringify(scratch)}, { skills: ["review"], includeConditional: false })));`]));
     if (listedBudget.files.some(entry => entry.path === "references/contracts/issue.md")) fail("listed Russian stage conditional contract leaked into mandatory read budget");
     restore(); check();
     console.log("PASS AE6 listed Russian stage: Russian tiers, no first AGENTS read, conditional contract and pack-root paths green");
@@ -7162,9 +7396,13 @@ function validateAe6Fixtures() {
     negative("unlisted stage without first AGENTS read", () => change("skills/review/SKILL.md", text => text.replace(/^1\. `AGENTS.md`\n/m, "")), "AGENTS.md must be the first eager read");
     negative("unlisted stage with colon condition", () => change("skills/review/SKILL.md", text => text.replace(/^(- `[^`]+`) — /m, "$1: ")), "conditional read needs a path and a condition");
     negative("unlisted stage with Russian pack-root path", () => change("skills/review/SKILL.md", text => text.replace("4. `references/readiness-gates.md`", "4. `<корень>/references/readiness-gates.md`")), "missing pack file <корень>/references/readiness-gates.md");
-    negative("unlisted stage with conditional Issue contract", () => change("skills/issue/SKILL.md", text => text
-      .replace(/^2\. `references\/contracts\/issue.md`\n/m, "")
-      .replace(/^Read when.*$/m, "$&\n- `references/contracts/issue.md` — before fixture write.")), "must read references/contracts/issue.md as its normative artifact source");
+    negative("unlisted stage with conditional Issue contract", () => {
+      change("scripts/validate-workflow.mjs", text => text.replace(
+        'contractConsumers: ["skills/issue/SKILL.md", "skills/handoff/SKILL.md"]',
+        'contractConsumers: ["skills/review/SKILL.md", "skills/handoff/SKILL.md"]'));
+      change("skills/review/SKILL.md", text => text.replace(/^Read when.*$/m,
+        "$&\n- `references/contracts/issue.md` — before fixture write."));
+    }, "must read references/contracts/issue.md as its normative artifact source");
     negative("Handoff conditional Issue contract removed", () => change("skills/handoff/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/issue\.md`:[^\n]+\n/m, "")), "must read references/contracts/issue.md as its normative artifact source");
     negative("Discovery conditional PRD contract removed", () => change("skills/discovery/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/prd\.md`:[^\n]+\n/m, "")), "must read references/contracts/prd.md as its normative artifact source");
     negative("Idea conditional Project contract removed", () => change("skills/idea/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/project\.md`:[^\n]+\n/m, "")), "must read references/contracts/project.md as its normative artifact source");
@@ -7270,6 +7508,13 @@ if (process.argv.includes("--handbook-only")) {
   process.exit(0);
 }
 
+if (process.argv.includes("--issue-recovery-only")) {
+  validateIssueDecisionSteps();
+  validateIssueRecoveryStates();
+  if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
+  console.log("Issue recovery validation passed."); process.exit(0);
+}
+
 if (!process.argv.includes("--ae6-fixtures") && !process.argv.includes("--document-skeleton-only") && !process.argv.includes("--model-policy-only") && !process.argv.includes("--model-policy-fixtures")) { validateReadBudget(); validateReadBudgetFixtures(); }
 failures.push(...checkModelPolicy(root));
 if (!process.argv.includes("--ae6-fixtures") && !process.argv.includes("--document-skeleton-only") && !process.argv.includes("--model-policy-only") && failures.length === 0) validateModelPolicyFixtures();
@@ -7341,6 +7586,8 @@ validateRepairAndRoutingContract();
 validateLandingBehavior();
 validateProjectConfigBehavior();
 validateIssueOnlyLaneBehavior();
+validateIssueDecisionSteps();
+validateIssueRecoveryStates();
 validateWatcherContaminationBehavior();
 await validateWatcherInactiveGateSpawnBehavior();
 await validateWatcherV3Behavior();

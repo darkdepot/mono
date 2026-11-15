@@ -1,129 +1,80 @@
 ---
 name: issue
-description: Use after excluding a raw idea when a request is unmistakably one-PR projectless issue-only work, or for create-then-approve renewal; Project relation or Project/PRD/Tech Spec chips, Issue slicing, deep/risky/multi-surface scope, or ambiguity fail closed to Project-first, while pre-ship drift routes to mono:ship.
+description: >-
+  Одна доработка на PR без проекта: подготовить задачу, проверить и получить
+  согласие владельца со стартом или на потом; также правка после согласия и отзыв.
+  Сырую идею ведёт mono:idea, связанный с проектом запрос и нарезку mono:handoff,
+  изменения перед PR mono:ship. Глубокое, рискованное и неясное в этот путь не входит.
 ---
 
-# Mono Issue
+# mono:issue
 
-Find shared files here or at the pack root.
+Роль: инженер, который готовит маленькую самостоятельную задачу и доводит ответ
+владельца до проверенной записи. Один PR, без Project, PRD и Tech Spec.
+Справки в `references/`, `<корень>` это `../..`.
 
-Use this skill as the front door for genuinely one-PR, projectless work that qualifies for the issue-only lane. It collapses idea → discovery → handoff → issue into a single gate: a self-contained Linear Issue, an owner-approved scope fingerprint, and the `issue-only` label — no Project, PRD, or Tech Spec.
+Прочитай сразу:
+- `references/run.md`.
+Прочитай, когда:
+- `AGENTS.md`: на входе;
+- `<корень>/references/contracts/issue.md`: перед телом задачи, маркером, правкой после «да» или отзывом;
+- `<корень>/templates/issue.md`: перед телом задачи, маркером, правкой после «да» или отзывом;
+- `<корень>/references/issue-only-lane.md`: перед телом задачи, маркером, правкой после «да» или отзывом;
+- `<корень>/references/readiness-gates.md`: перед оценкой риска и ревью;
+- `<корень>/references/owner-dialog.md`: перед итогом и ответом владельца;
+- `references/decisions.md`: перед ответом владельца или повторным входом;
+- `<корень>/references/artifact-rules.md`: нужно решить место записи или владельца артефакта;
+- `<корень>/references/human-friendly-output.md`: перед служебным комментарием;
+- `<корень>/skills/idea/SKILL.md`: запрос уходит в Idea;
+- `<корень>/skills/implement/SKILL.md`: только после подтверждённой записи старта в сессии владельца; до неё не читай.
 
-`mono:issue` owns first-time issue-only intake and create-then-approve renewal for an existing issue-only Issue. It is a front door, not a redirect or an internal atomic adapter. It grants the lane only when every eligibility condition holds.
+## Право на путь
 
-Read first:
+До создания или правки докажи все условия из `run.md`. Один PR, риск `tiny`
+или `standard`, нет открытого продуктового вопроса, связи с проектом, нарезки,
+новых акторов и изменений нескольких поверхностей. Сомнение закрывает путь:
+причина и mono:idea; готовый проектный контекст — mono:handoff. Задачу не заводи.
+Конфиг должен явно включать путь и называть `issueOnlyLane.ownerPrincipal`.
 
-Read now — every run of this stage loads all of these:
+## Подготовка и показ
 
-1. `AGENTS.md`
-2. `references/contracts/issue.md`
-3. `references/issue-only-lane.md`
-4. `references/readiness-gates.md`
-5. `references/human-friendly-output.md`
-6. `templates/issue.md`
+По договору и шаблону создай самостоятельное тело в состоянии до старта;
+новой задаче `assignee: "me"`, при правке сохрани исполнителя. Строка
+`Тематический проект:` словами в «Связи» не создаёт связи с Project.
+Для `standard` до показа обязательно `mono:review issue-only` → `ready`;
+для `tiny` допустимо записанное исключение с причиной. Не читай другой скилл
+написания задач. Отпечаток только `scripts/resolve-issue-context.mjs` с
+`--emit-fingerprint`, подробности записи в `decisions.md`.
 
-Read when — load the file only when its condition is true for this run:
+Владельцу итог до 120 слов: вывод первым, что изменится, как проверим, чего не
+делаем и ссылка на задачу. Без тела, отпечатка, имён скиллов и служебных слов; говори только о смысле
+изменения и запуска. Даты и «вчера»/«сегодня» определяй по часовому поясу владельца
+(если не задан — по часовому поясу хоста), не по UTC. Затем позиция
+и один вопрос об утверждении и старте последним сообщением хода; после вопроса
+ничего. Без окон. Например: «Уберём лишний шаг запуска. Проверим прежний и новый
+запуск на копиях. Правила выпуска не меняем. [Задача](https://linear.app/).
+Предлагаю начать сейчас: объём укладывается в одну правку. Утверждаешь и запускаем?»
 
-- `references/artifact-rules.md` — when this run must decide where a Linear record belongs or which stage owns it.
-- `skills/idea/SKILL.md` — when this run routes the request back to discovery.
+## Ответ и продолжение
 
-Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
+Утверждает только владелец своими словами на показанный итог, даже в сессии
+оркестратора. Оркестратор передаёт показанный текст, вопрос и дословный ответ,
+сам задачу не утверждает. Вопрос или сомнение не согласие.
+«Да» разрешает старт, «да, но позже» ждёт «запускай», «стоп»/«отменяю» отзывает;
+правка после «да» требует «Было / Стало» и нового согласия. Порядок записи,
+сбои и восстановление только по `decisions.md`; при сомнении старта нет.
 
-Contract application:
-
-- `references/contracts/issue.md` is the normative source for Issue artifact behavior. Apply `IS-001` through `IS-034` in full; `IS-005` supplies the issue-only routing exception and incorporates `references/issue-only-lane.md` without duplicating its protocol.
-- If issue-only prequalification refuses the request, stop this skill without rendering or mutating an Issue. Route shaped Project-first work to `mono:handoff` and unshaped work to `mono:idea`; the destination lifecycle owner applies the Project-first rules.
-- Render the self-contained Issue with `templates/issue.md`, applying every branch-relevant content, readiness, review, durability, and check rule from the bounded contract.
-
-## UI context
-
-UI-задача: в «Прочитать сначала» строка «Дизайн: запись mono-design <id>,
-canvas <https-ссылка>, tool paper|wonder, images <sha256>» или «Дизайн: нет», пути к памяти владельца,
-продукта и папке PNG конкретной версии. Правила вкуса обоих слоёв прочитай и
-скопируй применимые целиком текстом в «Снимок контекста» (причина, верно/неверно,
-источник, вес), в том числе без макета. Нет правил — явно укажи отсутствие.
-Задача без проекта не проходит Design и не получает выдуманную запись; применяет
-память вкуса. Нет доступа к существующим правилам — останови подготовку с
-причиной. Исполнитель может не видеть домашнюю папку.
-
-## Routing and fail-closed proof
-
-Prove the right to enter issue-only before creating or renewing anything:
-
-- A Project relation or Project/PRD/Tech Spec chips is an immediate refusal. Existing Project or shaped package context routes to `mono:handoff`; accepted pre-ship drift routes to `mono:ship`.
-- If the request asks for Issue slicing, dependent slices, or more than one PR, refuse issue-only and route to `mono:handoff` for Project-first planning.
-- If the work is deep, risky, multi-surface, cross-cutting, or ambiguous, fail closed to Project-first. Route a shaped request to `mono:handoff`; route an unshaped request to `mono:idea`.
-- Only unmistakably one-PR projectless work may continue. Never infer eligibility from the caller naming `mono:issue`.
-- An existing issue-only Issue body edit is not ordinary mutation. It may continue only through the create-then-approve renewal transaction below.
-- The plain-text `Тематический проект:` line in `Связи` is neither a Project relation nor a Project chip, and it never triggers the refusal above. It names a project in words so closeout can publish the update where the owner reads results; it creates no Linear link and no relation.
-
-## When issue-only is granted — the nine eligibility conditions
-
-The issue-only lane is granted only when all nine conditions hold for the activated package. Conditions 1–3 and 9 are outputs of the transaction; conditions 4–8 are prequalification inputs.
-
-### Prequalification — judge on the raw request, before creating anything
-
-4. Risk class is `tiny` or `standard`. `deep` and `risky` stay Project-first.
-5. The work is authorable as a complete self-contained Issue with objective, scope, desired behavior, stable acceptance IDs, verification, explicit non-goals, and a non-vacuous behavioral oracle.
-6. Exactly one PR delivers the whole independently acceptable outcome; no slicing or dependent Issue topology is needed.
-7. The Issue is the sole authoritative entity and lifecycle carrier. No Project, PRD, or Tech Spec exists or is created.
-8. The request has no risky domain, new actors, multi-surface or cross-cutting change, unresolved judgment, or critical escalation signal.
-
-If any prequalification condition is unmet or uncertain, fail closed to Project-first and stop before the transaction.
-
-### Established by the transaction, enforced by the resolver
-
-1. A valid, fresh `mono-issue-only marker` carries Marker version 1, exactly the five contract fields, and no forbidden route-record field.
-2. The exact verified `issue-only` label is present.
-3. The live whole-body fingerprint, marker approval, and caller-verified owner approval agree.
-9. The explicit approval decision is authenticated against the stable Linear user ID in `issueOnlyLane.ownerPrincipal`; author identity without an explicit owner decision is insufficient.
-
-Any missing, stale, superseded, unverified, or ambiguous signal fails closed to Project-first. Marker-integrity errors remain hard failures.
-
-## Create-then-approve intake and renewal transaction
-
-Approval binds to the full whole-body SHA-256 of the Issue contract. Run these steps in order for first-time intake and again after any edit to an existing issue-only Issue body:
-
-1. Create or update a non-startable Issue in the intake-authorized draft mode. Author the self-contained body by applying `references/contracts/issue.md` directly, especially `IS-005` through `IS-018` and `IS-028` through `IS-034`; do not call or read another Issue-writing SKILL.md. Leave the state type in `triage`, `backlog`, or `unstarted`. Set the assignee to the acting user (`assignee: "me"` on the Linear connector) when creating the Issue; a renewal leaves the existing assignee untouched. Assignment is Linear metadata rather than body content, so it changes no part of the whole-body fingerprint the owner approves below. Author the theme-project line `templates/issue.md` requires in `Связи`: name in `Тематический проект: <имя>` the project whose theme this work continues — an already completed project is a valid choice — or write `Тематический проект: нет — <почему>` when no project's theme fits. It is body content, so it is inside the fingerprint the owner approves. Do not write the marker or label yet.
-2. Run the mandatory review gate on the drafted body. `standard` requires `mono:review issue-only` to reach `ready`; `tiny` may use an explicitly recorded advisory exception. Record the disposition before fingerprinting.
-3. Fingerprint only with `node '<pack-root>/scripts/resolve-issue-context.mjs' --issue <issue-body> --emit-fingerprint`. Pass the reviewed Issue body explicitly. Do not add a second hashing path or concatenate sections.
-4. Present the reviewed body and exact fingerprint and wait for an explicit owner decision. Never self-approve or manufacture approval through the owner's connector. After the owner explicitly approves, record that decision as a Linear approval comment naming the exact fingerprint, made by or on the explicit instruction of the owner principal, and capture the comment author's stable Linear user ID for read-back. A connector comment without the preceding explicit decision carries no authority.
-5. Read back the live body and approval comment. Use `node '<pack-root>/scripts/resolve-issue-context.mjs' --issue <live-issue-body> --emit-fingerprint`; require both fingerprint equality and the owner principal's stable Linear user ID as author.
-6. Bind label first, marker last. Set `issue-only`, then write the `mono-issue-only marker` with exactly `Marker version`, `Scope fingerprint`, `Acceptance IDs`, `Risk class`, and `Approval`. On any error, roll back the partial state. The marker must not contain `route_revision`, `assurance_vector`, `required_artifacts`, or a sixth field: маркер ≠ route-record.
-7. Run the readiness check before activation: `mono:check issue` in issue-only mode must return `PASS`. Otherwise remove the marker and label and return `BLOCKED`.
-8. Leave a prepared, approved, non-startable package. Intake never moves the Issue to started; `mono:implement` owns activation after resolver and delivery-check read-back.
-
-The resolver command for downstream verification includes the live Issue, separate marker comment, project config, verified label, and approval fingerprint: `node <resolver> --issue <path> --marker <marker-comment> --config <project-config> --label issue-only --approval-verified <fingerprint>`.
-
-## Renewal recovery
-
-Renewal recovery differs from first-time rollback. After any body edit, the previous authoritative marker is stale. A failed renewal must remove or supersede that previous marker and remove the label; otherwise the resolver hard-fails before it can fall back. Write a new marker only after fresh review, fingerprinting, explicit owner approval, and read-back reconciliation.
-
-The renewal path never promotes the Issue in place or routes its body edit to handoff repair. If scope or risk leaves the envelope before code, park the Issue, annul the marker approval, and restart Project-first. After a ready preflight, freeze the independently shippable slice and put expanded scope in a separate Project.
-
-## Phase-1 go-live boundary
-
-The lane remains config-gated. It is usable only when the consuming repo explicitly sets `issueOnlyLane.enabled: true` and a non-empty `ownerPrincipal`. Intake remains non-activating and Project-first behavior remains available unchanged.
-
-## Rules
-
-- Never create Project, PRD, or Tech Spec artifacts or their chips/resources in issue-only.
-- Never infer issue-only from marker text alone; marker, verified label, authenticated explicit approval, config opt-in, and eligible risk must all agree.
-- Reuse the resolver for every fingerprint and resolution; protocol strings and its five-field output are byte-stable.
-- Write Linear-facing content in the project config language; default to Russian. Repo instructions remain English.
-- Follow the machine-block convention: a short human lead precedes the unchanged marker block.
-
-## Before finishing
-
-- Confirm the Issue is self-contained, one PR, projectless, and executable by a zero-context agent.
-- Confirm risk is `tiny` or `standard`, review disposition is current, and all fail-closed routing probes were applied.
-- Confirm marker, label, and owner-approved fingerprint were bound only after read-back reconciliation and the Issue remains non-startable.
-- Confirm first-time intake or create-then-approve renewal used the canonical resolver and `mono:check issue` passed.
-- If any check fails, park the Issue and return `BLOCKED` or Project-first; never leave a half-opened lane.
-
-## Pre-application renewal
-
-An issue-only pre-application manifest lives in `# Предприменение` in the Issue.
-Any correction after a worker parks blocked with exact replacement bytes follows
-the create-then-approve renewal above, including fresh fingerprint/approval.
-The renewed manifest requires a NEW dispatch with --preapply, never amend/resume.
+Машинная запись прежняя: `mono-issue-only marker` ровно из пяти полей,
+`route_revision` и другие поля записи пути запрещены. Сверяй автора с
+`issueOnlyLane.ownerPrincipal`; резолверу `--approval-verified` даёт вызывающая
+сторона после проверки слов и автора. Каждое разрешающее решение, включая
+второе «да» в той же сессии, проходит последовательность в `decisions.md`
+целиком, с новым отпечатком и отдельным `mono:check issue`: после комментария перечитай задачу и
+комментарии из Linear, сверь автора, вычисли отпечаток только из перечитанного
+живого тела; до совпадения маркер запрещён. После правки тела тоже сначала
+перечитай его из Linear. После маркера отдельным шагом вызови `mono:check issue`
+в issue-only режиме и дождись `PASS`: собственный резолвер её не заменяет.
+Только после этого говори владельцу, что проверка прошла. Сам этап не переводит
+задачу в работу. После подтверждённой записи старта в сессии владельца
+прочитай mono:implement и продолжай здесь;
+в сессии оркестратора верни переход, он запускает исполнителя.

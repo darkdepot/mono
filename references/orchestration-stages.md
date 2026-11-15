@@ -32,7 +32,12 @@ Stage agents use the same dialogue as owner sessions. Their last turn contains
 the result, position and one contextual question as its final message. Reply in words with a reason on that
 version; agent records `by=orchestrator`, reason and countercheck outside fences,
 then reads back. Idea requires the owner: show the stage description verbatim as the orchestrator's final message, then relay that text, the actual question and the verbatim owner reply. A paraphrase is insufficient; without the owner's words no Idea approval.
-Do not relay other stage questions to the owner. After every stage send the owner
+The same owner-only exception applies to `mono:issue`: show its short result
+verbatim as the orchestrator's final message, relay the shown text, question and
+verbatim owner reply to the stage. The orchestrator never approves a projectless
+Issue, even under a Project delegation. The stage confirms the answer and returns
+the authorized transition; the orchestrator launches the worker only after that.
+Do not relay other stage questions to the owner. After every other stage send the owner
 its R1 result (conclusion, decisions, exclusions/reason, next, link; 120 words,
 Handoff 150), plus «Утвердил сам, потому что…». Decisions on their behalf come first:
 «Решил за тебя: …, потому что …». Show exceptions and deferred/irreversible choices.
