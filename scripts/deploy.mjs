@@ -31,11 +31,12 @@ const filesIn = directory => fs.existsSync(directory) ? fs.readdirSync(directory
 // Only the latest Ship publication on this head is the boundary. Resolved replies
 // and Ship's own publications are deliberately excluded from new remarks.
 export function afterShip({ snapshot, issueComments, reviewComments, pr, reviewBodies = snapshot.reviews }, head) {
+  const ship = comment => !!snapshot.viewer && (comment.user?.login ?? comment.author?.login) === snapshot.viewer && comment.body?.includes(SHIP_MARKER);
   const body = authorPart(pr.body);
   const bodyPublication = body?.head === head && body.publishedAt ? { ...pr, updated_at: body.publishedAt } : null;
   const publications = [bodyPublication, ...issueComments, ...reviewBodies, ...reviewComments,
     ...snapshot.threads.flatMap(thread => thread.comments)].filter(Boolean);
-  const onHead = comment => comment.body?.includes(SHIP_MARKER) &&
+  const onHead = comment => ship(comment) &&
     (comment.commit_id === head || comment.body.includes(head));
   const time = comment => stamp(comment.updated_at ?? comment.updatedAt ?? comment.submitted_at ?? comment.publishedAt ?? comment.created_at);
   const boundary = Math.max(...publications.filter(onHead).map(time));
@@ -43,8 +44,8 @@ export function afterShip({ snapshot, issueComments, reviewComments, pr, reviewB
   need(snapshot.threads.every(thread => thread.isResolved === true), 'unresolved review thread');
   const threadComments = new Set(snapshot.threads.flatMap(thread => thread.comments.map(comment => comment.id)));
   const comments = [...issueComments, ...reviewBodies, ...reviewComments.filter(comment => !threadComments.has(comment.node_id))];
-  if (pr.body && !pr.body.includes(SHIP_MARKER)) comments.push(pr);
-  return comments.filter(comment => comment.body?.trim() && !comment.body.includes(SHIP_MARKER) && time(comment) > boundary);
+  if (pr.body && !ship(pr)) comments.push(pr);
+  return comments.filter(comment => comment.body?.trim() && !ship(comment) && time(comment) > boundary);
 }
 
 // An interrupted action is never replayed merely because its result is absent.
@@ -356,8 +357,14 @@ export async function runDeploy(command, request, clock = {}) {
       if (browserMissing(target)) return stopped('browser with Vercel login unavailable', target, true);
       need(rb.deployment && green(target, rb.deployment.id, 'browser'), 'repair own URL scenario and quick checks must be green');
       if (rb.phase !== 'awaiting-prod') {
-        rb.prodChecksFrom ??= target.checks.length; save(rollbackFile(target), rb);
-        try { await webAction('promote', rb.deployment); await flagMatches(target, true); }
+        try {
+          if (!run.intents[`${target.key}:promote`]) {
+            const current = domain(target);
+            need(ready(current) && current.id === rb.rollback.id, 'production version changed; refuse promote');
+          }
+          rb.prodChecksFrom ??= target.checks.length; save(rollbackFile(target), rb);
+          await webAction('promote', rb.deployment); await flagMatches(target, true);
+        }
         catch (error) { return stopped(error.message, target); }
         rb.phase = 'awaiting-prod'; save(rollbackFile(target), rb); quick(target, url(target.recipe.domain));
         return { state: 'awaiting-prod-check', outcome: null };
@@ -369,7 +376,13 @@ export async function runDeploy(command, request, clock = {}) {
         productionChecks.push(quick(target, url(target.recipe.domain)));
       }
       if (run.intents[`${target.key}:cancel-return`] || productionChecks.some(check => check.result === 'red')) {
-        try { await webAction('rollback', rb.rollback, 'cancel-return'); health(target); await flagMatches(target, false); }
+        try {
+          if (!run.intents[`${target.key}:cancel-return`]) {
+            const current = domain(target);
+            need(ready(current) && current.id === rb.deployment.id, 'production version changed; refuse cancel-return');
+          }
+          await webAction('rollback', rb.rollback, 'cancel-return'); health(target); await flagMatches(target, false);
+        }
         catch (error) { return stopped(error.message, target); }
         rb.phase = 'return-canceled'; save(rollbackFile(target), rb);
         return stopped('repair return canceled; production stays on rollback until morning', target);

@@ -22,7 +22,7 @@ function fixture(t, targets = [web]) {
   const baseline = { ...vercelFixture('06-domain-read-before-rollback'), id: 'old', url: 'old.vercel.app', projectId: 'prj_probe', meta: { githubCommitSha: OLD }, gitSource: { sha: OLD } };
   const fresh = { ...vercelFixture('11-new-deploy-ready-staged'), id: 'new', url: 'new.vercel.app', projectId: 'prj_probe', readySubstate: 'PROMOTED', createdAt: T, meta: { githubCommitSha: M }, gitSource: { sha: M } };
   const project = { ...vercelFixture('05-project-before-rollback'), id: 'prj_probe', name: 'probe', link: { repoId: 123, productionBranch: 'main' }, latestDeployments: [], targets: { production: baseline } };
-  const initial = { clock: T, head: H, merge: M, merged: false, files: [{ filename: 'src/a.js', patch: '+hello' }], comments: [{ body: `<!-- mono:ship --> ${H}`, created_at: new Date(T - 1000).toISOString() }], reviewComments: [], reviews: [], checks: [{ __typename: 'CheckRun', name: 'validate', status: 'COMPLETED', conclusion: 'SUCCESS', checkSuite: { commit: { oid: H } } }], threads: [], domain: baseline, deployments: { old: baseline, new: fresh }, project, main: M, comparisons: {}, calls: [], health: 0, local: { copyCommit: OLD, processCommit: OLD, startedAt: T - 10000, installing: false, restoring: false }, saved: OLD };
+  const initial = { clock: T, head: H, merge: M, merged: false, files: [{ filename: 'src/a.js', patch: '+hello' }], comments: [{ user: { login: 'owner' }, body: `<!-- mono:ship --> ${H}`, created_at: new Date(T - 1000).toISOString() }], reviewComments: [], reviews: [], checks: [{ __typename: 'CheckRun', name: 'validate', status: 'COMPLETED', conclusion: 'SUCCESS', checkSuite: { commit: { oid: H } } }], threads: [], domain: baseline, deployments: { old: baseline, new: fresh }, project, main: M, comparisons: {}, calls: [], health: 0, local: { copyCommit: OLD, processCommit: OLD, startedAt: T - 10000, installing: false, restoring: false }, saved: OLD };
   fs.writeFileSync(file, JSON.stringify(initial));
   fs.writeFileSync(config, JSON.stringify({ projectName: 'Проба', deploy: { targets }, qa: { mode: 'terminal', install: [], start: 'true', ready: { command: 'true', identity: 'copy' }, data: { source: 'synthetic', description: 'fixture' }, forbiddenActions: ['no real writes'], beforeMerge: false } }));
   const fake = `#!/usr/bin/env node
@@ -55,7 +55,7 @@ if(name==='gh') {
  if(endpoint?.includes('/commits/v')) send({sha:s.tags?.[endpoint.split('/').at(-1)]||'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'});
  if(endpoint?.includes('/compare/')) { const pair=endpoint.split('/compare/')[1]; send(s.comparisons[pair]||{status:pair.split('...')[0]===pair.split('...')[1]?'identical':'behind',files:[]}); }
  if(endpoint?.includes('/check-runs')) send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'completed',conclusion:s.landingRed?'failure':'success',completed_at:new Date(s.clock).toISOString()}]});
- if(endpoint?.endsWith('/pulls/1')) send({number:1,head:{sha:s.head},base:{ref:'main',repo:{full_name:'test/product'}},state:s.merged?'closed':'open',merged:s.merged,mergeable_state:s.mergeState==='BLOCKED'?'blocked':'clean',merged_at:s.merged?new Date(s.clock- (s.mergeAge||0)).toISOString():null,merge_commit_sha:s.merge});
+ if(endpoint?.endsWith('/pulls/1')) send({number:1,user:{login:'owner'},head:{sha:s.head},base:{ref:'main',repo:{full_name:'test/product'}},state:s.merged?'closed':'open',merged:s.merged,mergeable_state:s.mergeState==='BLOCKED'?'blocked':'clean',merged_at:s.merged?new Date(s.clock- (s.mergeAge||0)).toISOString():null,merge_commit_sha:s.merge});
  fail('unexpected gh '+JSON.stringify(a));
 }
 if(name==='vercel') {
@@ -89,7 +89,7 @@ if(name==='vercel') {
   const repair = async () => {
     await badNew(); await call('rollback',{repairIssue:'MONO-424'}); await call('outcome');
     request.head=F;request.issue='MONO-424';request.certificate=cert(F,'MONO-424');
-    mutate(s=>{s.head=F;s.merge=FM;s.main=FM;s.merged=false;s.checks[0].checkSuite.commit.oid=F;s.comments=[{body:`<!-- mono:ship --> ${F}`,created_at:new Date(s.clock).toISOString()}];s.deployments.fix={...s.deployments.new,id:'fix',url:'fix.vercel.app',meta:{githubCommitSha:FM},gitSource:{sha:FM},readySubstate:'STAGED'};s.project.latestDeployments=[s.deployments.fix];});
+    mutate(s=>{s.head=F;s.merge=FM;s.main=FM;s.merged=false;s.checks[0].checkSuite.commit.oid=F;s.comments=[{user:{login:'owner'},body:`<!-- mono:ship --> ${F}`,created_at:new Date(s.clock).toISOString()}];s.deployments.fix={...s.deployments.new,id:'fix',url:'fix.vercel.app',meta:{githubCommitSha:FM},gitSource:{sha:FM},readySubstate:'STAGED'};s.project.latestDeployments=[s.deployments.fix];});
     await call('merge',{fix:'MONO-424'}); await call('prove');
   };
   return {root,file,config,request,read,mutate,call,prove,check,badNew,repair,savedRun,editRun,rbFile};
@@ -106,7 +106,7 @@ test('merge invokes exact squash head gate, ignores empty commit statuses, and r
  const f=fixture(t);await f.call('merge');await f.call('merge');assert.equal(f.read().calls.filter(c=>c[1]==='pr'&&c[2]==='merge').length,1);assert.deepEqual(f.read().calls.find(c=>c[1]==='pr'&&c[2]==='merge'),['gh','pr','merge','1','--repo','test/product','--squash','--match-head-commit',H]);assert.equal(f.savedRun().targets[0].baseline.id,'old');
 });
 test('latest Ship marker on this head admits resolved replies and ignores earlier remarks',async t=>{
- const f=fixture(t);f.mutate(s=>{s.comments=[{body:`<!-- mono:ship --> ${H}`,created_at:new Date(T-3000).toISOString()},{body:'earlier',created_at:new Date(T-2000).toISOString()},{body:`<!-- mono:ship --> ${H}`,created_at:new Date(T-1000).toISOString()}];s.threads=[{id:'x',isResolved:true,comments:[{id:'reply'}]}];s.reviewComments=[{node_id:'reply',body:'fixed',updated_at:new Date(T+100).toISOString()}];});await f.call('merge');
+ const f=fixture(t);f.mutate(s=>{s.comments=[{user:{login:'owner'},body:`<!-- mono:ship --> ${H}`,created_at:new Date(T-3000).toISOString()},{body:'earlier',created_at:new Date(T-2000).toISOString()},{user:{login:'owner'},body:`<!-- mono:ship --> ${H}`,created_at:new Date(T-1000).toISOString()}];s.threads=[{id:'x',isResolved:true,comments:[{id:'reply'}]}];s.reviewComments=[{node_id:'reply',body:'fixed',updated_at:new Date(T+100).toISOString()}];});await f.call('merge');
 });
 test('no deploy block refuses; QA beforeMerge without proof refuses',async t=>{
  const f=fixture(t);const cfg=JSON.parse(fs.readFileSync(f.config));delete cfg.deploy;fs.writeFileSync(f.config,JSON.stringify(cfg));await assert.rejects(f.call('merge'),/deploy:/);cfg.deploy={targets:[web]};cfg.qa.beforeMerge=true;fs.writeFileSync(f.config,JSON.stringify(cfg));await assert.rejects(f.call('merge'),/QA:/);
@@ -172,7 +172,7 @@ for(const verb of ['repeat','rollback','promote','install','restore'])for(const 
 });
 test('local install proves running process; red health restores; repair installs and archives rollback',async t=>{
  const local={kind:'local',command:'node local.mjs',check:'node health.mjs'};const f=fixture(t,[local]);await f.call('merge');f.mutate(s=>s.healthByCommit={[M]:1,[OLD]:0});assert.equal((await f.call('local',{repairIssue:'MONO-424'})).outcome,'откатили');assert.equal(f.read().local.processCommit,OLD);await f.call('outcome');
- f.request.head=F;f.request.issue='MONO-424';f.request.certificate=cert(F,'MONO-424');f.mutate(s=>{s.head=F;s.merge=FM;s.main=FM;s.merged=false;s.health=0;s.checks[0].checkSuite.commit.oid=F;s.comments=[{body:`<!-- mono:ship --> ${F}`,created_at:new Date(s.clock).toISOString()}];});await f.call('merge',{fix:'MONO-424'});assert.equal((await f.call('local')).state,'awaiting-local-scenario');assert.equal(fs.existsSync(f.rbFile()),true);await f.check('scenario','green',FM,'local');assert.equal((await f.call('local')).state,'proven');assert.equal(f.read().local.processCommit,FM);assert.equal(fs.existsSync(f.rbFile()),false);
+ f.request.head=F;f.request.issue='MONO-424';f.request.certificate=cert(F,'MONO-424');f.mutate(s=>{s.head=F;s.merge=FM;s.main=FM;s.merged=false;s.health=0;s.checks[0].checkSuite.commit.oid=F;s.comments=[{user:{login:'owner'},body:`<!-- mono:ship --> ${F}`,created_at:new Date(s.clock).toISOString()}];});await f.call('merge',{fix:'MONO-424'});assert.equal((await f.call('local')).state,'awaiting-local-scenario');assert.equal(fs.existsSync(f.rbFile()),true);await f.check('scenario','green',FM,'local');assert.equal((await f.call('local')).state,'proven');assert.equal(f.read().local.processCommit,FM);assert.equal(fs.existsSync(f.rbFile()),false);
 });
 
 test('landing red tip requires explicit corrective authorization and still checks merge SHA',async t=>{
@@ -223,9 +223,9 @@ test('new local files with old running process do not prove installation',async 
 test('fixtures preserve recorded GitHub resolved thread and published COMMENTED review shapes',()=>{
  const thread=threadsFixture.data.repository.pullRequest.reviewThreads.nodes[0];const review=JSON.parse(fs.readFileSync(new URL('./fixtures/claude-pr-replies/attempt-2/session-out/04-review-state.json',import.meta.url)));
  const comment={node_id:String(thread.comments.nodes[1].databaseId),body:'reply',updated_at:new Date(T+2000).toISOString()};
- const snapshot={reviews:[review],threads:[{id:thread.id,isResolved:thread.isResolved,comments:thread.comments.nodes.map(c=>({id:String(c.databaseId)}))}]};
- assert.equal(afterShip({snapshot,issueComments:[{body:`<!-- mono:ship --> ${H}`,created_at:new Date(T).toISOString()}],reviewComments:[comment],pr:{}},H).length,0);
- snapshot.threads[0].isResolved=false;assert.throws(()=>afterShip({snapshot,issueComments:[{body:`<!-- mono:ship --> ${H}`,created_at:new Date(T).toISOString()}],reviewComments:[comment],pr:{}},H),/unresolved/);
+ const snapshot={viewer:'owner',reviews:[review],threads:[{id:thread.id,isResolved:thread.isResolved,comments:thread.comments.nodes.map(c=>({id:String(c.databaseId)}))}]};
+ assert.equal(afterShip({snapshot,issueComments:[{user:{login:'owner'},body:`<!-- mono:ship --> ${H}`,created_at:new Date(T).toISOString()}],reviewComments:[comment],pr:{}},H).length,0);
+ snapshot.threads[0].isResolved=false;assert.throws(()=>afterShip({snapshot,issueComments:[{user:{login:'owner'},body:`<!-- mono:ship --> ${H}`,created_at:new Date(T).toISOString()}],reviewComments:[comment],pr:{}},H),/unresolved/);
 });
 test('repair cannot close as deployed before domain return and production checks',async t=>{
  const f=fixture(t);await f.repair();await f.check('quick','green','fix');await f.check('scenario','green','fix');assert.equal((await f.call('outcome')).open,true);await f.call('return');await f.check('scenario','green','fix','domain');await f.call('return');assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
@@ -245,7 +245,7 @@ test('review: an installed old pack release cannot prove the current merge',asyn
  const f=fixture(t,[{kind:'pack'}]);await f.call('merge');await assert.rejects(f.call('outcome',{packResult:{outcome:'installed',sha:OLD,tag:'v0.1.0',places:[{verified:true,expected:'0.1.0',actual:'0.1.0'}]}}),/contain|merge|release/);assert.equal(f.savedRun().closedAt,undefined);
 });
 test('review: fix parameter cannot impersonate the recorded repair Issue',async t=>{
- const f=fixture(t);await f.badNew();await f.call('rollback',{repairIssue:'MONO-424'});await f.call('outcome');f.request.issue='MONO-425';f.request.head=F;f.request.certificate=cert(F,'MONO-425');f.mutate(s=>{s.head=F;s.merge=FM;s.main=FM;s.merged=false;s.checks[0].checkSuite.commit.oid=F;s.comments=[{body:`<!-- mono:ship --> ${F}`,created_at:new Date(s.clock).toISOString()}];});await assert.rejects(f.call('merge',{fix:'MONO-424'}),/recorded repair|repair Issue/);
+ const f=fixture(t);await f.badNew();await f.call('rollback',{repairIssue:'MONO-424'});await f.call('outcome');f.request.issue='MONO-425';f.request.head=F;f.request.certificate=cert(F,'MONO-425');f.mutate(s=>{s.head=F;s.merge=FM;s.main=FM;s.merged=false;s.checks[0].checkSuite.commit.oid=F;s.comments=[{user:{login:'owner'},body:`<!-- mono:ship --> ${F}`,created_at:new Date(s.clock).toISOString()}];});await assert.rejects(f.call('merge',{fix:'MONO-424'}),/recorded repair|repair Issue/);
 });
 test('review: repair Issue can be bound after rollback and closed original run',async t=>{
  const f=fixture(t);await f.badNew();await f.call('rollback');await f.call('outcome');assert.equal((await f.call('rollback',{repairIssue:'MONO-424'})).state,'repair-bound');assert.equal(JSON.parse(fs.readFileSync(f.rbFile())).issue,'MONO-424');assert.equal(f.read().calls.filter(c=>c[1]==='rollback').length,1);
@@ -254,11 +254,11 @@ test('review: production return has no second scenario attempt to hide red',asyn
  const f=fixture(t);await f.repair();await f.check('quick','green','fix');await f.check('scenario','green','fix');await f.call('return');await f.check('scenario','red','fix','domain');await assert.rejects(f.check('scenario','green','fix','domain',2),/no repeat/);assert.equal((await f.call('return')).state,'stopped');assert.equal(f.read().domain.id,'old');
 });
 test('review: Ship boundary includes marked PR body and marked review replies',()=>{
- const at=offset=>new Date(T+offset).toISOString();const snapshot={reviews:[],threads:[]};
- assert.deepEqual(afterShip({snapshot,issueComments:[],reviewComments:[],pr:{body:composeBody({author:'Ship body',head:H,publishedAt:at(0)}),updated_at:at(10)}},H),[]);
+ const at=offset=>new Date(T+offset).toISOString();const snapshot={viewer:'owner',reviews:[],threads:[]};
+ assert.deepEqual(afterShip({snapshot,issueComments:[],reviewComments:[],pr:{user:{login:'owner'},body:composeBody({author:'Ship body',head:H,publishedAt:at(0)}),updated_at:at(10)}},H),[]);
  const comments=[{body:'old remark',created_at:at(-10)},{body:'new remark',created_at:at(10)}];
- assert.equal(afterShip({snapshot,issueComments:comments,reviewComments:[],pr:{body:composeBody({author:'Ship body',head:H,publishedAt:at(0)}),updated_at:at(10)}},H).length,1);
- assert.deepEqual(afterShip({snapshot,issueComments:[{body:`<!-- mono:ship --> ${H}`,created_at:at(-100)},comments[0]],reviewComments:[{body:`<!-- mono:ship --> ${H}`,updated_at:at(0)}],pr:{}},H),[]);
+ assert.equal(afterShip({snapshot,issueComments:comments,reviewComments:[],pr:{user:{login:'owner'},body:composeBody({author:'Ship body',head:H,publishedAt:at(0)}),updated_at:at(10)}},H).length,1);
+ assert.deepEqual(afterShip({snapshot,issueComments:[{user:{login:'owner'},body:`<!-- mono:ship --> ${H}`,created_at:at(-100)},comments[0]],reviewComments:[{user:{login:'owner'},body:`<!-- mono:ship --> ${H}`,updated_at:at(0)}],pr:{}},H),[]);
 });
 test('review: successful proof clears stale stop and failure',async t=>{
  const f=fixture(t);await f.call('merge');f.mutate(s=>{s.main=F;s.comparisons[`${M}...${F}`]={status:'ahead',files:[{filename:'src/new.js'}]};});assert.equal((await f.call('prove')).state,'stopped');f.editRun(r=>r.targets[0].failed=true);f.mutate(s=>s.domain=s.deployments.new);await f.call('prove');await f.check('quick');await f.check('scenario');assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
@@ -288,7 +288,7 @@ test('review: local target also waits for landing validation of its exact merge 
  const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);const c=JSON.parse(fs.readFileSync(f.config));c.landing={validation:{check:'validate',timeoutSec:1}};fs.writeFileSync(f.config,JSON.stringify(c));await f.call('merge');assert.ok(f.savedRun().landing);assert.ok(f.read().calls.some(call=>call.some(arg=>arg.includes(`/commits/${M}/check-runs`))));
 });
 test('review: local repair retains rollback until its scenario and restores on repeated red',async t=>{
- const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);await f.call('merge');f.mutate(s=>s.healthByCommit={[M]:1,[OLD]:0});await f.call('local',{repairIssue:'MONO-424'});await f.call('outcome');f.request.head=F;f.request.issue='MONO-424';f.request.certificate=cert(F,'MONO-424');f.mutate(s=>{s.head=F;s.merge=FM;s.main=FM;s.merged=false;s.checks[0].checkSuite.commit.oid=F;s.comments=[{body:`<!-- mono:ship --> ${F}`,created_at:new Date(s.clock).toISOString()}];});await f.call('merge',{fix:'MONO-424'});assert.equal((await f.call('local')).state,'awaiting-local-scenario');assert.ok(fs.existsSync(f.rbFile()));await f.check('scenario','red',FM,'local',1);assert.equal((await f.call('local')).state,'awaiting-local-scenario-repeat');await f.check('scenario','red',FM,'local',2);assert.equal((await f.call('local')).state,'stopped');assert.equal(f.read().local.processCommit,OLD);assert.ok(fs.existsSync(f.rbFile()));
+ const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);await f.call('merge');f.mutate(s=>s.healthByCommit={[M]:1,[OLD]:0});await f.call('local',{repairIssue:'MONO-424'});await f.call('outcome');f.request.head=F;f.request.issue='MONO-424';f.request.certificate=cert(F,'MONO-424');f.mutate(s=>{s.head=F;s.merge=FM;s.main=FM;s.merged=false;s.checks[0].checkSuite.commit.oid=F;s.comments=[{user:{login:'owner'},body:`<!-- mono:ship --> ${F}`,created_at:new Date(s.clock).toISOString()}];});await f.call('merge',{fix:'MONO-424'});assert.equal((await f.call('local')).state,'awaiting-local-scenario');assert.ok(fs.existsSync(f.rbFile()));await f.check('scenario','red',FM,'local',1);assert.equal((await f.call('local')).state,'awaiting-local-scenario-repeat');await f.check('scenario','red',FM,'local',2);assert.equal((await f.call('local')).state,'stopped');assert.equal(f.read().local.processCommit,OLD);assert.ok(fs.existsSync(f.rbFile()));
 });
 test('U4 literal: missing original build permits immediate one repeat',async t=>{
  const f=fixture(t);await f.call('merge');await f.call('prove');const run=f.savedRun();assert.equal(run.intents[`${run.targets[0].key}:retry`].at,run.mergedAt);
@@ -310,7 +310,7 @@ test('round3: restored browser with unavailable owner data clears only browser S
  const f=fixture(t);await f.prove();await f.check('quick');await f.check('scenario','unavailable','new','browser',1,{reason:'browser absent',who:'owner'});await f.check('scenario','unavailable','new','browser',1,{reason:'owner data needed',who:'owner by tomorrow',browserAvailable:true});assert.equal(f.savedRun().stop,undefined);assert.equal((await f.call('outcome')).outcome,'выкатили, не проверено');
 });
 test('round3: PR activity timestamp cannot hide comments after actual Ship body publication',()=>{
- const at=n=>new Date(T+n).toISOString();const data={snapshot:{reviews:[],threads:[]},issueComments:[{body:'new owner concern',created_at:at(100)}],reviewComments:[],pr:{body:`<!-- mono:ship -->\n<!-- mono:ship body head=${H} published=${at(0)} -->\nbody\n<!-- /mono:ship body -->`,updated_at:at(100)}};
+ const at=n=>new Date(T+n).toISOString();const data={snapshot:{viewer:'owner',reviews:[],threads:[]},issueComments:[{body:'new owner concern',created_at:at(100)}],reviewComments:[],pr:{user:{login:'owner'},body:`<!-- mono:ship -->\n<!-- mono:ship body head=${H} published=${at(0)} -->\nbody\n<!-- /mono:ship body -->`,updated_at:at(100)}};
  assert.equal(afterShip(data,H).length,1);data.issueComments[0]={body:'edited concern',created_at:at(-100),updated_at:at(100)};assert.equal(afterShip(data,H).length,1);
 });
 test('round3: browser readiness is fresh at the actual merge after slow GitHub reads',async t=>{
@@ -418,4 +418,54 @@ for(const result of ['green','red'])test(`F7: awaiting-prod resumes missing ${re
   assert.equal(f.savedRun().targets[0].checks.slice(rb.prodChecksFrom).find(check=>check.kind==='quick'&&check.id==='fix'&&check.surface==='domain')?.result,'red');
  }
  assert.equal(f.read().calls.filter(call=>call[1]==='promote').length,1);
+});
+
+for (const source of ['issue', 'review', 'reviewBody', 'body', 'resolvedThread']) test(`P1 Ship: foreign ${source} marker cannot hide a concern`, () => {
+ const at=n=>new Date(T+n).toISOString();
+ const ship={user:{login:'owner'},body:`<!-- mono:ship --> ${H}`,created_at:at(0)};
+ const concern={body:'blocking concern',created_at:at(10)};
+ const forged={user:{login:'outsider'},author:{login:'outsider'},body:`<!-- mono:ship --> ${H}`,commit_id:H,updated_at:at(20)};
+ const data={snapshot:{viewer:'owner',reviews:[],threads:[]},issueComments:[ship,concern],reviewComments:[],pr:{}};
+ if(source==='issue') data.issueComments.push(forged);
+ if(source==='review') data.reviewComments.push(forged);
+ if(source==='reviewBody') data.reviewBodies=[forged];
+ if(source==='body') data.pr={...forged,body:composeBody({author:'forged Ship body',head:H,publishedAt:at(20)})};
+ if(source==='resolvedThread') data.snapshot.threads=[{isResolved:true,comments:[forged]}];
+ const remarks=afterShip(data,H);
+ assert.ok(remarks.includes(concern));
+ if(source!=='resolvedThread') assert.ok(remarks.includes(source==='body'?data.pr:forged));
+});
+test('P1 Ship: foreign marker itself remains a new remark and prevents merge', async t => {
+ const f=fixture(t);f.mutate(s=>s.comments.push({user:{login:'outsider'},body:`<!-- mono:ship --> ${H}`,created_at:new Date(T+1).toISOString()}));
+ await assert.rejects(f.call('merge'),/new remarks/);assert.equal(f.read().merged,false);
+});
+test('P1 Ship: GraphQL review author can publish the latest trusted boundary', async t => {
+ const f=fixture(t);f.mutate(s=>{s.comments.push({body:'earlier concern',created_at:new Date(T-500).toISOString()});s.reviewBodies=[{id:'ship-review',author:{login:'owner'},body:`<!-- mono:ship --> ${H}`,commit:{oid:H},submittedAt:new Date(T).toISOString(),updatedAt:new Date(T).toISOString()}];});
+ await f.call('merge');assert.equal(f.read().merged,true);
+ assert.ok(f.read().calls.some(c=>c.some(arg=>/reviews\(.*author\{login\}/.test(arg))));
+});
+test('P1 return: unrelated domain before new promote stops without an intent or write', async t => {
+ const f=fixture(t);await f.repair();await f.check('quick','green','fix');await f.check('scenario','green','fix');
+ f.mutate(s=>s.domain={...s.deployments.new,id:'unrelated'});
+ const r=await f.call('return');assert.equal(r.state,'stopped');assert.equal(r.outcome,null);
+ assert.equal(f.read().domain.id,'unrelated');assert.equal(f.read().calls.filter(c=>c[1]==='promote').length,0);
+ assert.equal(f.savedRun().intents[`${f.savedRun().targets[0].key}:promote`],undefined);
+});
+test('P1 return: unrelated domain after promote stops before new cancellation', async t => {
+ const f=fixture(t);await f.repair();await f.check('quick','green','fix');await f.check('scenario','green','fix');
+ await f.call('return');await f.check('scenario','red','fix','domain');
+ f.mutate(s=>s.domain={...s.deployments.new,id:'unrelated'});
+ const r=await f.call('return');assert.equal(r.state,'stopped');assert.equal(r.outcome,null);
+ assert.equal(f.read().domain.id,'unrelated');assert.equal(f.read().calls.filter(c=>c[1]==='rollback').length,1);
+ assert.equal(f.savedRun().intents[`${f.savedRun().targets[0].key}:cancel-return`],undefined);
+});
+for(const action of ['promote','cancel-return'])for(const occurred of [true,false])test(`P1 return: recorded ${action} ${occurred?'completed':'unknown'} is observed without replay`,async t=>{
+ const f=fixture(t);await f.repair();await f.check('quick','green','fix');await f.check('scenario','green','fix');
+ if(action==='cancel-return'){await f.call('return');await f.check('scenario','red','fix','domain');}
+ f.editRun(run=>{run.intents[`${run.targets[0].key}:${action}`]={action:action==='promote'?'promote':'rollback',target:action==='promote'?'fix':'old',at:T};});
+ f.mutate(s=>{s.domain=occurred?s.deployments[action==='promote'?'fix':'old']:{...s.deployments.new,id:'unrelated'};s.project.autoAssignCustomDomains=action==='promote';});
+ const before=f.read().calls.filter(c=>['promote','rollback'].includes(c[1])).length;
+ const r=await f.call('return');assert.equal(r.state,occurred&&action==='promote'?'awaiting-prod-check':'stopped');
+ assert.equal(f.read().calls.filter(c=>['promote','rollback'].includes(c[1])).length,before);
+ assert.equal(!!f.savedRun().intents[`${f.savedRun().targets[0].key}:${action}`].result,occurred);
 });

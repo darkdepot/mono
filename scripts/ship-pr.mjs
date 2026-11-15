@@ -57,7 +57,7 @@ export function readPrPublications(repo, number, { includeReviews = false } = {}
     const [owner, name] = repo.split('/');
     let cursor = null;
     do {
-      const query = 'query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviews(first:100,after:$after){nodes{id body submittedAt updatedAt commit{oid}} pageInfo{hasNextPage endCursor}}}}}';
+      const query = 'query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviews(first:100,after:$after){nodes{id body submittedAt updatedAt author{login} commit{oid}} pageInfo{hasNextPage endCursor}}}}}';
       const data = ghJson('api', 'graphql', '-f', `query=${query}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${number}`, ...(cursor ? ['-f', `after=${cursor}`] : []));
       const page = data.data?.repository?.pullRequest?.reviews;
       requireThat(Array.isArray(page?.nodes) && typeof page.pageInfo?.hasNextPage === 'boolean', 'PR review update times unavailable');
