@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
-import { atomicJson, canonical, readJson, withLock, processTable, processStart, isMain } from './runtime.mjs';
+import { atomicJson, canonical, readJson, withLock, processTable, processStart, isMain, resolvedLocation } from './runtime.mjs';
 import { updateBlockers, verifyQuiescence } from './verify-pack-state.mjs';
 import { verify as verifyDrain, close as closeDrain } from './orchestrator/landing-drain.mjs';
 import { attemptState } from './orchestrator/command-state.mjs';
@@ -104,9 +104,10 @@ function inspect(place, expected, env, pins = true) {
     }
     return { ...place, expected: expected.version, actual: [...new Set(entries.map(row => row.version))].join(','), folders: entries.map(row => row.installPath), verified: true };
   } catch (error) {
-    let actual = null;
-    try { actual = installed(place, env).map(row => row.version).join(',') || null; } catch { /* reported as unverifiable */ }
-    return { ...place, expected: expected.version, actual, verified: false, error: error.message };
+    let entries = [];
+    try { entries = installed(place, env); } catch { /* reported as unverifiable */ }
+    return { ...place, expected: expected.version, actual: entries.map(row => row.version).join(',') || null,
+      folders: entries.map(row => row.installPath).filter(folder => path.isAbsolute(folder ?? '')), verified: false, error: error.message };
   }
 }
 function profilePins(place) {
@@ -187,7 +188,10 @@ function processPlaces(host) {
     const command = /(?:^|[\s/])(claude|codex)(?:\.(?:js|mjs))?(?:\s|$)/.exec(row.command)?.[1];
     if (!command || row.state?.startsWith('Z')) return [];
     let cwd = null;
-    try { cwd = host.cwdOf(row.pid); } catch { /* unknown cwd remains a holder */ }
+    try {
+      cwd = host.cwdOf(row.pid);
+      if (!path.isAbsolute(cwd ?? '')) throw new Error('absolute process cwd unavailable');
+    } catch (error) { throw Object.assign(new Error(`process cwd unavailable: ${row.pid}: ${error.message}`), { waiting: true, pid: row.pid }); }
     return [{ pid: row.pid, command, cwd, startedAt: row.procStartEpoch, argv: row.command }];
   });
 }
@@ -265,6 +269,14 @@ function installRecord(file) {
 export async function installPack(input, overrides = {}) {
   const options = { home: os.homedir(), env: process.env, profiles: [], removePlaces: [], watcherConfigs: {}, ...input };
   const host = { processes: processTable, cwdOf, restartWatcher, verifyDrain, closeDrain, ...overrides };
+  const processes = host.processes;
+  host.processes = () => {
+    try {
+      const rows = processes();
+      if (!Array.isArray(rows) || rows.some(row => !row.state?.startsWith('Z') && !row.command?.trim())) throw new Error('process commands unavailable');
+      return rows;
+    } catch (error) { throw Object.assign(error, { waiting: true }); }
+  };
   const result = { code: 1, outcome: 'stopped', places: [], holders: [], restart: [], localCopies: [] };
   let saved, snapshot, baseline, places = [], expected, paused = false, root, progressFile, progress;
   const releases = new Map();
@@ -293,6 +305,21 @@ export async function installPack(input, overrides = {}) {
         }
       }
       const installDir = path.join(root, 'landing/install'), baselineFile = path.join(installDir, `${expected.tag}.json`);
+      for (const file of fs.existsSync(installDir) ? fs.readdirSync(installDir).filter(name => name.endsWith('.progress.json') && name !== `${expected.tag}.progress.json`).sort() : []) {
+        const unfinishedFile = path.join(installDir, file), unfinished = readJson(unfinishedFile), tag = file.slice(0, -'.progress.json'.length);
+        if (['installed', 'rolled-back'].includes(unfinished.outcome)) continue;
+        const recordFile = path.join(installDir, `${tag}.json`);
+        if (!fs.existsSync(recordFile)) continue;
+        if (unfinished.pauseActive) {
+          const record = readJson(recordFile);
+          saved = unfinished.pauseControl ?? readJson(record.snapshot);
+          atomicJson(control, saved);
+          unfinished.pauseActive = false;
+          atomicJson(unfinishedFile, unfinished);
+          if (canonical(readJson(unfinishedFile)) !== canonical(unfinished)) throw new Error('pause recovery read-back differs');
+        }
+        throw new Error(`unfinished installation ${tag}; resume that tag before installing ${expected.tag}`);
+      }
       progressFile = path.join(installDir, `${expected.tag}.progress.json`);
       baseline = fs.existsSync(baselineFile) ? installRecord(baselineFile) : null;
       progress = optional(progressFile, { phase: 'install', intents: [] });
@@ -318,13 +345,14 @@ export async function installPack(input, overrides = {}) {
       const history = fs.existsSync(installDir) ? fs.readdirSync(installDir).filter(file => /^v.*\.json$/.test(file) && !file.endsWith('.progress.json')).map(file => installRecord(path.join(installDir, file))).sort((a, b) => a.createdAt.localeCompare(b.createdAt)) : [];
       const profiles = fs.readdirSync(options.home).filter(name => name.startsWith('.claude')).map(name => path.join(options.home, name)).filter(dir => fs.existsSync(path.join(dir, 'plugins/installed_plugins.json')));
       const discovered = [path.join(options.home, '.claude'), ...profiles.filter(dir => claudeEntries({ place: dir }).length), ...options.profiles];
-      places = [...new Set(discovered.map(place => path.resolve(place)))].map(place => ({ kind: 'claude', place }));
+      places = [...new Map(discovered.map(place => [resolvedLocation(path.resolve(place)), { kind: 'claude', place: path.resolve(place) }])).values()];
       places.push({ kind: 'codex', place: path.resolve(options.env.CODEX_HOME || path.join(options.home, '.codex')) });
-      if (places.some(place => place.place === places.at(-1).place && place.kind !== places.at(-1).kind)) throw new Error('Claude and Codex places must be separate directories');
+      if (places.some(place => resolvedLocation(place.place) === resolvedLocation(places.at(-1).place) && place.kind !== places.at(-1).kind)) throw new Error('Claude and Codex places must be separate directories');
       const remembered = [...history.flatMap(record => record.places), ...(baseline?.places ?? [])];
       for (const prior of remembered) {
-        const current = places.find(place => place.place === prior.place);
+        const current = places.find(place => resolvedLocation(place.place) === resolvedLocation(prior.place));
         if (current && current.kind !== prior.kind) throw new Error('Claude and Codex places must be separate directories');
+        if (current) current.place = prior.place;
         if (!current) places.push({ kind: prior.kind, place: prior.place });
       }
       const retired = history.flatMap(record => optional(path.join(installDir, `${record.tag}.progress.json`), {}).removedPlaces ?? []);
@@ -479,7 +507,7 @@ export async function installPack(input, overrides = {}) {
         if (rollback && options.breaking) quiescence();
         const plan = places.map(place => {
           const desired = rollback ? rollbackRelease(place) : expected;
-          return { place, desired, inspected: desired ? inspect(place, desired, options.env) : { ...place, expected: null, verified: false, error: 'no previous release to restore' } };
+          return { place, desired, inspected: desired ? inspect(place, desired, options.env) : { ...inspect(place, expected, options.env), expected: null, verified: false, error: 'no previous release to restore' } };
         });
         const errors = [];
         for (const item of plan) {
@@ -508,7 +536,7 @@ export async function installPack(input, overrides = {}) {
       }
       let completed = false;
       try {
-        if (options.wave && !closedWave && (await host.verifyDrain(drainArgs, { underInstallLocks: true })).code !== 0) throw new Error('landing-drain verify refused installation');
+        if (progress.phase !== 'rollback' && options.wave && !closedWave && (await host.verifyDrain(drainArgs, { underInstallLocks: true })).code !== 0) throw new Error('landing-drain verify refused installation');
         if (progress.phase !== 'rollback') {
           try { await reconcile(false); await installedWatchers(false); }
           catch (error) { if (error.waiting) throw error; progress.phase = 'rollback'; progress.reason = error.message; persist(); }
@@ -546,7 +574,12 @@ export async function installPack(input, overrides = {}) {
       try { atomicJson(path.join(root, 'control.json'), saved); paused = false; }
       catch (cause) { restoreError = cause.message; }
     }
-    if (expected && (!result.places.length || error.waiting)) result.places = places.map(place => inspect(place, expected, options.env));
+    if (expected) result.places = places.map(place => {
+      const observed = inspect(place, expected, options.env), previous = result.places.find(row => row.place === place.place);
+      return previous ? { ...previous, actual: observed.actual, folders: observed.folders,
+        verified: previous.verified && previous.expected === observed.actual } : observed;
+    });
+    if (error.waiting) result.holders.push({ product: null, issue: null, ...(error.pid ? { pid: error.pid } : {}), state: 'unknown', reason: error.message });
     return { ...result, code: error.waiting ? 2 : 1, outcome: error.waiting ? 'waiting' : 'stopped', reason: error.message, ...(restoreError ? { restoreError } : {}) };
   }
 }

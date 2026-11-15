@@ -856,7 +856,7 @@ Canonical paths and the union of all past records retain older-tag extensions.
 A clean place recorded before its directory was created remains resumable;
 disappearance after a recorded creation, even before the whole run completes,
 still requires explicit removal. Remembered Claude and Codex directories cannot
-change type.
+change type, including through symbolic links to the same physical directory.
 
 All places must match the version, commit and Git tree, and each fresh CLI session
 must find `mono:ship`. Persistent mismatch or a failed skill probe triggers
@@ -865,11 +865,15 @@ a corrupt tree untouched; retry then rolls back, or stops when no previous relea
 exists. Both tool marketplace sources must be the canonical GitHub repository;
 rollback tags must still match the saved commits. Holders are rechecked before
 each replacement, including rollback, so late sessions leave a resumable wait.
+Unavailable process inventory or session directories also yield unknown holders.
 Live/unknown holders wait; dead
 records are named without removal. The original control snapshot survives retries
 and is restored on failure. Watcher restart from the verified version and a fresh
 pulse precede unhalt. Wave mode retains the existing verify → install → close
-cycle. Full procedure and JSON/exit meanings:
+cycle. A recorded rollback resumes without rechecking the outgoing wave's admission.
+A different tag stops at an unfinished installation and releases its recorded
+pause; resume the named tag first. Failed results include actual place versions
+even without a rollback target. Full procedure and JSON/exit meanings:
 [Plugin Updates](references/install.md#plugin-updates).
 
 Read the `places`, `holders`, `restart` and `localCopies` fields. Restart

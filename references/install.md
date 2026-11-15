@@ -58,6 +58,8 @@ from the previous installation record. Repeat `--profile /path/to/profile` for
 additional Claude profiles. A disappeared remembered place stops installation;
 only explicit `--remove-place /path/to/profile` retires it from this and subsequent runs. The
 immutable first record retains its previous version for recovery.
+Physical paths are compared through symbolic links: Claude and Codex may not
+share a directory, including a remembered place reached through a new alias.
 
 The installer holds launch locks across product registries, calls
 `updateBlockers` for replaced folders and reports live, dead and unknown holders
@@ -65,6 +67,7 @@ with product and Issue. Live/unknown holders found before installation yield `wa
 Holders are checked again before each replacement, including rollback: a newly
 opened session stops further changes with `waiting`, restores the pause and lists
 the actual places already changed for the next resume.
+Unavailable process commands or session directories are unknown holders and wait.
 Dead records are named and never removed. Live Codex processes using its outgoing
 folder also wait. An ordinary Codex session in a product folder is an unknown
 holder unless its exclusion from the updated home is proven; the installer does
@@ -77,7 +80,12 @@ other product registries must be empty, and all controls must be idle.
 Before replacement, `landing/install/<tag>.json` records every place's previous
 version/commit and `control.json.pre-update-<version>` saves the original control.
 Both are written once and read back. Retry retains them even after an interruption
-with `halt` already set. Once an installation completes, the same tag can add
+with `halt` already set. A different tag stops and names the unfinished
+installation after restoring its original control; resume that tag first.
+Resuming a recorded rollback does not recheck the outgoing wave's admission;
+holders still gate every replacement. Failed results reread actual place versions,
+including when there is no previous release to restore.
+Once an installation completes, the same tag can add
 explicit or newly discovered Claude profiles and a changed `CODEX_HOME`. Their
 first recovery state is appended before replacement to numbered JSON records in
 `landing/install/<tag>.places/`; the original record, prior extensions and control

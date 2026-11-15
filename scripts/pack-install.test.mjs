@@ -837,3 +837,95 @@ test('compatible rollback waits for a live process in the replaced folder withou
   f.host.processes = () => []; f.fault({});
   assert.equal((await f.run()).outcome, 'rolled-back');
 });
+
+test('pins v1: unavailable process inventory or session cwd waits without replacing profiles', async t => {
+  for (const fault of ['table', 'command', 'claude-cwd', 'codex-cwd']) await t.test(fault, async t => {
+    const f = fixture(t);
+    f.host.processes = () => {
+      if (fault === 'table') throw new Error('process list unavailable');
+      return [{ pid: 9321, command: fault === 'command' ? '' : fault.startsWith('claude') ? 'claude' : 'codex', state: 'S' }];
+    };
+    f.host.cwdOf = () => { throw new Error('session cwd unavailable'); };
+    const result = await f.run();
+    assert.equal(result.outcome, 'waiting', JSON.stringify(result)); assert.equal(result.code, 2);
+    assert.ok(result.holders.some(row => row.state === 'unknown'));
+    assert.ok(!f.calls().some(row => ['update', 'install', 'add'].includes(row.args[1])));
+    assert.ok(f.profiles.every(profile => read(path.join(profile, 'plugins/installed_plugins.json')).plugins['mono@mono-marketplace'][0].version === '1.0.0'));
+    assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+  });
+});
+
+test('pins v1: physical aliases cannot mix current or historical Claude and Codex places', async t => {
+  for (const historical of [false, true]) for (const kind of ['claude', 'codex']) await t.test(`${historical}-${kind}`, async t => {
+    const f = fixture(t), original = kind === 'claude' ? f.profiles[0] : f.env.CODEX_HOME;
+    if (historical) { assert.equal((await f.run()).outcome, 'installed'); addRelease(f, '1.2.0'); }
+    const alias = path.join(f.tmp, 'profile-alias'); fs.symlinkSync(original, alias);
+    const cache = path.join(original, 'plugins/cache/mono-marketplace/mono', historical ? '1.1.0' : '1.0.0', 'VERSION'), bytes = fs.readFileSync(cache);
+    const args = { tag: historical ? 'v1.2.0' : 'v1.1.0' };
+    if (kind === 'claude') f.env.CODEX_HOME = alias;
+    else { args.profiles = [alias]; if (historical) f.env.CODEX_HOME = path.join(f.tmp, 'new-codex'); }
+    const offset = f.calls().length, result = await f.run(args);
+    assert.equal(result.outcome, 'stopped', JSON.stringify(result)); assert.match(result.reason, /separate directories/);
+    assert.ok(!f.calls().slice(offset).some(row => ['update', 'install', 'add'].includes(row.args[1])));
+    assert.deepEqual(fs.readFileSync(cache), bytes);
+    assert.ok(!fs.existsSync(path.join(f.root, 'landing/install', `${args.tag}.json`)));
+  });
+});
+
+test('pins v1: resumed wave rollback skips outgoing verification and still waits for holders', async t => {
+  const f = fixture(t); let verifies = 0;
+  f.host.verifyDrain = async () => { verifies++; return { code: 0 }; };
+  f.fault({ skill: true });
+  f.host.processes = () => f.calls().some(row => row.args[0] === '-p') ? [{ pid: 9322, command: 'codex', state: 'S' }] : [];
+  f.host.cwdOf = () => '/product';
+  assert.equal((await f.run({ wave: true })).outcome, 'waiting');
+  assert.equal(read(path.join(f.root, 'landing/install/v1.1.0.progress.json')).phase, 'rollback');
+  f.host.processes = () => []; f.fault({});
+  f.host.verifyDrain = async () => { verifies++; return { code: 1 }; };
+  const result = await f.run({ wave: true });
+  assert.equal(result.outcome, 'rolled-back', JSON.stringify(result)); assert.equal(verifies, 1);
+  assert.ok(result.places.every(row => row.actual === '1.0.0' && row.verified));
+  assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+});
+
+test('pins v1: another tag stops and releases a recorded interrupted installation pause', async t => {
+  const f = fixture(t); assert.equal((await f.run()).outcome, 'installed'); addRelease(f, '1.2.0');
+  const file = path.join(f.root, 'landing/install/v1.1.0.progress.json'), progress = read(file);
+  delete progress.outcome; progress.pauseActive = true; progress.pauseControl = { state: 'idle', custom: 'preserve' }; atomicJson(file, progress);
+  atomicJson(path.join(f.root, 'control.json'), { ...progress.pauseControl, halt: true });
+  const baseline = path.join(f.root, 'landing/install/v1.1.0.json'), snapshot = path.join(f.root, 'control.json.pre-update-1.1.0');
+  const bytes = [fs.readFileSync(baseline), fs.readFileSync(snapshot)], offset = f.calls().length;
+  for (let n = 0; n < 2; n++) {
+    const result = await f.run({ tag: 'v1.2.0' });
+    assert.equal(result.outcome, 'stopped', JSON.stringify(result)); assert.match(result.reason, /unfinished installation.*v1\.1\.0/);
+    assert.deepEqual(read(path.join(f.root, 'control.json')), progress.pauseControl);
+    assert.ok(!fs.existsSync(path.join(f.root, 'landing/install/v1.2.0.json')));
+    assert.ok(!f.calls().slice(offset).some(row => ['update', 'install', 'add'].includes(row.args[1])));
+  }
+  assert.deepEqual(fs.readFileSync(baseline), bytes[0]); assert.deepEqual(fs.readFileSync(snapshot), bytes[1]);
+  assert.equal((await f.run()).outcome, 'installed');
+});
+
+test('pins v1: failed clean installation reports actual versions without rollback targets', async t => {
+  const f = fixture(t); fs.rmSync(f.home, { recursive: true }); fs.mkdirSync(f.home); f.fault({ skill: true });
+  const result = await f.run();
+  assert.equal(result.outcome, 'stopped', JSON.stringify(result)); assert.match(result.reason, /no previous release/);
+  assert.equal(result.places.length, 2);
+  assert.ok(result.places.every(row => row.actual === '1.1.0' && row.folders.length === 1 && !row.verified), JSON.stringify(result.places));
+  assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+});
+
+test('pins v1: late inventory failure stops further replacements and reports partial actual versions', async t => {
+  const f = fixture(t);
+  f.host.processes = () => {
+    if (f.calls().some(row => row.tool === 'claude' && row.args[1] === 'update')) throw new Error('process list became unavailable');
+    return [];
+  };
+  const result = await f.run();
+  assert.equal(result.outcome, 'waiting', JSON.stringify(result));
+  assert.ok(result.holders.some(row => row.state === 'unknown'));
+  assert.equal(f.calls().filter(row => row.tool === 'claude' && row.args[1] === 'update').length, 1);
+  assert.ok(!f.calls().some(row => row.tool === 'codex' && row.args[1] === 'add'));
+  assert.deepEqual(result.places.map(row => row.actual), ['1.1.0', '1.0.0', '1.0.0']);
+  assert.deepEqual(read(path.join(f.root, 'control.json')), { state: 'idle', custom: 'preserve' });
+});
