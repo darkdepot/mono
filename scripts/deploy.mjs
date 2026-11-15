@@ -215,8 +215,8 @@ export async function runDeploy(command, request, clock = {}) {
       return { state: 'repair-bound', outcome: 'откатили' };
     }
     if (run.closedAt) return { state: 'closed', ...run.outcome };
-    if (run.landing && run.landing.code !== 0 && ['local', 'prove', 'return', 'outcome'].includes(command))
-      return { state: 'waiting-validation', outcome: null, open: true, landing: run.landing };
+    if (config.landing?.validation && (run.landing?.code !== 0 || run.landing.sha !== run.merge) && ['local', 'prove', 'return', 'outcome'].includes(command))
+      return { state: 'waiting-validation', outcome: null, open: true, reason: 'green landing-guard check on merge commit not recorded; resume merge', landing: run.landing ?? null };
     if (['prove', 'local', 'check', 'rollback', 'return'].includes(command)) need(target, 'affected target index required');
     const latest = (t, id, surface, kind) => t.checks.filter(check => check.id === id && check.surface === surface && check.kind === kind).at(-1);
     const green = (t, id, surface) => ['quick', 'scenario'].every(kind => latest(t, id, surface, kind)?.result === 'green');
@@ -448,9 +448,12 @@ export async function runDeploy(command, request, clock = {}) {
             outcome = order[2]; reason = 'проверка по домену красная, по адресу сборки зелёная'; followup(t, reason, 'discrepancy');
           } else if (known) {
             const otherKinds = ['quick', 'scenario'].filter(kind => !reds.includes(kind));
-            need(otherKinds.every(checkFor), 'remaining scenario/check must be recorded');
-            outcome = otherKinds.every(kind => checkFor(kind).result === 'green') ? order[4] : order[2];
+            const remaining = otherKinds.flatMap(kind => kind === 'quick' && t.recipe.kind === 'vercel' ? [checkFor(kind), latest(t, t.proof.id, 'browser', kind)] : [checkFor(kind)]);
+            need(remaining.every(Boolean), 'remaining scenario/check must be recorded');
+            const unavailable = [...new Set([...remaining, ...['quick', 'scenario'].map(kind => latest(t, t.proof.id, 'browser', kind))])].filter(check => check?.result === 'unavailable');
+            outcome = remaining.every(check => check.result === 'green') && !unavailable.length ? order[4] : order[2];
             reason = 'известная поломка на прошлой сборке'; followup(t, reason);
+            for (const check of unavailable) reason += `; ${check.reason}; проверит ${check.who}`;
           }
           else {
             need(!reds.length, 'red check unresolved; compare in browser before outcome');

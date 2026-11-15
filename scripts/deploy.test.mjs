@@ -315,3 +315,35 @@ test('round3: PR activity timestamp cannot hide comments after actual Ship body 
 test('round3: browser readiness is fresh at the actual merge after slow GitHub reads',async t=>{
  const f=fixture(t);f.mutate(s=>s.advanceOnSnapshot=true);const r=await f.call('merge',{afk:true,browserReady:{id:'old',at:T}});assert.equal(r.state,'waiting-morning');assert.equal(f.read().merged,false);
 });
+
+for (const state of ['missing', 'null', 'no-code', 'red', 'other-sha']) test(`attempt2: ${state} landing result cannot authorize delivery`, async t => {
+ const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);
+ const cfg=JSON.parse(fs.readFileSync(f.config));cfg.landing={validation:{check:'validate',timeoutSec:1}};fs.writeFileSync(f.config,JSON.stringify(cfg));
+ await f.call('merge');
+ f.editRun(run=>{if(state==='missing')delete run.landing;else if(state==='null')run.landing=null;else if(state==='no-code')run.landing={sha:M};else run.landing={code:state==='red'?1:0,sha:state==='other-sha'?OLD:M};});
+ const before=f.read().calls.length;
+ for(const command of ['local','prove','return','outcome']){
+  const r=await f.call(command);assert.equal(r.state,'waiting-validation');assert.equal(r.outcome,null);assert.equal(r.open,true);assert.match(r.reason,/landing.*merge/i);assert.doesNotMatch(JSON.stringify(r),/выкатили/);
+ }
+ assert.equal(f.read().calls.length,before);assert.equal(f.savedRun().closedAt,undefined);
+ await f.call('merge');assert.equal(f.savedRun().landing.sha,M);assert.equal(f.savedRun().landing.code,0);
+ assert.equal((await f.call('local')).state,'proven');assert.equal(f.read().calls.filter(c=>c[0]==='local'&&c[1]==='install').length,1);
+});
+for(const unavailable of ['quick','scenario'])test(`attempt2: known failure cannot hide unavailable browser ${unavailable}`,async t=>{
+ const f=fixture(t);await f.prove();
+ const known=unavailable==='quick'?'scenario':'quick';
+ await f.check(known,'red');await f.check(known,'red','old');
+ await f.check(unavailable,'unavailable','new','browser',1,{reason:'owner data unavailable',who:'owner by tomorrow',browserAvailable:true});
+ const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.match(r.targets[0].reason,/известная/);assert.match(r.targets[0].reason,/owner data unavailable/);assert.match(r.targets[0].reason,/owner by tomorrow/);assert.ok(r.followups.length);
+});
+test('attempt2: known failure on one target cannot hide unavailable browser check on another',async t=>{
+ const f=fixture(t,[web,{...web,domain:'second.vercel.app'}]);f.mutate(s=>s.secondDomain=s.domain);await f.prove();f.mutate(s=>s.secondDomain=s.deployments.new);await f.call('prove',{target:1});
+ await f.check('quick');await f.check('scenario','red');await f.check('scenario','red','old');
+ await f.check('scenario','green','new','browser',1,{target:1});await f.check('quick','unavailable','new','browser',1,{target:1,reason:'second target needs owner',who:'owner by tomorrow',browserAvailable:true});
+ const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.equal(r.targets[0].target,1);assert.match(r.targets[0].reason,/second target needs owner/);assert.equal(r.targets[1].outcome,'выкатили и проверили');assert.match(r.targets[1].reason,/известная/);
+});
+test('attempt2: known red domain check cannot hide its unavailable browser comparison',async t=>{
+ const f=fixture(t);f.mutate(s=>s.health=1);await f.prove();await f.check('quick','red','old');await f.check('scenario');
+ await f.check('quick','unavailable','new','browser',1,{reason:'comparison needs owner',who:'owner by tomorrow',browserAvailable:true});
+ const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.match(r.targets[0].reason,/comparison needs owner/);assert.match(r.targets[0].reason,/owner by tomorrow/);
+});
