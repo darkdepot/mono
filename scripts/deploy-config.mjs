@@ -13,7 +13,10 @@ export function validateDeployConfig(deploy) {
       && !pattern.startsWith('/') && !pattern.split('/').some(part => ['..', '.'].includes(part)) && !/[\\?\[\]{}]/.test(pattern)), 'paths require root-relative patterns with * or **');
     for (const field of { vercel: ['domain', 'team', 'check'], local: ['command', 'check'], none: ['reason'], pack: [] }[target.kind])
       need(text(target[field]), `${target.kind}.${field} required`);
-    if (target.kind === 'vercel') need(/^[a-z0-9.-]+(?::\d+)?$/i.test(target.domain) && /^[a-z0-9_-]+$/i.test(target.team), 'domain and team must be bare names');
+    if (target.kind === 'vercel') {
+      need(/^[a-z0-9.-]+(?::\d+)?$/i.test(target.domain), 'domain must be bare name');
+      need(/^team_[a-z0-9_-]+$/i.test(target.team), 'team must be a Vercel team ID');
+    }
   }
   return deploy;
 }

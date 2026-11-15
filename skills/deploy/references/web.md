@@ -2,8 +2,8 @@
 
 Block: `{"targets":[{"kind":"vercel","paths":["src/**"],"domain":"app.example.com","team":"team_id","check":"node scripts/smoke.mjs"}]}`.
 At most five fields; paths use * and **, omitted means all files. Zeni paths must
-cover its vercel-ignore-build list; mobile gets none with paths/reason. Each
-product session writes its block; Mono only reads other products.
+cover its vercel-ignore-build list; mobile uses none. team is the Vercel team ID
+(team_…), never the slug. Product sessions write blocks; Mono only reads others.
 
 Before AFK merge, open current deployment's own URL in owner's browser with Vercel
 login; pass browserReady:{id,at}, or [{target,id,at}] for multiple targets

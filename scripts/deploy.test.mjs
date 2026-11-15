@@ -41,6 +41,7 @@ if(name==='gh') {
   if(s.advanceOnSnapshot&&!s.advanced){s.clock+=600001;s.advanced=true;}
   const q=a.find(x=>x.startsWith('query='));
   if(q.includes('reviewThreads')) send({data:{repository:{pullRequest:{reviewThreads:conn(s.threads)}}}});
+  if(q.includes('reviews(')) send({data:{repository:{pullRequest:{reviews:s.reviewPages?s.reviewPages[a.some(v=>v.startsWith('after='))?1:0]:conn(s.reviewBodies||s.reviews.map(r=>({...r,commit:{oid:r.commit_id},submittedAt:r.submitted_at,updatedAt:r.updated_at||r.submitted_at})))}}}});
   if(q.includes('node(id:')) {const id=a.find(x=>x.startsWith('id=')).slice(3); send({data:{node:{comments:conn(s.threads.find(t=>t.id===id).comments)}}});}
   if(q.includes('statusCheckRollup')) send({data:{repository:{object:{statusCheckRollup:{contexts:conn(s.checks)}}}}});
   send({data:{repository:{pullRequest:{headRefOid:s.head,state:s.merged?'MERGED':'OPEN',mergeStateStatus:s.mergeState||'CLEAN',mergeable:'MERGEABLE',baseRefName:'main',baseRefOid:s.main,baseRef:null}}}});
@@ -62,7 +63,7 @@ if(name==='vercel') {
  const endpoint=a[1];
  if(endpoint==='/v13/deployments' && a.includes('POST')) { s.retryBody=JSON.parse(fs.readFileSync(a[a.indexOf('--input')+1])); const d={...s.deployments.new,id:'repeated',createdAt:s.clock,readyState:s.repeatState||'READY'}; s.deployments.repeated=d; s.project.latestDeployments=[d]; if(s.repeatDomain) s.domain=d; send(d); }
  if(endpoint.startsWith('/v9/projects/')) {if(s.flagSequence?.length) s.project.autoAssignCustomDomains=s.flagSequence.shift(); send(s.project);}
- if(endpoint.includes('/v13/deployments/probe.vercel.app')) {if(s.unread)fail('login expired'); send(s.domain);}
+ if(endpoint.includes('/v13/deployments/probe.vercel.app')) {if(s.unread)fail('login expired'); if(s.originalOnDomain&&s.retryBody)s.domain=s.deployments.new; send(s.domain);}
  if(endpoint.includes('/v13/deployments/second.vercel.app')) send(s.secondDomain);
  const id=endpoint.split('/').at(-1); if(s.deployments[id]) send(s.deployments[id]);
  fail('unexpected vercel '+JSON.stringify(a));
@@ -346,4 +347,39 @@ test('attempt2: known red domain check cannot hide its unavailable browser compa
  const f=fixture(t);f.mutate(s=>s.health=1);await f.prove();await f.check('quick','red','old');await f.check('scenario');
  await f.check('quick','unavailable','new','browser',1,{reason:'comparison needs owner',who:'owner by tomorrow',browserAvailable:true});
  const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.match(r.targets[0].reason,/comparison needs owner/);assert.match(r.targets[0].reason,/owner by tomorrow/);
+});
+
+test('round1-a2: fresh rollback refuses a different live build before any action',async t=>{
+ const f=fixture(t);await f.badNew();f.mutate(s=>s.domain={...s.deployments.new,id:'unrelated'});const r=await f.call('rollback');assert.equal(r.state,'stopped');assert.equal(r.outcome,null);assert.match(r.reason,/production.*changed/i);assert.equal(f.read().calls.some(c=>c[1]==='rollback'),false);assert.equal(fs.existsSync(f.rbFile()),false);
+});
+for(const kind of ['web','local'])test(`round1-a2: outcome refuses stale ${kind} version proof`,async t=>{
+ const f=fixture(t,kind==='web'?[web]:[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);
+ if(kind==='web'){await f.prove();await f.check('quick');await f.check('scenario');f.mutate(s=>s.domain=s.deployments.old);}
+ else{await f.call('merge');await f.call('local');await f.call('check',{kind:'scenario',result:'green',id:M,surface:'local',attempt:1});f.mutate(s=>s.local.processCommit=OLD);}
+ await assert.rejects(f.call('outcome'),/current.*version|production.*changed/i);assert.equal(f.savedRun().closedAt,undefined);
+});
+for(const files of [null,Array.from({length:300},(_,i)=>({filename:`docs/${i}.md`}))])test(`round1-a2: incomplete compare ${files?'at cap':'missing files'} cannot authorize repeat`,async t=>{
+ const f=fixture(t);await f.call('merge');f.mutate(s=>{s.main=F;s.comparisons[`${M}...${F}`]={status:'ahead',...(files?{files}:{})};});const r=await f.call('prove');assert.equal(r.state,'stopped');assert.match(r.reason,/comparison.*incomplete/i);assert.equal(f.read().calls.some(c=>c.includes('POST')),false);
+});
+test('round1-a2: repeated build still building cannot hide original now on domain',async t=>{
+ const f=fixture(t);await f.call('merge');f.mutate(s=>{s.repeatState='BUILDING';s.originalOnDomain=true;});const r=await f.call('prove');assert.equal(r.state,'proven');assert.equal(r.id,'new');assert.ok(f.read().clock<T+600000);assert.equal(f.read().calls.filter(c=>c.includes('POST')).length,1);
+});
+test('round1-a2: review body edited after Ship is blocked with GraphQL update time',async t=>{
+ const f=fixture(t);f.mutate(s=>s.reviewBodies=[{id:'review',body:'new concern',commit:{oid:H},submittedAt:new Date(T-5000).toISOString(),updatedAt:new Date(T+1).toISOString()}]);await assert.rejects(f.call('merge'),/new remarks/);assert.equal(f.read().merged,false);
+});
+for(const discrepancy of [false,true])test(`round1-a2: ${discrepancy?'discrepancy':'normal'} outcome preserves every unavailable reason and checker`,async t=>{
+ const f=fixture(t);if(discrepancy)f.mutate(s=>s.health=1);await f.prove();await f.check('quick',discrepancy?'green':'unavailable','new','browser',1,{reason:'quick needs owner',who:'quick checker tomorrow',browserAvailable:true});await f.check('scenario','unavailable','new','browser',1,{reason:'scenario needs owner',who:'scenario checker tomorrow',browserAvailable:true});const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.match(r.targets[0].reason,/scenario needs owner/);assert.match(r.targets[0].reason,/scenario checker tomorrow/);if(!discrepancy){assert.match(r.targets[0].reason,/quick needs owner/);assert.match(r.targets[0].reason,/quick checker tomorrow/);}
+});
+test('round1-a2: team slug is rejected before external calls',async t=>{
+ const f=fixture(t,[{...web,team:'darkdepot'}]);await assert.rejects(f.call('merge'),/team.*ID/i);assert.equal(f.read().calls.length,0);
+});
+test('round1-a2: installed pack belongs to separate release run, ordinary closed run stays awaiting release',async t=>{
+ const f=fixture(t,[{kind:'pack'}]);await f.call('merge');assert.equal((await f.call('outcome')).outcome,'влито, ждёт выпуска');assert.equal((await f.call('outcome',{packResult:{outcome:'installed',places:[]}})).outcome,'влито, ждёт выпуска');
+});
+test('round1-a2: review update on second page blocks merge; missing update time fails closed',async t=>{
+ const f=fixture(t);f.mutate(s=>s.reviewPages=[{nodes:[],pageInfo:{hasNextPage:true,endCursor:'next'}},connection([{id:'review2',body:'edited concern',updatedAt:new Date(T+1).toISOString(),submittedAt:new Date(T-5000).toISOString(),commit:{oid:H}}])]);await assert.rejects(f.call('merge'),/new remarks/);assert.equal(f.read().merged,false);assert.equal(f.read().calls.filter(c=>c.includes('after=next')).length,1);
+ f.mutate(s=>{delete s.reviewPages;s.reviewBodies=[{id:'review',body:'unknown edit time',submittedAt:new Date(T-5000).toISOString()}];});await assert.rejects(f.call('merge'),/updatedAt missing/);assert.equal(f.read().merged,false);
+});
+test('round1-a2: failed live domain read at outcome cannot reuse prior green proof',async t=>{
+ const f=fixture(t);await f.prove();await f.check('quick');await f.check('scenario');f.mutate(s=>s.unread=true);const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.equal(r.targets[0].versionProven,false);assert.equal(r.projectUpdateAllowed,false);assert.match(r.targets[0].reason,/На проде подтвердить не смог/);
 });

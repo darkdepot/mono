@@ -30,10 +30,10 @@ const filesIn = directory => fs.existsSync(directory) ? fs.readdirSync(directory
 
 // Only the latest Ship publication on this head is the boundary. Resolved replies
 // and Ship's own publications are deliberately excluded from new remarks.
-export function afterShip({ snapshot, issueComments, reviewComments, pr }, head) {
+export function afterShip({ snapshot, issueComments, reviewComments, pr, reviewBodies = snapshot.reviews }, head) {
   const body = authorPart(pr.body);
   const bodyPublication = body?.head === head && body.publishedAt ? { ...pr, updated_at: body.publishedAt } : null;
-  const publications = [bodyPublication, ...issueComments, ...snapshot.reviews, ...reviewComments,
+  const publications = [bodyPublication, ...issueComments, ...reviewBodies, ...reviewComments,
     ...snapshot.threads.flatMap(thread => thread.comments)].filter(Boolean);
   const onHead = comment => comment.body?.includes(SHIP_MARKER) &&
     (comment.commit_id === head || comment.body.includes(head));
@@ -42,7 +42,7 @@ export function afterShip({ snapshot, issueComments, reviewComments, pr }, head)
   need(Number.isFinite(boundary), 'latest Ship publication time missing; republish Ship body');
   need(snapshot.threads.every(thread => thread.isResolved === true), 'unresolved review thread');
   const threadComments = new Set(snapshot.threads.flatMap(thread => thread.comments.map(comment => comment.id)));
-  const comments = [...issueComments, ...snapshot.reviews, ...reviewComments.filter(comment => !threadComments.has(comment.node_id))];
+  const comments = [...issueComments, ...reviewBodies, ...reviewComments.filter(comment => !threadComments.has(comment.node_id))];
   if (pr.body && !pr.body.includes(SHIP_MARKER)) comments.push(pr);
   return comments.filter(comment => comment.body?.trim() && !comment.body.includes(SHIP_MARKER) && time(comment) > boundary);
 }
@@ -183,7 +183,7 @@ export async function runDeploy(command, request, clock = {}) {
         need(snapshot.head === request.head && snapshot.state === 'OPEN', 'head changed; back to Ship');
         need(snapshot.mergeStateStatus === 'CLEAN' && pr.mergeable_state === 'clean', 'merge state is not clean');
         need(snapshot.checks.every(check => check.head === request.head && (check.__typename === 'StatusContext' ? check.state === 'SUCCESS' : check.status === 'COMPLETED' && ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion))), 'checks unfinished or red');
-        need(!afterShip({ snapshot, ...readPrPublications(request.repo, binding.pr) }, request.head).length, 'new remarks after Ship');
+        need(!afterShip({ snapshot, ...readPrPublications(request.repo, binding.pr, { includeReviews: true }) }, request.head).length, 'new remarks after Ship');
         requireQaPassed({ root: request.root, config, issue: request.issue, head: request.head, shipCertificate: certificate });
         if (config.landing?.validation) {
           const tip = gh(`repos/${request.repo}/commits/main`).sha;
@@ -231,12 +231,17 @@ export async function runDeploy(command, request, clock = {}) {
       const main = gh(`repos/${run.repo}/commits/main`).sha;
       if (main !== run.merge) {
         const comparison = gh(`repos/${run.repo}/compare/${run.merge}...${main}`);
+        need(Array.isArray(comparison.files) && comparison.files.length < 300, 'main comparison incomplete; no repeat');
         if (!['ahead', 'identical'].includes(comparison.status) || affected(target.recipe, (comparison.files ?? []).flatMap(file => [file.filename, file.previous_filename].filter(Boolean)))) return false;
       }
       const p = project(target);
       need(p.link?.repoId && p.id && p.name, 'project GitHub repoId required for repeat');
       await intent('retry', 'repeat', run.merge, async recorded => {
         try {
+          if (!rollback(target)) {
+            const current = domain(target);
+            if (ready(current) && follows(run.merge, commit(current))) return { state: 'occurred', value: { id: current.id, at: recorded.at } };
+          }
           const d = deploymentFor(target);
           // Project latestDeployments is a summary, not an authoritative negative
           // receipt. An interrupted POST with no visible build stays unknown.
@@ -330,6 +335,10 @@ export async function runDeploy(command, request, clock = {}) {
       need(failing.length, 'rollback requires browser red twice on new and green on recorded rollback target');
       try {
         const before = target.rollbackFrom ?? target.proof;
+        if (!run.intents[`${target.key}:rollback`]) {
+          const current = domain(target);
+          need(ready(current) && current.id === before.id, 'production version changed; refuse rollback');
+        }
         target.rollbackFrom = before; persist(); await webAction('rollback', target.baseline);
         health(target); await flagMatches(target, false);
         save(rollbackFile(target), { head: run.head, issue: request.repairIssue ?? null, rollback: target.baseline, before, phase: 'rolled-back', fix: null });
@@ -417,6 +426,16 @@ export async function runDeploy(command, request, clock = {}) {
         let outcome, reason;
         const activeRollback = rollback(t);
         if (activeRollback?.fix?.head === run.head && !t.returned) return stopped('repair awaits verified return', t);
+        if (t.proof && !t.rolledBack && !t.failed && t.recipe.kind === 'vercel') {
+          let current;
+          try { current = domain(t); delete t.unread; } catch (error) { t.unread = error.message; }
+          if (current) need(ready(current) && current.id === t.proof.id, 'current production version changed; rerun prove');
+          persist();
+        }
+        if (t.proof && !t.rolledBack && t.recipe.kind === 'local') {
+          const current = JSON.parse(cli('sh', ['-c', `${t.recipe.command} status`], { cwd: request.worktree }));
+          need(current.copyCommit === t.proof.copyCommit && current.processCommit === t.proof.id && stamp(current.startedAt) === stamp(t.proof.startedAt) && !current.installing && !current.restoring, 'current local version changed; rerun local');
+        }
         if (t.rolledBack) outcome = order[0];
         else if (t.failed) outcome = order[1];
         else if (t.recipe.kind === 'pack') {
@@ -442,6 +461,7 @@ export async function runDeploy(command, request, clock = {}) {
           need(scenario, 'task scenario result or explicit unavailable reason/checker must be recorded');
           const checkFor = kind => kind === 'scenario' ? scenario : latest(t, t.proof.id, surface, 'quick');
           const reds = ['quick', 'scenario'].filter(kind => checkFor(kind)?.result === 'red' || latest(t, t.proof.id, surface, kind)?.result === 'red' || (t.recipe.kind === 'vercel' && latest(t, t.proof.id, 'browser', kind)?.result === 'red'));
+          const unavailable = [...new Set(['quick', 'scenario'].flatMap(kind => [checkFor(kind), latest(t, t.proof.id, surface, kind), latest(t, t.proof.id, 'browser', kind)]))].filter(check => check?.result === 'unavailable');
           const discrepancy = reds.length && reds.every(kind => latest(t, t.proof.id, 'browser', kind)?.result === 'green');
           const known = reds.length && reds.every(kind => latest(t, t.baseline.id, 'browser', kind)?.result === 'red');
           if (discrepancy) { // S19 is the explicit U5 exception; preserve the red domain result.
@@ -450,19 +470,16 @@ export async function runDeploy(command, request, clock = {}) {
             const otherKinds = ['quick', 'scenario'].filter(kind => !reds.includes(kind));
             const remaining = otherKinds.flatMap(kind => kind === 'quick' && t.recipe.kind === 'vercel' ? [checkFor(kind), latest(t, t.proof.id, 'browser', kind)] : [checkFor(kind)]);
             need(remaining.every(Boolean), 'remaining scenario/check must be recorded');
-            const unavailable = [...new Set([...remaining, ...['quick', 'scenario'].map(kind => latest(t, t.proof.id, 'browser', kind))])].filter(check => check?.result === 'unavailable');
             outcome = remaining.every(check => check.result === 'green') && !unavailable.length ? order[4] : order[2];
             reason = 'известная поломка на прошлой сборке'; followup(t, reason);
-            for (const check of unavailable) reason += `; ${check.reason}; проверит ${check.who}`;
           }
           else {
             need(!reds.length, 'red check unresolved; compare in browser before outcome');
-            const unavailable = [scenario, latest(t, t.proof.id, 'browser', 'quick')].find(c => c?.result === 'unavailable');
             const checked = scenario.result === 'green' && checkFor('quick')?.result === 'green' && (scenario.surface !== 'browser' || latest(t, t.proof.id, 'browser', 'quick')?.result === 'green');
-            need(checked || unavailable, 'scenario result or unavailable reason/checker must be recorded');
-            outcome = checked ? order[4] : order[2];
-            reason = unavailable ? `${unavailable.reason}; проверит ${unavailable.who}` : outcome === order[2] ? 'сценарий задачи ещё не проверен; модель должна назвать проверяющего и дату' : null;
+            need(checked || unavailable.length, 'scenario result or unavailable reason/checker must be recorded');
+            outcome = checked && !unavailable.length ? order[4] : order[2];
           }
+          if (unavailable.length) reason = [reason, ...unavailable.map(check => `${check.reason}; проверит ${check.who}`)].filter(Boolean).join('; ');
         }
         rows.push({ target: t.index, outcome, reason, versionProven: !!t.proof && !t.unread, proof: t.proof?.id });
       }

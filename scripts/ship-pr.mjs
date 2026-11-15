@@ -50,10 +50,28 @@ export function unpushedSecrets(worktree, remote) {
 }
 const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 120_000 }).trim();
 const ghJson = (...args) => JSON.parse(gh(...args) || 'null');
-export function readPrPublications(repo, number) {
+export function readPrPublications(repo, number, { includeReviews = false } = {}) {
+  let reviewBodies;
+  if (includeReviews) {
+    reviewBodies = [];
+    const [owner, name] = repo.split('/');
+    let cursor = null;
+    do {
+      const query = 'query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviews(first:100,after:$after){nodes{id body submittedAt updatedAt commit{oid}} pageInfo{hasNextPage endCursor}}}}}';
+      const data = ghJson('api', 'graphql', '-f', `query=${query}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${number}`, ...(cursor ? ['-f', `after=${cursor}`] : []));
+      const page = data.data?.repository?.pullRequest?.reviews;
+      requireThat(Array.isArray(page?.nodes) && typeof page.pageInfo?.hasNextPage === 'boolean', 'PR review update times unavailable');
+      for (const review of page.nodes) {
+        requireThat(review && Number.isFinite(Date.parse(review.updatedAt)), 'PR review updatedAt missing');
+        reviewBodies.push({ ...review, commit_id: review.commit?.oid, submitted_at: review.submittedAt });
+      }
+      cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+      requireThat(!page.pageInfo.hasNextPage || cursor, 'PR reviews pagination cursor missing');
+    } while (cursor);
+  }
   return { issueComments: ghJson('api', '--paginate', '--slurp', `repos/${repo}/issues/${number}/comments`).flat(),
     reviewComments: ghJson('api', '--paginate', '--slurp', `repos/${repo}/pulls/${number}/comments`).flat(),
-    pr: ghJson('api', `repos/${repo}/pulls/${number}`) };
+    pr: ghJson('api', `repos/${repo}/pulls/${number}`), ...(includeReviews ? { reviewBodies } : {}) };
 }
 // Where GitHub push protection is on, GitHub is the check; elsewhere (or unreadable) Ship scans first.
 // GitHub protection counts only when the remote really pushes to that repository.

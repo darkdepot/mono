@@ -17,6 +17,7 @@ test('deploy config is opt-in, strict per target, and legacy approval is ignored
   const vercel = { kind: 'vercel', paths: ['src/**', '*.json'], domain: 'example.vercel.app', team: 'team_x', check: 'node smoke.mjs' };
   const valid = [undefined, { targets: [{ kind: 'pack' }] }, { targets: [vercel, { kind: 'local', command: 'node local.mjs', check: 'node health.mjs' }, { kind: 'none', paths: ['mobile/**'], reason: 'мобильное Deploy пока не смотрит' }] }];
   const invalid = [null, {}, { targets: [] }, { targets: [{ kind: 'pack', approval: true }] }, { targets: [{ ...vercel, sixth: true }] }, { targets: [{ ...vercel, check: '' }] }, { targets: [{ kind: 'local', command: 'install' }] }, { targets: [{ kind: 'none' }] }, { targets: [{ ...vercel, paths: ['../private/**'] }] }, { targets: [{ ...vercel, paths: ['src/[a]'] }] }, { targets: [{ kind: 'unknown' }] }, { targets: [{ kind: 'pack' }], approve: true }];
+  invalid.push({ targets: [{ ...vercel, team: 'darkdepot' }] });
   for (const [values, expected] of [[invalid, 1], [valid, 0]]) for (const deploy of values) {
     if (deploy === undefined) delete config.deploy; else config.deploy = deploy;
     fs.writeFileSync(path.join(root, '.agents/mono-workflow.config.json'), JSON.stringify(config));

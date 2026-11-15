@@ -1007,7 +1007,7 @@ its own orchestrator's responsibility.
 
 The product session owns `.agents/mono-workflow.config.json`. Configure `deploy`
 as `{ "targets": [...] }`; no block means no merge. Targets: `vercel` has paths,
-domain, team, check; `local` has paths, command, check; `pack` has only kind;
+domain, team (Vercel team ID, never a slug), check; `local` has paths, command, check; `pack` has only kind;
 `none` has paths/reason. Unknown fields and a sixth field fail. Paths are root
 relative * / ** globs; omitted means all files. See the [web](skills/deploy/references/web.md),
 [local](skills/deploy/references/local.md) and [pack](skills/deploy/references/pack.md)
@@ -1021,10 +1021,15 @@ pre-merge rollback target and action intentions with read-backs, and uses raw PR
 publications after the latest Ship marker on the same head. QA beforeMerge and
 landing tip remain merge gates. It never uses auto-merge. Manual pack PRs without
 registry attempts skip landing-drain record. CLI calls are bounded at 120 seconds.
+Before an issue-only merge, Deploy rereads the current body, marker, label and
+approved whole-body fingerprint; changed or revoked approval stops the merge (K-21).
+Review body edit times come from GraphQL. Before rollback or a final outcome,
+the live build/process must still match the recorded checks; a mismatch stops.
 
 Web proof reads the domain every 20 seconds, waits 10 minutes from merged_at,
 repeats once with GitHub repoId, waits 10 more. New touched main changes prevent
-old-code repeat. Browser checks of protected own URLs use the owner's Vercel
+old-code repeat; a missing or capped compare file list cannot authorize it. Domain
+reads continue while a repeat builds. Browser checks of protected own URLs use the owner's Vercel
 login and the same quick-check signs plus Issue scenario. Night web needs a fresh
 browser-ready mark BEFORE merge; without it, wait until morning. Red domain/green
 own URL retains the red, creates a discrepancy Issue and remains unverified.
@@ -1035,6 +1040,8 @@ morning. No browser: Stop/open run/no outcome; do not mint bypass secrets.
 
 Five outcomes worst first: rolled back; deployment failed/production old; deployed
 unverified; merged awaiting release; deployed verified. No targets means no outcome.
+Every unavailable check keeps its reason/checker. Installer JSON belongs to the
+separate release PR's run; closed ordinary pack PR runs keep their waiting outcome.
 Owner lines and Issue closeout use [output](skills/deploy/references/output.md);
 project update only for proven delivery uses its short [rule](skills/deploy/references/project-update.md).
 Deploy's entire reading union is capped at **13,000 bytes** by read-budget.mjs.

@@ -5,9 +5,9 @@ description: Use after green mono:ship, or when asked «выкати» / «вы�
 
 # Mono Deploy
 
-Use the product instructions already loaded for this session.
+Use product instructions already loaded.
 Run in the product's session, owner or orchestrator. Never in a delivery worker.
-Linear writes belong to this session; scripts decide from observed facts.
+Session owns Linear writes; scripts decide from facts.
 No messages to people, live sends, production data writes or new bypass secrets.
 
 Read first:
@@ -23,10 +23,12 @@ Read when:
 
 ## Run
 
-1. Recover current green Ship certificate; changed head returns to mono:ship.
-   Owner approves this product's block once; Mono alone may use delegated package
-   approval with its reason. No block: no merge.
-   Legacy workflows.deploy / deployApproval are ignored.
+1. Recover green Ship for current head; changed head returns to mono:ship.
+   Before issue-only merge, reread live Issue/marker/label; verify its whole-body
+   fingerprint against approval (../../references/issue-only-lane.md); changed or
+   revoked approval: stop.
+   Product block needs owner yes; Mono may use delegated package approval/reason.
+   No block: no merge; ignore legacy workflows.deploy / deployApproval.
 2. Request JSON outside checkout: absolute root/config/worktree, repo, issue, head,
    certificate (full text); root is existing product state root. Run
    `node <pack-root>/scripts/deploy.mjs merge --request <file>`.
@@ -45,5 +47,5 @@ Read when:
    repair only while rolled back; no second failed repair at night. Retire delivered
    worker through orchestrator after closeout. No new registry.
    After creating repair Issue, bind repairIssue via rollback, even on a closed run.
-6. Show exact owner lines in product terms, no commit/build identifiers. Project
-   update only when result actually reached people.
+6. Show exact owner lines in product terms, no commit/build identifiers.
+   Project update only after proven delivery.
