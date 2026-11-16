@@ -15,6 +15,7 @@
     "deploy": "gh merge, then landing-guard check on the merge SHA; install once per wave, after the release task: landing-drain record/status/verify, version tag on the landing tip, plugin update in Claude Code and Codex per references/install.md, installed version equals VERSION at the tip, landing-drain close (skill-pack delivery)"
   },
   "deployApproval": "risky-only",
+  "deploy": {"targets": [{"kind": "pack"}]},
   "prerequisites": {
     "autoreviewHelper": true
   },

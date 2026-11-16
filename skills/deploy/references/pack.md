@@ -5,7 +5,7 @@ Block exactly `{"targets":[{"kind":"pack"}]}`. Ordinary PR merge/outcome:
 registered attempt never calls landing-drain record.
 
 Separate approved release PR assembles changelog, version, plugin manifests and
-upgrade steps. New Deploy installs by preceding path; NEXT release uses pack-install.
+upgrade steps. Every release installs with `pack-install.mjs`.
 Mono writes its block on main first; other products own their configs/copies.
 
 Wave: landing-drain verify → `node <pack-root>/scripts/pack-install.mjs` → close.
