@@ -7,6 +7,6 @@
     "model_parameter": "claude-opus-5",
     "effort_parameter": "high"
   },
-  "settingsFile": "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/managed-settings/MONO-322-a2.json",
-  "log": "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/logs/MONO-322-mono-deliver-a2.jsonl"
+  "settingsFile": "/Users/owner/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/managed-settings/MONO-322-a2.json",
+  "log": "/Users/owner/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/logs/MONO-322-mono-deliver-a2.jsonl"
 }

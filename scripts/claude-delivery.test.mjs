@@ -264,17 +264,33 @@ const probeSession = attempt => {
   return { entry, events };
 };
 
-test("recorded Claude PR probe preserves raw inputs and passes transport startup identity", () => {
+test("recorded Claude PR probe preserves redacted inputs and passes transport startup identity", () => {
   const manifest = probeJson("provenance.json");
   assert.equal(manifest.claudeCodeVersion, "2.1.316");
   assert.equal(manifest.packVersion, "0.42.0");
+  assert.deepEqual(manifest.redaction, {
+    homeDirectory: "/Users/owner",
+    claudeProjectDirectoryPrefix: "-Users-owner-",
+    environmentUser: "owner",
+    environmentLogname: "owner",
+    githubLogin: "owner",
+    githubUserId: 1000000,
+    githubNodeId: "U_owner",
+    githubProfileName: "Owner",
+    hostTemporaryDirectory: "/tmp/mono-322-probe-inputs"
+  });
+  const sourceHashes = [
+    "0c3f8960d81f2549fd9025f5687b4cc182643277d945ef88db1e22eac813cad3",
+    "b592e4b7ee68968fb02ed0b895fcd0efaaaf080e4a20372c58136e2a5f9f696f"
+  ];
+  assert.deepEqual(manifest.files.filter(file => file.path.endsWith(".jsonl")).map(file => file.sourceSha256), sourceHashes);
   for (const file of manifest.files) {
     const bytes = fs.readFileSync(new URL(file.path, probeRoot));
     assert.equal(createHash("sha256").update(bytes).digest("hex"), file.sha256, file.path);
     if (file.sourceSha256) {
-      assert.match(file.normalization, /one leading LF only/);
+      assert.match(file.normalization, /Removed one leading LF/);
+      assert.match(file.normalization, /applied the redaction table/);
       assert.equal(bytes[0], 123, "journal starts with a JSON object, not an empty line");
-      assert.equal(createHash("sha256").update(Buffer.concat([Buffer.from("\n"), bytes])).digest("hex"), file.sourceSha256);
     }
   }
   for (const attempt of [1, 2]) {
@@ -294,6 +310,28 @@ test("recorded Claude PR probe preserves raw inputs and passes transport startup
     const init = events.find(event => event.type === "system" && event.subtype === "init");
     assert.throws(() => transport.startupEvent({ ...init, permissionMode: "bypassPermissions" }, entry, {}), /permission mode/);
   }
+});
+
+test("recorded Claude PR probe removes owner values across the entire archive", () => {
+  for (const name of fs.readdirSync(probeRoot, { recursive: true })) {
+    const file = new URL(name, probeRoot);
+    if (fs.statSync(file).isFile()) {
+      assert.doesNotMatch(fs.readFileSync(file, "utf8"), /sasha|225361662|U_kgDODW6-_g|\/private\/var\/folders\//i, name);
+    }
+  }
+  for (const attempt of [1, 2]) {
+    const env = probeJson(`attempt-${attempt}/launch/environment-redacted.json`);
+    assert.equal(env.HOME, "/Users/owner");
+    assert.equal(env.USER, "owner");
+    assert.equal(env.LOGNAME, "owner");
+  }
+  const user = probeJson("attempt-2/session-out/01-line-comment.json").user;
+  assert.equal(user.login, "owner");
+  assert.equal(user.id, 1000000);
+  assert.equal(user.node_id, "U_owner");
+  assert.equal(user.url, "https://api.github.com/users/owner");
+  assert.equal(user.html_url, "https://github.com/owner");
+  assert.match(user.avatar_url, /^https:\/\/avatars\.githubusercontent\.com\/u\/1000000\?/);
 });
 
 test("recorded PR reply is submitted, resolved and independently read back; bot mention persists", () => {

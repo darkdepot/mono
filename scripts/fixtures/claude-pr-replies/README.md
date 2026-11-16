@@ -2,9 +2,20 @@
 
 Host inputs supplied for MONO-322, 2026-11-04, Claude Code 2.1.316, installed
 Mono 0.42.0. Temporary draft: https://github.com/darkdepot/mono/pull/244.
-`provenance.json` records SHA-256 digests. Journals omit one leading empty line
-to avoid watcher contamination warnings; source hashes and the exact transformation
-are recorded. Other supplied files remain byte-identical.
+`provenance.json` records SHA-256 digests of the files after redaction. Journals
+omit one leading empty line to avoid watcher contamination warnings; their
+`sourceSha256` values retain the original supplied-file fingerprints and cannot
+be reconstructed from the redacted bytes. Each journal's `normalization` records
+both transformations.
+
+One replacement table applies throughout this directory, including JSON strings
+inside journals. The manifest's `redaction` field lists the replacement classes
+and placeholders without retaining the original values: home and Claude project
+paths, environment user names, GitHub login, user id, user node id and profile
+name, and the host temporary directory prefix. Path suffixes are preserved.
+Repository and PR identity, versions, comment/review/thread/session ids, run ids,
+timestamps and comment bodies remain unchanged. JSON keys, types and order are
+preserved, so recorded startup and reply relationships can still be replayed.
 No model or GitHub calls run when these fixtures are replayed.
 
 `attempt-1` retains the real compound Bash write denial and Claude's explicit
@@ -21,7 +32,8 @@ policy, storing responses through Write. It created a line comment, posted a rep
 read its review back as `COMMENTED`, resolved the thread and posted
 `@greptileai review` in the PR conversation. Launch files retain settings, arguments,
 redacted environment, prepare result and successful startup check. Journals retain
-the exact calls, errors, results and process/startup identities, including Claude's
+the calls, errors, results and process/startup identities with the same redaction,
+including Claude's
 foreground `system/task_started` / `system/task_notification` events.
 
 GitHub response map for T2:
@@ -43,6 +55,5 @@ review. No PENDING response or GitHub permission-error response was observed;
 tests must label mutations of these shapes synthetic, never live evidence.
 
 Omitted supplied files: token-user profile response, duplicate call summaries,
-prompts/launcher and redundant host reads. The full read-only input directory was
-`/private/var/folders/dw/fc6_vlfn7g3_hbw1fhbqxd9h0000gn/T/mono-322-probe-inputs`.
+prompts/launcher and redundant host reads. The host input directory is omitted.
 Current live agreement with GitHub remains an orchestrator check before merge.
