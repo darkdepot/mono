@@ -7,6 +7,25 @@ import { spawnSync } from 'node:child_process';
 import * as runtime from './runtime.mjs';
 
 const risks = ['tiny', 'standard', 'deep', 'risky', 'riskyCritical'];
+test('deploy config is opt-in, strict per target, and legacy approval is ignored', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-deploy-config-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, '.agents'));
+  const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+  delete config.workflows.deploy;
+  config.deployApproval = 'obsolete and ignored';
+  const vercel = { kind: 'vercel', paths: ['src/**', '*.json'], domain: 'example.vercel.app', team: 'team_x', check: 'node smoke.mjs' };
+  const valid = [undefined, { targets: [{ kind: 'pack' }] }, { targets: [vercel, { kind: 'local', command: 'node local.mjs', check: 'node health.mjs' }, { kind: 'none', paths: ['mobile/**'], reason: 'мобильное Deploy пока не смотрит' }] }];
+  const invalid = [null, {}, { targets: [] }, { targets: [{ kind: 'pack', approval: true }] }, { targets: [{ ...vercel, sixth: true }] }, { targets: [{ ...vercel, check: '' }] }, { targets: [{ kind: 'local', command: 'install' }] }, { targets: [{ kind: 'none' }] }, { targets: [{ ...vercel, paths: ['../private/**'] }] }, { targets: [{ ...vercel, paths: ['src/[a]'] }] }, { targets: [{ kind: 'unknown' }] }, { targets: [{ kind: 'pack' }], approve: true }];
+  invalid.push({ targets: [{ ...vercel, team: 'darkdepot' }] });
+  for (const [values, expected] of [[invalid, 1], [valid, 0]]) for (const deploy of values) {
+    if (deploy === undefined) delete config.deploy; else config.deploy = deploy;
+    fs.writeFileSync(path.join(root, '.agents/mono-workflow.config.json'), JSON.stringify(config));
+    const result = spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
+    assert.equal(result.status, expected, `${JSON.stringify(deploy)}: ${result.stderr}`);
+    if (expected) assert.match(result.stderr, /deploy:/);
+  }
+});
 test('design config accepts paper/wonder or omitted tool and rejects unsupported values clearly', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-design-config-'));
   try {
@@ -283,7 +302,7 @@ test('non-model token settings remain valid through CLI and BASE role resolution
     const file = path.join(root, '.agents/mono-workflow.config.json');
     const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
     config.orchestration.maxTokens = 512000;
-    config.deploy = { tokenEnv: 'DEPLOY_TOKEN' };
+    config.deliverySecrets = { tokenEnv: 'DEPLOY_TOKEN' };
     const check = () => spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
     for (const models of [undefined, { roles: {} }]) {
       if (models === undefined) delete config.models; else config.models = models;

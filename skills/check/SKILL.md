@@ -17,7 +17,7 @@ description: Используй mono:check перед переходом к сл
 
 Прочитай, когда:
 - `references/before-work.md` — режимы `idea`, `discovery`, `design`, `tech`, `handoff`, `repair`.
-- `references/delivery.md` — режимы `delivery`, `issue`, `pre-ship`, `post-ship`, `project-config`; для `delivery` по проекту ещё `references/before-work.md`.
+- `references/delivery.md` — режимы `delivery`, `issue`, `pre-ship`, `project-config`; для `delivery` по проекту ещё `references/before-work.md`.
 - `<корень>/references/execution-quality.md` — проверяемое включает diff, реализацию или доказательства проверки.
 - `<корень>/references/human-friendly-output.md` — вердикт видит человек или он уходит текстом в Linear.
 - `<корень>/references/artifact-rules.md` — проверяемое включает тело артефакта Linear или комментарий для Linear.
@@ -39,7 +39,6 @@ description: Используй mono:check перед переходом к сл
 - `handoff`
 - `design`
 - `pre-ship`
-- `post-ship`
 - `project-config`
 - `repair`
 

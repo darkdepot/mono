@@ -229,18 +229,18 @@ Discovery без второй остановки.
 Раздел ещё не выпускался — только песочница задачи и служебная строка «нет
 выпущенной основы», без страницы и выдуманного коммита. Сверка только с выпущенными
 соседями, если они есть; итог — «раздел ещё не выпущен, сверять не с чем».
-Страницу заводит Live QA Deploy после первого выпуска по экранам, как на проде.
+Страницу заводит Design при следующем входе после первого подтверждённого выпуска.
 
 До показа агент снимает страницу раздела и сверяет соседние экраны и состояния;
 расхождения входят в итог. Главный инструмент недоступен — «не сверено» с причиной,
-показ продолжается. Утверждение главный файл не меняет. После выпуска Live QA
-Deploy заменяет только затронутые экраны по живому продукту, записывает дату,
+показ продолжается. Утверждение главный файл не меняет. При следующем входе после
+выпуска Design заменяет только затронутые экраны по живому продукту, записывает дату,
 версию и отличия от утверждённых PNG. Непроверенные соседние изменения не дают
 продвинуть проверенный коммит или снять старую отметку. Нет инструмента либо
 обновление не удалось — сообщение и «раздел устарел после выпуска <дата>»;
 итог выпуска сохраняется. Служебные строки пишутся без согласия, правила вкуса
-по-прежнему только дизайнером с согласия. Живой Deploy-путь проверит первая
-задача после выпуска; сценарии Design его не покрывают.
+по-прежнему только дизайнером с согласия. Синхронизация принадлежит Design;
+Deploy поставляет доказательство доставки, но главный файл не обновляет.
 
 Утверждение связывает `canvas` (HTTPS-ссылку на макет), `tool=paper|wonder`,
 неизменяемую папку PNG и версию PRD. Старое `paper=` без новых полей читается
@@ -344,8 +344,8 @@ raw idea → recorded owner approval → Project in Idea → owner or delegated 
 6. **Package.** `mono:handoff` reconciles the Brief with approved inputs before recording, reviews and records the package and execution Issues, checks each and sets Ready before its final summary, position and start question. Work starts only on agreement to that question or explicit owner words; delegation needs an explicit request.
 7. **Start.** `mono:implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
 8. **Implement and prepare.** `mono:deliver` sequences `mono:implement`, `mono:preflight`, and `mono:ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, commit, and pass the collection's review round (`clean` or `clean-with-successors`, at most three rounds) and verification. Record the ready certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory. The collector auto-confirms empty and collection queues, including carried confirmed writes. New connector writes in a collection queue require present observations in the active report session before collection. Start facts live in the code report; the Russian ready-certificate comment retains its machine block. Review runs only in the external collection on a committed head, for every transport; managed Claude Code's ready certificate also names its stop/resume startup. Preserve phase ownership.
-9. **Ship to green.** Preflight opens the PR as a draft at its first collection request (`scripts/ship-pr.mjs open`, secrets checked before every push where GitHub push protection is off) and feeds the bot remarks, failed CI checks and owner instructions it fixed into the next review round (`prRemarks`), where they close only when the checker verifies the fix. Ship writes the description for people in Russian from `templates/pr-body.md` (`ship-pr.mjs body`, rewritten after every round: the author's part between Ship's markers names its head, a bot's block outside them is kept, and Ship itself writes the «Проверки» line in which only finished successful checks are «прошли»), synchronizes accepted drift, settles every other remark and checks every statement of the description through a read-only pass (`ship-pr.mjs check --pr`; a second disagreement in a row stops Ship), leaves draft (`ship-pr.mjs ready`) only with a clean receipt on the head, no failed CI and a description that passes the form check (required sections, up to 400 visible words, the task link, written for this head), and confirms the Linear status/link. A late remark that needs a fix returns the PR to draft and parks not-converged. Ship speaks Russian to the owner: one to three product lines above the certificate name the attempt, the review rounds spent of three and the wait out of its limit. Run by hand in the owner's session, Ship needs a branch with a ready Linear Issue and a signed clean receipt on the current head from the Issue's collection; otherwise it refuses with the reason, and without permission to post replies it stops with «нет права публиковать ответы». Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.
-10. **Deploy and close.** `mono:deploy` verifies that the current PR head matches the green certificate, applies the configured approval policy, and delegates the configured deploy workflow. Verify delivery and run live acceptance where users consume the result. Close the Issue only after its delivery requirements pass; publish the informational project update, report cost, record useful learnings, and retire the worker. Only the shipment of the last open Project Issue may complete that Project.
+9. **Ship to green.** Preflight opens the PR as a draft at its first collection request (`scripts/ship-pr.mjs open`, secrets checked before every push where GitHub push protection is off) and feeds the bot remarks, failed CI checks and owner instructions it fixed into the next review round (`prRemarks`), where they close only when the checker verifies the fix. Ship writes the description for people in Russian from `templates/pr-body.md` (`ship-pr.mjs body`, rewritten after every round: the author's part between Ship's markers names its head and publication time (PR activity cannot move Deploy's boundary; republish a legacy body without that time), a bot's block outside them is kept, and Ship itself writes the «Проверки» line in which only finished successful checks are «прошли»), synchronizes accepted drift, settles every other remark and checks every statement of the description through a read-only pass (`ship-pr.mjs check --pr`; a second disagreement in a row stops Ship), leaves draft (`ship-pr.mjs ready`) only with a clean receipt on the head, no failed CI and a description that passes the form check (required sections, up to 400 visible words, the task link, written for this head), and confirms the Linear status/link. A late remark that needs a fix returns the PR to draft and parks not-converged. Ship speaks Russian to the owner: one to three product lines above the certificate name the attempt, the review rounds spent of three and the wait out of its limit. Run by hand in the owner's session, Ship needs a branch with a ready Linear Issue and a signed clean receipt on the current head from the Issue's collection; otherwise it refuses with the reason, and without permission to post replies it stops with «нет права публиковать ответы». Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.
+10. **Deploy and close.** `mono:deploy` merges the pinned green head only with an approved deploy.targets block, proves the actual version and checks the Issue scenario/product health. Close the Issue on merge with a truthful comment. New repeated browser failure against a green previous build permits rollback and one repair. Only proven delivery earns a project update; only shipment of its last open Issue may complete a Project. Retire the delivered worker after closeout.
 
 Stages rebuilt under «Mono как продукт» and their shared host reference
 `references/owner-dialog.md` are written in Russian; machine tokens
@@ -689,7 +689,7 @@ On macOS, collection verification also grants the resolved Darwin user temp root
 
 | Role | Responsibility and decision boundary |
 | --- | --- |
-| Owner | Product scope, slicing, design, acceptance of risk, package/start approval, deploy approval per policy |
+| Owner | Product scope, slicing, design, acceptance of risk, package/start approval and the product deploy block |
 | Orchestrator | One control session per product; inspect, dispatch, monitor, answer technical questions, apply/read back Linear queues for implement/preflight/ship workers, launch restricted stage agents and relay their results, and run deploy; each stage agent writes and reads back its own Linear records; never absorb code/preflight/ship |
 | Delivery worker | One Issue/worktree/context; execute code, local readiness and ship in order; report evidence and queues; no Linear access, sub-workers, session management or owner questions in AFK mode |
 | Second Voice | Independent pre-write package challenge on the policy-selected cross-vendor route |
@@ -770,7 +770,7 @@ new launches go to Codex. Installation requirements for each worker are in
 
 ## Cost
 
-A wave's cost is telemetry, not a gate. Wait mode avoids an exit/resume cycle; short uses one certifying collection and one combined start/ready comment. These are mechanisms, not a measured savings claim; worker reading inputs and corpus bytes must not grow. Read the **Cost** line in deploy closeout and the **Wave Cost** line in orchestrator status; project updates carry only a short product-level conclusion. The installed `wave-cost.mjs` calculates the figures from reports, logs, review receipts and ledger:
+A wave's cost is telemetry, not a gate. Wait mode avoids an exit/resume cycle; short uses one certifying collection and one combined start/ready comment. These are mechanisms, not a measured savings claim; worker reading inputs and corpus bytes must not grow. Read the **Wave Cost** line in orchestrator status; project updates carry only a short product-level conclusion. The installed `wave-cost.mjs` calculates the figures from reports, logs, review receipts and ledger:
 
 - Dispatch-to-green-PR and dispatch-to-merge elapsed time, independently selected from the `mono-deliver` report's top-level fields first, legacy `mono-ship` reports next, then ledger events. A green PR and a recorded merge are separate events: merge time never comes from delivery completion.
 - Review rounds from `mono-deliver.review_rounds` (including zero), falling back to legacy `mono-ship` forms. Invalid or missing values fall through; source fields identify the selected report or event. Only `green_at` proves green in a delivery report; legacy ship completion/report timestamps remain supported.
@@ -880,7 +880,8 @@ Read the `places`, `holders`, `restart` and `localCopies` fields. Restart
 listed Claude/Codex sessions to load new rules; a product session owns updating
 its local plugin copies. The installer never updates them on its behalf.
 For isolated verification, run the fake-CLI fixtures with a temporary HOME:
-`node --test scripts/pack-install.test.mjs`; do not use owner profiles.
+`node --test scripts/deploy.test.mjs
+node --test scripts/pack-install.test.mjs`; do not use owner profiles.
 
 To try unreleased code without installation, launch Claude from the checkout with
 `claude --plugin-dir "$PWD"`, or open `skills/<skill>/SKILL.md` from Codex in that
@@ -1002,6 +1003,51 @@ plugin cache. Restore the previous
 that installation before resuming. The other product's config and state remain
 its own orchestrator's responsibility.
 
+## Deploy targets
+
+The product session owns `.agents/mono-workflow.config.json`. Configure `deploy`
+as `{ "targets": [...] }`; no block means no merge. Targets: `vercel` has paths,
+domain, team (Vercel team ID, never a slug), check; `local` has paths, command, check; `pack` has only kind;
+`none` has paths/reason. Unknown fields and a sixth field fail. Paths are root
+relative * / ** globs; omitted means all files. See the [web](skills/deploy/references/web.md),
+[local](skills/deploy/references/local.md) and [pack](skills/deploy/references/pack.md)
+recipes. Each block needs owner yes in its own product session. Zeni's web paths
+cover its ignore-build list and mobile uses none. CallCatch/Red need rollback
+before opting in. Mono's exact block is `{"targets":[{"kind":"pack"}]}`.
+
+`deploy.mjs` commands merge/prove/local/check/rollback/return/outcome accept
+`--request FILE`. It locks one open run per product in landing/deploy, records
+pre-merge rollback target and action intentions with read-backs, and uses raw PR
+publications after the latest Ship marker on the same head. QA beforeMerge and
+landing tip remain merge gates. It never uses auto-merge. Manual pack PRs without
+registry attempts skip landing-drain record. CLI calls are bounded at 120 seconds.
+Before an issue-only merge, Deploy rereads the current body, marker, label and
+approved whole-body fingerprint; changed or revoked approval stops the merge (K-21).
+Review body edit times come from GraphQL. Before rollback or a final outcome,
+the live build/process must still match the recorded checks; a mismatch stops.
+
+Web proof reads the domain every 20 seconds, waits 10 minutes from merged_at,
+repeats once with GitHub repoId, waits 10 more. New touched main changes prevent
+old-code repeat; a missing or capped compare file list cannot authorize it. Domain
+reads continue while a repeat builds. Browser checks of protected own URLs use the owner's Vercel
+login and the same quick-check signs plus Issue scenario. Night web needs a fresh
+browser-ready mark BEFORE merge; without it, wait until morning. Red domain/green
+own URL retains the red, creates a discrepancy Issue and remains unverified.
+Only browser red twice on new/green on saved old permits rollback. Repair STAGED
+is checked at its own URL, explicitly promoted, then checked on production before
+archiving rollback. One red after return cancels return, no repeat, Stop until
+morning. No browser: Stop/open run/no outcome; do not mint bypass secrets.
+
+Five outcomes worst first: rolled back; deployment failed/production old; deployed
+unverified; merged awaiting release; deployed verified. No targets means no outcome.
+Every unavailable check keeps its reason/checker. Installer JSON belongs to the
+separate release PR's run; closed ordinary pack PR runs keep their waiting outcome.
+Owner lines and Issue closeout use [output](skills/deploy/references/output.md);
+project update only for proven delivery uses its short [rule](skills/deploy/references/project-update.md).
+Deploy's entire reading union is capped at **13,000 bytes** by read-budget.mjs.
+Design now synchronizes its main product file from verified released screens;
+Deploy does not alter design memory.
+
 ## Project Config
 
 Optional `design.tool` selects `paper` or `wonder`; omitted `design` or `tool`
@@ -1048,7 +1094,7 @@ node scripts/project-config.mjs --repo /path/to/product --project-name Product -
 node scripts/project-config.mjs --repo /path/to/product --check
 ```
 
-Configure product/team names, Linear/repository languages, narrow artifact roots, ship, documentation, review-feedback and deploy workflows. Ship and review feedback are built into `mono:ship`: `workflows.ship` accepts `null`, `mono` or `gstack ship`, `workflows.reviewFeedback` accepts `null`, `mono` or `compound-engineering:ce-resolve-pr-feedback`; all of them mean the built-in Ship, and any other value fails the config check with that reason. The old `prerequisites.autoreviewHelper` field is no longer required and is accepted silently. `workflows.implementation` remains valid for existing configs but is no longer read by mono:implement; no external implementation engine or learnings helper is needed. Optional workflows may be `null`; a missing deploy workflow blocks deployment. Optional QA/authentication policy defines how live verification accesses the product; owner-session access requires permission. `--clean` removes legacy generated Mono and previous-brand workflow files while migrating project policy.
+Configure product/team names, Linear/repository languages, narrow artifact roots, ship, documentation, review-feedback and deploy targets. Ship and review feedback are built into `mono:ship`: `workflows.ship` accepts `null`, `mono` or `gstack ship`, `workflows.reviewFeedback` accepts `null`, `mono` or `compound-engineering:ce-resolve-pr-feedback`; all of them mean the built-in Ship, and any other value fails the config check with that reason. The old `prerequisites.autoreviewHelper` field is no longer required and is accepted silently. `workflows.implementation` remains valid for existing configs but is no longer read by mono:implement; no external implementation engine or learnings helper is needed. Optional workflows may be `null`. An absent `deploy` block blocks merging; old `workflows.deploy` and `deployApproval` are accepted and ignored. Optional QA/authentication policy defines how live verification accesses the product; owner-session access requires permission. `--clean` removes legacy generated Mono and previous-brand workflow files while migrating project policy.
 
 Optional `models.roles` overrides model routes within the [role/transport matrix](references/model-policy.md#product-overrides).
 The legacy `autoreview` role (old pins and configs only; it never runs) accepts claude, kimi, pi or codex with `effortByRisk` for all five risk keys.
@@ -1076,7 +1122,7 @@ builds provider environment from the route and keeps the existing two invocation
 sealed-head requirement and all certification checks. No provider key value belongs
 in config, dispatch, registry or receipts. Resumes keep their original pins.
 
-Set `deployApproval` to `always` (default), `risky-only` (approval for standard/deep/risky and unknown risk; only tiny proceeds without asking), or `never`. Approval binds the exact PR/head. Configure `orchestration.transport` and `maxParallelWorkers` (default 3) when needed. Delivery settings default to a 900-second confirmation timeout, 120-second quiet interval, 2,400-second evidence limit, 10-second polling and three attempts. This repository opts in to its own issue-only lane with its owner ID; the lane stays off by default, and consumers enable it explicitly with `issueOnlyLane.enabled` and the canonical approving `ownerPrincipal`. Plugin compatibility and helper policy: [guide](references/install.md).
+The owner approves a product deploy block once; the block authorizes guarded merge without another approval. Mono alone uses delegated package approval. Configure targets with at most five fields (kind included), unknown fields fail. No block is inferred from repository files. Configure `orchestration.transport` and `maxParallelWorkers` (default 3) when needed. Delivery settings default to a 900-second confirmation timeout, 120-second quiet interval, 2,400-second evidence limit, 10-second polling and three attempts. This repository opts in to its own issue-only lane with its owner ID; the lane stays off by default, and consumers enable it explicitly with `issueOnlyLane.enabled` and the canonical approving `ownerPrincipal`. Plugin compatibility and helper policy: [guide](references/install.md).
 
 The optional `workflows."qa"` setting selects live-sweep browser automation;
 absent or null uses the available runtime tool. `qaAuth` accepts `cookie-import`,
@@ -1140,14 +1186,14 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-16.** Review the package record and Issue slicing before the first write and bring the owner one summary with «Начать работу», so one decision does not become a stream of questions — [Pre-write package review](references/orchestration-stages.md#pre-write-package-review).
 - **K-17.** Have an independent cross-vendor Second Voice review the package draft before its first Linear write, so author and reviewer do not share the same blind spots — [Second Voice](references/orchestration-stages.md#second-voice).
 - **K-18.** Decide repository-, Linear- and config-derived implementation details, document structure and risk classification autonomously, but ask about scope, slicing, risk acceptance and design, so routine questions do not consume owner time or seize owner authority — [Autonomy Defaults](references/questioning.md#autonomy-defaults).
-- **K-19.** Apply the project's deploy-approval policy (always, all except tiny, or never) to the exact code head, so yesterday's approval cannot authorize different code — [Project Config](HANDBOOK.md#project-config).
+- **K-19.** Require the owner-approved deploy.targets block and a green Ship certificate bound to the current PR head — [Project Config](HANDBOOK.md#project-config).
 - **K-20.** Grant issue-only delivery only when all nine conditions hold and the owner approves the exact Issue fingerprint, falling back to Project-first on doubt, so the shortcut cannot bypass its boundary — [Nine eligibility conditions](skills/issue/references/run.md#девять-условий) and [Trust boundary](references/issue-only-lane.md#trust-boundary).
 - **K-21.** Invalidate approval whenever an approved issue-only body changes and obtain new review and fingerprint approval, so the approved text remains the executed contract — [Renewal recovery](skills/issue/references/decisions.md#повторный-вход).
 - **K-22.** Run the code review round at every risk class with the policy's reviewer and checker from different model families, pinned at launch, so the reviewer has the capability and depth to challenge the author — [Roles](references/model-policy.md#roles) and [Review admission](references/review-admission.md#review-admission).
 - **K-23.** Classify work as tiny, standard, deep or risky to set artifact requirements and review depth, treating money, data, access, production and public interfaces as risky domains, so dangerous work cannot pass through a light process — [Risk Classification](references/readiness-gates.md#risk-classification).
 - **K-24.** Require package review before writing and formal pre-ship review for standard, deep and risky work, permitting only a recorded tiny advisory exception, so review can challenge decisions before they become accepted artifacts — [Review Gate Policy](references/readiness-gates.md#review-gate-policy).
-- **K-25.** Close an Issue only after merge, delivery and verification, except under an explicitly accepted merge-as-delivery policy, so closed work cannot silently fail to reach users — [Deploy](references/lifecycle.md#deploy).
-- **K-26.** Verify user-facing changes live against Issue acceptance after deployment and file defects as immediate out-of-queue hotfixes, while still requiring the original Issue's own green live pass for closure, so automated checks cannot substitute for the user experience — [Deploy](references/lifecycle.md#deploy).
+- **K-25.** Close an Issue on confirmed merge and keep delivery truth, proof, checker and date in its closeout comment — [Deploy](references/lifecycle.md#deploy).
+- **K-26.** Verify user-facing changes live against Issue acceptance after deployment and file defects as immediate out-of-queue hotfixes, and keep unverified results visible in the closed Issue, so automated checks cannot substitute for the user experience — [Deploy](references/lifecycle.md#deploy).
 - **K-27.** Include a compact checked/not-checked boundary in every stage result and call uninspected work unverified, so the owner cannot infer unsupported confidence — [Checked / Not Checked](references/human-friendly-output.md#checked--not-checked).
 - **K-28.** Report a stop with completed work, the exact blocking point, unperformed work and the smallest unblock action, so unfinished work cannot be mistaken for ready — [Blocked / Timed-Out Shape](references/human-friendly-output.md#blocked--timed-out-shape).
 - **K-29.** Append only observed facts with actual recording times to the ledger and append corrections instead of rewriting history, so invented history cannot conceal delays — [Mailbox And Ledger](references/orchestration.md#mailbox-and-ledger).
@@ -1228,7 +1274,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | [mono:preflight](skills/preflight/SKILL.md) | Local verification, commit, the collection's review round and ready certificate |
 | [mono:ship](skills/ship/SKILL.md) | Accepted pre-ship drift, PR, docs, feedback and green certificate |
 | [mono:qa](skills/qa/SKILL.md) | Независимая проверка готовой задачи или всего проекта на хосте: ожидания до действий, доказательства, баги и сертификат; заданная версия без права вливания |
-| [mono:deploy](skills/deploy/SKILL.md) | Merge/deploy delegation, verification, closeout and learnings |
+| [mono:deploy](skills/deploy/SKILL.md) | Guarded merge, version proof, production checks, rollback/return and truthful outcome |
 | [mono:orchestrate](skills/orchestrate/SKILL.md) | Product control plane: dispatch, monitoring, decisions and Linear writes |
 
 ## Documentation Map
@@ -1242,7 +1288,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | Decisions and owner-facing wording | [Questioning](references/questioning.md), [human output](references/human-friendly-output.md), [decision/status/wave brief](templates/orchestrator-brief.md) |
 | Runtime and worker recovery | [Orchestration](references/orchestration.md) with its parts for [stages](references/orchestration-stages.md), [dispatch](references/orchestration-dispatch.md) and [delivery](references/orchestration-delivery.md), [worker contract](references/worker-contract.md), [dispatch](templates/orchestrator-dispatch.md), [report](templates/orchestrator-report.md), [compaction](templates/compact-instructions.md) |
 | Linear artifact templates | [Project](templates/project.md), [PRD](templates/prd.md), [Tech Spec](templates/tech-spec.md), [Issue](templates/issue.md), [project updates](templates/project-update.md); templates define form, contracts define obligations |
-| Review, check and delivery output | [Review](templates/review-output.md), [check](templates/check-output.md), [ship](templates/ship-output.md), [interactive ship status](templates/ship-status-ux.md), [deploy](templates/deploy-output.md); examples are placeholders, not evidence |
+| Review, check and delivery output | [Review](templates/review-output.md), [check](templates/check-output.md), [ship](templates/ship-output.md), [interactive ship status](templates/ship-status-ux.md), [deploy](skills/deploy/references/output.md); examples are placeholders, not evidence |
 | Installation and policy | [Install](references/install.md), [versioning](references/install.md), [models](references/model-policy.md), [risk classes](references/readiness-gates.md#risk-classification) |
 | Rationale outside worker reading | [Audience](references/rationale/audience.md), [review](references/rationale/review.md), [output](references/rationale/output.md), [delivery](references/rationale/delivery.md); explanation adds no obligations |
 | Worked examples and history | [Consumer dogfood](examples/consumer-dogfood.md), [profile regression](examples/profile-workbench-regression.md), [CHANGELOG](CHANGELOG.md) |

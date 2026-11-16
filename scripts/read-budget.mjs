@@ -9,6 +9,7 @@ import { isRussianStage } from './russian-stages.mjs';
 
 // Validator ceiling for the union, in bytes. Tokens are only bytes / 4.
 export const READ_BUDGET_MAX_BYTES = 99_882;
+export const DEPLOY_READ_BUDGET_MAX_BYTES = 13_000;
 export const DELIVERY_SKILLS = ["deliver", "implement", "preflight", "ship"];
 
 function withoutFences(text) {
@@ -110,7 +111,8 @@ export function measureReadBudget(root, { skills = DELIVERY_SKILLS, includeCondi
   const files = [...entries.values()].sort((a, b) => a.path.localeCompare(b.path))
     .map((entry) => ({ ...entry, approximate_tokens: entry.bytes / 4, read_by: [...entry.read_by].sort() }));
   const bytes = files.reduce((total, entry) => total + entry.bytes, 0);
-  return { files, bytes, approximate_tokens: bytes / 4, ceiling_bytes: READ_BUDGET_MAX_BYTES, within_ceiling: bytes <= READ_BUDGET_MAX_BYTES };
+  const ceiling = skills.length === 1 && skills[0] === 'deploy' ? DEPLOY_READ_BUDGET_MAX_BYTES : READ_BUDGET_MAX_BYTES;
+  return { files, bytes, approximate_tokens: bytes / 4, ceiling_bytes: ceiling, within_ceiling: bytes <= ceiling };
 }
 
 const self = fileURLToPath(import.meta.url);
@@ -136,7 +138,9 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(self
       for (const entry of result.files) console.log(`${entry.bytes}\t${entry.approximate_tokens}\t${entry.path}`);
       console.log(`Read budget: ${result.bytes} bytes / ~${result.approximate_tokens} tokens; ${result.files.length} files; ceiling ${result.ceiling_bytes} bytes; ${result.within_ceiling ? "PASS" : "FAIL"}`);
     }
-    process.exitCode = result.within_ceiling ? 0 : 1;
+    const deploy = skills === DELIVERY_SKILLS ? measureReadBudget(root, { skills: ['deploy'] }) : null;
+    if (deploy && !json) console.log(`Deploy: ${deploy.bytes} bytes; ceiling ${deploy.ceiling_bytes}; ${deploy.within_ceiling ? 'PASS' : 'FAIL'}`);
+    process.exitCode = result.within_ceiling && (!deploy || deploy.within_ceiling) ? 0 : 1;
   } catch (error) {
     console.error(`Read budget: ${error.message}`);
     process.exitCode = 1;

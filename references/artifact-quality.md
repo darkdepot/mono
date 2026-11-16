@@ -33,7 +33,7 @@ Use complete durable `mono-ship green certificate`/`Ship: green` as recorded by 
 
 ## Deploy Closeout
 
-Record matching green/current head, workflow/merged SHA/target/proof, post-ship check or unavailability, Done outcome/reason, learnings/none and boundary.
+Record matching green/current head, merged SHA, target/version proof and checks, one of five outcomes or open Stop, unverified reason/checker/date, rollback/repair and project-update state. Close Issue on confirmed merge; delivery truth stays in its comment.
 
 ## Review Findings
 

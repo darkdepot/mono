@@ -48,8 +48,31 @@ export function unpushedSecrets(worktree, remote) {
     });
   });
 }
-const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim();
+const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 120_000 }).trim();
 const ghJson = (...args) => JSON.parse(gh(...args) || 'null');
+export function readPrPublications(repo, number, { includeReviews = false } = {}) {
+  let reviewBodies;
+  if (includeReviews) {
+    reviewBodies = [];
+    const [owner, name] = repo.split('/');
+    let cursor = null;
+    do {
+      const query = 'query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviews(first:100,after:$after){nodes{id body submittedAt updatedAt author{login} commit{oid}} pageInfo{hasNextPage endCursor}}}}}';
+      const data = ghJson('api', 'graphql', '-f', `query=${query}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${number}`, ...(cursor ? ['-f', `after=${cursor}`] : []));
+      const page = data.data?.repository?.pullRequest?.reviews;
+      requireThat(Array.isArray(page?.nodes) && typeof page.pageInfo?.hasNextPage === 'boolean', 'PR review update times unavailable');
+      for (const review of page.nodes) {
+        requireThat(review && Number.isFinite(Date.parse(review.updatedAt)), 'PR review updatedAt missing');
+        reviewBodies.push({ ...review, commit_id: review.commit?.oid, submitted_at: review.submittedAt });
+      }
+      cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+      requireThat(!page.pageInfo.hasNextPage || cursor, 'PR reviews pagination cursor missing');
+    } while (cursor);
+  }
+  return { issueComments: ghJson('api', '--paginate', '--slurp', `repos/${repo}/issues/${number}/comments`).flat(),
+    reviewComments: ghJson('api', '--paginate', '--slurp', `repos/${repo}/pulls/${number}/comments`).flat(),
+    pr: ghJson('api', `repos/${repo}/pulls/${number}`), ...(includeReviews ? { reviewBodies } : {}) };
+}
 // Where GitHub push protection is on, GitHub is the check; elsewhere (or unreadable) Ship scans first.
 // GitHub protection counts only when the remote really pushes to that repository.
 export function pushesTo(url, repo) {
@@ -74,7 +97,7 @@ function push({ worktree, repo, remote, branch, protection }) {
 }
 // The author's part of the description sits between its own markers and names the head it describes;
 // anything outside them (a bot's block) is kept when the description is rewritten.
-const BODY_START = /<!-- mono:ship body head=([a-f0-9]{40}|none) -->\n?/, BODY_END = '<!-- /mono:ship body -->';
+const BODY_START = /<!-- mono:ship body head=([a-f0-9]{40}|none)(?: published=([^\s>]+))? -->\n?/, BODY_END = '<!-- /mono:ship body -->';
 const BODY_MARKERS = /<!-- mono:ship body head=[^>]*-->\n?|<!-- \/mono:ship body -->\n?/g;
 // Exactly one pair of markers; nested, repeated or unclosed ones mean there is no author part to trust.
 export function authorPart(body) {
@@ -82,15 +105,15 @@ export function authorPart(body) {
   if (!start || (text.match(BODY_MARKERS) ?? []).length !== 2) return null;
   const end = text.indexOf(BODY_END, start.index + start[0].length);
   if (end < 0) return null;
-  return { head: start[1] === 'none' ? null : start[1], text: text.slice(start.index + start[0].length, end).trim(),
+  return { head: start[1] === 'none' ? null : start[1], publishedAt: start[2] ?? null, text: text.slice(start.index + start[0].length, end).trim(),
     outside: (text.slice(0, start.index) + text.slice(end + BODY_END.length)).replace(SHIP_MARKER, '').trim() };
 }
 // A bot's block in the description is the one it marks itself (Greptile: <!-- greptile_comment --> … <!-- /greptile_comment -->).
 export const botBlocks = body => [...String(body ?? '').matchAll(/<!-- ([a-z][a-z0-9_]*)_comment -->[\s\S]*?<!-- \/\1_comment -->/g)].map(match => match[0]);
-export function composeBody({ author, head, current = '' }) {
+export function composeBody({ author, head, current = '', publishedAt = new Date().toISOString() }) {
   // Everything else of the old description is replaced: old author text never stays visible beside the new.
   const rest = botBlocks(current).join('\n\n');
-  return `${SHIP_MARKER}\n<!-- mono:ship body head=${head ?? 'none'} -->\n${author.trim()}\n${BODY_END}${rest ? `\n\n${rest}` : ''}\n`;
+  return `${SHIP_MARKER}\n<!-- mono:ship body head=${head ?? 'none'} published=${publishedAt} -->\n${author.trim()}\n${BODY_END}${rest ? `\n\n${rest}` : ''}\n`;
 }
 export function draftBody({ issue, issueUrl, title, head = null }) {
   return composeBody({ author: `${title}\n\nЗадача: [${issue}](${issueUrl})`, head });
@@ -261,10 +284,7 @@ async function main(argv) {
   if (!command || command === '--help') { console.log(usage); return; }
   const snapshotFor = () => {
     const snapshot = readShipSnapshot(args.repo, Number(args.pr));
-    const issueComments = ghJson('api', '--paginate', '--slurp', `repos/${args.repo}/issues/${args.pr}/comments`).flat();
-    const reviewComments = ghJson('api', '--paginate', '--slurp', `repos/${args.repo}/pulls/${args.pr}/comments`).flat();
-    const pr = ghJson('api', `repos/${args.repo}/pulls/${args.pr}`);
-    return { snapshot, issueComments, reviewComments, pr: { body: pr.body ?? '', created_at: pr.created_at } };
+    return { snapshot, ...readPrPublications(args.repo, Number(args.pr)) };
   };
   if (command === 'open') return console.log(JSON.stringify(openDraft({ worktree: args.worktree, repo: args.repo, remote: args.remote ?? 'origin', branch: args.branch,
     base: args.base ?? 'main', title: args.title, issue: args.issue, issueUrl: args['issue-url'] })));
