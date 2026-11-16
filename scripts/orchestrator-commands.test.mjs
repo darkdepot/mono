@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { test } from "node:test";
@@ -11,7 +11,7 @@ import { extractSnapshot, references, section } from "./orchestrator/snapshot.mj
 import { renderDispatch } from "./orchestrator/dispatch.mjs";
 import { ideaDispatchFixture, ideaProjectId } from './fixtures/idea-dispatch.mjs';
 import { applyPreapply, preapplyManifest } from "./orchestrator/preapply.mjs";
-import { digest, readJson, atomicJson, withLock, REVIEW_PRODUCER } from "./runtime.mjs";
+import { digest, readJson, atomicJson, withLock, canonical, REVIEW_PRODUCER } from "./runtime.mjs";
 import { publishPhase, validateConfirmation, confirmQueue } from "./delivery-state.mjs";
 import { expandedWrite, effectivePins, admitCollection, collectionPinsBinding, checkCollectionRequest, pinnedShipPolicy } from "./orchestrator/command-state.mjs";
 import { acceptAck, acceptReport, acceptAmend } from "./orchestrator/accept.mjs";
@@ -905,6 +905,118 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
         const blank = run(process.execPath, [...amendArgs("Invalid bot decision."), "--bot-unavailable", " "]);
         assert.notEqual(blank.status, 0); assert.match(blank.stderr, /nonempty reason/);
       }));
+      const withBotRounds = async (count, callback, { currentHead = true } = {}) => isolatedPreparation(async context => {
+        const worker = context.before[ack.issue], current = effectivePins(worker), evidence = current.evidenceRoot;
+        const saved = evidence + '.bot-rounds-saved', existed = fs.existsSync(evidence);
+        if (existed) fs.renameSync(evidence, saved);
+        fs.mkdirSync(path.join(evidence, 'history'), { recursive: true });
+        const key = Buffer.alloc(32, 42); fs.writeFileSync(path.join(evidence, 'receipt.key'), key);
+        const tip = pass(run('git', ['rev-parse', 'HEAD'], current.worktree));
+        const base = pass(run('git', ['merge-base', 'HEAD', current.baseRef], current.worktree));
+        let contract = fs.readFileSync(path.join(current.fullSnapshot.directory, `issue-${ack.issue}.md`), 'utf8');
+        for (const record of Object.values(worker.completed_amendments).sort((a, b) => a.pinsVersion - b.pinsVersion))
+          contract += `\n\n## Orchestrator amendment ${record.pinsVersion}\n${record.change.text}`;
+        const seal = receipt => atomicJson(path.join(evidence, 'history', receipt.runId + '.json'), {
+          receipt, signature: createHmac('sha256', key).update(canonical(receipt)).digest('hex') });
+        for (let n = 1; n <= count; n++) seal({ producer: REVIEW_PRODUCER, pins: collectionPinsBinding(worker),
+          head: n === count && currentHead ? tip : String(n).repeat(40), base,
+          recordedAt: `2026-11-15T00:00:0${n}Z`, runId: `bot-round-${n}`,
+          review: { spent: true, round: n, contractDigest: digest(contract), outcome: 'clean',
+            record: { outcome: 'clean', findings: [], rounds: [] } } });
+        try { await callback({ ...context, current, evidence, tip, seal }); }
+        finally { fs.rmSync(evidence, { recursive: true, force: true }); if (existed) fs.renameSync(saved, evidence); }
+      });
+      for (const count of [2, 3]) for (const dirty of [false, true])
+        await t.test(`bot-unavailable-round-guard: ${count} completed, reusable HEAD, dirty=${dirty}`, () => withBotRounds(count, async ({ registryFile, output, current, evidence, tip }) => {
+          const dirtyFile = path.join(current.worktree, 'uncommitted-bot-fix');
+          if (dirty) write(dirtyFile, 'Code change not committed.\n');
+          if (count === 2 && dirty) atomicJson(path.join(output, 'amendment.pending.json'), { pinsVersion: 99 });
+          const registryBytes = fs.readFileSync(registryFile), names = fs.readdirSync(output);
+          const args = [...amendArgs('Code fix plus bot outage must preserve the reusable round.'), '--bot-unavailable', 'Greptile limit'];
+          try {
+            for (let retry = 0; retry < 2; retry++) {
+              const result = run(process.execPath, args), refusal = JSON.parse(result.stdout);
+              assert.equal(result.status, 1, result.stderr + result.stdout);
+              assert.equal(refusal.outcome, 'refused'); assert.equal(refusal.version, null); assert.equal(refusal.state, null);
+              assert.match(refusal.reason, /неизменённом коде.*пройденный круг ревью/u);
+              assert.match(refusal.reason, count === 2 ? /следующий.*последним/u : /лимит исчерпан/u);
+              for (const option of [/дождаться бота/u, /без отметки/u, /до следующего круга/u, /новой попытке/u, /решение оркестратора/u]) assert.match(refusal.reason, option);
+              assert.doesNotMatch(refusal.reason, /\n|working tree is dirty/u);
+              assert.deepEqual(fs.readFileSync(registryFile), registryBytes);
+              assert.deepEqual(fs.readdirSync(output), names, 'refusal creates no pins, resume or pending files');
+            }
+          } finally { if (dirty) fs.unlinkSync(dirtyFile); }
+          if (count === 2 && !dirty) {
+            const codex = path.join(bin, 'codex'), original = fs.readFileSync(codex);
+            const getconf = path.join(bin, 'getconf'), savedGetconf = fs.existsSync(getconf) ? fs.readFileSync(getconf) : null;
+            const darwinTemp = path.join(scratch, 'bot-darwin-temp'); fs.mkdirSync(darwinTemp, { recursive: true });
+            write(getconf, `#!/usr/bin/env node\nconsole.log(${JSON.stringify(darwinTemp)});\n`); fs.chmodSync(getconf, 0o700);
+            // A controlled verification adapter; any review CLI launch is a test failure.
+            write(codex, `#!/usr/bin/env node
+if(process.argv[2]!=='sandbox')process.exit(74);
+const p=JSON.parse(process.argv.at(-1));console.log(p.probeMarker);
+`);
+            const request = { ...current, pins: collectionPinsBinding(readJson(registryFile)[ack.issue]), head: tip,
+              collectionId: `preflight-collect:${tip}:401`, collect: false };
+            const requestFile = path.join(scratch, 'bot-reuse-request.json');
+            try {
+              atomicJson(requestFile, request);
+              assert.equal(run(process.execPath, [path.join(runtime, 'gate.mjs'), 'preflight', '--request', requestFile]).status, 2);
+              const queue = [{ id: request.collectionId, operation: 'preflight-collect', target: tip, payload: { request } }];
+              await admitCollection(root, { ...collectReport, linear_mutations_pending: queue, capsule: { ...collectReport.capsule, open_queue: queue } });
+              atomicJson(requestFile, { ...request, collect: true });
+              pass(run(process.execPath, [path.join(runtime, 'gate.mjs'), 'preflight', '--request', requestFile]));
+              const receipt = readJson(path.join(evidence, `${tip}.json`)).receipt;
+              assert.equal(receipt.review.round, 2); assert.equal(receipt.review.spent, false);
+              assert.equal(receipt.review.reusedFrom, 'bot-round-2');
+              const completed = fs.readdirSync(path.join(evidence, 'history')).map(name => readJson(path.join(evidence, 'history', name)).receipt).filter(r => r.review.spent);
+              assert.equal(completed.length, 2, 'Preflight spends no new round after refusal');
+            } finally {
+              fs.writeFileSync(codex, original);
+              if (savedGetconf) fs.writeFileSync(getconf, savedGetconf); else fs.unlinkSync(getconf);
+            }
+          }
+        }));
+      for (const [count, currentHead] of [[1, true], [2, false]])
+        await t.test(`bot-unavailable-round-admitted: ${count} completed, reusable=${currentHead}`, () => withBotRounds(count, async () => {
+          const result = JSON.parse(pass(run(process.execPath, [...amendArgs('Bot decision with review capacity.'), '--bot-unavailable', 'Greptile limit'])));
+          assert.equal(result.state, 'registered'); processes.track(result.pid);
+        }, { currentHead }));
+      await t.test('bot-unavailable-round-contract-fix-first: code amendment then bot decision at two rounds', () => withBotRounds(2, async () => {
+        const fix = JSON.parse(pass(run(process.execPath, amendArgs('Apply code fix before another round.'))));
+        await processes.stop(processes.track(fix.pid));
+        const bot = JSON.parse(pass(run(process.execPath, [...amendArgs('Record outage before the next round.'), '--bot-unavailable', 'Greptile limit'])));
+        assert.equal(bot.pinsVersion, fix.pinsVersion + 1); processes.track(bot.pid);
+      }));
+      for (const storage of ['registered', 'delivered', 'inherited'])
+        await t.test(`bot-unavailable-round-replay: ${storage} decision at two rounds`, () => withBotRounds(1, async ({ registryFile, output, seal }) => {
+          const args = [...amendArgs('Record bot outage before round two.'), '--bot-unavailable', 'Greptile limit'];
+          const result = JSON.parse(pass(run(process.execPath, args))); await processes.stop(processes.track(result.pid));
+          const registry = readJson(registryFile), worker = registry[ack.issue], record = structuredClone(worker.last_amendment);
+          const current = effectivePins(worker), tip = pass(run('git', ['rev-parse', 'HEAD'], current.worktree));
+          let contract = fs.readFileSync(path.join(current.fullSnapshot.directory, `issue-${ack.issue}.md`), 'utf8');
+          for (const amendment of Object.values(worker.completed_amendments).sort((a, b) => a.pinsVersion - b.pinsVersion))
+            contract += `\n\n## Orchestrator amendment ${amendment.pinsVersion}\n${amendment.change.text}`;
+          seal({ producer: REVIEW_PRODUCER, pins: collectionPinsBinding(worker), head: tip,
+            base: pass(run('git', ['merge-base', 'HEAD', current.baseRef], current.worktree)),
+            runId: 'bot-round-2', recordedAt: '2026-11-15T00:00:02Z',
+            review: { spent: true, round: 2, contractDigest: digest(contract), outcome: 'clean', record: { outcome: 'clean', findings: [], rounds: [] } } });
+          if (storage === 'inherited') {
+            const next = JSON.parse(pass(run(process.execPath, amendArgs('Post-ship fix without explicit bot flag.'))));
+            assert.equal(next.state, 'registered'); processes.track(next.pid);
+            assert.equal(effectivePins(readJson(registryFile)[ack.issue]).botUnavailable.reason, 'Greptile limit');
+          } else {
+            if (storage !== 'registered') {
+              worker.pinsVersion = record.currentVersion;
+              delete worker.completed_amendments[record.pinsVersion]; delete worker.last_amendment;
+              delete record.registeredResume; delete record.resumeResult;
+              atomicJson(path.join(output, 'amendment.pending.json'), record); atomicJson(registryFile, registry);
+            }
+            const replay = JSON.parse(pass(run(process.execPath, args))); processes.track(replay.pid);
+            assert.equal(replay.pinsVersion, result.pinsVersion);
+            assert.deepEqual(replay, result, 'registered and delivered retries never resume again');
+          }
+        }));
       await t.test("AC4 old archive pins: new amendments retain full base and admit collection", () => isolatedPreparation(async ({ registryFile, before }) => {
         const launchFile = before[ack.issue].pins.file, launchBytes = fs.readFileSync(launchFile);
         const priorFile = path.join(path.dirname(launchFile), "pins.v1.json"), priorBytes = fs.readFileSync(priorFile);

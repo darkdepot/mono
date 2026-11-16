@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { evaluateShip, validatePreflight, advanceEvidence, botRemarkDigest, reviewHistory, roundOutcome } from "./gate.mjs";
+import { evaluateShip, validatePreflight, advanceEvidence, botRemarkDigest, reviewHistory, roundOutcome, reviewContext } from "./gate.mjs";
 import { REVIEW_PRODUCER, digest } from "./runtime.mjs";
 import { installReviewClis, setReview, reviewCalls, reviewFinding, reviewVerdict } from "./test-fixtures/review-clis.mjs";
 import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
@@ -213,6 +213,50 @@ test("review rounds are counted per task attempt from signed history", () => {
   const foreign = [{ ...three[0], producer: 'gate-autoreview-v2' }, { ...three[1], pins: { file: '/root/dispatch/MONO-2-a1/pins.json', digest: 'd' } },
     { ...three[2], pins: { file: '/root/dispatch/MONO-1-a2/pins.json', digest: 'd' } }, { producer: REVIEW_PRODUCER, pins }, null];
   assert.equal(read(foreign).spent, 0, 'old receipts, other tasks and other attempts are never counted');
+});
+test('shared review context refreshes the remote base, uses HEAD while dirty, and reads only signed current-contract rounds', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { createHmac } = await import('node:crypto');
+  const { atomicJson, canonical } = await import('./runtime.mjs');
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-context-'));
+  try {
+    const repo = path.join(scratch, 'repo'), origin = path.join(scratch, 'origin.git');
+    fs.mkdirSync(repo);
+    const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const commit = message => { git('add', '.'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', message); return git('rev-parse', 'HEAD'); };
+    git('init', '-b', 'main'); const first = commit('base');
+    git('init', '--bare', origin); git('remote', 'add', 'origin', origin); git('push', 'origin', 'main');
+    const second = commit('new base'); git('push', 'origin', 'main');
+    git('update-ref', 'refs/remotes/origin/main', first); // Simulate a worker's stale remote ref.
+    git('switch', '-c', 'delivery'); const tip = commit('work');
+    fs.writeFileSync(path.join(repo, 'dirty'), 'uncommitted');
+    const root = path.join(scratch, 'control'), attempt = path.join(root, 'dispatch/MONO-999-a1');
+    fs.mkdirSync(path.join(attempt, 'snapshot'), { recursive: true });
+    fs.writeFileSync(path.join(attempt, 'snapshot/issue-MONO-999.md'), 'Approved task.');
+    const pins = { file: path.join(attempt, 'pins.v1.json'), digest: 'a'.repeat(64) };
+    atomicJson(path.join(root, 'workers.json'), { 'MONO-999': { issue: 'MONO-999', attempt: 1, stage: 'mono-deliver',
+      packVersion: 'fixture', surfaceRevision: 5, completed_amendments: {
+        later: { pinsVersion: 2, change: { text: 'Future amendment.' } },
+        now: { pinsVersion: 1, change: { text: 'Registered amendment.' } } } } });
+    fs.writeFileSync(path.join(attempt, 'resume.v3.md'), 'Prepared only.');
+    const evidenceRoot = path.join(scratch, 'evidence'); fs.mkdirSync(path.join(evidenceRoot, 'history'), { recursive: true });
+    const key = Buffer.alloc(32, 23); fs.writeFileSync(path.join(evidenceRoot, 'receipt.key'), key);
+    const expected = 'Approved task.\n\n## Orchestrator amendment 1\nRegistered amendment.';
+    const receipt = { producer: REVIEW_PRODUCER, pins, head: tip, base: second, recordedAt: '2026-11-15T00:00:01Z',
+      review: { spent: true, contractDigest: digest(expected), record: {}, outcome: 'clean' } };
+    const seal = (name, value, signed = true) => atomicJson(path.join(evidenceRoot, 'history', name + '.json'), {
+      receipt: value, signature: signed ? createHmac('sha256', key).update(canonical(value)).digest('hex') : 'forged' });
+    seal('valid', receipt); seal('forged', receipt, false);
+    seal('other-attempt', { ...receipt, pins: { ...pins, file: path.join(root, 'dispatch/MONO-999-a2/pins.json') } });
+    const request = { worktree: repo, baseRef: 'origin/main', evidenceRoot, pins };
+    const result = reviewContext(request, { pinsVersion: 1 });
+    assert.equal(result.head, tip); assert.equal(result.base, second);
+    assert.equal(git('rev-parse', 'origin/main'), second, 'base refresh uses the gate remote fetch');
+    assert.equal(result.contract, expected); assert.equal(result.contractDigest, digest(expected));
+    assert.equal(result.history.spent, 1); assert.deepEqual(result.history.reuse, receipt);
+    const live = reviewContext(request, { pinsVersion: 1 }, first);
+    assert.equal(live.base, first, 'the live PR base remains authoritative'); assert.equal(live.history.reuse, null);
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
 test("preflight accepts only a v3 receipt with an accepted review, exact head/base and proven verification", () => {
   const base = "b".repeat(40);
