@@ -32,4 +32,4 @@ full Проверено/Не проверено and complete certificates; optio
 
 ## Ownership
 
-Preserve the separate stage/repair owners in `AGENTS.md`; review is report-only, check readiness-only.
+PRD: `mono:discovery`; new Tech Spec: `mono:tech-evaluation`; package record, legacy Tech Spec and Project Issues: `mono:handoff`; issue-only body: `mono:issue`; accepted pre-PR drift: `mono:ship`; review is report-only, check readiness-only.
