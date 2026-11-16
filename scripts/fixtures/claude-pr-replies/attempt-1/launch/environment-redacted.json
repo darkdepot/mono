@@ -1,8 +1,8 @@
 {
-  "HOME": "/Users/sasha",
-  "USER": "sasha",
-  "LOGNAME": "sasha",
-  "PATH": "/opt/homebrew/opt/libpq/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/sasha/.local/bin:/Users/sasha/.orbstack/bin:/Users/sasha/.maestro/bin:/Users/sasha/Library/pnpm",
+  "HOME": "/Users/owner",
+  "USER": "owner",
+  "LOGNAME": "owner",
+  "PATH": "/opt/homebrew/opt/libpq/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/owner/.local/bin:/Users/owner/.orbstack/bin:/Users/owner/.maestro/bin:/Users/owner/Library/pnpm",
   "SHELL": "/bin/zsh",
   "TMPDIR": "/private/tmp/m322-probe",
   "CLAUDE_CODE_TMPDIR": "/private/tmp/m322-probe",

@@ -16,7 +16,7 @@
     "--permission-mode",
     "dontAsk",
     "--settings",
-    "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/managed-settings/MONO-322-a2.json",
+    "/Users/owner/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/managed-settings/MONO-322-a2.json",
     "--setting-sources",
     "",
     "--strict-mcp-config",
@@ -28,6 +28,6 @@
     "--disallowedTools",
     "WebFetch,WebSearch"
   ],
-  "runner": "/Users/sasha/.codex/plugins/cache/mono-marketplace/mono/0.42.0/scripts/transports/claude-runner.mjs",
-  "cwd": "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/repo"
+  "runner": "/Users/owner/.codex/plugins/cache/mono-marketplace/mono/0.42.0/scripts/transports/claude-runner.mjs",
+  "cwd": "/Users/owner/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/repo"
 }

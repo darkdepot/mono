@@ -1,8 +1,8 @@
 {
   "githubConfigDir": "/private/tmp/m322-probe/mono-gh-W4XIQI",
   "credentialPaths": [
-    "/Users/sasha/.config/gh",
-    "/Users/sasha/.config/gh/hosts.yml"
+    "/Users/owner/.config/gh",
+    "/Users/owner/.config/gh/hosts.yml"
   ],
   "auth": {
     "requested": "subscription",
