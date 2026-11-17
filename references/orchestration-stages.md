@@ -19,7 +19,10 @@ return only after the stage's own record is confirmed.
 
 Every PRD approval decides design then size; `next=design` goes to Design then
 ordinary/large work to Tech Evaluation, tiny work to Handoff. Not-needed routes
-by size. Reapproval invalidates lower records when the route changes. Run `route`
+by size. Read size through the mapping in `skills/discovery/references/prd.md`;
+write new Russian names, never reassess or rewrite old PRDs without reapproval.
+Routing follows recorded `next=`, not the size word.
+Reapproval invalidates lower records when the route changes. Run `route`
 before exemptions, then verify required records in chain order. PRD without
 `next=` retains the router's old path. Handoff verifies effective `mono-tech` for
 current PRD and consumes a valid record without another offer. Only absent/invalid
