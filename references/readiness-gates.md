@@ -16,9 +16,9 @@ conflicting credible reviews); importance alone is not one.
 
 ## Review Gate Policy
 
-Require review for standard/deep/risky handoff/pre-ship; created/materially rewritten PRD/Spec/Issue; material pre-ship drift/drift-candidate; bug/perf missing repro/baseline/loop; AFK with unresolved judgment; risky domains; or legacy no-spec beyond tiny/low-risk. Tiny/accepted PRD-lite/explicit low-risk no-spec may be advisory with reason.
+Require review for standard/deep/risky handoff/pre-ship; created/materially rewritten PRD/Spec/Issue; material pre-ship drift/drift-candidate; bug/perf missing repro/baseline/loop; AFK with unresolved judgment; risky domains; or legacy no-spec beyond tiny/low-risk. Tiny/accepted PRD-lite/explicit low-risk no-spec may be advisory with reason. Single-Issue handoff is always required.
 
-Handoff reviews its package record and Issue drafts against approved PRD before first durable write or queue. No standard/deep/risky exception; only recorded tiny advisory skip. Handoff fixes draft; review stays report-only. Dispatched workers keep their worker contract's mode precedence. Issue-only review/check requires only its self-contained contract: standard ready, tiny advisory/reason, no Project/docs.
+Handoff reviews record/Issue drafts against approved PRD before writing or queue: one Issue, any risk including tiny, requires both reviewers in one round; wording fixes need no round, P0/P1 substance fixes need author-only targeted recheck, rejection needs source refutation. Multiple Issues: up to three rounds, only tiny advisory skip with reason. Handoff fixes; review reports. Worker mode precedence applies. Issue-only review/check requires only its self-contained contract: standard ready, tiny advisory/reason, no Project/docs.
 
 ## Gate Outcomes
 

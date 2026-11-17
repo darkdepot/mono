@@ -174,6 +174,24 @@ test("snapshot U12 named contracts", async t => {
   }
 });
 
+test("snapshot-single-task-short-record: compressed U coverage retains decisions and preapply", () => {
+  const input = JSON.parse(fixture("snapshot-single-task-short-record.json"));
+  const result = extractSnapshot(input.issue, input.prd, input.spec);
+  assert.equal(result.full, false);
+  assert.deepEqual(result.ids, ["R1", "U1", "U2"]);
+  assert.match(result.prd, /R1\. Источник виден/u);
+  assert(!result.prd.includes("R2."));
+  for (const decision of ["U1. Источник после имени", "U2. Настройка источника"]) assert(result.spec.includes(decision));
+  assert(!result.spec.includes("U3."));
+  assert.deepEqual(preapplyManifest(input.issue, input.prd, result.spec, false).entries, input.entries);
+  assert.deepEqual(preapplyManifest(input.issue, input.prd, input.spec, false).entries, input.entries);
+  const withoutConfig = issueFor("R1, U1");
+  assert.equal(preapplyManifest(withoutConfig, input.prd, input.spec, false), null);
+  assert(!extractSnapshot(withoutConfig, input.prd, input.spec).spec.includes("Предприменение"));
+  assert.throws(() => preapplyManifest(input.issue, input.prd,
+    result.spec.replace(input.entries[0].sha256, "0".repeat(64)), false), /sha256 mismatch/u);
+});
+
 test("snapshot U12 package extracts retain baseline bytes", () => {
   for (const expected of JSON.parse(fixture("snapshot-u12-package-bytes.json"))) {
     assert.deepEqual(extractSnapshot(issueFor(expected.coverage), fixture("cheap-waves-prd.md"), fixture("cheap-waves-spec.md")),

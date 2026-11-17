@@ -83,7 +83,12 @@ Linear, дизайн-Paper/Wonder и поисковых инструментов
 
 Перед каждой записью `by=orchestrator` независимая другая семья модели читает
 точный текст/версию и причину без подключений владельца; вердикт с моделью и
-версией вне заборов в той же записи. Изменился текст или причина: новая проверка.
+версией вне заборов в той же записи. В проекте с ожидаемой одной задачей для PRD,
+страницы техлида и старта отмеченные автором возражения «по формулировке» вносятся
+мелкой поправкой без нового круга: «Поправки по формулировке: было → стало»,
+утверждение связано с исправленной версией. Без отметки возражение по сути;
+по сути или иная правка текста/причины — новая проверка. Нарезано больше одной
+задачи — исключение кончилось; макеты, ремонт и issue-only им не пользуются.
 Строки второй модели этапов закреплены с `--ignore-user-config` и
 `--strict-mcp-config`, а Codex также с `--disable apps`: подключённые приложения
 не должны оставаться доступны через авторизацию ChatGPT. Владелец получает итог каждого этапа с «Утвердил сам,
@@ -611,7 +616,7 @@ A gate proves only its stated boundary. `mono:review` returns quality/risk findi
 
 | Gate | What it proves |
 | --- | --- |
-| Package review and approval | The draft was reviewed at the required risk level before writing, and the owner accepted the package; implementation still needs start authorization |
+| Package review and approval | Before writing: one Issue, any risk including tiny, both reviewers in one round; wording fixes without a round, P0/P1 substance fixes rechecked by finder or refuted by source. Multiple Issues retain up to three rounds and tiny advisory/reason. Implementation needs start authorization |
 | Pack identity / `gate.mjs start` | Installed pack is compatible under [the versioning rule](references/install.md#compatibility); branch, base and clean worktree match the start request |
 | Start handshake / delivery check | The worker checked snapshot, approvals, resolved findings and context seam; the orchestrator applied/read back lifecycle changes; the amended package is ready for code |
 | `gate.mjs preflight` | Current committed head/merge-base has an authentic receipt with review `clean` or `clean-with-successors` and successful sandboxed verification; missing, stale, fabricated, old-format or incomplete evidence fails |
@@ -1197,7 +1202,7 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-13.** Assign new agent-created Project leads and Issue assignees to the acting owner while preserving existing assignments, so created work reaches the owner's lists — [Linear Artifact Rules](references/artifact-rules.md#linear-artifact-rules).
 - **K-14.** Treat project updates as informational closeout results whose absence or failure cannot block delivery or change its verdict, so reporting cannot stop shipment — [Skill Design Rules](AGENTS.md#skill-design-rules).
 - **K-15.** Turn a raw idea into a Project with a read-back owner approval record and a verified move to Discovery, before PRD, Tech Spec, Issues or code — [Idea exit](references/lifecycle.md#idea).
-- **K-16.** Review the package record and Issue slicing before the first write and bring the owner one summary with «Начать работу», so one decision does not become a stream of questions — [Pre-write package review](references/orchestration-stages.md#pre-write-package-review).
+- **K-16.** Review record and slicing before writing; one Issue uses a short record with needed Spec decisions in U and references their numbers, both reviewers run one full round at any risk. Wording fixes need no round; P0/P1 substance fixes get finder-only targeted recheck, rejection needs source refutation. Bring one summary with «Начать работу» — [Pre-write package review](references/orchestration-stages.md#pre-write-package-review).
 - **K-17.** Have an independent cross-vendor Second Voice review the package draft before its first Linear write, so author and reviewer do not share the same blind spots — [Second Voice](references/orchestration-stages.md#second-voice).
 - **K-18.** Decide repository-, Linear- and config-derived implementation details, document structure and risk classification autonomously, but ask about scope, slicing, risk acceptance and design, so routine questions do not consume owner time or seize owner authority — [Autonomy Defaults](references/questioning.md#autonomy-defaults).
 - **K-19.** Require the owner-approved deploy.targets block and a green Ship certificate bound to the current PR head — [Project Config](HANDBOOK.md#project-config).
@@ -1205,7 +1210,7 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-21.** Invalidate approval whenever an approved issue-only body changes and obtain new review and fingerprint approval, so the approved text remains the executed contract — [Renewal recovery](skills/issue/references/decisions.md#повторный-вход).
 - **K-22.** Run the code review round at every risk class with the policy's reviewer and checker from different model families, pinned at launch, so the reviewer has the capability and depth to challenge the author — [Roles](references/model-policy.md#roles) and [Review admission](references/review-admission.md#review-admission).
 - **K-23.** Classify work as tiny, standard, deep or risky to set artifact requirements and review depth, treating money, data, access, production and public interfaces as risky domains, so dangerous work cannot pass through a light process — [Risk Classification](references/readiness-gates.md#risk-classification).
-- **K-24.** Require package review before writing and formal pre-ship review for standard, deep and risky work, permitting only a recorded tiny advisory exception, so review can challenge decisions before they become accepted artifacts — [Review Gate Policy](references/readiness-gates.md#review-gate-policy).
+- **K-24.** Require both pre-write package reviewers for a single Issue at every risk, including tiny; multiple Issues keep up to three rounds and tiny advisory with reason. Formal pre-ship review for standard/deep/risky stays unchanged — [Review Gate Policy](references/readiness-gates.md#review-gate-policy).
 - **K-25.** Close an Issue on confirmed merge and keep delivery truth, proof, checker and date in its closeout comment — [Deploy](references/lifecycle.md#deploy).
 - **K-26.** Verify user-facing changes live against Issue acceptance after deployment and file defects as immediate out-of-queue hotfixes, and keep unverified results visible in the closed Issue, so automated checks cannot substitute for the user experience — [Deploy](references/lifecycle.md#deploy).
 - **K-27.** Include a compact checked/not-checked boundary in every stage result and call uninspected work unverified, so the owner cannot infer unsupported confidence — [Checked / Not Checked](references/human-friendly-output.md#checked--not-checked).

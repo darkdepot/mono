@@ -101,7 +101,8 @@ Before every `by=orchestrator` record (PRD including renewals/Design callbacks,
 mockup, tech page, work start, package-repair approval), run a different-family
 second model per `references/model-policy.md`, read-only, foreground. Give result,
 exact approved text/version, PRD, earlier owner decisions, stage second-model
-report and proposed reason. Pass text/local paths, never Linear links: no owner
+report and proposed reason. Ask the checker to label each objection «по сути» or
+«по формулировке» itself; no label means substance. Pass text/local paths, never Linear links: no owner
 connections. Resolve model/effort by policy, then use the appropriate invocation:
 
 ```bash
@@ -114,8 +115,21 @@ when user config is ignored.
 
 Record verdict with model and reviewed-text version outside fences in that same
 approval comment, alongside reason; machine lines unchanged. Text or reason changes:
-check again. Objection: explain it in words without approving. Repeated objection on the same
-point: decide, retain objection/rejection reason in record; first owner-result line:
+check again, with this sole exception for PRD, tech-page and work-start approvals
+in a delegated Project expecting one Issue (PRD size line or Spec estimate;
+a slice of more than one ends the exception). If all objections are explicitly
+«по формулировке», agree to those named fixes; the stage applies only them as a
+minor correction per `references/owner-dialog.md`, without another check round.
+The approved version is the shown text plus only those fixes; bind the approval
+to the corrected updatedAt/hash. In that same comment outside fences keep verdict,
+model, reviewed version and «Поправки по формулировке: было → стало» with each fix.
+Any substance objection or other text/reason change requires another round.
+For this single-Issue case reject a blocker only by source refutation proving it
+wrong; “it was so before” is not refutation. Mockups, repairs and projectless
+Issues get no exception; only the owner approves issue-only.
+Objection: explain it in words without approving. Repeated objection on the same
+point: decide (single-Issue blockers still require source refutation), retain
+objection/rejection reason in record; first owner-result line:
 «Решил за тебя: … вопреки второй модели, потому что …». No response after one retry:
 no approval; report reason and continue other Projects. This countercheck is separate
 from the unchanged package Second Voice dialogue below.
@@ -170,6 +184,10 @@ Claude worker row; changing a worker never selects the alternative reviewer.
 
 #### Unavailable route
 
+A required pre-write package reviewer cannot be replaced by this fallback:
+if the cross-vendor reviewer is unavailable, stop before package/Issue writes.
+Only multi-Issue tiny packages may skip the advisory review with a recorded reason.
+
 - Fallback, only when the cross-vendor model is unreachable (no Codex
   auth, or no Claude access): run the lens review in-session (product,
   engineering, and design lenses) and record the substitution and its
@@ -184,7 +202,12 @@ user-question tools, there is no user on its side; and the required
 closing verdict: strengths, top risks, contested items, recommendation.
 
 Dialogue protocol: rounds of ask → answer → challenge, capped at 3
-rounds per skill (guidance, not a gate). After the cap, unresolved
+rounds per skill (guidance, not a gate), except single-Issue package review:
+exactly one full round at any risk, including tiny, with both reviewers. Its
+wording fixes need no round; P0/P1 substance fixes go only to their finder for
+targeted recheck, rejection needs source refutation. Unresolved blockers stop
+writing. Multiple-Issue packages keep the prior limit and tiny advisory reason.
+After the cap, unresolved
 disagreements that are Always-ask class go to the user as checkpoint
 items; the rest the orchestrator decides, recording both positions under
 «Решил сам:».
@@ -208,10 +231,12 @@ set Ready and bring the owner the summary.
   fresh context, cross-vendor model, no worktree, no Issue, no registry
   entry — and it has no Linear-write capability and no owner contact.
   Findings return to the orchestrator, which applies accepted fixes to the
-  draft package.
+  draft package per `skills/handoff/references/review.md`. Reviewers also check
+  every needed Tech Spec decision is in U and the single Issue references U
+  numbers without retelling. Each finder labels substance/wording objections.
 - Obligation follows `references/readiness-gates.md`: required for
-  `standard`, `deep`, and `risky`, advisory for `tiny` with the skip reason
-  recorded. The orchestrator cannot decide this gate away under «Решил
+  every risk with one Issue (both reviewers, one round); with multiple Issues,
+  required for `standard`, `deep`, and `risky`, advisory for `tiny` with reason. The orchestrator cannot decide this gate away under «Решил
   сам:»; only findings inside it are its to accept.
 - The reviewed subject is the draft, so none of the drafted bodies — package
   record, [execution Issues](lifecycle.md#задачи-этапов) — is written to Linear at review time.

@@ -52,10 +52,10 @@ function fixture(t) {
 
 test('Mono catalog has exactly six stage contracts, all host text replies and no stored run identities',()=>{
   const catalog=loadCatalog(path.join(source,'index.json'));
-  assert.deepEqual([...catalog.stages.keys()],Object.keys(neighbors));assert.equal(catalog.scenarios.size,19);
+  assert.deepEqual([...catalog.stages.keys()],Object.keys(neighbors));assert.equal(catalog.scenarios.size,20);
   for(const [id,stage] of catalog.stages){
-    assert.deepEqual(stage.neighbors,neighbors[id]);assert.equal(stage.scenarios.length,id==='research'?2:['idea','design'].includes(id)?4:3);
-    assert.deepEqual(stage.scenarios.map(p=>catalog.scenarios.get(`${id}/${p.split('/')[1]}`).kind),id==='research'?['main','question']:id==='idea'?['main','correction','unclear','defer']:id==='design'?['main','correction','unclear','continuation']:['main','correction','unclear']);
+    assert.deepEqual(stage.neighbors,neighbors[id]);assert.equal(stage.scenarios.length,id==='research'?2:['idea','design','handoff'].includes(id)?4:3);
+    assert.deepEqual(stage.scenarios.map(p=>catalog.scenarios.get(`${id}/${p.split('/')[1]}`).kind),id==='research'?['main','question']:id==='idea'?['main','correction','unclear','defer']:['design','handoff'].includes(id)?['main','correction','unclear','continuation']:['main','correction','unclear']);
     assert(!stage.files.includes('templates/qa-output.md'));
     for(const common of ['references/owner-dialog.md','scripts/russian-stages.mjs','scripts/idea-gate.mjs']) assert(stage.files.includes(common));
   }
@@ -817,7 +817,7 @@ for(const changed of [false,true])test(`acceptance directly selects the full cat
  if(changed){write(path.join(f.dir,'skills/idea/SKILL.md'),'changed Idea\n');f.commit();}
  const args={indexFile:path.join(f.catalogDir,'index.json'),worktree:f.dir,base,purpose:'acceptance'};
  const actual=selectScenarios(args),full=selectScenarios({...args,full:true});
- assert.equal(actual.status,'selected');assert.equal(actual.expectedItems.length,56);
+ assert.equal(actual.status,'selected');assert.equal(actual.expectedItems.length,58);
  assert.deepEqual(actual.affected,Object.keys(neighbors));assert.deepEqual(actual.expectedItems,full.expectedItems);assert.deepEqual(actual.units,full.units);
  assert.equal(selectScenarios({...args,purpose:'release'}).expectedItems.length,12,'release remains the single seedless chain');
 });
