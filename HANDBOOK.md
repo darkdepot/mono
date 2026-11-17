@@ -615,7 +615,9 @@ config: a nonempty list of unique check names, default `["Greptile Review"]`.
 Dispatch pins the policy from the immutable base. Workers cannot empty, replace
 or disable it. The orchestrator may record a confirmed outage for the current task
 attempt with `accept.mjs amend --root DIR --issue KEY --attempt N --text TEXT
---bot-unavailable "<reason>"`; another attempt needs its own decision.
+--bot-unavailable "<reason>"`; another attempt needs its own decision. A new amendment or a retry of a prepared,
+undelivered amendment with `--bot-unavailable` is refused when the current HEAD, base and review contract
+have a reusable completed round and at least `ROUND_LIMIT − 1` rounds are spent.
 
 After an authorized ship fix, the amendment names the next ship-gate attempt:
 run it for the new head with a new state file, preserving the previous one in the

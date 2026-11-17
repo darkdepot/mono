@@ -343,6 +343,26 @@ function reviewBaseTip(repo, baseRef, liveTip) {
   }
   return git(repo, "rev-parse", "--verify", `${liveTip ?? baseRef}^{commit}`);
 }
+// Shared review inputs for Preflight and amendment admission; HEAD remains usable on a dirty tree.
+export function reviewContext(request, pins, liveTip = null) {
+  const repo = fs.realpathSync(request.worktree), head = git(repo, "rev-parse", "HEAD");
+  const base = git(repo, "merge-base", head, reviewBaseTip(repo, request.baseRef, liveTip));
+  let contract = null, contractDigest = null;
+  if (!pins || !request.pins) return { head, base, contract, contractDigest, history: null };
+  const pinnedIssue = /^([A-Z][A-Z0-9]*-[1-9][0-9]*)-a[1-9][0-9]*$/.exec(path.basename(path.dirname(request.pins.file)))?.[1];
+  const file = path.join(pins.fullSnapshot?.directory ?? path.join(path.dirname(request.pins.file), "snapshot"), `issue-${pinnedIssue}.md`);
+  if (!pinnedIssue || !fs.existsSync(file)) return { head, base, contract, contractDigest, history: null };
+  contract = fs.readFileSync(file, "utf8");
+  // Amendment texts narrow or correct the task: the reviewer must read them with the Issue.
+  // Only registered ones: a prepared amendment that was never delivered stays on disk and is not part of the task.
+  const attempt = Number(/-a([1-9][0-9]*)$/.exec(path.basename(path.dirname(request.pins.file)))[1]);
+  const registered = Object.values(registryEntry(path.dirname(path.dirname(path.dirname(request.pins.file))), pinnedIssue, attempt).completed_amendments ?? {});
+  for (const record of registered.filter(item => item.pinsVersion <= (pins.pinsVersion ?? 0)).sort((a, b) => a.pinsVersion - b.pinsVersion))
+    contract += `\n\n## Orchestrator amendment ${record.pinsVersion}\n${record.change?.text ?? fs.readFileSync(record.resumeFile, "utf8").split(/\n\n## (?:Effective attempt pins|issue-)/)[0]}`;
+  contractDigest = digest(contract);
+  return { head, base, contract, contractDigest, history: reviewHistory(signedHistory(request.evidenceRoot, request.pins.file),
+    { pins: request.pins, head, base, contractDigest }) };
+}
 async function verifyPreflight(request, live = null, allowPending = false) {
   const pins = checkCollectionRequest(request);
   if (live) {
@@ -368,13 +388,11 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   validateEvidenceGrants(request.skillsRoot, request.workerWritableRoots, 'installed skillsRoot');
   const repo = fs.realpathSync(request.worktree);
   cleanTree(repo);
-  const head = git(repo, "rev-parse", "HEAD");
+  const { head, base, contract, contractDigest, history } = reviewContext(request, pins, live?.baseRefOid);
   if (pins && head !== request.head) throw new Error(`collection request mismatch: head; expected ${canonical(head)}`);
   if (pins && !new RegExp(`^preflight-collect:${head}:[1-9][0-9]*$`).test(request.collectionId ?? ""))
     throw new Error(`collection request mismatch: collectionId; expected ${canonical(`preflight-collect:${head}:<n>`)}`);
   requireThat(head === request.head, "head differs from collection/verification request");
-  const baseTip = reviewBaseTip(repo, request.baseRef, live?.baseRefOid);
-  const base = git(repo, "merge-base", head, baseTip);
   const policyBase = pins?.base ?? base;
   const landing = validateLanding(baseModelConfig(repo, policyBase));
   if (landing?.serialPaths !== undefined) {
@@ -395,23 +413,6 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   const binding = { ...(idea ? { idea } : {}), ...(request.issue !== undefined ? { issue: request.issue } : {}), ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), ...(request.prRemarks?.length ? { prRemarks: request.prRemarks } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
     critical: request.critical, root: fs.realpathSync(request.root), worktree: repo, evidenceRoot,
     workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort() };
-  // The task contract is the dispatch snapshot of the Issue (snapshot.vN after a full-snapshot amendment).
-  // Read with this attempt's signed history only when a round may be requested or run.
-  let contract = null, contractDigest = null;
-  const priorRounds = () => {
-    if (!pins || !request.pins) return null;
-    const file = path.join(pins.fullSnapshot?.directory ?? path.join(path.dirname(request.pins.file), "snapshot"), `issue-${pinnedIssue}.md`);
-    if (!pinnedIssue || !fs.existsSync(file)) return null;
-    contract = fs.readFileSync(file, "utf8");
-    // Amendment texts narrow or correct the task: the reviewer must read them with the Issue.
-    // Only registered ones: a prepared amendment that was never delivered stays on disk and is not part of the task.
-    const attempt = Number(/-a([1-9][0-9]*)$/.exec(path.basename(path.dirname(request.pins.file)))[1]);
-    const registered = Object.values(registryEntry(path.dirname(path.dirname(path.dirname(request.pins.file))), pinnedIssue, attempt).completed_amendments ?? {});
-    for (const record of registered.filter(item => item.pinsVersion <= (pins.pinsVersion ?? 0)).sort((a, b) => a.pinsVersion - b.pinsVersion))
-      contract += `\n\n## Orchestrator amendment ${record.pinsVersion}\n${record.change?.text ?? fs.readFileSync(record.resumeFile, "utf8").split(/\n\n## (?:Effective attempt pins|issue-)/)[0]}`;
-    contractDigest = digest(contract);
-    return reviewHistory(signedHistory(evidenceRoot, request.pins.file), { pins: request.pins, head, base, contractDigest });
-  };
   let receipt, verifiedReceiptFile = receiptFile;
   if (request.collect === false) {
     const readSigned = file => {
@@ -433,7 +434,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     if (!receipt) {
       requireThat(allowPending, "missing or stale review receipt/head/base");
       // Refuse here, before the worker publishes a request that could only be refused.
-      const prior = priorRounds();
+      const prior = history;
       if (prior && !prior.reuse) {
         requireThat(prior.notReviewed < 2, `blocked: ${NOT_REVIEWED_TWICE}`);
         requireThat(prior.spent < ROUND_LIMIT, `needs-decision: ${ROUND_LIMIT_REACHED}`);
@@ -459,7 +460,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   if (request.collect === true) {
     const recordedAt = new Date().toISOString();
     const protectedPaths = { "orchestrator root": request.root, skillsRoot: request.skillsRoot, packRoot: request.packRoot ?? request.skillsRoot };
-    const prior = priorRounds();
+    const prior = history;
     requireThat(prior, "review contract missing in the pinned dispatch snapshot (issue-<KEY>.md)");
     const consistency = { passed: true, error: null };
     const checkConsistency = () => {
