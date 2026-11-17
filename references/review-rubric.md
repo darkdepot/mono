@@ -53,7 +53,7 @@ PRD:
 
 Package record:
 
-- Input versions name the approved PRD and Research; reconciliation findings are resolved; shared `U` decisions cover what several Issues need (deep/risky: at least one).
+- Input versions name the approved PRD and Research; reconciliation findings are resolved; `U` decisions include every Spec decision needed by the Issues (deep/risky: at least one); a single Issue uses their numbers without retelling, omitted work is in non-goals.
 - One Issue unless a recorded `too-big`, `shared-base` or `probe` reason; at most three without the owner; every PRD requirement has an Issue and every Issue a requirement.
 - No `approval_status`, `mono-idea:` or `mono-idea-snapshot` inside it.
 
@@ -65,7 +65,7 @@ Tech Spec:
 - Only non-inferable, expensive-to-redo details remain, with concrete validation and applicable failure/release/rollback decisions; no empty sections.
 - Deep/risky specs use the interface as the test surface and pass the deletion-test smell check.
 - No-spec exception is justified when present; it cannot replace the Spec on the Tech Evaluation route. Old-path/tiny package records retain their `U` decisions.
-- Handoff carries approved Spec decisions into `U` units and Issue key contracts; any change to a page line returns to Tech Evaluation (after start, class 3 repair first).
+- Handoff carries approved Spec decisions into `U` units, referenced by single-Issue key contracts without retelling; any change to a page line returns to Tech Evaluation (after start, class 3 repair first).
 
 Issue:
 
@@ -103,11 +103,18 @@ Repair classification:
 - Ambiguity or risk growth is class 3. A mixed or unanchored diff cannot receive
   a lower advisory classification.
 
+Single-Issue handoff, any risk including tiny: both reviewers, one full round;
+wording fixes without a new round; blocking P0/P1 substance fixes rechecked only
+by their finder on that finding. Reject a blocker only with source refutation,
+never “it was so before”. Multiple Issues keep up to three rounds and tiny advisory
+with reason. Check every needed Spec decision is in U; do not duplicate it in the Issue.
+
 ## Finding Format
 
 Each finding must include:
 
 - Tier: `blocking`, `proposed-fix`, `decision`, or `fyi`.
+- In handoff, finder marks «по сути» or «по формулировке»; absent mark means substance. Blocking findings carry priority P0/P1.
 - Artifact: Project, PRD, Tech Spec, Issue, or Ship.
 - Evidence: short quote or artifact section reference.
 - Impact: what goes wrong if ignored.

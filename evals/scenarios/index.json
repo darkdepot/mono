@@ -217,7 +217,7 @@
     {
       "id": "handoff",
       "name": "Handoff",
-      "minimum": 3,
+      "minimum": 4,
       "files": [
         "skills/handoff/",
         "references/owner-dialog.md",
@@ -255,7 +255,8 @@
       "scenarios": [
         "handoff/approve/scenario.json",
         "handoff/correction/scenario.json",
-        "handoff/empty/scenario.json"
+        "handoff/empty/scenario.json",
+        "handoff/single-task/scenario.json"
       ]
     }
   ],
