@@ -5,7 +5,8 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { atomicJson, readJson, digest, canonical, withLock, isMain, validateEvidenceGrants } from "../runtime.mjs";
-import { registryEntry, effectivePins, correlatedPhase, expandedWrite, attemptDirectory, admitUnderLock, commandFlags, allowedFlags, sha256File, validateReportBarriers, amendmentState, amendmentChange, amendmentMatches, amendmentDocuments, validateAmendment, restoreAmendmentGrants } from "./command-state.mjs";
+import { registryEntry, effectivePins, collectionPinsBinding, correlatedPhase, expandedWrite, attemptDirectory, admitUnderLock, commandFlags, allowedFlags, sha256File, validateReportBarriers, amendmentState, amendmentChange, amendmentMatches, amendmentDocuments, validateAmendment, restoreAmendmentGrants } from "./command-state.mjs";
+import { reviewContext, ROUND_LIMIT } from "../gate.mjs";
 import { consumeAck } from "./consume-gate-ack.mjs";
 import { recordObservation, sessionContext, reconcile } from "./linear-adapter.mjs";
 import { classifyQueue } from "../delivery-state.mjs";
@@ -166,6 +167,12 @@ export async function acceptAmend(args) {
           }
           return { record, ...verified, pendingFile };
         }
+        if (args["bot-unavailable"] !== undefined) {
+          const current = effectivePins(entry);
+          const { history } = reviewContext({ ...current, pins: collectionPinsBinding(entry) }, current);
+          if (history?.reuse && history.spent >= ROUND_LIMIT - 1)
+            throw new Error(`Отметка недоступности бота на неизменённом коде отменила бы уже пройденный круг ревью (${history.spent >= ROUND_LIMIT ? "лимит исчерпан" : "следующий круг будет последним"}); варианты: дождаться бота; если нужна правка кода, сначала поправка с правкой без отметки, отметка сразу следом, до следующего круга; записать недоступность в новой попытке; решение оркестратора по задаче.`);
+        }
         if (pending) {
           version = pending.pinsVersion; state = amendmentState(entry, pending).state;
           // A different request cannot hide damaged files or an uncertain launch.
@@ -267,7 +274,7 @@ export async function acceptAmend(args) {
 if (isMain(import.meta.url)) {
   try {
     const [command, ...argv] = process.argv.slice(2), args = commandFlags(argv, ["full-snapshot", "preapply"], ["observe"]);
-    if (command === "--help" || args.help) console.log("Usage: accept.mjs ack --root DIR --issue KEY --attempt N [--outcome applied|blocked|rejected] [--readback FILE]\naccept.mjs report --root DIR --report FILE [--config FILE] [--session UUID --observe 'writeId=JSON']\nObservation: {sessionId,writeId,reportDigest,writeDigest,observedAt,state:'present|missing',evidence,absent?:true}; repeat --observe for multiple writes; @file is supported. Without --session open a new session, invalidate prior observations and print expanded writes (reread first on retry).\naccept.mjs amend --root DIR --issue KEY --attempt N --text TEXT [--risk CLASS] [--critical TEXT] [--bot-unavailable REASON] [--worker-writable-roots JSON] [--full-snapshot --snapshot DIR]\nAdmission files: consumed/KEY-aN/admissions/collectionId.json; launch.lock serializes admissions and amendments. --preapply requires a new dispatch after artifact-owner repair. No script writes to Linear.");
+    if (command === "--help" || args.help) console.log("Usage: accept.mjs ack --root DIR --issue KEY --attempt N [--outcome applied|blocked|rejected] [--readback FILE]\naccept.mjs report --root DIR --report FILE [--config FILE] [--session UUID --observe 'writeId=JSON']\nObservation: {sessionId,writeId,reportDigest,writeDigest,observedAt,state:'present|missing',evidence,absent?:true}; repeat --observe for multiple writes; @file is supported. Without --session open a new session, invalidate prior observations and print expanded writes (reread first on retry).\naccept.mjs amend --root DIR --issue KEY --attempt N --text TEXT [--risk CLASS] [--critical TEXT] [--bot-unavailable REASON] [--worker-writable-roots JSON] [--full-snapshot --snapshot DIR]\nA new --bot-unavailable amendment is refused when the current HEAD/base/contract has a reusable round and at least ROUND_LIMIT - 1 rounds are completed.\nAdmission files: consumed/KEY-aN/admissions/collectionId.json; launch.lock serializes admissions and amendments. --preapply requires a new dispatch after artifact-owner repair. No script writes to Linear.");
     else if (command === "ack") await acceptAck(args);
     else if (command === "report") await acceptReport(args);
     else if (command === "amend") console.log(JSON.stringify(await acceptAmend(args)));

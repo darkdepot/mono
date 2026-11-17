@@ -303,7 +303,9 @@ Ship pins capture orchestration.ship.botChecks from the immutable project base
 (default ["Greptile Review"], nonempty unique names). A worker cannot override this
 list. For a confirmed bot outage, use accept.mjs amend --bot-unavailable "<reason>"
 with the current --issue/--attempt and recovery --text; the decision is scoped to
-that task attempt and does not carry into another attempt. A ship-fix amendment
+that task attempt and does not carry into another attempt. A new amendment with
+`--bot-unavailable` is refused when the current HEAD, base and review contract
+have a reusable completed round and at least `ROUND_LIMIT − 1` rounds are spent. A ship-fix amendment
 names the next ship-gate attempt number; the worker keeps the old state and uses
 a new stateFile for the new head within the same task attempt. Ship-gate attempts
 have no machine bound; review/class/cap gates and evidence-window code are unchanged.
