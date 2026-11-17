@@ -926,6 +926,82 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
         try { await callback({ ...context, current, evidence, tip, seal }); }
         finally { fs.rmSync(evidence, { recursive: true, force: true }); if (existed) fs.renameSync(saved, evidence); }
       });
+      const assertBotRoundTwoReused = async ({ current, registryFile, tip, evidence }) => {
+        const codex = path.join(bin, 'codex'), original = fs.readFileSync(codex);
+        const getconf = path.join(bin, 'getconf'), savedGetconf = fs.existsSync(getconf) ? fs.readFileSync(getconf) : null;
+        const darwinTemp = path.join(scratch, 'bot-darwin-temp'); fs.mkdirSync(darwinTemp, { recursive: true });
+        write(getconf, `#!/usr/bin/env node\nconsole.log(${JSON.stringify(darwinTemp)});\n`); fs.chmodSync(getconf, 0o700);
+        // A controlled verification adapter; any review CLI launch is a test failure.
+        write(codex, `#!/usr/bin/env node
+if(process.argv[2]!=='sandbox')process.exit(74);
+const p=JSON.parse(process.argv.at(-1));console.log(p.probeMarker);
+`);
+        const request = { ...current, pins: collectionPinsBinding(readJson(registryFile)[ack.issue]), head: tip,
+          collectionId: `preflight-collect:${tip}:401`, collect: false };
+        const requestFile = path.join(scratch, 'bot-reuse-request.json');
+        try {
+          atomicJson(requestFile, request);
+          assert.equal(run(process.execPath, [path.join(runtime, 'gate.mjs'), 'preflight', '--request', requestFile]).status, 2);
+          const queue = [{ id: request.collectionId, operation: 'preflight-collect', target: tip, payload: { request } }];
+          await admitCollection(root, { ...collectReport, linear_mutations_pending: queue, capsule: { ...collectReport.capsule, open_queue: queue } });
+          atomicJson(requestFile, { ...request, collect: true });
+          pass(run(process.execPath, [path.join(runtime, 'gate.mjs'), 'preflight', '--request', requestFile]));
+          const receipt = readJson(path.join(evidence, `${tip}.json`)).receipt;
+          assert.equal(receipt.review.round, 2); assert.equal(receipt.review.spent, false);
+          assert.equal(receipt.review.reusedFrom, 'bot-round-2');
+          const completed = fs.readdirSync(path.join(evidence, 'history')).map(name => readJson(path.join(evidence, 'history', name)).receipt).filter(r => r.review.spent);
+          assert.equal(completed.length, 2, 'Preflight spends no new round after refusal');
+        } finally {
+          fs.writeFileSync(codex, original);
+          if (savedGetconf) fs.writeFileSync(getconf, savedGetconf); else fs.unlinkSync(getconf);
+        }
+      };
+      await t.test('bot-unavailable-prepared-retry: second round refuses undelivered amendment and restores grants', () => withBotRounds(1, async ({ registryFile, output, current, evidence, tip, seal }) => {
+        const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+        const exited = new Promise(resolve => child.once('exit', resolve));
+        const registry = readJson(registryFile); registry[ack.issue].pid = child.pid; atomicJson(registryFile, registry);
+        const extra = path.join(scratch, 'bot-prepared-extra'), grantsFile = path.join(scratch, 'bot-prepared-grants.json');
+        fs.mkdirSync(extra); write(grantsFile, [...current.workerWritableRoots, extra]);
+        const args = [...amendArgs('Prepared bot decision before round two.'), '--bot-unavailable', 'Greptile limit', '--worker-writable-roots', grantsFile];
+        try {
+          const prepared = run(process.execPath, args);
+          assert.equal(prepared.status, 1); assert.match(prepared.stderr, /worker process is still live/u);
+          assert.match(prepared.stderr, /proven non-delivery; prior grants restored/u);
+          const record = readJson(pendingFile);
+          assert.equal(JSON.parse(prepared.stdout).state, 'prepared');
+          assert.equal(record.launchMayHaveStartedAt, undefined);
+          assert.deepEqual(readJson(registryFile), registry);
+          child.kill('SIGTERM'); await exited;
+          const first = readJson(path.join(evidence, 'history/bot-round-1.json')).receipt;
+          seal({ ...first, runId: 'bot-round-2', recordedAt: '2026-11-15T00:00:02Z',
+            review: { ...first.review, round: 2 } });
+          const files = new Map(fs.readdirSync(output).map(name => [name,
+            fs.statSync(path.join(output, name)).isFile() ? fs.readFileSync(path.join(output, name)) : null]));
+          // An interrupted pre-launch preparation may have provisional grants to restore.
+          const provisional = structuredClone(registry);
+          for (const key of ['workerWritableRoots', 'writable_roots']) provisional[ack.issue][key].push(extra);
+          provisional[ack.issue].capsule.writable_roots.push(extra);
+          atomicJson(registryFile, provisional);
+          for (let retry = 0; retry < 2; retry++) {
+            const result = run(process.execPath, args), refusal = JSON.parse(result.stdout);
+            assert.equal(result.status, 1, result.stderr + result.stdout);
+            assert.equal(refusal.outcome, 'refused'); assert.equal(refusal.state, 'prepared');
+            assert.equal(refusal.version, record.pinsVersion);
+            assert.match(refusal.reason, /неизменённом коде.*пройденный круг ревью.*следующий.*последним/u);
+            assert.doesNotMatch(refusal.reason, /\n/u);
+            assert.deepEqual(readJson(registryFile), registry, 'refusal restores prior grants without registering or resuming');
+            assert.deepEqual(fs.readdirSync(output), [...files.keys()]);
+            for (const [name, bytes] of files) if (bytes) assert.deepEqual(fs.readFileSync(path.join(output, name)), bytes);
+          }
+          await assertBotRoundTwoReused({ current, registryFile, tip, evidence });
+          const uncertain = { ...record, launchMayHaveStartedAt: new Date().toISOString() };
+          atomicJson(pendingFile, uncertain); atomicJson(registryFile, provisional);
+          const refused = run(process.execPath, args);
+          assert.equal(refused.status, 1); assert.match(JSON.parse(refused.stdout).reason, /launch may have started/u);
+          assert.deepEqual(readJson(pendingFile), uncertain);
+          assert.deepEqual(readJson(registryFile), provisional, 'uncertain launch refusal precedes round guard and grant restoration');
+        } finally { child.kill('SIGTERM'); await exited; await processes.stop(child.pid); }
+      }));
       for (const count of [2, 3]) for (const dirty of [false, true])
         await t.test(`bot-unavailable-round-guard: ${count} completed, reusable HEAD, dirty=${dirty}`, () => withBotRounds(count, async ({ registryFile, output, current, evidence, tip }) => {
           const dirtyFile = path.join(current.worktree, 'uncommitted-bot-fix');
@@ -946,36 +1022,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
               assert.deepEqual(fs.readdirSync(output), names, 'refusal creates no pins, resume or pending files');
             }
           } finally { if (dirty) fs.unlinkSync(dirtyFile); }
-          if (count === 2 && !dirty) {
-            const codex = path.join(bin, 'codex'), original = fs.readFileSync(codex);
-            const getconf = path.join(bin, 'getconf'), savedGetconf = fs.existsSync(getconf) ? fs.readFileSync(getconf) : null;
-            const darwinTemp = path.join(scratch, 'bot-darwin-temp'); fs.mkdirSync(darwinTemp, { recursive: true });
-            write(getconf, `#!/usr/bin/env node\nconsole.log(${JSON.stringify(darwinTemp)});\n`); fs.chmodSync(getconf, 0o700);
-            // A controlled verification adapter; any review CLI launch is a test failure.
-            write(codex, `#!/usr/bin/env node
-if(process.argv[2]!=='sandbox')process.exit(74);
-const p=JSON.parse(process.argv.at(-1));console.log(p.probeMarker);
-`);
-            const request = { ...current, pins: collectionPinsBinding(readJson(registryFile)[ack.issue]), head: tip,
-              collectionId: `preflight-collect:${tip}:401`, collect: false };
-            const requestFile = path.join(scratch, 'bot-reuse-request.json');
-            try {
-              atomicJson(requestFile, request);
-              assert.equal(run(process.execPath, [path.join(runtime, 'gate.mjs'), 'preflight', '--request', requestFile]).status, 2);
-              const queue = [{ id: request.collectionId, operation: 'preflight-collect', target: tip, payload: { request } }];
-              await admitCollection(root, { ...collectReport, linear_mutations_pending: queue, capsule: { ...collectReport.capsule, open_queue: queue } });
-              atomicJson(requestFile, { ...request, collect: true });
-              pass(run(process.execPath, [path.join(runtime, 'gate.mjs'), 'preflight', '--request', requestFile]));
-              const receipt = readJson(path.join(evidence, `${tip}.json`)).receipt;
-              assert.equal(receipt.review.round, 2); assert.equal(receipt.review.spent, false);
-              assert.equal(receipt.review.reusedFrom, 'bot-round-2');
-              const completed = fs.readdirSync(path.join(evidence, 'history')).map(name => readJson(path.join(evidence, 'history', name)).receipt).filter(r => r.review.spent);
-              assert.equal(completed.length, 2, 'Preflight spends no new round after refusal');
-            } finally {
-              fs.writeFileSync(codex, original);
-              if (savedGetconf) fs.writeFileSync(getconf, savedGetconf); else fs.unlinkSync(getconf);
-            }
-          }
+          if (count === 2 && !dirty) await assertBotRoundTwoReused({ current, registryFile, tip, evidence });
         }));
       for (const [count, currentHead] of [[1, true], [2, false]])
         await t.test(`bot-unavailable-round-admitted: ${count} completed, reusable=${currentHead}`, () => withBotRounds(count, async () => {
@@ -1011,6 +1058,9 @@ const p=JSON.parse(process.argv.at(-1));console.log(p.probeMarker);
               delete worker.completed_amendments[record.pinsVersion]; delete worker.last_amendment;
               delete record.registeredResume; delete record.resumeResult;
               atomicJson(path.join(output, 'amendment.pending.json'), record); atomicJson(registryFile, registry);
+              const first = readJson(path.join(current.evidenceRoot, 'history/bot-round-1.json')).receipt;
+              seal({ ...first, runId: 'bot-round-2', recordedAt: '2026-11-15T00:00:02Z',
+                review: { ...first.review, round: 2 } });
             }
             const replay = JSON.parse(pass(run(process.execPath, args))); processes.track(replay.pid);
             assert.equal(replay.pinsVersion, result.pinsVersion);
