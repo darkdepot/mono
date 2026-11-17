@@ -562,6 +562,23 @@ live Linear serialization samples: [fixtures](scripts/fixtures/idea-gate/README.
 inline code and fences remain literal. The project body stays unchanged.
 Known limitation: inline code spanning multiple source lines refuses `unsupported-format`.
 
+`node scripts/idea-gate.mjs initiative --mode fresh --dump DIR --config CONFIG`
+проверяет согласие владельца на инициативу без сети. Дамп содержит сырые
+`initiative.json` (`get_initiative` с `includeProjects`, статус строкой),
+`decision.json` (`get_document` или `list_documents`) и полные страницы
+`comments-N.json` с фактическими `comments-N.request.json`, как выше.
+Действует последняя запись `mono-initiative: approved` по `createdAt`, только
+`by=owner`; проза вне забора не участвует. Хеши описания и решения считаются
+по обратному чтению: строки «Заведён» исключены, теги проекта/задачи заменены
+на `id`, маркеры списков и угловые скобки адресов ссылок приведены к одной
+форме, пробелы в конце строк убраны, повторные пустые строки сжаты.
+«Есть проект» входит в хеш; переименование тега его не меняет.
+`updatedAt` сущностей не служит версией, у комментария он может быть раньше
+`createdAt`. Вывод: «Готово» или «Стоп: …», затем JSON с `code` из `pass`,
+`no-record`, `stale-brief`, `stale-decision`, `bad-record`.
+Обезличенные живые образцы и происхождение —
+[фикстуры](scripts/fixtures/initiative-gate/README.md).
+
 | Surface | What belongs there |
 | --- | --- |
 | Linear Project body | Idea: what, why, target outcome; Handoff leaves it unchanged (legacy packages may carry in scope and out of scope) |
@@ -573,7 +590,7 @@ Known limitation: inline code spanning multiple source lines refuses `unsupporte
 | GitHub | Branch, PR, code review, CI, deploy and merge history |
 | Worker report | Phase, exact head, decisions, every pending write and verification result; no direct Linear mutation |
 
-Keep whole PRD and Tech Spec bodies out of Issues. Link them through Project resources and Issue chips/snapshots. Use stable requirement and acceptance IDs when required by risk. Prefer one Issue; a second and third need a named reason (`too-big`, `shared-base`, `probe`), more need the owner; Issues touching the same surfaces are chained. Mark **AFK** when an agent can execute alone, or **HITL** when a named human action remains. For a bug or performance issue, carry reproduction/baseline and fix-proof expectations, or an explicit reason that the symptom cannot yet be reproduced.
+Keep whole PRD and Tech Spec bodies out of Issues. Link them through Project resources and Issue references/snapshots, following [references/linear-links.md](references/linear-links.md) for each entity's format. Use stable requirement and acceptance IDs when required by risk. Prefer one Issue; a second and third need a named reason (`too-big`, `shared-base`, `probe`), more need the owner; Issues touching the same surfaces are chained. Mark **AFK** when an agent can execute alone, or **HITL** when a named human action remains. For a bug or performance issue, carry reproduction/baseline and fix-proof expectations, or an explicit reason that the symptom cannot yet be reproduced.
 
 Handoff counts a change expected to exceed roughly 1,000 lines in critical paths (gates, release, security, data) as `too-big` and splits it into smaller one-PR Issues with verifiable contracts and dependencies.
 
@@ -1645,7 +1662,7 @@ node scripts/read-budget.mjs
 node scripts/validate-plugin.mjs
 claude plugin validate . --strict
 node scripts/lint-mono-artifacts.mjs
-node --test scripts/route-gate.test.mjs scripts/design-gate.test.mjs scripts/tech-gate.test.mjs
+node --test scripts/route-gate.test.mjs scripts/design-gate.test.mjs scripts/tech-gate.test.mjs scripts/initiative-gate.test.mjs
 ```
 
 Runtime tests use scratch plugin folders; the real sandbox-boundary test runs outside a worker sandbox and reports an explicit skip when nested sandboxing prevents it. Installation, live production QA, deploy and owner acceptance are separate evidence boundaries, never implied by a local green check.

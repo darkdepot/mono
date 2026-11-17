@@ -4,7 +4,7 @@ Apply `AGENTS.md` source-of-truth, artifact responsibilities, stage ownership an
 
 Set newly created Project leads and Issue assignees to acting user in every owner stage, including hotfix/follow-up; preserve existing assignments.
 
-Project body: only what/why/outcome/in/out (`Что`, `Зачем`, `Образ результата`, `Что входит`, `Что не входит`); no active-doc/Issue/status/workflow dashboard. PRD WHAT; Spec HOW; Issue one PR/snapshot, not whole-doc copies. Apply `references/execution-quality.md`. Judge responsibility before heading spelling. Attach PRD/Spec only to Project; Issue gets chips/snapshot/resource links when supported. Prefer chips/entity mentions over raw URLs; remove obsolete/closed PR chips. Keep workflow mechanics out of durable bodies.
+Project body: only what/why/outcome/in/out (`Что`, `Зачем`, `Образ результата`, `Что входит`, `Что не входит`), no dashboard/mechanics. PRD WHAT; Spec HOW; Issue one PR/snapshot, no full copies. Apply `references/execution-quality.md`; judge responsibility before heading spelling. Attach PRD/Spec only to Project; Issue references/resources follow [references/linear-links.md](linear-links.md). Remove obsolete/closed PR chips; no mechanics in durable bodies.
 
 Record user/package acceptance in comments, naming package, PRD/Spec links/titles, Issue slices/IDs and start authorization. Legacy: missing/rejected approval or requested changes forbids execution-Issue creation/Delivery (BLOCKED/INCOMPLETE, links). `mono-package`: Issues and Ready precede the owner's recorded start; Handoff records, never grants it; implement verifies it. Raw discovery implementation plans require handoff first.
 

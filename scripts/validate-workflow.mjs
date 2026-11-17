@@ -5862,6 +5862,11 @@ const STRING_PINS = [
   ["skills/handoff/references/record.md", "mono-package: recorded"],
   ["skills/handoff/references/record.md", "mono-package: start"],
   ["skills/handoff/references/record.md", "by=orchestrator"],
+  // MONO-259: entity-format consumers share a path; prose remains unpinned.
+  ...["skills/handoff/references/record.md", "templates/issue.md", "references/lifecycle.md",
+    "references/review-rubric.md", "references/artifact-quality.md", "references/artifact-rules.md",
+    "skills/check/references/delivery.md", "skills/issue/references/run.md", "HANDBOOK.md"]
+    .map(file => [file, "references/linear-links.md"]),
   ["skills/check/references/before-work.md", "mono-package: recorded"],
   ["skills/handoff/SKILL.md", "too-big"],
   ["skills/handoff/SKILL.md", "shared-base"],
@@ -6484,6 +6489,7 @@ const ISSUE_RECOVERY_CASES = [
 ];
 
 const MACHINE_TOKENS = new Set([
+  "references/linear-links.md",
   "requireQaPassed",
   "scripts/deploy.mjs",
   "skills/deploy/references/output.md",

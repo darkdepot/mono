@@ -443,6 +443,10 @@ function readDump(root, raw, config, { elidedBodies = false } = {}) {
   const headings = configuredHeadings(config);
   const project = { id: raw.uuid, createdAt: raw.createdAt, status: raw.status?.name,
     body: raw.description, language: 'custom' };
+  return { project, records: { complete: true, comments: readCommentDump(root, { elidedBodies }) }, headings };
+}
+
+function readCommentDump(root, { elidedBodies = false } = {}) {
   const files = fs.readdirSync(root).filter(name => /^comments-.*\.json$/.test(name));
   const pages = files.filter(name => /^comments-[1-9]\d*\.json$/.test(name));
   if (!pages.length || files.length !== pages.length * 2 ||
@@ -467,7 +471,7 @@ function readDump(root, raw, config, { elidedBodies = false } = {}) {
       if (typeof item.body === 'string') comments.push({ id: item.id, createdAt: item.createdAt, body: item.body });
     }
   }
-  return { project, records: { complete: true, comments }, headings };
+  return comments;
 }
 
 function verifyDump(options, config) {
@@ -492,7 +496,7 @@ export function latestApproval(comments, marker, required, optional = []) {
   const prefix = marker.slice(0, marker.indexOf(':') + 1);
   const candidates = comments.map(comment => {
     const fenced = blocks(comment.body, true);
-    const records = fenced.flatMap((block, index) => block.info === 'mono-tech-page' ? []
+    const records = fenced.flatMap((block, index) => block.info === 'mono-tech-page' && marker !== 'mono-initiative: approved' ? []
       : (block.fenced ? block.content : block.text).split(/\r?\n/).map(line => line.trim())
         .filter(line => line.startsWith(prefix)).map(line => ({ line, index })));
     return { comment, records };
@@ -615,6 +619,50 @@ function checkTechDump(root, config) {
   } catch { return { ok: false, code: 'bad-record', projectId, stage: 'mono:tech-evaluation' }; }
 }
 
+export function initiativeFingerprint(markdown) {
+  if (typeof markdown !== 'string') fail('bad-record');
+  const normalized = markdown.replace(/\r\n/g, '\n').split('\n')
+    .filter(line => !/^[ \t]*Заведён:/.test(line))
+    .map(line => line.replace(/[ \t]+$/, '').replace(/^([ \t]*)[*+-][ \t]+/, '$1* ')).join('\n')
+    .replace(/<(project|issue)\b([^>]*?)(?:\/>|>[\s\S]*?<\/\1\s*>)/g, (_tag, _kind, attributes) => {
+      const id = attributes.match(/\bid\s*=\s*(["'])(.*?)\1/)?.[2];
+      if (!uuid(id)) fail('bad-record');
+      return id;
+    })
+    .replace(/\[([^\]\n]+)\]\(<([^<>\n]+)>\)/g, '[$1]($2)')
+    .replace(/\n{3,}/g, '\n\n').replace(/^\n+|\n+$/g, '');
+  return sha256(normalized);
+}
+
+function checkInitiativeDump(root) {
+  let initiativeId = null;
+  try {
+    const initiative = readJson(path.join(root, 'initiative.json'));
+    initiativeId = initiative?.uuid ?? initiative?.id ?? null;
+    if (!object(initiative) || !uuid(initiativeId) || typeof initiative.description !== 'string' ||
+        typeof initiative.status !== 'string' || !initiative.status) fail('bad-record');
+    const approval = latestApproval(readCommentDump(root), 'mono-initiative: approved',
+      ['initiative', 'brief-sha256', 'decision', 'decision-sha256', 'by']);
+    if (!approval) return { ok: false, code: 'no-record', initiativeId };
+    const a = approval.fields;
+    if (a.by !== 'owner' || a.initiative !== initiativeId || !uuid(a.decision) ||
+        !/^[a-f0-9]{64}$/.test(a['brief-sha256']) || !/^[a-f0-9]{64}$/.test(a['decision-sha256']) ||
+        !approval.record.content.split(/\r?\n/)[0].trim().startsWith('mono-initiative: approved ')) fail('bad-record');
+    const raw = readJson(path.join(root, 'decision.json'));
+    const documents = Array.isArray(raw?.documents) ? raw.documents : [raw];
+    const matches = documents.filter(doc => doc?.id === a.decision);
+    if (matches.length > 1) fail('bad-record');
+    const decision = matches[0] ?? (documents.length === 1 ? documents[0] : null);
+    if (!object(decision) || !uuid(decision.id) || typeof decision.content !== 'string' ||
+        (decision.initiative?.id ?? decision.initiativeId) !== initiativeId) fail('bad-record');
+    const briefSha256 = initiativeFingerprint(initiative.description), decisionSha256 = initiativeFingerprint(decision.content);
+    const code = briefSha256 !== a['brief-sha256'] ? 'stale-brief' :
+      decision.id !== a.decision || decisionSha256 !== a['decision-sha256'] ? 'stale-decision' : 'pass';
+    return { ok: code === 'pass', code, initiativeId, recordId: approval.comment.id,
+      documentId: decision.id, briefSha256, decisionSha256 };
+  } catch { return { ok: false, code: 'bad-record', initiativeId }; }
+}
+
 function designProductDirectory(config, repository) {
   if (typeof config.projectName !== 'string' || !config.projectName.trim() || !repository) fail('bad-record');
   const slug = config.projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -665,12 +713,14 @@ function approvalMain(command, argv) {
       options[key] = argv.shift();
     }
     if (options['--mode'] !== 'fresh' || !options['--dump']) fail('bad-record');
-    const check = { route: checkRouteDump, tech: checkTechDump, design: checkDesignDump }[command];
+    const check = { route: checkRouteDump, tech: checkTechDump, design: checkDesignDump, initiative: checkInitiativeDump }[command];
     const configFile = options['--config'];
     result = check(options['--dump'], configFile ? readJson(configFile) : {},
       configFile ? path.dirname(path.dirname(path.resolve(configFile))) : null);
-  } catch { result = { ok: false, code: 'bad-record', projectId: null }; }
-  const reasons = { 'no-record': `нет записи mono-${command}; нужен этап ${command === 'design' ? 'Design' : 'Tech Evaluation'}`,
+  } catch { result = { ok: false, code: 'bad-record', [command === 'initiative' ? 'initiativeId' : 'projectId']: null }; }
+  const reasons = { 'no-record': `нет записи mono-${command}; нужен этап ${command === 'initiative' ? 'Инициатива' : command === 'design' ? 'Design' : 'Tech Evaluation'}`,
+    'stale-brief': 'описание инициативы изменилось; нужен новый показ и согласие владельца',
+    'stale-decision': 'решение инициативы изменилось; нужен новый показ и согласие владельца',
     'stale-prd': 'PRD изменился; нужна новая запись этапа', 'stale-spec': 'тело Tech Spec изменилось; нужен Tech Evaluation',
     'stale-images': 'картинки изменились или недоступны; нужен Design', 'stale-design': 'запись дизайна сменилась; нужен Tech Evaluation',
     'bad-record': 'запись или ответы Linear неполны либо повреждены' };
@@ -873,7 +923,7 @@ function main(argv) {
        idea-gate.mjs check --mode fresh --dump DIR --config CONFIG
        idea-gate.mjs check --mode fresh|approved --snapshot DIR [--config CONFIG]
        idea-gate.mjs research --snapshot DIR [--config CONFIG]
-       idea-gate.mjs route|design|tech --mode fresh --dump DIR [--config CONFIG]
+       idea-gate.mjs route|design|tech|initiative --mode fresh --dump DIR [--config CONFIG]
        idea-gate.mjs research-draft --draft FILE [--config CONFIG] [--project UUID]
        idea-gate.mjs fingerprint --snapshot FILE [--config CONFIG]
 Dump: project.json and comments-N.json are raw Linear responses (N=1,2,...).
@@ -884,6 +934,11 @@ design reads raw prd.json and the immutable PNG version under ~/.mono-agent-work
 --config supplies projectName and its repository location.
 tech also reads raw prd.json and tech-spec.json: id, content, project.id (or projectId),
 and PRD updatedAt. It hashes the exact spec content and mono-tech-page lines with final LF.
+initiative reads initiative.json (get_initiative with includeProjects, status is a string),
+decision.json (get_document or list_documents) and the complete comments-N pages/requests.
+It binds the latest owner mono-initiative record by createdAt to normalized read-back bodies:
+drop Заведён lines, replace project/issue tags by id, unify link angles/list markers,
+strip trailing whitespace and collapse blank runs. Entity updatedAt is not a version.
 Only the fields the script reads are needed: project uuid, createdAt, status.name, description;
 per page comments, hasNextPage, cursor; per comment id, createdAt, updatedAt and body.
 verify accepts comments without body (they cannot match --expect); check --dump needs every body.
@@ -900,7 +955,7 @@ It never gates work; exit 1 means findings to fix before writing.`);
     return;
   }
   if (argv[0] === 'research-draft') return researchDraftMain(argv.slice(1));
-  if (['route', 'design', 'tech'].includes(argv[0])) return approvalMain(argv[0], argv.slice(1));
+  if (['route', 'design', 'tech', 'initiative'].includes(argv[0])) return approvalMain(argv[0], argv.slice(1));
   if (['record', 'verify', 'helper'].includes(argv[0])) return authoringMain(argv);
   const research = argv[0] === 'research';
   let projectId = null, result;

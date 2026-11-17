@@ -4,7 +4,7 @@ Require zero-context execution without invented behavior or proof.
 
 ## Project
 
-Body: what/why/outcome/in/out (`PC-005`). Put lifecycle, active-doc/Issue chips and risk/gate/verdict/evidence/disposition/owner/next record in metadata/resources/comments/handoff (`PC-006`, `PC-007`, `PC-010`), not body. Separate overview/full docs; remove obsolete PRs/raw URLs where chips exist.
+Body: what/why/outcome/in/out (`PC-005`). Lifecycle, document/Issue references and risk/gate/verdict/evidence/disposition/owner/next belong in metadata/resources/comments/handoff (`PC-006/007/010`). Use [references/linear-links.md](linear-links.md). Separate overview/full docs; remove obsolete PRs/raw URLs where chips exist.
 
 ## PRD
 
@@ -21,7 +21,7 @@ Deep/risky needs a real seam; legacy no-spec only tiny/low risk; no repair archa
 
 ## Issue
 
-Require one PR, Read first / `Прочитать сначала`, AFK/HITL/human dependency, source/blockers/startability, snapshot, surfaces/proof/acceptance/non-goals/links and risk/gate/verdict/evidence/disposition/owner/next. Bug/perf: current/desired/repro/baseline/fix proof. Stable contracts, no brittle edit choreography. Use chips, no attached PRD/Spec or premature PR chips.
+One PR: Read first, AFK/HITL/human dependency, source/blockers/startability, snapshot, surfaces/proof/acceptance/non-goals/links, risk/gate/verdict/evidence/disposition/owner/next. Bug/perf: current/desired/repro/baseline/fix proof. Stable contracts, no brittle edits. Format: `references/linear-links.md`; no attached PRD/Spec or premature PR chips.
 
 ## Preflight Certificate
 
