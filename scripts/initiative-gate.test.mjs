@@ -138,6 +138,42 @@ test('list markers, link angles, trailing whitespace and repeated blank lines ar
   check('pass');
 }));
 
+for (const label of ['A > B', 'A /> B', "A id='aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa' > B"]) {
+  test(`quoted tag boundary preserves the whole decision: ${label}`, () => fixture(({ read, change, check }) => {
+    const first = 'db8f0260-fcfc-4218-8a87-9595769b0190';
+    const second = '689d16af-3131-4680-81bb-62de0155ffb2';
+    const body = `<project label="${label}" id="${first}" />\nЦенность: согласованная.\n<project id="${second}">Проект два</project>`;
+    const expected = `${first}\nЦенность: согласованная.\n${second}`;
+    change('decision.json', d => { d.content = body; });
+    change('comments-1.json', p => { p.comments[0].body = p.comments[0].body.replace(/decision-sha256=[a-f0-9]{64}/, `decision-sha256=${hash(expected)}`); });
+    check('pass');
+    change('decision.json', d => { d.content = d.content.replace(`label="${label}"`, 'label="Новое имя > без изменения проекта"'); });
+    check('pass');
+    change('decision.json', d => { d.content = d.content.replace('согласованная.', 'другая.'); });
+    check('stale-decision');
+    change('decision.json', d => { d.content = d.content.replace('другая.', 'согласованная.').replace(second, 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb'); });
+    check('stale-decision');
+    // A hash produced by the old swallowed-span bug cannot authorize this body.
+    change('comments-1.json', p => { p.comments[0].body = p.comments[0].body.replace(/decision-sha256=[a-f0-9]{64}/, `decision-sha256=${hash(first)}`); });
+    check('stale-decision');
+    assert.ok(read('decision.json').content.includes('Ценность: согласованная.'));
+  }));
+}
+
+for (const title of ['Решение [v2]', 'Решение \\[v2\\]']) {
+  test(`link destination normalizes with a bracketed title: ${title}`, () => fixture(({ change, check }) => {
+    const previous = 'ТЕСТ Mono: проект карты К1';
+    const expected = decision.replace(`[${previous}]`, `[${title}]`);
+    change('decision.json', d => { d.content = d.content.replace(`[${previous}]`, `[${title}]`); });
+    change('comments-1.json', p => { p.comments[0].body = p.comments[0].body.replace(/decision-sha256=[a-f0-9]{64}/, `decision-sha256=${hash(expected)}`); });
+    check('pass');
+    change('decision.json', d => { d.content = d.content.replace('](<https:', '](https:').replace('f205c01efd11>)', 'f205c01efd11)'); });
+    check('pass');
+    change('decision.json', d => { d.content = d.content.replace('f205c01efd11)', 'other-project)'); });
+    check('stale-decision');
+  }));
+}
+
 for (const [name, mutate] of [
   ['orchestrator approval', c => { c.body = c.body.replace('by=owner', 'by=orchestrator'); }],
   ['unknown author role', c => { c.body = c.body.replace('by=owner', 'by=worker'); }],

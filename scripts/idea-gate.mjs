@@ -624,12 +624,14 @@ export function initiativeFingerprint(markdown) {
   const normalized = markdown.replace(/\r\n/g, '\n').split('\n')
     .filter(line => !/^[ \t]*Заведён:/.test(line))
     .map(line => line.replace(/[ \t]+$/, '').replace(/^([ \t]*)[*+-][ \t]+/, '$1* ')).join('\n')
-    .replace(/<(project|issue)\b([^>]*?)(?:\/>|>[\s\S]*?<\/\1\s*>)/g, (_tag, _kind, attributes) => {
-      const id = attributes.match(/\bid\s*=\s*(["'])(.*?)\1/)?.[2];
-      if (!uuid(id)) fail('bad-record');
+    .replace(/<(project|issue)\b((?:"[^"]*"|'[^']*'|[^"'<>/])*)(?:\/>|>[\s\S]*?<\/\1\s*>)/g, (_tag, _kind, attributes) => {
+      const ids = [...attributes.matchAll(/([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)]
+        .filter(match => match[1] === 'id');
+      const id = ids[0]?.[2] ?? ids[0]?.[3];
+      if (ids.length !== 1 || !uuid(id)) fail('bad-record');
       return id;
     })
-    .replace(/\[([^\]\n]+)\]\(<([^<>\n]+)>\)/g, '[$1]($2)')
+    .replace(/\]\(<([^<>\n]+)>\)/g, ']($1)')
     .replace(/\n{3,}/g, '\n\n').replace(/^\n+|\n+$/g, '');
   return sha256(normalized);
 }
