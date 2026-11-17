@@ -184,6 +184,10 @@ Claude worker row; changing a worker never selects the alternative reviewer.
 
 #### Unavailable route
 
+A required pre-write package reviewer cannot be replaced by this fallback:
+if the cross-vendor reviewer is unavailable, stop before package/Issue writes.
+Only multi-Issue tiny packages may skip the advisory review with a recorded reason.
+
 - Fallback, only when the cross-vendor model is unreachable (no Codex
   auth, or no Claude access): run the lens review in-session (product,
   engineering, and design lenses) and record the substitution and its
