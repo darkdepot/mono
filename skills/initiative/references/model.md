@@ -32,6 +32,8 @@ Claude Code: эти агенты с выданной моделью. Codex: вс
 До вопроса владельцу один проход другой семьи по вариантам, цели, источникам
 и пробелам. Прочитай `<корень>/references/model-policy.md`: Claude Code роль
 `second-voice`, Codex `second-voice-alt`. Модель и усилие из этой политики.
+Запускай вторую модель из папки продукта. Если `codex exec` запускается из
+временной папки вне Git, добавь `--skip-git-repo-check`.
 Из Codex: `claude -p --strict-mcp-config --model <модель> --effort <усилие> "<задание>" < /dev/null`;
 из Claude Code: `codex exec --ignore-user-config --disable apps -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null`.
 Передний план с таймаутом команды `600000`, только чтение; жди итога,
