@@ -43,10 +43,9 @@ Required sections:
 Rules:
 
 - Issue is a one-PR execution contract.
-- Include `Прочитать сначала` links or chips for Project, PRD, Tech Spec when it exists, and relevant repo docs; for a package-record package also Research and the package record (a link to its comment). A legacy package keeps its approved set and previous tracing.
-- Include Linear chips/entity mentions for Project, PRD, and Tech Spec where available.
+- Include `Прочитать сначала` references for Project, PRD, Tech Spec when it exists, and relevant repo docs; for a package-record package also Research and the package record (a link to its comment). A legacy package keeps its approved set and previous tracing. Use the entity formats in [references/linear-links.md](../references/linear-links.md).
 - Add PRD and Tech Spec as Linear resources/links when the connector supports it.
-- Do not use raw document URLs in the body when Linear chips can represent those entities.
+- Write document links with their exact titles, per `references/linear-links.md`.
 - Include an implementation-critical context snapshot.
 - For UI work, Read first includes a design line: exact mono-design record id,
   canvas HTTPS link, tool (paper|wonder) and images hash, or no mockup; plus owner-taste, product-memory and

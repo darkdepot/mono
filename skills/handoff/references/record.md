@@ -183,8 +183,9 @@ mono-package: recorded project=<uuid проекта> version=<n> previous=<id к
 ## Тела задач
 
 По `<корень>/templates/issue.md` и `<корень>/references/contracts/issue.md`:
-- «Прочитать сначала»: проект и PRD чипами, «Исследование» и запись пакета
-  ссылками, Tech Spec и дизайн, если есть. UI-задаче строка «Дизайн: запись
+- «Прочитать сначала»: проект, PRD, «Исследование», запись пакета, Tech Spec
+  и дизайн, если есть; формат — `<корень>/references/linear-links.md`.
+  UI-задаче строка «Дизайн: запись
   mono-design <id>, canvas <https-ссылка>, tool paper|wonder, images <sha256>» или «Дизайн: нет»; пути
   к `~/.mono-agent-workflow/design/owner-taste.md`, памяти продукта и папке
   PNG конкретной версии в «Прочитать сначала». Прочитай оба слоя вкуса и

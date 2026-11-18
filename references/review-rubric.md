@@ -74,7 +74,7 @@ Issue:
 - States `AFK` or `HITL`, dependencies, and blockers.
 - For bug/perf work, includes current vs desired behavior and a reproduction, baseline, or feedback-loop expectation.
 - Is durable: no line numbers, brittle edit scripts, or procedural choreography.
-- Uses Project and PRD chips, the Tech Spec chip only when it exists, and a package-record link for a package record.
+- Uses Project and PRD references, Tech Spec when it exists, and a package-record comment link; entity formats follow [references/linear-links.md](linear-links.md).
 - Does not attach PRD or Tech Spec docs.
 
 Pre-ship:

@@ -175,12 +175,12 @@ Required:
 - Current vs desired behavior plus reproduction or baseline for bug/perf work.
 - Key contracts when they matter for implementation.
 - Concrete validation.
-- Linear chips for Project, PRD, and Tech Spec where available.
+- Project, PRD and Tech Spec references per [references/linear-links.md](linear-links.md).
 
 Forbidden:
 
 - Attached PRD or Tech Spec documents on the Issue.
-- Raw document URLs when Linear chips can represent the entities.
+- Bare document URLs without their exact titles (`references/linear-links.md`).
 - Code changes before the Issue is sufficient for another agent.
 
 Gate: `mono:check issue`.
