@@ -96,7 +96,11 @@ function validateReadBudgetFixtures() {
     ].sort();
     const budget = measureReadBudget(root, { skills: ["idea"], includeConditional: false });
     require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
-      "Idea mandatory file set must include both scout tasks and exclude conditional inputs");
+      "Idea mandatory file set must include both scout tasks and exclude initiative context and other conditional inputs");
+    const initiativeContext = "skills/idea/references/initiative.md";
+    requireMachineToken(initiativeContext);
+    require(measureReadBudget(root, { skills: ["idea"] }).files.some(entry => entry.path === initiativeContext),
+      "Idea initiative context must remain a discoverable conditional input");
     const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
     require(budget.bytes === total && total <= 20_480, "Idea actual mandatory total differs or exceeds 20 KB");
     const stage = read("skills/idea/SKILL.md");
@@ -6563,6 +6567,7 @@ const MACHINE_TOKENS = new Set([
   "name", "description", "model", "effort", "disallowedTools", "Write", "Edit", "NotebookEdit",
   "pass", "legacy-before-cutoff", "legacy-migrate", "issue-only", "no-record", "other-project", "bad-record", "stale",
   "missing-heading", "duplicate-heading", "unsupported-format", "bad-since", "read-failed",
+  "skills/idea/references/initiative.md",
   "idea-helper", "mono-idea-snapshot", "mono-brief", "references/brief.md", "mono-idea: approved project=<uuid> sha256=<64 hex>",
   "node scripts/idea-gate.mjs check --mode fresh --snapshot <dir> --config <path>",
   "node scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>",

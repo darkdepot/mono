@@ -127,6 +127,33 @@ PRD и Tech Spec записываются по версии исправленн
 показа и ответа в разговоре; нет их — новый показ. Подробности в
 [правиле разговора](references/owner-dialog.md).
 
+## Idea с контекстом инициативы
+
+Idea называет найденную связь с инициативой и читает её описание и «Решение»:
+цель, модель и место в карте помогают уточнить замысел. Рамка описания остаётся
+словами владельца, утверждение Idea отдельное и словами, как прежде.
+Похожий пункт ещё не связь: владелец подтверждает принадлежность до записи.
+В шаге записи новый проект создаётся с `addInitiatives`, существующий без связи
+получает её тем же полем, затем читается обратно по UUID. Другие связи остаются.
+Новый проект, признанный пунктом карты, получает её приоритет при создании;
+номер пункта и ссылка на инициативу сохраняются в «Отброшено» брифа для поиска
+при повторном входе Initiative. Строка — справочный контекст карты, не выдуманное
+прежнее тело; Idea не пишет «Решение». Уже привязанный не требует повторного
+подтверждения. Нет инициативы — прежний путь.
+
+Проект карты с двумя строками без брифа проходит обычный Idea без трёх разделов:
+прежнее тело записывается целиком в «Отброшено» брифа Linear и читается обратно
+перед заменой. Подтверждённая привязка выполняется и при возврате без записи Idea,
+когда прежнее тело остаётся. Контекст условный:
+[справка Idea](skills/idea/references/initiative.md); обязательное чтение до
+20 480 байт. Idea не перенаправляет разговор в Initiative автоматически;
+маршрут нескольких проектов указан в описании скилла. Срабатывание проверяется
+в `evals/idea/`. До PR после готовности Preflight исполнитель ждёт живой прогон
+T3: независимый тестировщик в роли владельца утверждает описание словами на новых
+тестовых сущностях в Mono Test. Сущности T2 уже отменены. Оркестратор публикует
+«Живой прогон: …» в задаче, передаёт его исполнителю и отменяет новые тестовые
+сущности; владелец лично проверяет после выпуска и обновления пака.
+
 ## Инициатива перед проектами
 
 [mono:initiative](skills/initiative/SKILL.md) ведёт владелец в своей сессии:
@@ -1338,7 +1365,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | Skill | Use it for |
 | --- | --- |
 | [mono:initiative](skills/initiative/SKILL.md) | Owner session only: goal, research, model and map; one version-bound approval, then linked Idea Projects without starting them |
-| [mono:idea](skills/idea/SKILL.md) | Idea intake and recorded owner approval; Research starts by owner or delegated orchestrator |
+| [mono:idea](skills/idea/SKILL.md) | Idea intake with optional initiative context and recorded owner approval; Research starts by owner or delegated orchestrator |
 | [mono:research](skills/research/SKILL.md) | Facts before a solution, Research document and next-step advice without owner questions |
 | [mono:discovery](skills/discovery/SKILL.md) | Solution found with the owner in conversation, explicit choice and version-approved PRD; same stage for owner or delegated orchestrator |
 | [mono:design](skills/design/SKILL.md) | Designer stage after PRD routing, consented taste memory and immutable Paper/Wonder PNG approval; orchestrator chooses with reasons |
