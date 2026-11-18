@@ -1,8 +1,8 @@
 # Project artifact contract
 
 This bounded contract is the normative source for Project artifact behavior.
-Lifecycle owners consume it directly: `mono:idea` creates or strengthens an
-Idea Project, while `mono:handoff` creates or repairs the Project-first package.
+Lifecycle owners consume it directly: `mono:initiative` creates map Projects,
+`mono:idea` creates or strengthens an Idea Project, while `mono:handoff` creates or repairs the Project-first package.
 It defines artifact behavior, not lifecycle orchestration. Use the shared [artifact rules](../artifact-rules.md),
 [readiness gates](../readiness-gates.md), and [lifecycle](../lifecycle.md) for
 cross-artifact policy. Render the body with
@@ -11,8 +11,11 @@ single source for presentation shape.
 
 ## PC-001 — Project routing
 
-Use this contract for Linear Project mutations. Raw ideas and existing Idea
-Projects route to `mono:idea`; an Idea Project with a verified approval record routes
+Use this contract for Linear Project mutations. Owner intake routes one
+projectless PR to `mono:issue`, an idea for one Project to `mono:idea`, and an idea
+for several Projects to `mono:initiative`. Map Projects in Idea enter `mono:idea`
+like other Idea Projects; Initiative approval does not start them or delegate
+them to the orchestrator. An Idea Project with a verified approval record routes
 to `mono:research` when the owner starts Research in words in reply to an explicit start question or by an explicit start request,
 or the orchestrator starts it for a delegated Project defined in PC-019. An existing Project in Discovery without a Research document routes
 to `mono:research`, except a package approved strictly before `researchGate.since` (config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` in
@@ -56,7 +59,10 @@ Keep the Project at overview level. Never inline the PRD or Tech Spec.
 In Idea, limit the body to what, why, and target outcome, with second-level
 headings: `Что`, `Зачем`, `Образ результата` in default Russian output. Unknowns
 live in the approval comment snapshot. Scope boundaries live in the PRD; Handoff
-leaves the approved body unchanged, and legacy packages may keep the in scope
+leaves the approved body unchanged. Exception: a map Project created by
+`mono:initiative` stays in Idea before its own Idea stage with no Brief and a
+body consisting of its initiative link, item number and value, plus a
+«Зависит от» line when dependencies exist. Legacy packages may keep the in scope
 and out of scope sections (`Что входит`, `Что не входит`) they already added.
 
 ## PC-006 — No workflow dashboard
@@ -102,7 +108,11 @@ Project body.
 
 In Idea, keep the three-section concise description defined in PC-005 and a
 Project Brief document following `references/brief.md`; PRD, Tech Spec, and
-execution Issues must not exist yet. Before replacing the body, preserve the
+execution Issues must not exist yet. The PC-005 map Project exception applies
+until its own Idea stage: an item line and optional «Зависит от» line, no Brief.
+Idea then handles it as a Project without the three sections: preserve the
+whole replaced body in the Brief’s «Отброшено», then write the three sections
+and Brief under the ordinary approval rules. Before replacing the body, preserve the
 replaced text verbatim in the Brief’s «Отброшено», with its source and reason.
 The approval comment retains the approved snapshot and a Brief link instead of notes. The approved
 Project stays in Idea until the owner starts Research, or the orchestrator starts

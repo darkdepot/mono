@@ -30,6 +30,7 @@ const EXPECTED_SKILLS = [
   "handoff",
   "idea",
   "implement",
+  "initiative",
   "issue",
   "orchestrate",
   "preflight",
@@ -112,6 +113,14 @@ function validateReadBudgetFixtures() {
     require(!/agents\/[^\s`"<>]*\.md/.test(outsideLaunches)
       && !budget.files.some(entry => entry.path.startsWith("agents/")),
       "Scout definitions must occur only as subagent reads, never as Idea inputs");
+  });
+  fixture("Initiative actual mandatory inputs and byte total", () => {
+    const expected = ["skills/initiative/SKILL.md", "skills/initiative/references/run.md"].sort();
+    const budget = measureReadBudget(root, { skills: ["initiative"], includeConditional: false });
+    require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
+      "Initiative mandatory file set must exclude conditional research, approval and project rules");
+    const total = expected.reduce((sum, file) => Buffer.byteLength(read(file)) + sum, 0);
+    require(budget.bytes === total && total <= 20_480, "Initiative actual mandatory total differs or exceeds 20 KB");
   });
   fixture("Research actual mandatory inputs and byte total", () => {
     const expected = ["skills/research/SKILL.md", "skills/research/references/run.md"].sort();
@@ -479,7 +488,7 @@ function validateStageDelegation() {
 function validateStageDialogueRules() {
   // Former host-tool presence pins are retired. References route every stage to
   // one dialogue owner; native text fixtures enforce the no-window invariant.
-  for (const stage of ["idea", "research", "discovery", "design", "tech-evaluation", "handoff", "orchestrate"]) {
+  for (const stage of ["initiative", "idea", "research", "discovery", "design", "tech-evaluation", "handoff", "orchestrate"]) {
     requireMachineToken("owner-dialog.md");
     if (!read(`skills/${stage}/SKILL.md`).includes("owner-dialog.md"))
       fail(`stage dialogue reference missing: ${stage}`);
@@ -759,8 +768,9 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "448475e11474e6430eb57afe41405f36cb030b17fff06ea0c9ff8e523f74bc6a",
+      contractFingerprint: "abf4a467041c9ee896268c3859aabcfab69afbcc7149ce4a28733a76dd176f16",
       contractConsumers: [
+        "skills/initiative/SKILL.md",
         "skills/idea/SKILL.md",
         "skills/research/SKILL.md",
         "skills/handoff/SKILL.md",
@@ -6210,6 +6220,20 @@ const REQUIRED_HEADINGS = [
   ["skills/design/references/drawing.md", "Проверка по картинке"],
   ["skills/design/references/approval.md", "Повторный вход"],
   ["skills/design/references/approval.md", "Вход для исправления записи"],
+  ["skills/initiative/SKILL.md", "mono:initiative"],
+  ["skills/initiative/SKILL.md", "Как ты думаешь"],
+  ["skills/initiative/SKILL.md", "Как ты говоришь"],
+  ["skills/initiative/SKILL.md", "Кто что решает"],
+  ["skills/initiative/references/run.md", "Вход"],
+  ["skills/initiative/references/run.md", "Части инициативы"],
+  ["skills/initiative/references/run.md", "Карта проектов"],
+  ["skills/initiative/references/run.md", "Повторный вход"],
+  ["skills/initiative/references/model.md", "Варианты модели"],
+  ["skills/initiative/references/record.md", "После ответа"],
+  ["skills/initiative/references/record.md", "Команда проверки"],
+  ["skills/initiative/references/projects.md", "Два прохода"],
+  ["skills/initiative/references/projects.md", "Повторный вход и состояния S10"],
+  ["skills/initiative/references/projects.md", "Итог после согласия"],
   ["skills/tech-evaluation/SKILL.md", "mono:tech-evaluation"],
   ["skills/tech-evaluation/references/spec.md", "Вход для исправления записи"],
   ["skills/tech-evaluation/SKILL.md", "Как ты думаешь"],

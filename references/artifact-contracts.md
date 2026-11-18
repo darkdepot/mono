@@ -23,6 +23,13 @@ every bounded contract and its direct lifecycle consumers.
 
 ## Project parity
 
+MONO-260 / U7 explicitly changes PC-001, PC-005 and PC-013: the owner routes
+several Projects to Initiative; map Projects may remain in Idea with an item
+and dependency line and no Brief until their own Idea stage. That stage preserves
+the old body in the Brief. The Project fingerprint is renewed for these rules;
+PC-019 and the other three contracts are unchanged. `mono:initiative` consumes
+the Project contract conditionally before Project writes.
+
 MONO-357 / U6 explicitly changes PC-002, PC-008 and PC-013: the body is a
 concise description; the active Brief document replaces Idea approval notes and
 preserves replaced text. The bounded Project fingerprint changes with these rules;
@@ -30,26 +37,26 @@ the Idea approval fingerprint and reader do not change.
 
 | Contract source | Rule ID | Named consumers |
 | --- | --- | --- |
-| `references/contracts/project.md#PC-001` | `PC-001` | `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-002` | `PC-002` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-003` | `PC-003` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-004` | `PC-004` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-005` | `PC-005` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-006` | `PC-006` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-007` | `PC-007` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-008` | `PC-008` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-009` | `PC-009` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-010` | `PC-010` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-011` | `PC-011` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-012` | `PC-012` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-013` | `PC-013` | `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-014` | `PC-014` | `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-015` | `PC-015` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-016` | `PC-016` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-017` | `PC-017` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-018` | `PC-018` | `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-001` | `PC-001` | `mono:initiative`, `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-002` | `PC-002` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-003` | `PC-003` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-004` | `PC-004` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-005` | `PC-005` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-006` | `PC-006` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-007` | `PC-007` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-008` | `PC-008` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-009` | `PC-009` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-010` | `PC-010` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-011` | `PC-011` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-012` | `PC-012` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-013` | `PC-013` | `mono:initiative`, `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-014` | `PC-014` | `mono:initiative`, `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-015` | `PC-015` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-016` | `PC-016` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-017` | `PC-017` | `mono:initiative`, `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-018` | `PC-018` | `mono:initiative`, `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 
-| `references/contracts/project.md#PC-019` | `PC-019` | `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:implement`, `mono:orchestrate` |
+| `references/contracts/project.md#PC-019` | `PC-019` | `mono:initiative`, `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:implement`, `mono:orchestrate` |
 
 ## PRD parity
 

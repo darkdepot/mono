@@ -33,6 +33,7 @@ left context after compaction is read again when its condition holds.
 
 | Stage | Runs in |
 | --- | --- |
+| `mono:initiative` | сессия владельца, оркестратор не запускает |
 | `mono:idea` | stage agent; orchestrator shows owner its description verbatim as its final message and relays the shown text, question and verbatim owner reply |
 | `mono:issue` | stage agent; orchestrator shows its result verbatim as final message and relays shown text, question and verbatim owner reply; only owner approves, then orchestrator launches worker |
 | `mono:research` | stage agent after authorized start; no owner questions or separate approval |

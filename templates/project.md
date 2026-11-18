@@ -3,7 +3,13 @@
 Use the project config language for Linear Project body. Use Russian when no
 project config is present.
 
-In Idea, use exactly three second-level sections. Legacy Handoff packages added In scope and
+Before its own Idea stage, a map Project created by `mono:initiative` is the
+PC-005/PC-013 exception: Idea status, no Brief, one line with the initiative link,
+`К<n>` and value, plus «Зависит от: P-<TEAM>-N, …» when dependencies exist.
+Its own Idea stage preserves this whole body in the Brief’s «Отброшено» before
+writing the ordinary description and Brief; Initiative approval does not start it.
+
+Otherwise in Idea, use exactly three second-level sections. Legacy Handoff packages added In scope and
 Out of scope; the current Handoff leaves the approved body unchanged. Unknowns live in the approval comment snapshot, outside the body.
 
 Default Russian Idea body:

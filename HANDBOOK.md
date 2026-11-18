@@ -127,6 +127,48 @@ PRD и Tech Spec записываются по версии исправленн
 показа и ответа в разговоре; нет их — новый показ. Подробности в
 [правиле разговора](references/owner-dialog.md).
 
+## Инициатива перед проектами
+
+[mono:initiative](skills/initiative/SKILL.md) ведёт владелец в своей сессии:
+сырая идея на несколько проектов или черновая инициатива Linear. Одна доработка
+на PR без проекта идёт в mono:issue, идея одного проекта в mono:idea. Оркестратор
+инициативу не запускает и не утверждает. Этап читает описание, все документы и
+связанные проекты, называет сделанное и продолжает с первого несделанного шага.
+Готовое исследование не повторяет: добирает только пробелы. Два-три варианта
+модели с позицией и сильнейшим доводом против проверяет вторая модель одним
+проходом; выбор остаётся владельцу. Решённые шаги сохраняются с отметками.
+
+Цель живёт в описании, модель и плоская карта в «Решении»; прежнее описание
+черновика сохраняется целиком отдельным документом, новое исследование появляется
+только при доборе. Карта задаёт ценность, объём, зависимости номерами без циклов,
+приоритет и неизвестные. Ссылки по [Linear links](references/linear-links.md).
+
+Утверждение одно, словами на показанной версии. Любая поправка после показа,
+даже вместе с согласием, требует нового показа: исключение из мелкой поправки
+[owner-dialog](references/owner-dialog.md). Хеши только из обратного чтения,
+нормализация T1 по id, не названиям; updatedAt версией не служит. Команда
+`node scripts/idea-gate.mjs initiative --mode fresh --dump <папка> --config <конфиг>`
+должна вернуть exit 0, «Готово» и pass до создания/восстановления проектов.
+
+После согласия Planned и владелец инициативы, проекты в Idea по одному вызову
+с привязкой и номером пункта, сразу «Заведён» в решении. Затем второй проход
+всех зависимостей по действующей карте. Повтор ищет по id и номеру, в том числе
+в «Отброшено» брифа. Существующий признанный проект получает привязку/приоритет
+и зависимость комментарием, без смены тела/статуса; снятый пункт не меняет его
+проект. Итог называет порядок, приоритеты и зависимости; путь заканчивается.
+
+PC-001/005/013 явно допускают проекты карты без брифа до собственной Idea,
+где прежнее тело переносится в бриф. PC-019 не меняется: инициативой проекты
+не делегируются. Повторный вход показывает состояния по статусу и записи Idea,
+без неё запуск не разрешён. После Planned путь статус инициативы не меняет:
+завершение всех проектов не доказывает достижения цели.
+
+Обязательное чтение: SKILL и run, предел 20 480 байт; измерение
+`node scripts/read-budget.mjs --skill initiative --mandatory`, фикстура в
+validate-workflow. [Сценарии](evals/initiative/README.md): срабатывание отдельно,
+поведение доказывает живой прогон владельца на версии ветки до вливания.
+Каталог шести этапов не расширяется: изменения initiative дают uncovered.
+
 ## Tech Evaluation между Discovery и Handoff
 
 Выпущенный в 0.36.0 этап [mono:tech-evaluation](skills/tech-evaluation/SKILL.md) выбирает одно
@@ -1295,6 +1337,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 
 | Skill | Use it for |
 | --- | --- |
+| [mono:initiative](skills/initiative/SKILL.md) | Owner session only: goal, research, model and map; one version-bound approval, then linked Idea Projects without starting them |
 | [mono:idea](skills/idea/SKILL.md) | Idea intake and recorded owner approval; Research starts by owner or delegated orchestrator |
 | [mono:research](skills/research/SKILL.md) | Facts before a solution, Research document and next-step advice without owner questions |
 | [mono:discovery](skills/discovery/SKILL.md) | Solution found with the owner in conversation, explicit choice and version-approved PRD; same stage for owner or delegated orchestrator |
