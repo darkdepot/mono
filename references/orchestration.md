@@ -59,7 +59,20 @@ carry it to owner for approval in words on the shown version, confirmed new reco
 The orchestrator's reply or bundled start cannot approve that Idea snapshot.
 Only delegated Projects with that current approval allow autonomous Research/work,
 write start `by=orchestrator` with a reason, answer and approve after Idea, including
-irreversible, deferred and contrary-to-owner decisions. Stage approval does not
+irreversible, deferred and contrary-to-owner decisions.
+
+Narrow mode «веди до Handoff» (PC-019): the owner's words verbatim in a Project
+comment with the outside-fence line «Ведёт оркестратор до Handoff: <дата>. Старт работ за владельцем.»;
+said to you, write that comment at once, a stage writes it per `references/owner-dialog.md`.
+It allows the same autonomy up to Handoff, but never work start: Handoff brings the
+owner the start question and the start stays `by=owner`. On resume and every time you
+leave a wait, look for the latest such mark on Projects before Delivery and continue
+the chain from the existing records: the next missing stage, or only the pending
+start question for a Ready Project, asked once. Never relaunch a stage whose current version is
+recorded and complete; an unfinished one (e.g. Handoff with its package record but
+without Issues, checks or Ready) re-enters to finish the missing steps, reusing
+existing records without duplicates (`skills/handoff/references/run.md`). The owner's correction in words reopens that stage; your approval of the
+earlier version no longer counts. Stage approval does not
 execute external writes or spending. Configured deploy targets and the owner-approved rollback remain required.
 
 Before each `by=orchestrator` record apply the Approval countercheck in
@@ -273,6 +286,7 @@ A fresh orchestrator session rebuilds state without loss:
    terminal Issues are excluded. Missing label is not discovered by this label
    search; a known in-session incomplete answer still belongs to the stage.
    Dependency order is unchanged; no unverified reconstruction enters delivery.
+   Also look for «веди до Handoff» marks on Projects before Delivery (Decision Authority).
 3. Read ledger, phase capsules and mailbox reports; reconcile every queued write against Linear and apply only missing writes through Delivery Write Barriers. Never replay a queue from local receipts alone.
 4. Corroborate key ledger claims — dispatches, phase transitions, deploys —
    against worker log and report timestamps. A ledger line with no

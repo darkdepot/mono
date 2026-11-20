@@ -14,7 +14,7 @@ Handoff sets `Ready` after the package record, execution Issues and
 shipment. Close sets `Canceled`; defer keeps the status. Ordinary Projects need the
 owner's start; delegated Projects (PC-019: latest Idea delegation mark or explicit
 owner decision) allow the orchestrator's start `by=orchestrator` with reason and
-countercheck. Stage sessions and the orchestrator follow
+countercheck. The narrow «веди до Handoff» mode keeps work start with the owner. Stage sessions and the orchestrator follow
 `references/owner-dialog.md` and `references/orchestration-stages.md`.
 
 ## Initiative
@@ -296,6 +296,7 @@ Required:
   applies their queued mutations. Pre-delivery stage agents write their own records.
 - Idea always waits for owner agreement in words. Delegated Projects per PC-019 allow autonomous
   Research/work start and approvals with reason/countercheck; ordinary Projects do not.
+  «Веди до Handoff» allows the same up to Handoff; work start stays `by=owner`.
 - Owner retains new taste rules and first exemplars. Each result reaches them with
   «Утвердил сам, потому что…» and leading «Решил за тебя: …, потому что …» where needed.
 - Every `by=orchestrator` approval has foreground different-family read-only
