@@ -36,8 +36,8 @@ Start: gate.mjs start --request <file>; implement handshake; wait mode runs wait
    with its full queue. Only its generated implemented-needs-preflight comment
    defers confirmation to Preflight; all other queues wait. No broken/unfinished work advances.
 2. Preflight/commit; publish preflight-collect confirmation-request. Confirm,
-   gate.mjs preflight collect:false, worker failure rules. Open findings: fix,
-   commit, next round. Pass: publish ready certificate once; confirm before
+   gate.mjs preflight collect:false, worker failure rules. Gate line per
+   review-admission. Pass: publish ready certificate once; confirm before
    formal review.
 3. Ship with write barriers. New head repeats checks/review round/evidence.
    gate.mjs ship --request <file> → pass/decision/deadline; confirm queue/certificate.

@@ -199,21 +199,40 @@ Claude CLIs logged in by subscription; a single-family setup gives
 runs only when the reviewer reports findings).
 
 Between rounds do nothing: the worker fixes open findings and requests the next
-round itself. At most three completed rounds per task attempt, counted from
-signed receipts over every pins version; rounds after the first read only the
-fixes and open findings; the same head reuses its round; `not-reviewed` spends
-nothing.
+round itself. The pinned risk sets the completed rounds per task attempt (`risky`
+three, the fast path one), counted from signed receipts over every pins version;
+rounds after the first read only the fixes and open findings; the same head
+reuses its round; `not-reviewed` spends nothing. `ROUND_LIMIT` stays 3 and
+`reviewContext` counts as before, for the installed `accept.mjs`.
+
+Fast path: after its round the worker fixes, runs the full verification on the
+final head and requests it with `workerVerification: {head, exitCode: 0}`; the
+collection signs that head without another round (`review clean (round 1 of 1),
+fixes after it confirmed by the worker's full verification`), unless the round
+found out-of-contract work or a raised risk (needs-decision). The bot sees the
+result on the PR.
+
+Live run (before review): the worker runs the main scenario of a behavior change
+in its worktree and puts the proof in the code report. Pack skill and stage
+changes it cannot run from its sandbox: the orchestrator runs them in the test
+Linear workspace after the first code report, before review. No separate gate:
+Preflight checks the proof in the code report before its first collection, and
+pre-ship review (`mono:review`) reports a missing run; the collection's review
+round never sees the code report.
 
 Parks:
 - needs-decision, `review not-converged after round 3` or `review round limit
-  reached`: split the Issue or change the approach in a new attempt; an amend
-  keeps the count and adds no rounds.
+  reached` (strict path): the orchestrator decides; merging needs green CI, passed
+  required checks and no open finding harming the main path, data or the owner's
+  install; otherwise split the Issue or change the approach in a new attempt. An
+  amend keeps the count and adds no rounds.
 - needs-decision, `verification failed on the reviewed head` (older attempts):
   decide whether the code or the environment is wrong.
 - blocked, `not-reviewed twice in a row`: restore both CLI logins, then amend to
   resume.
 
-`clean-with-successors` passes. Its candidates are older defects, minor P3
+`clean-with-successors` passes. Its candidates are older defects (on the strict
+path only harmless ones), minor P3
 leftovers from round 2 on (never data, security or gate bypass) and, on round 3,
 leftovers both roles call harmless. After merge the task's Linear writer (the
 worker through Linear MCP when it has access, otherwise the orchestrator) files

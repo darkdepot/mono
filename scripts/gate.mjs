@@ -123,6 +123,9 @@ export function verifyModelPins(request, base) {
   requireThat(['tiny', 'standard', 'deep', 'risky'].includes(request.risk) && (!request.critical || request.risk === 'risky'), 'unresolved final risk route');
 }
 export const ROUND_LIMIT = 3;
+// The pinned risk sets the rounds: the strict path (risky) up to ROUND_LIMIT; the fast path one round,
+// after which the worker fixes, runs the full verification and the gate accepts that head on its word.
+export const roundLimit = risk => risk === 'risky' ? ROUND_LIMIT : 1;
 const ACCEPTED = ['clean', 'clean-with-successors'];
 const findingLine = finding => `${finding.weight} ${finding.file}:${finding.line} ${finding.title}`;
 // The worker fixes from this line alone: it may not be able to read the receipt.
@@ -146,16 +149,17 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest }) {
     record: completed.findLast(receipt => receipt.base === base)?.review.record ?? null };
 }
 // What may leave the rounds as a successor candidate instead of blocking the PR:
-// - an older defect the task did not introduce (any round);
+// - an older defect the task did not introduce (any round); on the strict path only a harmless one;
 // - a minor (P3) leftover once the first fixes are in (round 2 on), unless it is about data, security or a gate letting work through;
 // - on the last round also any leftover both roles call harmless.
 // Everything else open means "fix and ask again", and on the last round stays not-converged.
-export function roundOutcome(record, round) {
+export function roundOutcome(record, round, strict = false) {
   const open = leftover(record), settled = finding => finding.outcome !== 'unresolved';
-  const older = finding => finding.origin === 'pre-existing' && settled(finding);
+  const harmful = finding => finding.danger !== false && (finding.weight !== 'P3' || STRICT_DANGER.includes(finding.dangerCase));
+  const older = finding => finding.origin === 'pre-existing' && settled(finding) && !(strict && harmful(finding));
   const minor = finding => round > 1 && finding.weight === 'P3' && !STRICT_DANGER.includes(finding.dangerCase);
   // An older dangerous defect is filed after merge, not left to choice, unless it is a minor one outside the strict cases.
-  const mustFile = finding => older(finding) && finding.danger !== false && (finding.weight !== 'P3' || STRICT_DANGER.includes(finding.dangerCase));
+  const mustFile = finding => older(finding) && harmful(finding);
   const harmless = finding => round >= ROUND_LIMIT && finding.danger === false && settled(finding);
   // An owner's instruction on the PR is done in the round or asked about; it never becomes a successor.
   const ownerRemark = finding => finding.class === 'pr-remark' && finding.source === 'owner';
@@ -172,12 +176,14 @@ function reviewRefusal(review) {
     ? `blocked: not-reviewed twice in a row on this head: ${review.reason}`
     : `not-reviewed: ${review.reason}; no round spent, request this head once more`;
   // The collector reads the last 64 KiB of gate output: keep the line inside it and say what was left out.
-  const all = leftover(review.record).map(openLine), round = `round ${review.round} of ${ROUND_LIMIT}`, open = [];
+  const limit = review.limit ?? ROUND_LIMIT;
+  const all = leftover(review.record).map(openLine), round = `round ${review.round} of ${limit}`, open = [];
   for (const line of all) { if (open.join('; ').length + line.length > 40000) break; open.push(line); }
   const list = `${all.length} open: ${open.join('; ')}${open.length < all.length ? `; ${all.length - open.length} more in the next round` : ''}`;
-  return review.round === ROUND_LIMIT ? `needs-decision: review not-converged after ${round}; ${list}`
-    : `review not-converged (${round}); fix and request the next round; ${list}`;
+  if (review.round < limit) return `review not-converged (${round}); fix and request the next round; ${list}`;
+  return limit === ROUND_LIMIT ? `needs-decision: review not-converged after ${round}; ${list}` : `review not-converged (${round}); ${FAST_FIX}; ${list}`;
 }
+const FAST_FIX = 'fix, run the full verification on the final head and request it with workerVerification {head, exitCode: 0}';
 export function validatePreflight(receipt, head, base) {
   requireThat(receipt?.producer === REVIEW_PRODUCER && receipt.review, "missing review receipt or old receipt format; request a new collection");
   requireThat(receipt.head === head && receipt.base === base, "missing or stale review receipt/head/base");
@@ -191,8 +197,9 @@ export function validatePreflight(receipt, head, base) {
     requireThat(receipt.verification?.exitCode === 0, "needs-decision: verification failed on the reviewed head");
     requireThat(receipt.verification.sandbox?.mode === "workspace-write" && receipt.verification.sandbox.probed === true, "verification sandbox proof missing");
   }
-  const successors = receipt.review.successors ?? [];
-  return `review ${receipt.review.outcome} (round ${receipt.review.round} of ${ROUND_LIMIT}) and verification verified on head` +
+  const successors = receipt.review.successors ?? [], worker = receipt.review.workerVerification;
+  requireThat(!worker || (worker.head === head && worker.exitCode === 0), "worker verification is not on this head");
+  return `review ${receipt.review.outcome} (round ${receipt.review.round} of ${receipt.review.limit ?? ROUND_LIMIT})${worker ? ', fixes after it confirmed by the worker\'s full verification,' : ''} and verification verified on head` +
     (successors.length ? `; successor candidates: ${successors.map(item => item.line).join('; ')}` : '');
 }
 
@@ -207,6 +214,8 @@ function evidenceKey(directory, create) {
 }
 const sign = (key, value) => crypto.createHmac("sha256", key).update(canonical(value)).digest("hex");
 const ROUND_LIMIT_REACHED = `review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); split the Issue or change approach in a new attempt`;
+// Fast path: the spent round needs the worker's full verification on the final head instead of another round.
+const limitRefusal = limit => limit === ROUND_LIMIT ? `needs-decision: ${ROUND_LIMIT_REACHED}` : `review round spent (1 of 1 on this task attempt); ${FAST_FIX}`;
 const NOT_REVIEWED_TWICE = "not-reviewed twice in a row on this head; check that both review CLIs are logged in";
 // Other issues' and older receipts share this folder: only this attempt's pins files are read further;
 // unreadable or unsigned files are skipped, never counted.
@@ -297,7 +306,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   requireThat(/^[a-f0-9]{40}$/.test(request.head), "dispatch head required");
   // Remarks on the draft PR (bot, CI, owner) the worker fixed: open findings of this round, signed in the receipt.
   if (request.prRemarks !== undefined) prRemarkFindings(request.prRemarks);
-  const workerCheck = request.workerVerification;
+  const workerCheck = request.workerVerification, limit = roundLimit(request.risk), strict = limit === ROUND_LIMIT;
   requireThat(workerCheck === undefined || (Object.keys(workerCheck ?? {}).sort().join(",") === "exitCode,head" && /^[a-f0-9]{40}$/.test(workerCheck.head) &&
     Number.isInteger(workerCheck.exitCode)), "workerVerification must be {head, exitCode} of the worker's full verification run");
   const evidenceRoot = preflightEvidenceRoot(request);
@@ -354,7 +363,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       const prior = history;
       if (prior && !prior.reuse) {
         requireThat(prior.notReviewed < 2, `blocked: ${NOT_REVIEWED_TWICE}`);
-        requireThat(prior.spent < ROUND_LIMIT, `needs-decision: ${ROUND_LIMIT_REACHED}`);
+        requireThat(prior.spent < limit || workerFixed(prior), limitRefusal(limit));
       }
       return { publishRequest: { ...request, collect: false } };
     }
@@ -369,6 +378,22 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   }
   verifyModelPins(request, base);
   validateEvidenceGrants(request.skillsRoot, [repo], "installed skillsRoot");
+  // Fast path after its round: accepted on the worker's full verification (exit 0) of this head; what the
+  // round left for a decision (out of contract, raised risk) never passes on the worker's word.
+  function workerFixed(prior) {
+    if (strict || prior.spent < 1 || workerCheck?.head !== head || workerCheck.exitCode !== 0) return null;
+    // The attempt's last completed round, on any base: a newer base does not clear its blockers or successors.
+    const last = signedHistory(request.evidenceRoot, request.pins.file).filter(receipt => receipt.producer === REVIEW_PRODUCER && receipt.review?.spent === true)
+      .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt))).at(-1)?.review ?? null;
+    if (last?.record?.findings?.some(finding => finding.outOfContract || finding.riskRaised))
+      return { outcome: 'refused', spent: false, round: null, successors: [], record: null,
+        reason: 'needs-decision: the review round found work outside the task or a higher risk; the worker\'s verification does not settle it' };
+    // Older defects the worker need not fix stay listed (must-file ones too) for filing after merge.
+    const successors = last?.successors?.length ? last.successors : last?.record
+      ? roundOutcome({ outcome: 'clean', findings: leftover(last.record).filter(finding => finding.origin === 'pre-existing') }, last.round).successors : [];
+    return { outcome: successors.length ? 'clean-with-successors' : 'clean', spent: false, round: prior.spent, successors,
+      record: last?.record ?? null, workerVerification: workerCheck };
+  }
   const unchanged = () => {
     if (idea) verifyIdeaArtifact(idea, pinnedIssue ?? request.issue);
     cleanTree(repo);
@@ -388,9 +413,9 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     const refuse = reason => ({ outcome: 'refused', spent: false, round: null, reason, successors: [], record: null });
     // New PR remarks on the same head are not covered by the stored round: they need a round of their own.
     if (prior.reuse && canonical(prior.reuse.prRemarks ?? null) !== canonical(request.prRemarks?.length ? request.prRemarks : null)) prior.reuse = null;
-    if (prior.reuse) review = { ...prior.reuse.review, ...roundOutcome(prior.reuse.review.record, prior.reuse.review.round), spent: false, reusedFrom: prior.reuse.runId };
+    if (prior.reuse) review = { ...prior.reuse.review, ...roundOutcome(prior.reuse.review.record, prior.reuse.review.round, strict), spent: false, reusedFrom: prior.reuse.runId };
     else if (prior.notReviewed >= 2) review = refuse(`blocked: ${NOT_REVIEWED_TWICE}`);
-    else if (prior.spent >= ROUND_LIMIT) review = refuse(`needs-decision: ${ROUND_LIMIT_REACHED}`);
+    else if (prior.spent >= limit) review = workerFixed(prior) ?? refuse(limitRefusal(limit));
     else {
       const record = await runReviewRound({ worktree: repo, head, base, contract, risk: request.critical ? 'riskyCritical' : request.risk,
         config: baseModelConfig(repo, request.modelRoutes?.base ?? base), packRoot: path.resolve(scriptDir, '..'), ...(prior.record ? { stageRecord: prior.record } : {}),
@@ -399,9 +424,9 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       review = record.outcome === 'not-reviewed'
         ? { outcome: 'not-reviewed', spent: false, round: null, repeated: prior.notReviewed > 0, reason: record.failures.at(-1)?.reason ?? `no readable text for ${record.unreviewedFiles.join(', ') || 'the review'}`,
           successors: [], record: null, failures: record.failures.slice(-6), costs }
-        : { ...roundOutcome(record, prior.spent + 1), spent: true, round: prior.spent + 1, record: stageRecord };
+        : { ...roundOutcome(record, prior.spent + 1, strict), spent: true, round: prior.spent + 1, record: stageRecord };
     }
-    review.contractDigest = contractDigest;
+    review.contractDigest = contractDigest; review.limit = limit;
     checkConsistency();
     receipt = { producer: REVIEW_PRODUCER, recordedAt, ...binding, runId: crypto.randomUUID(), head, base, review,
       // The worker runs the full verification; the collection records the pinned command unrun.

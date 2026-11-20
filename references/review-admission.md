@@ -3,29 +3,30 @@
 A collection runs one read-only review round on the committed head (reviewer and
 checker from different model families). The gate line is the
 result; findings are in the signed receipt under `review.record.findings`.
+Behavior changes get a live main-scenario run before round 1.
 
-At most three rounds per task attempt; an amendment keeps the count and record.
-Round 1 reads the whole change, later ones (post-PR fixes too) only fixes
-and open findings. Same head reuses its round; new base, fresh record.
+Pinned risk sets rounds per task attempt: `risky` up to three, others one;
+amendments keep the count and record. Round 1 reads the whole change, later ones
+fixes and open findings. Same head reuses its round; new base, fresh record.
 
 - `review clean` or `clean-with-successors` with your verification: pass.
 - `review not-converged (round 1|2 of 3)`: fix the error class of each open
-  finding with existing/literal tools, check, commit, request the next round.
+  finding, check, commit, request the next round.
+- Fast path after its round (`of 1`): fix, run the full verification on the
+  final head, request it with `workerVerification: {head, exitCode: 0}`.
 - `worker verification missing`: run it, request again.
-- `needs-decision:` (not-converged after round 3, round limit): park
-  needs-decision with that line. The orchestrator splits or changes approach
-  in a new attempt.
+- `needs-decision:` (round 3 not-converged, raised risk): park needs-decision
+  with that line.
 - `not-reviewed:` (a role failed or coverage was incomplete): no round spent;
-  request the same head once more. `blocked:` (twice in a row): park blocked.
+  request the same head again. `blocked:` (twice in a row): park blocked.
 
 A fixed finding closes when the checker verifies the fix on the new head and
-the reviewer no longer reports it, dangerous or not. PR remarks you fixed (bot,
-CI, owner) go in `prRemarks` as open findings; a P0/P1 one needs a fix.
+the reviewer no longer reports it. Fixed PR remarks (bot, CI, owner) go in
+`prRemarks` as open findings; a P0/P1 one needs a fix.
 
 Successor candidates pass instead of blocking: an older defect the task did not
-introduce (any round); a minor P3 leftover from round 2 on, unless it is about
-data, security or a gate bypass; on round 3 also any leftover both roles call
-harmless. Out-of-contract or risk-raised fixes never pass. List candidates in
-the certificate and report. After merge the task's Linear writer files every
-`must-file` one (an older dangerous defect, minor ones only for data, security
-or gate bypass) and decides on the rest. Never weaken tests to converge.
+introduce (on `risky` only a harmless one); a P3 leftover from round 2 on, unless
+about data, security or a gate bypass; on round 3 any leftover both roles call
+harmless. Out-of-contract or risk-raised fixes never pass. List them in the
+certificate and report. After merge the task's Linear writer files every
+`must-file` one and decides on the rest.

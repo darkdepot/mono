@@ -43,8 +43,8 @@ comments/certificates; apply worker snapshot/queue rules.
    first request: `scripts/ship-pr.mjs open` (draft, once). Later: `push`,
    then `remarks`; all fixed this attempt go in the request's `prRemarks`. Run the pinned
    gate.mjs preflight collect:false, publish its returned request, confirm, rerun.
-5. Follow the gate line per references/review-admission.md: open findings → fix,
-   check, commit, next round (three per attempt); `needs-decision:`/`blocked:`
+5. Behavior change: live-run the main scenario before the first round. Follow
+   the gate line per references/review-admission.md; `needs-decision:`/`blocked:`
    → park. No broad/release-sensitive rewrites or weakened tests.
 6. Reclassify fixes. Pass needs review clean|clean-with-successors and
    verification on this head; missing/hand-made/old/stale proof fails.
@@ -64,7 +64,7 @@ Issue(s): <keys>
 Branch: <branch>; commit state: <clean/dirty/committed>
 Changed files: <count/list/summary>
 Local verification: <commands/outcomes>
-Review: <clean|clean-with-successors|not-converged|not-reviewed|unavailable>; round: <n of 3>; receipt: <collectionId|none>
+Review: <clean|clean-with-successors|not-converged|not-reviewed|unavailable>; round: <n of 1|3>; receipt: <collectionId|none>
 Review successors: <none|weight file:line title for each>
 Review route: risk=<tiny|standard|deep|risky>; source=<Linear|diff>; critical=<none|signal>; reclassified=<no|summary>
 Drift candidate: <none/summary>

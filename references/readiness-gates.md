@@ -4,10 +4,10 @@
 
 Use the higher of the latest approved risk (Project, review, Spec or Issue) and the final-diff class:
 
-- `tiny`: one narrow artifact, no data/auth/billing/migration/multi-surface UX/release/public-API risk; explicit PRD-lite/no-spec may qualify.
+- `tiny`: one narrow artifact, no `risky` area or multi-surface UX; explicit PRD-lite/no-spec may qualify.
 - `standard`: normal product/workflow; approved Project/PRD/Spec or record/Issue (issue-only substitutes its contract).
 - `deep`: cross-cutting artifacts/abstractions/multi-step behavior; explicit architecture review of stable interfaces/real seams/tests.
-- `risky`: auth/permissions/billing/migrations/sensitive-production data/release-deploy/public API/security.
+- `risky`: strict path; installer, delivery, deploy/release, prod scripts, user data/migrations, security/auth/billing, public API, review-gate changes.
 
 Ambiguity moves up; unclassified non-tiny is `deep`. Reclassify after scope/risk changes; upward risk or a stronger
 critical signal stales earlier clean evidence. Critical escalation of `risky` needs a recorded concrete signal
