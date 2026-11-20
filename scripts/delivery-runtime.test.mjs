@@ -494,6 +494,22 @@ console.log(JSON.stringify(result));
     assert.equal(json(shipRequest.stateFile).preflightReceipt.path, fs.realpathSync(receiptFile));
     assert.equal(json(shipRequest.stateFile).preflightReceipt.runId, envelope.receipt.runId);
 
+    // U1: actual installed CLI releases a composed silent bot check at first-green +30m.
+    const silentState = path.join(root, 'silent-bot-state.json');
+    const botClock = path.join(root, 'ship-bot-fixture-repo-87.json');
+    const initialBot = fs.readFileSync(botClock);
+    fs.unlinkSync(botClock); // independent synthetic attempt clock, not a production reset
+    const greenAt = Date.now() - 1_800_001;
+    const silentChecks = checks.map(c => c.name === 'Greptile Review'
+      ? { ...c, status: 'IN_PROGRESS', conclusion: null }
+      : { ...c, completedAt: new Date(greenAt).toISOString(), createdAt: new Date(greenAt).toISOString() });
+    write(githubFile, { github, checks: silentChecks });
+    write(gateRequest, { ...shipRequest, stateFile: silentState });
+    const silent = pass(shipCall()); assert.match(silent.stdout, /Бот: молчал/);
+    assert.equal(json(silentState).bot.startedAt, greenAt);
+    assert.match(pass(shipCall()).stdout, /Бот: молчал/, 'restart never reopens waiting');
+    fs.writeFileSync(botClock, initialBot); write(githubFile, { github, checks });
+
     // AC4: ship also reads both historical signed receipt shapes under registered pins.
     for (const populated of [false, true]) {
       const archive = path.join(preflight.evidenceRoot, "datasets/old.v1.md"); write(archive, "Old archived context.\n");

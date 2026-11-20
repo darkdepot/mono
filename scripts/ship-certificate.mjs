@@ -29,5 +29,12 @@ export function validateShipCertificate(report, repo) {
   if (pr === undefined) throw new Error("ship certificate PR requires a GitHub PR URL or number");
   if (urlRepo && repo !== undefined && urlRepo !== repo) throw new Error("ship certificate repository mismatch");
   repo ??= urlRepo;
+  const botLines = certificate.split("\n").filter(line => line.startsWith("Бот:"));
+  if (botLines.length) {
+    if (botLines.length !== 1) throw new Error("ship certificate Бот ambiguous");
+    const bot = field("Бот");
+    if (!["ответил", "молчал", "нет"].includes(bot)) throw new Error("invalid ship certificate bot outcome");
+    return { repo, pr, head: report.head, bot };
+  }
   return { repo, pr, head: report.head };
 }

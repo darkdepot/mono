@@ -221,6 +221,9 @@ Workflow states:
      with empty registry. halt refuses spawn/resume without stopping workers.
      Keep attempts.json when an entry retires; never reset the cap.
 5. `monitor`
+   - Apply the thirty-minute old-attempt release and durable late-bot-feedback cursor
+     in references/orchestration-delivery.md on restore and each deploy; P1/P2
+     correction Issues must be read back before advancing the journal point.
    - Apply Monitoring Protocol in `references/orchestration-delivery.md` before
      every event/poll. No-change wakeups
      (false alarm after inspection, already-consumed report, or no events) create

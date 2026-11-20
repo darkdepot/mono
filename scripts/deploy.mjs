@@ -4,10 +4,10 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { atomicJson, canonical, digest, readJson, flags, isMain, withLock } from './runtime.mjs';
+import { atomicJson, canonical, digest, readJson, flags, isMain, withLock, shipBotChecks } from './runtime.mjs';
 import { validateDeployConfig, affected } from './deploy-config.mjs';
 import { validateShipCertificate } from './ship-certificate.mjs';
-import { readShipSnapshot } from './gate.mjs';
+import { readShipSnapshot, isReviewBot, isBotCheck } from './gate.mjs';
 import { readPrPublications, SHIP_MARKER, authorPart } from './ship-pr.mjs';
 import { requireQaPassed } from './qa-gate.mjs';
 import { check as landingCheck } from './orchestrator/landing-guard.mjs';
@@ -30,7 +30,7 @@ const filesIn = directory => fs.existsSync(directory) ? fs.readdirSync(directory
 
 // Only the latest Ship publication on this head is the boundary. Resolved replies
 // and Ship's own publications are deliberately excluded from new remarks.
-export function afterShip({ snapshot, issueComments, reviewComments, pr, reviewBodies = snapshot.reviews }, head) {
+export function afterShip({ snapshot, issueComments, reviewComments, pr, reviewBodies = snapshot.reviews }, head, ignoreBots = false) {
   const ship = comment => !!snapshot.viewer && (comment.user?.login ?? comment.author?.login) === snapshot.viewer && comment.body?.includes(SHIP_MARKER);
   const body = authorPart(pr.body);
   const bodyPublication = body?.head === head && body.publishedAt ? { ...pr, updated_at: body.publishedAt } : null;
@@ -41,11 +41,12 @@ export function afterShip({ snapshot, issueComments, reviewComments, pr, reviewB
   const time = comment => stamp(comment.updated_at ?? comment.updatedAt ?? comment.submitted_at ?? comment.publishedAt ?? comment.created_at);
   const boundary = Math.max(...publications.filter(onHead).map(time));
   need(Number.isFinite(boundary), 'latest Ship publication time missing; republish Ship body');
-  need(snapshot.threads.every(thread => thread.isResolved === true), 'unresolved review thread');
-  const threadComments = new Set(snapshot.threads.flatMap(thread => thread.comments.map(comment => comment.id)));
+  const threads = snapshot.threads.filter(thread => !ignoreBots || !isReviewBot(thread.comments?.[0]?.author));
+  need(threads.every(thread => thread.isResolved === true), 'unresolved review thread');
+  const threadComments = new Set(threads.flatMap(thread => thread.comments.map(comment => comment.id)));
   const comments = [...issueComments, ...reviewBodies, ...reviewComments.filter(comment => !threadComments.has(comment.node_id))];
   if (pr.body && !ship(pr)) comments.push(pr);
-  return comments.filter(comment => comment.body?.trim() && !ship(comment) && time(comment) > boundary);
+  return comments.filter(comment => comment.body?.trim() && !ship(comment) && (!ignoreBots || !isReviewBot(comment.user ?? comment.author)) && time(comment) > boundary);
 }
 
 // An interrupted action is never replayed merely because its result is absent.
@@ -192,8 +193,9 @@ export async function runDeploy(command, request, clock = {}) {
         const snapshot = readShipSnapshot(request.repo, binding.pr);
         need(snapshot.head === request.head && snapshot.state === 'OPEN', 'head changed; back to Ship');
         need(snapshot.mergeStateStatus === 'CLEAN' && pr.mergeable_state === 'clean', 'merge state is not clean');
-        need(snapshot.checks.every(check => check.head === request.head && (check.__typename === 'StatusContext' ? check.state === 'SUCCESS' : check.status === 'COMPLETED' && ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion))), 'checks unfinished or red');
-        need(!afterShip({ snapshot, ...readPrPublications(request.repo, binding.pr, { includeReviews: true }) }, request.head).length, 'new remarks after Ship');
+        const bots = binding.bot ? shipBotChecks(config) : [];
+        need(snapshot.checks.filter(check => !binding.bot || !isBotCheck(check.name ?? check.context, snapshot, { botChecks: bots })).every(check => check.head === request.head && (check.__typename === 'StatusContext' ? check.state === 'SUCCESS' : check.status === 'COMPLETED' && ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion))), 'checks unfinished or red');
+        need(!afterShip({ snapshot, ...readPrPublications(request.repo, binding.pr, { includeReviews: true }) }, request.head, !!binding.bot).length, 'new remarks after Ship');
         requireQaPassed({ root: request.root, config, issue: request.issue, head: request.head, shipCertificate: certificate });
         if (config.landing?.validation) {
           const tip = gh(`repos/${request.repo}/commits/main`).sha;

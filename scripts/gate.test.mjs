@@ -810,7 +810,7 @@ test("safeGitEnv removes inherited proxy parameters for non-fetch git even with 
 test('ship-bot-policy: worker fields cannot remove or replace trusted bot requirements', async () => {
   const { validateShipBotPolicy } = await import('./gate.mjs');
   const trusted = { botChecks: ['Greptile Review'], botUnavailable: null };
-  for (const policy of [{ botChecks: [] }, { botChecks: ['Other Bot'] }, { botUnavailable: 'worker says unavailable' }])
+  for (const policy of [{ botChecks: [] }, { botChecks: ['Other Bot'] }, { botUnavailable: 'worker says unavailable' }, { botOutcome: 'молчал' }])
     assert.throws(() => validateShipBotPolicy(policy, trusted), /bot/);
   const s = sample(); s.checks.pop();
   assert.throws(() => evaluateShip(s, judgment(), validateShipBotPolicy({}, trusted)), /bot Greptile Review pending/);
@@ -819,7 +819,7 @@ test('ship-bot-policy: worker fields cannot remove or replace trusted bot requir
   assert.throws(() => validateShipBotPolicy({ botUnavailable: 'different reason' }, unavailable), /bot/);
 });
 
-test('ship-next-attempt-after-fix: new head/state opens a window in the same task attempt', async () => {
+test('ship-next-attempt-after-fix: new gate window retains task bot outcome across heads and restart', async () => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-ship-next-'));
   try {
     const scripts = path.join(scratch, 'scripts');
@@ -862,16 +862,95 @@ test('ship-next-attempt-after-fix: new head/state opens a window in the same tas
       collectionTimeoutSec: 0.005, confirmationTimeoutSec: 0.01, evidenceLimitSec: 0.6 } } });
     // The limit leaves room for at least one poll on a loaded host before it parks.
     const waiting = { ...next, attempt: 3, stateFile: path.join(scratch, 'ship-3.json') };
-    await assert.rejects(shipGate(waiting), /evidence-limit/);
-    assert.match(JSON.parse(fs.readFileSync(waiting.stateFile)).pendingReason, /bot Greptile Review pending/);
+    assert.match(await shipGate(waiting), /Бот: ответил/);
+    const botFile = path.join(root, 'reports', `${issue}-a1-ship-bot.json`);
+    assert.equal(JSON.parse(fs.readFileSync(botFile)).outcome, 'ответил');
+    // A separate synthetic task clock: silent bot, first green already thirty minutes ago.
+    atomicJson(botFile, { scope: { repo: request.repo, number: request.number }, startedAt: Date.now() - 1_800_001, outcome: null });
+    const timed = { ...waiting, attempt: 4, stateFile: path.join(scratch, 'ship-4.json') };
+    assert.match(await shipGate(timed), /Бот: молчал/);
+    assert.equal(JSON.parse(fs.readFileSync(timed.stateFile)).bot.outcome, 'молчал');
+    assert.match(await shipGate(timed), /Бот: молчал/, 'restart does not reopen bot wait');
+    const expired = JSON.parse(fs.readFileSync(timed.stateFile));
+    expired.startedAt = Date.now() - 7_201_000; expired.pendingReason = 'bot Greptile Review pending on head';
+    atomicJson(timed.stateFile, expired);
+    assert.match(await shipGate(timed), /Бот: молчал/, 'restart long after pure bot wait does not park on evidence-limit');
 
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
 
-test('ship-bot-policy: project configuration requires nonempty unique check names', async () => {
+test('ship-bot-policy: project configuration accepts no bots and requires unique check names', async () => {
   const { shipBotChecks } = await import('./runtime.mjs');
   assert.deepEqual(shipBotChecks(), ['Greptile Review']);
   assert.deepEqual(shipBotChecks({ orchestration: { ship: { botChecks: ['Custom Review'] } } }), ['Custom Review']);
-  for (const botChecks of [[], null, 'Greptile Review', [' '], ['Bot', 'Bot'], [' Bot']])
+  assert.deepEqual(shipBotChecks({ orchestration: { ship: { botChecks: [] } } }), []);
+  for (const botChecks of [null, 'Greptile Review', [' '], ['Bot', 'Bot'], [' Bot']])
     assert.throws(() => shipBotChecks({ orchestration: { ship: { botChecks } } }), /botChecks/);
+});
+
+
+test('ship bot clock starts at fully green mandatory CI, persists over heads and expires at thirty minutes', async () => {
+  const { advanceBotWait } = await import('./gate.mjs');
+  const policy = { botChecks: ['Greptile Review'], requiredChecks: ['validate'] };
+  const start = 1_000_000, s = sample(); s.checks.pop();
+  const pending = structuredClone(s); pending.checks[0].status = 'IN_PROGRESS';
+  assert.equal(advanceBotWait(null, pending, policy, start).startedAt, null);
+  for (const conclusion of ['FAILURE', 'SKIPPED', 'NEUTRAL']) {
+    const red = structuredClone(s); red.checks[0].conclusion = conclusion;
+    assert.equal(advanceBotWait(null, red, policy, start).startedAt, null);
+  }
+  const absent = structuredClone(s); absent.checks.shift();
+  assert.equal(advanceBotWait(null, absent, policy, start).startedAt, null);
+  let clock = advanceBotWait(null, s, policy, start);
+  assert.equal(clock.startedAt, start); assert.equal(clock.outcome, null);
+  const changed = structuredClone(s); changed.head = 'b'.repeat(40); changed.checks.forEach(c => c.head = changed.head);
+  clock = advanceBotWait(JSON.parse(JSON.stringify(clock)), changed, policy, start + 1_799_999);
+  assert.equal(clock.startedAt, start); assert.equal(clock.outcome, null);
+  clock = advanceBotWait(clock, changed, policy, start + 1_800_000);
+  assert.equal(clock.outcome, 'молчал');
+  assert.doesNotThrow(() => evaluateShip(changed, { ...judgment(), head: changed.head }, { ...policy, botOutcome: clock.outcome }));
+  assert.equal(advanceBotWait(null, s, { botChecks: [] }, start).outcome, 'нет');
+});
+
+test('timely bot response is retained after fixes; original bot remarks still require judgment', async () => {
+  const { advanceBotWait } = await import('./gate.mjs');
+  const policy = { botChecks: ['Greptile Review'] }, s = sample(), start = 1_000_000;
+  let clock = advanceBotWait(null, s, policy, start);
+  assert.equal(clock.outcome, 'ответил');
+  s.checks[2].status = 'IN_PROGRESS'; s.head = 'b'.repeat(40); s.checks.forEach(c => c.head = s.head);
+  clock = advanceBotWait(clock, s, policy, start + 1_800_001);
+  assert.equal(clock.outcome, 'ответил');
+  const j = { ...judgment(), head: s.head };
+  assert.doesNotThrow(() => evaluateShip(s, j, { ...policy, botOutcome: clock.outcome }));
+  s.botComments = [{ id: 'P1', body: 'P1: broken path' }];
+  assert.throws(() => evaluateShip(s, j, { ...policy, botOutcome: clock.outcome }), /unaddressed bot remark/);
+  j.botRemarks = [{ id: 'P1', commentDigest: botRemarkDigest(s.botComments[0]), outcome: 'fixed', evidence: 'fixed and checked on this head' }];
+  assert.doesNotThrow(() => evaluateShip(s, j, { ...policy, botOutcome: clock.outcome }));
+  s.botComments[0].body = 'P2: consider the edge case';
+  j.botRemarks[0] = { id: 'P1', commentDigest: botRemarkDigest(s.botComments[0]), outcome: 'rejected', evidence: 'published reply explaining why the observed behavior is intended' };
+  assert.doesNotThrow(() => evaluateShip(s, j, { ...policy, botOutcome: clock.outcome }));
+  j.botRemarks[0].evidence = '';
+  assert.throws(() => evaluateShip(s, j, { ...policy, botOutcome: clock.outcome }), /unaddressed bot remark/);
+});
+
+
+test('bot deadline uses first completed mandatory CI and does not accept a late reply as timely', async () => {
+  const { advanceBotWait } = await import('./gate.mjs');
+  const now = 4_000_000, greenAt = now - 1_800_001, s = sample();
+  s.requiredChecks = ['validate']; s.checks[0].completedAt = new Date(greenAt).toISOString();
+  s.checks[2].completedAt = new Date(now).toISOString();
+  assert.deepEqual(advanceBotWait(null, s, { botChecks: ['Greptile Review'] }, now), { startedAt: greenAt, outcome: 'молчал' });
+  s.checks[2].status = 'IN_PROGRESS';
+  assert.doesNotThrow(() => evaluateShip(s, judgment(), { botChecks: [], botOutcome: 'нет' }));
+  s.requiredChecks.push('Greptile Review');
+  assert.throws(() => evaluateShip(s, judgment(), { botChecks: [], botOutcome: 'нет' }), /Greptile Review.*pending/);
+});
+
+
+test('CI automation remarks never count as a review bot response and still require disposition', async () => {
+  const { advanceBotWait } = await import('./gate.mjs');
+  const s = sample(), now = 4_000_000; s.checks.pop();
+  s.botComments = [{ id: 'CI', body: 'P1: CI warning', reviewBot: false, createdAt: new Date(now).toISOString() }];
+  assert.equal(advanceBotWait(null, s, { botChecks: ['Greptile Review'] }, now).outcome, null);
+  assert.throws(() => evaluateShip(s, judgment(), { botOutcome: 'молчал' }), /unaddressed bot remark CI/);
 });

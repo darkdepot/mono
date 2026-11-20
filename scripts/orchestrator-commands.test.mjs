@@ -2625,3 +2625,17 @@ test('ship-bot-policy: current pins override recovered admission; foreign attemp
     }
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
+
+
+test('ship-bot-policy: immutable attempt pins accept an empty bot list', () => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-no-bots-'));
+  const root = path.join(scratch, 'root'), issue = 'MONO-162', head = 'a'.repeat(40);
+  const file = path.join(root, 'dispatch', `${issue}-a1`, 'pins.json');
+  const pins = { root, worktree: scratch, workerWritableRoots: [scratch], shipBotChecks: [] };
+  try {
+    atomicJson(file, pins);
+    const binding = { file, digest: createHash('sha256').update(fs.readFileSync(file)).digest('hex') };
+    atomicJson(path.join(root, 'workers.json'), { [issue]: { issue, worktree: scratch, attempt: 1, stage: 'mono-deliver', packVersion: 'test', surfaceRevision: 5, pins: binding } });
+    assert.deepEqual(pinnedShipPolicy({ ...pins, pins: binding, head, collect: false, collectionId: `preflight-collect:${head}:1` }), { botChecks: [], botUnavailable: null });
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+});

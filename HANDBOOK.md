@@ -429,7 +429,7 @@ raw idea → recorded owner approval → Project in Idea → owner or delegated 
 6. **Package.** `mono:handoff` reconciles the Brief with approved inputs before recording, reviews and records the package and execution Issues, checks each and sets Ready before its final summary, position and start question. Work starts only on agreement to that question or explicit owner words; delegation needs an explicit request.
 7. **Start.** `mono:implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
 8. **Implement and prepare.** `mono:deliver` sequences `mono:implement`, `mono:preflight`, and `mono:ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, commit, and pass the collection's review round (`clean` or `clean-with-successors`, at most three rounds) and verification. Record the ready certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory. The collector auto-confirms empty and collection queues, including carried confirmed writes. New connector writes in a collection queue require present observations in the active report session before collection. Start facts live in the code report; the Russian ready-certificate comment retains its machine block. Review runs only in the external collection on a committed head, for every transport; managed Claude Code's ready certificate also names its stop/resume startup. Preserve phase ownership.
-9. **Ship to green.** Preflight opens the PR as a draft at its first collection request (`scripts/ship-pr.mjs open`, secrets checked before every push where GitHub push protection is off) and feeds the bot remarks, failed CI checks and owner instructions it fixed into the next review round (`prRemarks`), where they close only when the checker verifies the fix. Ship writes the description for people in Russian from `templates/pr-body.md` (`ship-pr.mjs body`, rewritten after every round: the author's part between Ship's markers names its head and publication time (PR activity cannot move Deploy's boundary; republish a legacy body without that time), a bot's block outside them is kept, and Ship itself writes the «Проверки» line in which only finished successful checks are «прошли»), synchronizes accepted drift, settles every other remark and checks every statement of the description through a read-only pass (`ship-pr.mjs check --pr`; a second disagreement in a row stops Ship), leaves draft (`ship-pr.mjs ready`) only with a clean receipt on the head, no failed CI and a description that passes the form check (required sections, up to 400 visible words, the task link, written for this head), and confirms the Linear status/link. A late remark that needs a fix returns the PR to draft and parks not-converged. Ship speaks Russian to the owner: one to three product lines above the certificate name the attempt, the review rounds spent of three and the wait out of its limit. Run by hand in the owner's session, Ship needs a branch with a ready Linear Issue and a signed clean receipt on the current head from the Issue's collection; otherwise it refuses with the reason, and without permission to post replies it stops with «нет права публиковать ответы». Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.
+9. **Ship to green.** Preflight opens the PR as a draft at its first collection request (`scripts/ship-pr.mjs open`, secrets checked before every push where GitHub push protection is off) and feeds the bot remarks, failed CI checks and owner instructions it fixed into the next review round (`prRemarks`), where they close only when the checker verifies the fix. Ship writes the description for people in Russian from `templates/pr-body.md` (`ship-pr.mjs body`, rewritten after every round: the author's part between Ship's markers names its head and publication time (PR activity cannot move Deploy's boundary; republish a legacy body without that time), a bot's block outside them is kept, and Ship itself writes the «Проверки» line in which only finished successful checks are «прошли»), synchronizes accepted drift, settles every other remark and checks every statement of the description through a read-only pass (`ship-pr.mjs check --pr`; a second disagreement in a row stops Ship), leaves draft (`ship-pr.mjs ready`) only with a clean receipt on the head, no failed CI and a description that passes the form check (required sections, up to 400 visible words, the task link, written for this head), and confirms the Linear status/link. A late remark that needs a fix returns the PR to draft and parks not-converged. Ship speaks Russian to the owner: one to three product lines above the certificate name the attempt, the review rounds spent of three and the wait out of its limit. Run by hand in the owner's session, Ship needs a branch with a ready Linear Issue and a signed clean receipt on the current head from the Issue's collection; otherwise it refuses with the reason, and without permission to post replies it stops with «нет права публиковать ответы». Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Wait for current-head CI and the bounded task bot outcome. Emit the green certificate only after all ship conditions and write confirmations pass.
 10. **Deploy and close.** `mono:deploy` merges the pinned green head only with an approved deploy.targets block, proves the actual version and checks the Issue scenario/product health. Close the Issue on merge with a truthful comment. New repeated browser failure against a green previous build permits rollback and one repair. Only proven delivery earns a project update; only shipment of its last open Issue may complete a Project. Retire the delivered worker after closeout.
 
 Stages rebuilt under «Mono как продукт» and their shared host reference
@@ -706,26 +706,39 @@ A gate proves only its stated boundary. `mono:review` returns quality/risk findi
 | Start handshake / delivery check | The worker checked snapshot, approvals, resolved findings and context seam; the orchestrator applied/read back lifecycle changes; the amended package is ready for code |
 | `gate.mjs preflight` | Current committed head/merge-base has an authentic receipt with review `clean` or `clean-with-successors` and successful sandboxed verification; missing, stale, fabricated, old-format or incomplete evidence fails |
 | Pre-ship review and check | Diff matches the Issue, readiness is recoverable, required review is complete, artifacts are current and accepted drift is synchronized |
-| `gate.mjs ship` | PR is open on the certified head, checks and bot review cover that head, threads and bot remarks are resolved/disposed, closure replies are published, no own review draft or outstanding change request remains, and mergeability is acceptable under policy |
+| `gate.mjs ship` | PR is open on the certified head, mandatory CI covers that head and the task bot wait is settled, threads and bot remarks are resolved/disposed, closure replies are published, no own review draft or outstanding change request remains, and mergeability is acceptable under policy |
 | Independent QA before merge | Connected products require current-head task QA; held final work also requires project QA matching the current build. Ship green precedes this gate. A recipe with `beforeMerge: false` turns it off: QA runs on request and before a release |
 | Deploy verification and live QA | Certified change was merged and delivered to the target; acceptance was checked where consumed, with explicit evidence or a permitted recorded skip |
 
 Ship also requires recorded valid outcomes for pre-ship review, readiness, and documentation. Apply only the repository's accepted check exceptions. Pending or unknown evidence is not success; terminal failures stop the gate. A new head invalidates its old proof. The gate accumulates evidence on the current head, waits the configured quiet interval after events, and stops at its deadline rather than waiting forever.
 
-Configure required PR bots with `orchestration.ship.botChecks` in the project
-config: a nonempty list of unique check names, default `["Greptile Review"]`.
-Dispatch pins the policy from the immutable base. Workers cannot empty, replace
-or disable it. The orchestrator may record a confirmed outage for the current task
-attempt with `accept.mjs amend --root DIR --issue KEY --attempt N --text TEXT
---bot-unavailable "<reason>"`; another attempt needs its own decision. A new amendment or a retry of a prepared,
-undelivered amendment with `--bot-unavailable` is refused when the current HEAD, base and review contract
-have a reusable completed round and at least `ROUND_LIMIT − 1` rounds are spent.
+Configure PR bots with `orchestration.ship.botChecks`: unique names, default
+`["Greptile Review"]`, or `[]` for no bot. Dispatch pins the immutable-base policy;
+workers cannot override it. New attempts wait thirty minutes from first fully green
+mandatory CI; red/pending CI never opens the bot clock. Task-level Ship state
+`reports/<Issue>-a<attempt>-ship-bot.json` stores `startedAt` and outcome across
+restarts, corrected heads, amendments and new gate state files. Silence becomes
+`молчал` without a park/amendment; [] gives `нет`. Timely reply gives `ответил`:
+fix P1 in the PR, fix P2 or publish a reply, retain `botRemarks`; later heads do not
+wait again. General evidence/quiet clocks still govern other Ship conditions.
 
-After an authorized ship fix, the amendment names the next ship-gate attempt:
-run it for the new head with a new state file, preserving the previous one in the
-same task attempt. Ship-gate attempts have no machine limit; the evidence window
-and review strictness remain unchanged. Green phase reports require the same
-issue/head/PR certificate validation as landing, which also requires confirmation.
+The certificate adds `Бот: ответил|молчал|нет`. Installed Deploy with this line
+ignores pending bot checks and late bot feedback; mandatory CI and owner remarks
+always block. Certificates without it keep legacy blocking. Bot checks must not
+be branch-required (Mono requires only `validate`). No new pins/constants or
+surface revision: existing attempts keep their installed gate. Their orchestrator
+uses `amend --bot-unavailable` after thirty minutes of green CI; if the unchanged
+head/base/review contract has a completed round and `ROUND_LIMIT − 1` rounds spent
+and amendment refuses, start a new attempt on the same head. Product [] is enabled
+only after installation and orchestration restart.
+
+After a ship fix preserve old gate state; new head/stateFile/proof uses a new gate
+attempt without resetting task bot state. Green reports retain issue/head/PR
+certificate validation and confirmation. On every deploy/restore the orchestrator
+reads late bot feedback on merged PRs after a journal cursor (time/id), without
+an age cutoff; P1/P2 become deduplicated correction Issues, read back before cursor
+advance. Initially file the four known outstanding P1s. See
+[delivery rules](references/orchestration-delivery.md#late-bot-feedback).
 
 ### Write barriers and recovery
 
@@ -1122,7 +1135,8 @@ before opting in. Mono's exact block is `{"targets":[{"kind":"pack"}]}`.
 `deploy.mjs` commands merge/prove/local/check/rollback/return/outcome accept
 `--request FILE`. It locks one open run per product in landing/deploy, records
 pre-merge rollback target and action intentions with read-backs, and uses raw PR
-publications after the latest Ship marker on the same head. QA beforeMerge and
+publications after the latest Ship marker on the same head; a `Бот:` certificate
+waives only bot waits/late bot remarks. QA beforeMerge and
 landing tip remain merge gates. It never uses auto-merge. Manual pack PRs without
 registry attempts skip landing-drain record. CLI calls are bounded at 120 seconds.
 Before an issue-only merge, Deploy rereads the current body, marker, label and
@@ -1490,6 +1504,8 @@ and observed boundary, including unknown observations. The [dataset instructions
 credential-read limitation and required live boundary tests.
 
 ## Validation
+
+Bot-limit fixtures: `node --test scripts/gate.test.mjs scripts/deploy.test.mjs scripts/delivery-runtime.test.mjs` cover first green, red/pending CI, restart/fixes, empty policy, new/legacy certificates, and retained CI/owner blockers. Check-run bot responses are synthetic; recorded PR 244 replies remain in `scripts/fixtures/claude-pr-replies/`. A live silent-bot → timed Ship → Deploy merge check before review is separate evidence; skill scenarios run through the orchestrator in test Linear (U3).
 
 Pack installation fixtures: `node --test scripts/pack-install.test.mjs` uses fake Claude/Codex CLIs and temporary profiles; it covers interrupted installation, immutable rollback targets, holders, dual-file pins, tree proof, fresh-session discovery and the wave cycle.
 
