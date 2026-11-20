@@ -574,7 +574,7 @@ export function readShipSnapshot(repo, number, deadline = Infinity, botSince = n
   requireThat(requiredChecks.every(name => typeof name === "string" && name.trim()), "invalid required checks");
   function checksFor(head) {
     let headStartedAt;
-    const checks = pages('query($owner:String!,$name:String!,$head:GitObjectID!,$after:String){repository(owner:$owner,name:$name){object(oid:$head){... on Commit{committedDate statusCheckRollup{contexts(first:100,after:$after){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{commit{oid} app{slug}}} ... on StatusContext{context state createdAt targetUrl}} pageInfo{hasNextPage endCursor}}}}}}}',
+    const checks = pages('query($owner:String!,$name:String!,$head:GitObjectID!,$after:String){repository(owner:$owner,name:$name){object(oid:$head){... on Commit{committedDate statusCheckRollup{contexts(first:100,after:$after){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{commit{oid} app{slug}}} ... on StatusContext{context state createdAt targetUrl creator{login}}} pageInfo{hasNextPage endCursor}}}}}}}',
       { owner, name, head }, d => { headStartedAt = d.repository.object.committedDate; return d.repository.object.statusCheckRollup?.contexts ?? { nodes: [], pageInfo: { hasNextPage: false } }; })
       .map(check => ({ ...check, head: check.__typename === "CheckRun" ? check.checkSuite?.commit?.oid : head }));
     return { head, headStartedAt, checks };
@@ -597,11 +597,17 @@ export function readShipSnapshot(repo, number, deadline = Infinity, botSince = n
   return { ...final, head, headStartedAt, ciHistory, botSince, rules: rulesEvidence, requiredChecks, checks, threads, viewer, reviews, botComments };
 }
 
+// CheckRun authors come from their app; a StatusContext (commit status) names its author in creator.
+// Only the app's [bot] account matches, so a person who posts a status never becomes a review bot.
+const reviewBotLogin = check => {
+  const login = check.__typename === 'StatusContext' ? check.creator?.login : check.checkSuite?.app?.slug;
+  return login ? (login.endsWith('[bot]') ? login : `${login}[bot]`) : null;
+};
 export const isReviewBot = (user, names = ['Greptile Review', 'Devin Review'], checks = []) =>
   (names.includes('Greptile Review') && ['greptile-apps[bot]', 'greptile[bot]'].includes(user?.login)) ||
   (names.includes('Devin Review') && ['devin-ai-integration[bot]', 'devin-ai[bot]'].includes(user?.login)) ||
   (user?.login !== 'github-actions[bot]' && checks.some(check => names.includes(check.name ?? check.context) &&
-    check.checkSuite?.app?.slug && user?.login === `${check.checkSuite.app.slug}[bot]`));
+    reviewBotLogin(check) === user?.login));
 export const isBotCheck = (name, snapshot, policy) => [...(policy.botChecks ?? []), 'Greptile Review', 'Devin Review'].includes(name) &&
   ![...(snapshot.requiredChecks ?? []), ...(policy.requiredChecks ?? [])].includes(name);
 const greenCheck = check => check.__typename === 'CheckRun'
@@ -634,15 +640,18 @@ export function advanceBotWait(previous, snapshot, policy, now) {
   const checks = candidates.flatMap(candidate => candidate.checks);
   const heads = new Set(candidates.map(candidate => candidate.head));
   const commits = candidates.map(candidate => Date.parse(candidate.headStartedAt)).filter(Number.isFinite);
-  const replySince = Math.max(snapshot.botSince ?? 0, commits.length ? Math.min(...commits) : Infinity);
+  const since = snapshot.botSince ?? 0;
+  const replySince = Math.max(since, commits.length ? Math.min(...commits) : Infinity);
+  // Every reply source honours the attempt boundary: a reply before botSince belongs to an earlier attempt.
+  const inWindow = time => time >= since && time <= deadline;
   const replied = names.every(name => checks.some(check => (check.name ?? check.context) === name &&
-    heads.has(check.head) && greenCheck(check) && (Date.parse(check.completedAt ?? check.createdAt) || now) <= deadline) ||
+    heads.has(check.head) && greenCheck(check) && inWindow(Date.parse(check.completedAt ?? check.createdAt) || now)) ||
     snapshot.botComments?.some(item => (item.user ? isReviewBot(item.user, [name], checks) : names.length === 1 && item.reviewBot !== false) &&
       (heads.has(item.head) || (!item.head && Date.parse(item.createdAt) >= replySince)) &&
-      Date.parse(item.createdAt ?? item.updatedAt) <= deadline) ||
+      inWindow(Date.parse(item.createdAt ?? item.updatedAt))) ||
     snapshot.reviews?.some(item => isReviewBot(item.user, [name], checks) &&
       ['COMMENTED', 'APPROVED', 'CHANGES_REQUESTED'].includes(item.state) && heads.has(item.commit_id) &&
-      Date.parse(item.submitted_at) >= (snapshot.botSince ?? 0) && Date.parse(item.submitted_at) <= deadline));
+      inWindow(Date.parse(item.submitted_at))));
   if (replied) state.outcome = 'ответил';
   else if (now >= deadline || policy.botUnavailable?.trim()) state.outcome = 'молчал';
   return state;

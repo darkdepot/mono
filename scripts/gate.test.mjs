@@ -1043,3 +1043,46 @@ test('historical replies are recovered for every configured bot without acceptin
   s.botComments = [{ user: { login: 'custom-review[bot]', type: 'Bot' }, body: 'Reviewed', createdAt: new Date(now).toISOString() }];
   assert.equal(advanceBotWait(null, s, { botChecks: ['Custom Review', 'Devin Review'] }, now).outcome, 'ответил', 'combine configured app reply with the other bot check');
 });
+
+test('configured StatusContext bot is identified by its creator', async () => {
+  const { isReviewBot, advanceBotWait } = await import('./gate.mjs');
+  const now = 4_000_000, s = sample();
+  const status = { __typename: 'StatusContext', context: 'Custom Review', head, state: 'PENDING', createdAt: new Date(now).toISOString(), creator: { login: 'custom-review' } };
+  assert.equal(isReviewBot({ login: 'custom-review[bot]' }, ['Custom Review'], [status]), true, 'GraphQL Bot login without suffix');
+  assert.equal(isReviewBot({ login: 'custom-review[bot]' }, ['Custom Review'], [{ ...status, creator: { login: 'custom-review[bot]' } }]), true);
+  assert.equal(isReviewBot({ login: 'vercel[bot]' }, ['Custom Review'], [status]), false);
+  assert.equal(isReviewBot({ login: 'custom-review[bot]' }, ['Custom Review'], [{ ...status, creator: null }]), false);
+  assert.equal(isReviewBot({ login: 'sasha' }, ['Custom Review'], [{ ...status, creator: { login: 'sasha' } }]), false, 'a person posting a status is not a review bot');
+  assert.equal(isReviewBot({ login: 'custom-review[bot]' }, ['Other Review'], [status]), false);
+  s.checks.pop(); s.checks.push(status); s.botSince = now - 60_000; s.headStartedAt = new Date(now - 30_000).toISOString();
+  s.botComments = [{ user: { login: 'custom-review[bot]', type: 'Bot' }, body: 'Reviewed', createdAt: new Date(now).toISOString() }];
+  assert.equal(advanceBotWait(null, s, { botChecks: ['Custom Review'] }, now).outcome, 'ответил');
+});
+
+test('bot replies before the attempt boundary never count, on any source', async () => {
+  const { advanceBotWait } = await import('./gate.mjs');
+  const since = 4_000_000, now = since + 120_000, old = 'b'.repeat(40), s = sample(), policy = { botChecks: ['Greptile Review'] };
+  s.checks.pop(); s.requiredChecks = ['validate']; s.botSince = since;
+  s.headStartedAt = new Date(now - 30_000).toISOString(); s.checks[0].completedAt = new Date(now - 10_000).toISOString();
+  // Old head H1: required CI re-run after the boundary, bot replies are from an earlier attempt.
+  s.ciHistory = [{ head: old, headStartedAt: new Date(since - 3_600_000).toISOString(), checks: [
+    { ...s.checks[0], head: old, completedAt: new Date(since + 2 * 60_000).toISOString() },
+    { __typename: 'CheckRun', name: 'Greptile Review', head: old, status: 'COMPLETED', conclusion: 'SUCCESS', completedAt: new Date(since - 54 * 60_000).toISOString() },
+  ] }];
+  const early = new Date(since - 54 * 60_000).toISOString(), late = new Date(since + 60_000).toISOString();
+  assert.equal(advanceBotWait(null, s, policy, now).outcome, null, 'old check run');
+  s.ciHistory[0].checks[1].completedAt = late;
+  assert.equal(advanceBotWait(null, s, policy, now).outcome, 'ответил', 'check run inside the window');
+  s.ciHistory[0].checks.pop();
+  s.botComments = [{ user: { login: 'greptile-apps[bot]' }, body: 'Reviewed H1', head: old, createdAt: early }];
+  assert.equal(advanceBotWait(null, s, policy, now).outcome, null, 'old head-bound comment');
+  s.botComments[0].createdAt = late;
+  assert.equal(advanceBotWait(null, s, policy, now).outcome, 'ответил');
+  s.botComments = [{ user: { login: 'greptile-apps[bot]' }, body: 'Reviewed', createdAt: early }];
+  assert.equal(advanceBotWait(null, s, policy, now).outcome, null, 'old issue comment');
+  s.botComments = [];
+  s.reviews = [{ user: { login: 'greptile-apps[bot]' }, state: 'COMMENTED', body: '', commit_id: old, submitted_at: early }];
+  assert.equal(advanceBotWait(null, s, policy, now).outcome, null, 'old review');
+  s.reviews[0].submitted_at = late;
+  assert.equal(advanceBotWait(null, s, policy, now).outcome, 'ответил');
+});
