@@ -48,7 +48,8 @@ Handoff 150), plus «Утвердил сам, потому что…». Decision
 Handoff asks a contextual question about starting work.
 Only explicit owner words delegating work record
 `by=owner` and transfers delivery to the orchestrator. A delegated Project accepts
-orchestrator start with reason/countercheck. Ready alone never starts delivery.
+orchestrator start with reason/countercheck; under «веди до Handoff» relay the start
+question to the owner. Ready alone never starts delivery.
 
 ## Stage agent permissions and visible dialogue
 

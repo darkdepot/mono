@@ -125,6 +125,9 @@ Workflow states:
      match; never rebind a thread from another surface revision.
    - Apply queued Linear mutations from worker reports that were never
      applied.
+   - Here and on every exit from a wait, find «веди до Handoff» marks on
+     Projects before Delivery and continue their chain (Decision Authority in
+     `references/orchestration.md`).
    - Output the rebuilt status (the «Статус» shape from
      `templates/orchestrator-brief.md` with its «Техника» table) before
      taking new actions.
@@ -146,7 +149,8 @@ Workflow states:
      final-message result and contextual question; relay the exact shown text, actual
      question and verbatim owner reply. Idea files are written by shell from that
      conversation before Linear writes, with only the named small correction.
-     Only a delegated Project allows autonomous Research/work start. First exemplars and
+     Only a delegated Project allows autonomous Research/work start; «веди до Handoff»
+     allows Research, not work start. First exemplars and
      new taste rules stay with owner. Their words reopen approvals.
    - Maintain `.claude/session-views/<этап>-<ключ проекта>-<круг>.md` in product cwd,
      append by shell before the final owner summary/question or after the owner reply; Idea description/notes from the shown message and actual owner reply.
@@ -168,8 +172,8 @@ Workflow states:
    - Launch Handoff after the routed required records. It owns package/review/Issues.
      Missing `next=`: consume effective valid tech for current PRD without another
      offer. Only absent/invalid tech with ordinary/large size offers Tech Evaluation;
-     without consent no package or bypass. Authorized start only: ordinary `by=owner`, delegated
-     `by=orchestrator` with reason/countercheck. «Передать оркестратору» or typed
+     without consent no package or bypass. Authorized start only: ordinary and «веди до Handoff»
+     `by=owner` after the owner's answer, delegated `by=orchestrator` with reason/countercheck. «Передать оркестратору» or typed
      «передай оркестратору» in owner session records `by=owner` and transfers work.
      Confirm start before dispatch; Ready alone is never authorization.
 4. `dispatch`
@@ -299,6 +303,7 @@ Rules:
   and refresh item state immediately before asking (Decision Briefs policy).
 - Idea approval, new taste rules and first-product exemplars remain owner decisions.
   A delegated Project authorizes subsequent stage decisions and Research/work start;
+  «веди до Handoff» the same up to Handoff, work start stays with the owner;
   ordinary Projects still need owner start. Deploy follows configured policy.
 - Second Voice reviewers are discovery agents, not workers: they never
   talk to the user, never write Linear, and never dispatch or steer

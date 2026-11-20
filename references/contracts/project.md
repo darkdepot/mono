@@ -141,8 +141,9 @@ Delivery begins only after `mono:implement` verifies the Project, current PRD,
 the current package record (a legacy package: Tech Spec or explicit no-spec
 exception), execution Issue set, the start record bound to the shown summary and
 that Issue set (a legacy package: its approval), and readiness to start from those
-Issues. Ordinary Projects require `by=owner`; only delegated Projects (PC-019)
-accept `by=orchestrator` with a reason and the countercheck verdict outside fences.
+Issues. Ordinary Projects require `by=owner`; only Projects delegated with work
+start (PC-019, not the narrow mode) accept `by=orchestrator` with a reason and the
+countercheck verdict outside fences.
 
 ## PC-017 — Ship state ownership
 
@@ -174,3 +175,13 @@ and changes to earlier owner decisions. Every `by=orchestrator` approval require
 an independent read-only countercheck and its model/version verdict outside fences
 in the same comment. Taste-memory consent and first-product exemplars stay with
 the owner; their later words reopen approvals. Merge/release policy stays configured.
+
+Narrow mode «веди до Handoff»: a Project comment quoting the owner's words verbatim
+with the outside-fence line «Ведёт оркестратор до Handoff: <дата>. Старт работ за владельцем.»
+delegates everything above except work start. The orchestrator may start Research,
+answer stages and approve their shown versions with reasons and counterchecks up to
+Handoff; Handoff stops at Ready with the start question to the owner, and the start
+record stays `by=owner`. This mark never authorizes `by=orchestrator` work start.
+The owner's correction in words reopens that stage; an orchestrator approval of the
+earlier version no longer counts. The latest owner handover comment decides between
+the two modes.

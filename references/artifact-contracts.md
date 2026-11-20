@@ -35,6 +35,12 @@ concise description; the active Brief document replaces Idea approval notes and
 preserves replaced text. The bounded Project fingerprint changes with these rules;
 the Idea approval fingerprint and reader do not change.
 
+MONO-446 / U5 explicitly changes PC-016 and PC-019: beside «веди сам», the narrow
+mode «веди до Handoff» (owner words verbatim plus the outside-fence mark
+«Ведёт оркестратор до Handoff: <дата>. Старт работ за владельцем.») delegates the
+stages up to Handoff but not work start, which stays `by=owner`. The bounded Project
+fingerprint changes with these rules; record formats and scripts do not change.
+
 | Contract source | Rule ID | Named consumers |
 | --- | --- | --- |
 | `references/contracts/project.md#PC-001` | `PC-001` | `mono:initiative`, `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |

@@ -102,10 +102,9 @@ fallback/higher-risk review, never ready outside lane. Ship bad approval→stop 
 no-promotion handoff.
 
 Project start: by=owner; PC-019 allows by=orchestrator with reason/countercheck
-(model/version outside the fence in that comment) only with «Ведёт оркестратор»
-outside the last Idea approval fence or an explicit owner Project comment.
-Delegated stale/legacy-migrate Idea needs a new owner button, confirmed record and
-fresh check. Legacy package/start or bundled approval can authorize code;
+(model/version outside fence, same comment) only by «Ведёт оркестратор:» outside
+last Idea approval fence or an owner «веди сам» comment, never «до Handoff».
+Delegated stale/legacy-migrate Idea needs new owner words, record, fresh check. Legacy package/start or bundled approval can authorize code;
 «запускай реализацию» permits Delivery/branch/code; documents alone do not.
 [PC-016/PC-019](contracts/project.md).
 
