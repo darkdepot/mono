@@ -31,36 +31,11 @@
         ],
         "additionalProperties": false
       }
-    },
-    "description": {
-      "type": "object",
-      "properties": {
-        "verdict": {
-          "type": "string",
-          "enum": [
-            "truthful",
-            "false-claims",
-            "not-supplied"
-          ]
-        },
-        "falseClaims": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "verdict",
-        "falseClaims"
-      ],
-      "additionalProperties": false
     }
   },
   "required": [
     "completed",
-    "verdicts",
-    "description"
+    "verdicts"
   ],
   "additionalProperties": false
 }

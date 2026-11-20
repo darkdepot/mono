@@ -1,19 +1,20 @@
 # Review Admission
 
 A collection runs one read-only review round on the committed head (reviewer and
-checker from different model families), then verification. The gate line is the
+checker from different model families). The gate line is the
 result; findings are in the signed receipt under `review.record.findings`.
 
 At most three rounds per task attempt; an amendment keeps the count and record.
 Round 1 reads the whole change, later ones (post-PR fixes too) only fixes
 and open findings. Same head reuses its round; new base, fresh record.
 
-- `review clean` or `clean-with-successors` with verification: pass.
+- `review clean` or `clean-with-successors` with your verification: pass.
 - `review not-converged (round 1|2 of 3)`: fix the error class of each open
   finding with existing/literal tools, check, commit, request the next round.
-- `needs-decision:` (not-converged after round 3, round limit, failed
-  verification): park needs-decision with that line. The orchestrator splits
-  or changes approach in a new attempt.
+- `worker verification missing`: run it, request again.
+- `needs-decision:` (not-converged after round 3, round limit): park
+  needs-decision with that line. The orchestrator splits or changes approach
+  in a new attempt.
 - `not-reviewed:` (a role failed or coverage was incomplete): no round spent;
   request the same head once more. `blocked:` (twice in a row): park blocked.
 

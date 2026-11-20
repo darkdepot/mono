@@ -115,7 +115,7 @@ test("amend collection pins-file contracts", async t => {
   const entry = { issue, attempt: 1, stage: "mono-deliver", packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4,
     pins: { file, digest: null }, pinsVersion: 1 };
   const reportFor = number => {
-    const request = { ...pins, pins: collectionPinsBinding(entry), head, collect: false, collectionId: `preflight-collect:${head}:${number}` };
+    const request = { ...pins, pins: collectionPinsBinding(entry), head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:${number}` };
     const queue = [{ id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } }];
     return { ...entry, phase: "preflight", kind: "confirmation-request", sequence: number, head,
       linear_mutations_pending: queue, capsule: { phase: "preflight", head, decisions: [], writable_roots: [scratch], open_queue: queue } };
@@ -790,7 +790,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     const apply = spawnSync(path.join(runtime, "orchestrator/linear-adapter.mjs"), [], { env, encoding: "utf8", input: JSON.stringify({ action: "apply", issue: ack.issue, attempt: 1, write: queue[0] }) });
     assert.equal(apply.status, 0); assert.equal(apply.stdout, ""); assert.match(apply.stderr, /not success/u);
     const pins = effectivePins(readJson(path.join(root, "workers.json"))[ack.issue]);
-    const request = { ...pins, pins: entry.pins, head, collect: false, collectionId: `preflight-collect:${head}:1` };
+    const request = { ...pins, pins: entry.pins, head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:1` };
     const collect = { id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } };
     const collectReport = { ...report, phase: "preflight", pinsVersion: 0, linear_mutations_pending: [collect], capsule: { ...report.capsule, phase: "preflight", open_queue: [collect] } };
     const admission = (await admitCollection(root, collectReport))[0]; assert.equal(admission.manifestDigest, digest(pins)); assert.equal(admission.reportDigest, digest(collectReport));
@@ -955,7 +955,7 @@ if(process.argv[2]!=='sandbox')process.exit(74);
 const p=JSON.parse(process.argv.at(-1));console.log(p.probeMarker);
 `);
         const request = { ...current, pins: collectionPinsBinding(readJson(registryFile)[ack.issue]), head: tip,
-          collectionId: `preflight-collect:${tip}:401`, collect: false };
+          workerVerification: { head: tip, exitCode: 0 }, collectionId: `preflight-collect:${tip}:401`, collect: false };
         const requestFile = path.join(scratch, 'bot-reuse-request.json');
         try {
           atomicJson(requestFile, request);
@@ -1107,7 +1107,7 @@ const p=JSON.parse(process.argv.at(-1));console.log(p.probeMarker);
             assert.deepEqual(published, current, "resume block must match registered pins after a prior old amendment");
             assert.deepEqual(worker.last_amendment.effectiveInputs, current, "replay inputs use the same canonical overlay");
             assert.equal(current.reviewDataset, archive); assert.equal(current.reviewDatasetDigest, legacy.reviewDatasetDigest);
-            const request = { ...published, pins: collectionPinsBinding(worker), head, collect: false, collectionId: `preflight-collect:${head}:${result.pinsVersion + 100}` };
+            const request = { ...published, pins: collectionPinsBinding(worker), head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:${result.pinsVersion + 100}` };
             const queue = [{ id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } }];
             const report = { ...collectReport, linear_mutations_pending: queue, capsule: { ...collectReport.capsule, open_queue: queue } };
             assert.equal((await admitCollection(root, report))[0].manifestDigest, digest(current));
@@ -1426,7 +1426,7 @@ async function collectorAttentionFixture(runFixture, plugin = false) {
   const reportFile = path.join(root, "reports", `${issue}-phase-preflight.json`), registry = path.join(root, "workers.json");
   const phase = (name, sequence, queue = []) => ({ ...identity, issue, stage: "mono-deliver", attempt: 1, phase: name, kind: "confirmation-request", sequence, head,
     publishedAt: new Date().toISOString(), linear_mutations_pending: queue, capsule: { phase: name, head, decisions: [], open_queue: queue, writable_roots: [repo] } });
-  const request = number => ({ ...pins, pins: { file: pinsFile, digest: createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") }, head, collect: false, collectionId: `preflight-collect:${head}:${number}` });
+  const request = number => ({ ...pins, pins: { file: pinsFile, digest: createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") }, head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:${number}` });
   const report = (number, overrides = {}) => {
     const value = { ...request(number), ...overrides };
     return phase("preflight", number, [{ id: value.collectionId, operation: "preflight-collect", target: head, payload: { request: value } }]);
@@ -1621,7 +1621,7 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
     await assert.rejects(collectorStart(options), /locked/u);
     assert.equal(collectorStatus(options).status, "running-or-unverified");
     await waitUntil(() => fs.existsSync(path.join(root, "confirmations", `${issue}-phase-code-a1-s1.confirmed.json`)));
-    const request = { ...pins, pins: collectionPinsBinding(entry), head, collect: false, collectionId: `preflight-collect:${head}:1` };
+    const request = { ...pins, pins: collectionPinsBinding(entry), head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:1` };
     const queued = { id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } };
     const report = phase("preflight", 1, [queued]), reportFile = path.join(root, "reports", `${issue}-phase-preflight.json`);
     atomicJson(modeFile, { crash: true }); atomicJson(reportFile, report);
@@ -2611,7 +2611,7 @@ test('ship-bot-policy: current pins override recovered admission; foreign attemp
   try {
     atomicJson(file, pins); entry.pins.digest = createHash('sha256').update(fs.readFileSync(file)).digest('hex');
     atomicJson(path.join(root, 'workers.json'), { [issue]: entry });
-    const request = { ...pins, pins: collectionPinsBinding(entry), head, collect: false, collectionId: `preflight-collect:${head}:1` };
+    const request = { ...pins, pins: collectionPinsBinding(entry), head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:1` };
     assert.deepEqual(pinnedShipPolicy(request), { botChecks: ['Custom Review'], botUnavailable: null });
     const admission = path.join(root, 'consumed', `${issue}-a1`, 'admissions', `${request.collectionId}.json`);
     atomicJson(admission, { collectionId: request.collectionId, pinsVersion: 0, manifestDigest: digest({ ...pins, pinsVersion: 0 }) });
