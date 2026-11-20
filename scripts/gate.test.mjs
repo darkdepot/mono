@@ -690,12 +690,18 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.equal(reviewCalls(bin).length, calls, 'no second round on the fast path');
         assert.deepEqual([receipt.review.spent, receipt.workerVerification, receipt.review.workerVerification], [false, verified.workerVerification, verified.workerVerification]);
         const unbound = call(at(fixed)); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /receipt workerVerification differs from the request/);
-        // A raised risk from the round is the orchestrator's decision, never the worker's word.
-        setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'Raised', title: 'Raised' })], verdict: reviewVerdict({ riskRaised: true }) });
-        const evidenceFiles = fs.readdirSync(path.join(evidence, 'history'));
-        for (const name of evidenceFiles) fs.unlinkSync(path.join(evidence, 'history', name));
+        const fresh = () => { for (const name of fs.readdirSync(path.join(evidence, 'history'))) fs.unlinkSync(path.join(evidence, 'history', name)); };
+        // An older harmful defect passed by the round stays a must-file successor on the worker-verified head.
+        fresh(); setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'Older', title: 'Older' })], verdict: reviewVerdict({ origin: 'pre-existing', danger: true, dangerCase: 'data', dangerReason: 'Data may be lost.' }) });
+        const olderHead = commit('export const older = 1;\n');
+        await round(at(olderHead), 0, /pass: review clean-with-successors \(round 1 of 1\).*must-file P2 input\.mjs:1 Older/);
+        const botFix = commit('export const botFix = 1;\n');
+        receipt = await round(at(botFix, 1, { workerVerification: { head: botFix, exitCode: 0 } }), 0, /pass: review clean-with-successors \(round 1 of 1\), fixes after it confirmed.*must-file P2 input\.mjs:1 Older/);
+        // A raised risk from the round is the orchestrator's decision, never the worker's word, also after the base moves.
+        fresh(); setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'Raised', title: 'Raised' })], verdict: reviewVerdict({ riskRaised: true }) });
         const raised = commit('export const raised = 1;\n');
         await round(at(raised), 1, /fail: review not-converged \(round 1 of 1\)/);
+        git('branch', '-f', 'review-base', raised);
         const after = commit('export const after = 1;\n');
         await round(at(after, 1, { workerVerification: { head: after, exitCode: 0 } }), 1, /fail: needs-decision: the review round found work outside the task or a higher risk/);
         return;

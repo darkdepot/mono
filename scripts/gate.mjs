@@ -468,10 +468,17 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   // round left for a decision (out of contract, raised risk) never passes on the worker's word.
   function workerFixed(prior) {
     if (strict || prior.spent < 1 || workerCheck?.head !== head || workerCheck.exitCode !== 0) return null;
-    if (prior.record?.findings?.some(finding => finding.outOfContract || finding.riskRaised))
+    // The attempt's last completed round, on any base: a newer base does not clear its blockers or successors.
+    const last = signedHistory(request.evidenceRoot, request.pins.file).filter(receipt => receipt.producer === REVIEW_PRODUCER && receipt.review?.spent === true)
+      .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt))).at(-1)?.review ?? null;
+    if (last?.record?.findings?.some(finding => finding.outOfContract || finding.riskRaised))
       return { outcome: 'refused', spent: false, round: null, successors: [], record: null,
         reason: 'needs-decision: the review round found work outside the task or a higher risk; the worker\'s verification does not settle it' };
-    return { outcome: 'clean', spent: false, round: prior.spent, successors: [], record: prior.record, workerVerification: workerCheck };
+    // Older defects the worker need not fix stay listed (must-file ones too) for filing after merge.
+    const successors = last?.successors?.length ? last.successors : last?.record
+      ? roundOutcome({ outcome: 'clean', findings: leftover(last.record).filter(finding => finding.origin === 'pre-existing') }, last.round).successors : [];
+    return { outcome: successors.length ? 'clean-with-successors' : 'clean', spent: false, round: prior.spent, successors,
+      record: last?.record ?? null, workerVerification: workerCheck };
   }
   const unchanged = () => {
     if (idea) verifyIdeaArtifact(idea, pinnedIssue ?? request.issue);
