@@ -102,8 +102,11 @@ mockup, tech page, work start, package-repair approval), run a different-family
 second model per `references/model-policy.md`, read-only, foreground. It is the
 only different-model check of a Discovery, Design or Tech Evaluation version:
 stage agents run no stage second model. Give result, exact approved text/version
-(tech page with the Tech Spec draft), PRD, earlier owner decisions, package
-review report for work start and proposed reason. Ask the checker to label each objection «по сути» or
+(tech page with the Tech Spec draft, sources and scout report; ask what is
+excess, which case is uncovered, any hidden owner decision, what breaks nearby,
+whether Spec answers every PRD open question, whether the page reads without
+technical words), PRD, earlier owner decisions, package review report for work
+start and proposed reason. Ask the checker to label each objection «по сути» or
 «по формулировке» itself; no label means substance. Pass text/local paths, never Linear links: no owner
 connections. Resolve model/effort by policy, then use the appropriate invocation:
 
