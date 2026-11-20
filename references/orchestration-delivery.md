@@ -216,7 +216,9 @@ Live run (before review): the worker runs the main scenario of a behavior change
 in its worktree and puts the proof in the code report. Pack skill and stage
 changes it cannot run from its sandbox: the orchestrator runs them in the test
 Linear workspace after the first code report, before review. No separate gate:
-the review round checks that the run is there.
+Preflight checks the proof in the code report before its first collection, and
+pre-ship review (`mono:review`) reports a missing run; the collection's review
+round never sees the code report.
 
 Parks:
 - needs-decision, `review not-converged after round 3` or `review round limit
