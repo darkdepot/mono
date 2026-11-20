@@ -99,9 +99,14 @@ its end of turn returns control. Owner-led separate-session Design stays separat
 
 Before every `by=orchestrator` record (PRD including renewals/Design callbacks,
 mockup, tech page, work start, package-repair approval), run a different-family
-second model per `references/model-policy.md`, read-only, foreground. Give result,
-exact approved text/version, PRD, earlier owner decisions, stage second-model
-report and proposed reason. Ask the checker to label each objection «по сути» or
+second model per `references/model-policy.md`, read-only, foreground. It is the
+only different-model check of a Discovery, Design or Tech Evaluation version:
+stage agents run no stage second model. Give result, exact approved text/version
+(tech page with the Tech Spec draft, sources and scout report; ask what is
+excess, which case is uncovered, any hidden owner decision, what breaks nearby,
+whether Spec answers every PRD open question, whether the page reads without
+technical words), PRD, earlier owner decisions, package review report for work
+start and proposed reason. Ask the checker to label each objection «по сути» or
 «по формулировке» itself; no label means substance. Pass text/local paths, never Linear links: no owner
 connections. Resolve model/effort by policy, then use the appropriate invocation:
 
@@ -115,20 +120,18 @@ when user config is ignored.
 
 Record verdict with model and reviewed-text version outside fences in that same
 approval comment, alongside reason; machine lines unchanged. Text or reason changes:
-check again, with this sole exception for PRD, tech-page and work-start approvals
-in a delegated Project expecting one Issue (PRD size line or Spec estimate;
-a slice of more than one ends the exception). If all objections are explicitly
+check again, with this sole exception at any size (mockups, repairs and
+projectless Issues excluded). If all objections are explicitly
 «по формулировке», agree to those named fixes; the stage applies only them as a
 minor correction per `references/owner-dialog.md`, without another check round.
 The approved version is the shown text plus only those fixes; bind the approval
 to the corrected updatedAt/hash. In that same comment outside fences keep verdict,
 model, reviewed version and «Поправки по формулировке: было → стало» with each fix.
 Any substance objection or other text/reason change requires another round.
-For this single-Issue case reject a blocker only by source refutation proving it
-wrong; “it was so before” is not refutation. Mockups, repairs and projectless
-Issues get no exception; only the owner approves issue-only.
+In a Project expecting one Issue reject a blocker only by source refutation
+proving it wrong; “it was so before” is not refutation. Only the owner approves issue-only.
 Objection: explain it in words without approving. Repeated objection on the same
-point: decide (single-Issue blockers still require source refutation), retain
+point: decide (one-Issue blockers still require source refutation), retain
 objection/rejection reason in record; first owner-result line:
 «Решил за тебя: … вопреки второй модели, потому что …». No response after one retry:
 no approval; report reason and continue other Projects. This countercheck is separate
