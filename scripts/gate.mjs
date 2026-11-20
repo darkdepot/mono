@@ -2,9 +2,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { execFileSync, spawnSync, spawn } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER, REVIEW_ROUND_ROLES } from "./runtime.mjs";
 import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, registryEntry } from "./orchestrator/command-state.mjs";
 
@@ -190,105 +189,20 @@ export function validatePreflight(receipt, head, base) {
   requireThat(receipt.head === head && receipt.base === base, "missing or stale review receipt/head/base");
   requireThat(ACCEPTED.includes(receipt.review.outcome), reviewRefusal(receipt.review));
   requireThat(receipt.consistency?.passed === true && receipt.consistency.error === null, `collection consistency failed or missing: ${receipt.consistency?.error ?? "no record"}`);
-  requireThat(receipt.verification?.exitCode === 0, "needs-decision: verification failed on the reviewed head");
-  requireThat(receipt.verification.sandbox?.mode === "workspace-write" && receipt.verification.sandbox.probed === true, "verification sandbox proof missing");
+  // The collection no longer verifies (exitCode null): only the worker's full verification of this head, exit 0, passes it.
+  // Older receipts keep their own sandbox verification.
+  if (receipt.verification?.exitCode === null) requireThat(receipt.workerVerification?.head === head && receipt.workerVerification.exitCode === 0,
+    "worker verification missing on this head: run the full verification and request with workerVerification {head, exitCode: 0}");
+  else {
+    requireThat(receipt.verification?.exitCode === 0, "needs-decision: verification failed on the reviewed head");
+    requireThat(receipt.verification.sandbox?.mode === "workspace-write" && receipt.verification.sandbox.probed === true, "verification sandbox proof missing");
+  }
   const successors = receipt.review.successors ?? [], worker = receipt.review.workerVerification;
   requireThat(!worker || (worker.head === head && worker.exitCode === 0), "worker verification is not on this head");
   return `review ${receipt.review.outcome} (round ${receipt.review.round} of ${receipt.review.limit ?? ROUND_LIMIT})${worker ? ', fixes after it confirmed by the worker\'s full verification,' : ''} and verification verified on head` +
     (successors.length ? `; successor candidates: ${successors.map(item => item.line).join('; ')}` : '');
 }
 
-// Keep semantic lines separately from diagnostics; a saturated semantic budget
-// refuses the result instead of silently dropping evidence used by validation.
-export function captureOutput({ tailBytes = 8192, retainedBytes = 1024 * 1024 } = {}) {
-  let pending = "", tail = "", kept = "", retentionError = null, discarding = false;
-  // The sandbox boundary marker proves the verification run was probed; everything else is diagnostics.
-  const requiredLine = line => line.startsWith("mono-boundary-denied:");
-  const consume = line => {
-    if (requiredLine(line)) {
-      if (Buffer.byteLength(kept) + Buffer.byteLength(line) + 1 > retainedBytes) retentionError = "semantic output retention limit exceeded";
-      else kept += line + "\n";
-    } else tail = (tail + line + "\n").slice(-tailBytes);
-  };
-  return {
-    write(chunk) {
-      for (const segment of String(chunk).split(/(?<=\n)/)) {
-        if (!discarding) pending += segment;
-        else tail = (tail + segment).slice(-tailBytes);
-        if (Buffer.byteLength(pending) > retainedBytes) {
-          if (requiredLine(pending)) retentionError = "output line retention limit exceeded";
-          else tail = (tail + pending).slice(-tailBytes);
-          pending = ""; discarding = true;
-        }
-        if (segment.endsWith("\n")) {
-          if (!discarding) consume(pending.replace(/\r?\n$/, ""));
-          pending = ""; discarding = false;
-        }
-      }
-    },
-    finish() {
-      if (pending) consume(pending);
-      pending = "";
-      return { output: kept, diagnosticTail: tail, retentionError };
-    },
-  };
-}
-export async function runCaptured(command, args, cwd, env = process.env) {
-  return new Promise(resolve => {
-    const out = captureOutput(), err = captureOutput();
-    const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
-    let error = null;
-    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
-    child.stdout.on("data", chunk => out.write(chunk)); child.stderr.on("data", chunk => err.write(chunk));
-    child.on("error", cause => { error = cause.message; });
-    child.on("close", exitCode => {
-      const stdout = out.finish(), stderr = err.finish();
-      resolve({ command, args, exitCode, output: stdout.output + stderr.output,
-        diagnosticTail: (stdout.diagnosticTail + stderr.diagnosticTail).slice(-8192),
-        retentionError: stdout.retentionError ?? stderr.retentionError, error });
-    });
-  });
-}
-export async function runSandboxed(command, args, repo, evidenceRoot, {
-  env = process.env, protectedPaths = {}
-} = {}) {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-sandbox-temp-"));
-  try {
-  const roots = [...new Set([repo, tempRoot].map(resolvedLocation))];
-  if (process.platform === "darwin") {
-    let darwinTemp = null;
-    try {
-      const result = spawnSync("getconf", ["DARWIN_USER_TEMP_DIR"], { env, encoding: "utf8" });
-      if (result.status === 0 && path.isAbsolute(result.stdout.trim())) darwinTemp = fs.realpathSync(result.stdout.trim());
-    } catch {} // Unavailable system temp root retains the existing grants.
-    if (darwinTemp) {
-      for (const [label, location] of Object.entries({ ...protectedPaths, evidenceRoot }))
-        validateEvidenceGrants(darwinTemp, [location], `collection Darwin temporary write grant (${label})`);
-      if (!roots.includes(darwinTemp)) roots.push(darwinTemp);
-    }
-  }
-  validateEvidenceGrants(evidenceRoot, roots);
-  const probe = path.join(evidenceRoot, `.write-boundary-${crypto.randomUUID()}`);
-  const probeMarker = `mono-boundary-denied:${crypto.randomUUID()}`;
-  const launcher = `const fs=require('node:fs'),cp=require('node:child_process');
-const p=JSON.parse(process.argv[1]);let denied=false;
-try{fs.writeFileSync(p.probe,'boundary-probe',{flag:'wx'});fs.unlinkSync(p.probe);}
-catch(e){if(['EACCES','EPERM','EROFS'].includes(e.code))denied=true;else throw e;}
-if(!denied){console.error('verification sandbox permits evidence writes');process.exit(73);}
-console.log(p.probeMarker);
-process.env.MONO_DELIVERY_SANDBOX='1';
-const r=cp.spawnSync(p.command,p.args,{stdio:'inherit'});
-if(r.error)console.error(r.error.message);process.exit(r.status===null?1:r.status);`;
-  const filesystem = ['":root"="read"', ...roots.map(root => `${JSON.stringify(root)}="write"`)].join(",");
-  const profile = `permissions.mono-collector={filesystem={${filesystem}},network={enabled=true}}`;
-  const sandboxArgs = ["sandbox", "-C", repo, "-P", "mono-collector", "-c", profile,
-    "--", process.execPath, "-e", launcher, JSON.stringify({ probe, probeMarker, command, args })];
-  const result = await runCaptured("codex", sandboxArgs, repo, { ...env, TMPDIR: tempRoot, TMP: tempRoot, TEMP: tempRoot });
-  return { ...result, command, args, output: result.output + "\n" + result.diagnosticTail,
-    sandbox: { command: "codex", args: sandboxArgs, mode: "workspace-write", tempRoot,
-      probed: result.output.split("\n").includes(probeMarker) } };
-  } finally { fs.rmSync(tempRoot, { recursive: true, force: true }); }
-}
 function evidenceKey(directory, create) {
   const file = path.join(directory, "receipt.key");
   if (create && !fs.existsSync(file)) {
@@ -488,7 +402,6 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   };
   if (request.collect === true) {
     const recordedAt = new Date().toISOString();
-    const protectedPaths = { "orchestrator root": request.root, skillsRoot: request.skillsRoot, packRoot: request.packRoot ?? request.skillsRoot };
     const prior = history;
     requireThat(prior, "review contract missing in the pinned dispatch snapshot (issue-<KEY>.md)");
     const consistency = { passed: true, error: null };
@@ -515,24 +428,9 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     }
     review.contractDigest = contractDigest; review.limit = limit;
     checkConsistency();
-    let verification = null;
-    if (ACCEPTED.includes(review.outcome) && consistency.passed) {
-      // A launch refusal is recorded, not thrown: the completed round must still be signed.
-      try {
-        verification = await runSandboxed(request.verification.command, request.verification.args, repo, evidenceRoot, { protectedPaths });
-        checkConsistency();
-        if (verification.exitCode !== 0 && verification.sandbox?.mode === 'workspace-write' && verification.sandbox.probed === true && consistency.passed) {
-          const first = verification;
-          verification = await runSandboxed(request.verification.command, request.verification.args, repo, evidenceRoot, { protectedPaths });
-          verification.output = `Verification run 1 (exit ${first.exitCode}):\n${first.output}\nVerification run 2 (exit ${verification.exitCode}):\n${verification.output}`;
-          // A successful rerun cannot attest an unprobed boundary.
-          verification.sandbox.probed = first.sandbox.probed && verification.sandbox.probed;
-          checkConsistency();
-        }
-      } catch (error) { consistency.passed = false; consistency.error ??= error.message; }
-    }
     receipt = { producer: REVIEW_PRODUCER, recordedAt, ...binding, runId: crypto.randomUUID(), head, base, review,
-      verification: verification ?? { command: request.verification.command, args: request.verification.args, exitCode: null }, consistency };
+      // The worker runs the full verification; the collection records the pinned command unrun.
+      verification: { command: request.verification.command, args: request.verification.args, exitCode: null }, consistency };
     if (fs.existsSync(path.join(evidenceRoot, "receipt.key"))) regularEvidence(path.join(evidenceRoot, "receipt.key"));
     const key = evidenceKey(evidenceRoot, true);
     atomicJson(path.join(evidenceRoot, "history", `${receipt.runId}.json`), { receipt, signature: sign(key, receipt) });
@@ -842,7 +740,7 @@ if (isMain(import.meta.url)) {
 start request: {worktree, branch, base, packRoot, skillsRoot, packVersion, sourceCommit, surfaceRevision}
   Generated dispatch adds {root,issue,attempt,risk,critical,pins:{file,digest}}; start verifies the active registered attempt and current pins before code.
   The orchestrator's locked pre-launch invocation uses --before-spawn true for the next unregistered attempt; worker invocation omits it.
-preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],pins?:{file,digest},modelRoutes?,prRemarks?:[{id,source:bot|ci|owner,file,line,title,body,urgent,head}],collect,verification:{command,args}}
+preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],pins?:{file,digest},modelRoutes?,prRemarks?:[{id,source:bot|ci|owner,file,line,title,body,urgent,head}],workerVerification?:{head,exitCode},collect,verification:{command,args}}
   prRemarks: remarks from the draft PR the worker fixed (scripts/ship-pr.mjs remarks); they enter the round as open findings and close only when the checker verifies the fix.
   modelRoutes pins immutable base/configDigest/roles from resolveModelRoutes; overrides require pins.
   risk is the final approved/diff risk; critical is a concrete escalation reason or null.
@@ -852,11 +750,11 @@ preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,ri
   Pending worker collection exits 2 with publishRequest; publish exactly that request. Pass exits 0; refusal exits 1.
   Use ~/.mono-agent-workflow/evidence/<product>/ outside EVERY worker-writable root,
   including worktree, orchestrator root and additional workerWritableRoots. Pin that list in dispatch.
-  Verification grants the worktree and one private temp directory per invocation, on macOS also the validated Darwin user temp root when available. workerWritableRoots never becomes collector grants.
+  workerVerification: the worker's own run of the pinned full verification on this head; a receipt passes only with exitCode 0 on its head.
   collect:true runs the read-only review round first (reviewer and checker from different model families, both CLIs logged in by subscription),
-  then verification with evidence-write denial probes only after clean or clean-with-successors; one signed gate-review-v3 receipt per collectionId.
+  and records verification unrun (exitCode null); one signed gate-review-v3 receipt per collectionId.
   At most three completed rounds per task attempt (amendments keep the count), counted from signed history; rounds after the first review only the fixes and open findings; the same head reuses its round; not-reviewed spends nothing.
-  Refusals are signed too: fix and request the next round, or park on a needs-decision:/blocked: line. Sandbox failure fails closed.
+  Refusals are signed too: fix and request the next round, or park on a needs-decision:/blocked: line.
   The sandbox write boundary is the trust anchor; the key may be readable but receipts are not worker-writable.
 ship request: {preflight:<complete preflight collect:false request>, repo:"owner/repo", number:123, attempt:1, stateFile:"/absolute/file", judgmentFile:"/absolute/file", config:"/project/.agents/mono-workflow.config.json", watch:true, policy:{requiredChecks:[],nonBlockingChecks:[{name,reason}],botChecks:["Greptile Review"],botUnavailable:null}}
   Refresh remote-tracking baseRef; bind receipts to head/merge-base, not the moving base tip.

@@ -188,7 +188,8 @@ payload.request, kind=confirmation-request:
 id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
 target=<head>, payload={request}. Adapter: immutable receipt path/digest/gate even
 on failure; confirmation proves completion only. Verify collect:false.
-Follow the gate line per references/review-admission.md. Same head: increment n/sequence.
+Collection = review round; verification is yours. Follow the gate line per
+references/review-admission.md. Same head: increment n/sequence.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,
 readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify sealed
 head/merge-base receipt before judgment; no string substitutes.

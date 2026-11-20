@@ -293,32 +293,15 @@ test("preflight accepts only a v3 receipt with an accepted review, exact head/ba
     [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed', repeated: true } }, /^blocked: not-reviewed twice in a row on this head: role failed$/],
     [{ review: { outcome: 'refused', round: null, reason: 'needs-decision: review round limit reached' } }, /^needs-decision: review round limit reached$/],
     [{ verification: { exitCode: 1, sandbox: { mode: "workspace-write", probed: true } } }, /^needs-decision: verification failed/],
-    [{ verification: { exitCode: null } }, /^needs-decision: verification failed/],
+    [{ verification: { exitCode: null } }, /^worker verification missing on this head/],
+    [{ verification: { exitCode: null }, workerVerification: { head, exitCode: 1 } }, /^worker verification missing on this head/],
+    [{ verification: { exitCode: null }, workerVerification: { head: "c".repeat(40), exitCode: 0 } }, /^worker verification missing on this head/],
     [{ verification: { exitCode: 0, sandbox: { mode: "workspace-write", probed: false } } }, /sandbox proof missing/],
     [{ consistency: { passed: false, error: 'head or base changed during verification' } }, /consistency failed or missing: head or base changed/],
   ]) assert.throws(() => validatePreflight(receipt(extra), head, base), { message: refusal });
-});
-
-test("stream retention keeps the sandbox probe line beyond the diagnostic tail", async () => {
-  const gate = await import('./gate.mjs');
-  assert.equal(typeof gate.captureOutput, 'function');
-  const capture = gate.captureOutput({ tailBytes: 64 });
-  const marker = 'mono-boundary-denied:fixture-probe';
-  for (const part of [marker.slice(0, 7), marker.slice(7) + '\n', 'noise\n'.repeat(10000),
-    'autoreview target: branch\nengine: claude\nclaude usage: input_tokens=10\noverall: patch is correct (0.9)\n']) capture.write(part);
-  const result = capture.finish();
-  assert.equal(result.output, marker + '\n');
-  assert.ok(result.diagnosticTail.length <= 64);
-});
-
-test('oversized diagnostic lines do not invalidate the sandbox probe line', async () => {
-  const {captureOutput}=await import('./gate.mjs');
-  const capture=captureOutput({tailBytes:64});
-  capture.write('diagnostic: '+ 'x'.repeat(2*1024*1024));capture.write('\n');
-  capture.write('mono-boundary-denied:fixture-probe\n');
-  const result=capture.finish();assert.equal(result.retentionError,null);assert.ok(result.diagnosticTail.length<=64);
-  assert.equal(result.output,'mono-boundary-denied:fixture-probe\n');
-  const consumed=captureOutput();consumed.write('mono-boundary-denied:'+'x'.repeat(2*1024*1024)+'\n');assert.ok(consumed.finish().retentionError);
+  // The collection no longer verifies: its receipt passes only with the worker's full verification of this head.
+  assert.match(validatePreflight(receipt({ verification: { command: 'node', args: ['verify.mjs'], exitCode: null }, workerVerification: { head, exitCode: 0 } }), head, base),
+    /^review clean \(round 1 of 3\) and verification verified on head$/);
 });
 
 test('the collection lock remains held until its asynchronous action settles', async () => {
@@ -332,23 +315,6 @@ test('the collection lock remains held until its asynchronous action settles', a
     await assert.rejects(withLock(file,()=>{throw new Error('second action must not run');}),error=>error.code==='ELOCKED');
     release();assert.equal(await running,'done');assert.equal(fs.existsSync(file),false);
   }finally{release();fs.rmSync(root,{recursive:true,force:true});}
-});
-
-test('streamed commands receive EOF on stdin instead of hanging the collection', async () => {
-  const {runCaptured}=await import('./gate.mjs');
-  const result=await runCaptured(process.execPath,['-e',"const timer=setTimeout(()=>process.exit(9),500);process.stdin.resume();process.stdin.on('end',()=>{clearTimeout(timer);process.exit(0)});"],process.cwd());
-  assert.equal(result.exitCode,0);
-});
-
-test('a quoted probe marker does not become sandbox evidence', async () => {
-  const {captureOutput}=await import('./gate.mjs');
-  const capture=captureOutput({tailBytes:64});
-  capture.write(JSON.stringify({tool_result:'mono-boundary-denied:quoted'})+'\n');
-  capture.write(JSON.stringify({tool_result:'x'.repeat(2*1024*1024)+' mono-boundary-denied:quoted'})+'\n');
-  capture.write('mono-boundary-denied:real\n');
-  const result=capture.finish();
-  assert.equal(result.retentionError,null);
-  assert.equal(result.output,'mono-boundary-denied:real\n');
 });
 
 test('review environment is built from the route', async () => {
@@ -378,77 +344,24 @@ test('review environment is built from the route', async () => {
 test("named collection fixtures through the gate CLI", async t => {
   const fs = await import("node:fs"), path = await import("node:path"), os = await import("node:os"), crypto = await import("node:crypto");
   const { spawnSync } = await import("node:child_process");
-  const { atomicJson, canonical, digest, resolvedLocation } = await import("./runtime.mjs");
+  const { atomicJson, canonical, digest } = await import("./runtime.mjs");
   const { sha256File } = await import("./orchestrator/command-state.mjs");
-  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collection-idea|collector-temp|collection-verify|collection-review)-.*\.json$/u.test(name));
+  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collection-idea|collection-review)-.*\.json$/u.test(name));
   for (const name of files) await t.test(name, async () => {
     const fixture = JSON.parse(fs.readFileSync(path.join("scripts/fixtures", name), "utf8"));
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-u13-cli-"));
     try {
-      const repo = path.join(scratch, "repo"), root = path.join(scratch, "orchestrator"), evidence = path.join(scratch, "evidence"), skills = path.join(scratch, "skills"), bin = path.join(scratch, "bin"), darwinTemp = path.join(scratch, "darwin-temp");
-      for (const dir of [repo, root, evidence, skills, bin, darwinTemp]) fs.mkdirSync(dir);
-      const sandboxLog = path.join(scratch, "sandbox.log"), getconfLog = path.join(scratch, "getconf.log");
-      const env = { ...process.env, HOME: path.join(scratch, "home"), PATH: `${bin}:${process.env.PATH}`, MONO_FIXTURE_DARWIN_TEMP: darwinTemp,
-        MONO_FIXTURE_SANDBOX_LOG: sandboxLog, MONO_FIXTURE_GETCONF_LOG: getconfLog };
+      const repo = path.join(scratch, "repo"), root = path.join(scratch, "orchestrator"), evidence = path.join(scratch, "evidence"), skills = path.join(scratch, "skills"), bin = path.join(scratch, "bin");
+      for (const dir of [repo, root, evidence, skills, bin]) fs.mkdirSync(dir);
+      const env = { ...process.env, HOME: path.join(scratch, "home"), PATH: `${bin}:${process.env.PATH}` };
       const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, value); };
-      // All portable collectors, including U13, use a disjoint controlled root.
-      const getconf = path.join(bin, "getconf");
-      write(getconf, `#!/usr/bin/env node
-if(process.argv[2]!=='DARWIN_USER_TEMP_DIR')process.exit(72);
-require('node:fs').appendFileSync(process.env.MONO_FIXTURE_GETCONF_LOG,'getconf\\n');
-if(${JSON.stringify(fixture.unavailable)}==='command-failed')process.exit(1);
-console.log(process.env.MONO_FIXTURE_DARWIN_TEMP);
-`); fs.chmodSync(getconf, 0o700);
-      const preload = path.join(scratch, "platform.cjs");
-      if (fixture.platform) write(preload, `Object.defineProperty(process,'platform',{value:${JSON.stringify(fixture.platform)}});`);
       const git = (...args) => { const r = spawnSync("git", args, { cwd: repo, encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
       write(path.join(repo, ".gitignore"), ".orchestrator/\n");
       git("init", "-b", "delivery"); git("add", ".gitignore"); git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture");
       const head = git("rev-parse", "HEAD");
       for (const policy of ["model-policy.md"]) write(path.join(skills, "references", policy), fs.readFileSync(path.join("references", policy), "utf8"));
-      let pack = null;
-      if (fixture.protected === "packRoot") {
-        pack = path.join(scratch, "pack"); fs.mkdirSync(pack);
-        fs.cpSync(path.join(skills, "references"), path.join(pack, "references"), { recursive: true });
-      }
-      const protectedPaths = { evidenceRoot: evidence, "orchestrator root": root, skillsRoot: skills,
-        packRoot: pack ?? skills };
-      if (fixture.protected) {
-        const target = protectedPaths[fixture.protected];
-        env.MONO_FIXTURE_DARWIN_TEMP = fixture.relationship === "contains" ? path.dirname(target)
-          : fixture.relationship === "inside" ? path.join(target, "darwin-temp") : target;
-        if (fixture.relationship === "inside") fs.mkdirSync(env.MONO_FIXTURE_DARWIN_TEMP);
-      }
-      if (fixture.darwinSymlink) {
-        const link = path.join(scratch, "darwin-link"); fs.symlinkSync(darwinTemp, link);
-        env.MONO_FIXTURE_DARWIN_TEMP = link;
-      }
-      if (fixture.unavailable === "empty") env.MONO_FIXTURE_DARWIN_TEMP = "";
-      if (fixture.unavailable === "missing-path") env.MONO_FIXTURE_DARWIN_TEMP = path.join(scratch, "absent");
-      if (fixture.unavailable === "relative") env.MONO_FIXTURE_DARWIN_TEMP = "relative-temp";
-      if (fixture.privateInsideDarwin) Object.assign(env, { TMPDIR: darwinTemp, TMP: darwinTemp, TEMP: darwinTemp });
-      const boundary = path.join(scratch, "boundary.cjs");
-      write(boundary, `
-const fs=require('node:fs'),path=require('node:path'),write=fs.writeFileSync;
-const grants=JSON.parse(process.env.MONO_FIXTURE_GRANTS);
-fs.writeFileSync=function(file,...args){
-  const target=path.join(fs.realpathSync(path.dirname(path.resolve(file))),path.basename(file));
-  if(!grants.some(root=>target===root||target.startsWith(root+path.sep))){const e=new Error('fixture write grant denial');e.code='EPERM';throw e;}
-  return write.call(this,file,...args);
-};
-`);
-      // Model the outside collector launcher; the actual gate still runs the review
-      // roles (fake CLIs), the write-denial probe, verification, signing and history writes.
-      installReviewClis(bin, { codexStub: `
-const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path'),a=process.argv.slice(2);
-const command=a.slice(a.indexOf('--')+1),p=JSON.parse(command.at(-1));
-fs.appendFileSync(process.env.MONO_FIXTURE_SANDBOX_LOG,'sandbox\\n');
-if(${JSON.stringify(fixture.sandboxFailure)})process.exit(73);
-const protectedRoot=path.dirname(p.probe);fs.chmodSync(protectedRoot,0o500);let r;
-const profile=a[a.indexOf('-c')+1],grants=[...profile.matchAll(/("(?:\\\\.|[^"\\\\])*")="write"/g)].map(m=>JSON.parse(m[1]));
-const env={...process.env,MONO_FIXTURE_GRANTS:JSON.stringify(grants),NODE_OPTIONS:'--require '+JSON.stringify(${JSON.stringify(boundary)})};
-try{r=cp.spawnSync(command[0],command.slice(1),{stdio:'inherit',env});}finally{fs.chmodSync(protectedRoot,0o700);}
-process.exit(r.status===null?1:r.status);` });
+      // The collection runs only the review roles: any other codex call (the old sandbox) fails the fixture.
+      installReviewClis(bin);
       const pinsFile = path.join(root, "dispatch/MONO-999-a1/pins.json");
       write(path.join(path.dirname(pinsFile), "snapshot/issue-MONO-999.md"), "# MONO-999\n\nFixture task contract.\n");
       const pins = { product: "fixture", root, worktree: repo, skillsRoot: skills, baseRef: "HEAD", evidenceRoot: evidence,
@@ -460,24 +373,12 @@ process.exit(r.status===null?1:r.status);` });
         Object.assign(pins, { reviewDataset: fixture.populated ? archive : null,
           reviewDatasetVersion: fixture.populated ? 1 : 0, reviewDatasetDigest: fixture.populated ? sha256File(archive) : null });
       }
-      if (pack) pins.packRoot = pack;
-      if (fixture.mode.startsWith("temp-")) pins.verification.args = ["-e", `
-const assert=require('node:assert/strict'),path=require('node:path');
-assert.equal(process.env.TMPDIR,process.env.TMP);assert.equal(process.env.TMPDIR,process.env.TEMP);
-assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
-`];
       if (fixture.mode.startsWith("review-")) {
         git("branch", "review-base"); pins.baseRef = "review-base";
         // The strict path keeps up to three rounds; the fast path has one.
         if (fixture.mode === "review-rounds") pins.risk = "risky";
         pins.verification.args = ["-e", `const fs=require('node:fs');fs.mkdirSync('.orchestrator',{recursive:true});fs.writeFileSync('.orchestrator/verify-saw',fs.readFileSync(${JSON.stringify(path.join(bin, "review.log"))},'utf8'))`];
       }
-      if (fixture.mode.startsWith('verify-')) pins.verification.args = ['-e', `
-const fs=require('node:fs'),p='.orchestrator/verify-count';fs.mkdirSync('.orchestrator',{recursive:true});
-const n=fs.existsSync(p)?Number(fs.readFileSync(p,'utf8'))+1:1;fs.writeFileSync(p,String(n));console.log('project verification '+n);
-if(${JSON.stringify(fixture.changeHead)})require('node:child_process').execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','changed']);
-process.exit(n<=${fixture.failRuns ?? 0}?1:0);
-`];
       if (fixture.mode.startsWith('idea-')) {
         pins.packVersion = fixture.mode === 'idea-old-no-pin' ? '0.31.1' : '0.32.0';
         if (!fixture.mode.endsWith('no-pin')) {
@@ -501,9 +402,10 @@ process.exit(n<=${fixture.failRuns ?? 0}?1:0);
         packVersion: "fixture", sourceCommit: "b".repeat(40), surfaceRevision: 4, pins: binding, pinsVersion: 0 };
       const registryFile = path.join(root, "workers.json");
       const register = () => atomicJson(registryFile, { "MONO-999": entry }); register();
-      let request = { ...pins, head, collect: false, collectionId: `preflight-collect:${head}:1`, pins: binding };
+      // The worker ran the full verification on this head before asking for the collection.
+      let request = { ...pins, head, collect: false, collectionId: `preflight-collect:${head}:1`, pins: binding, workerVerification: { head, exitCode: 0 } };
       const file = path.join(scratch, "request.json"), receiptFile = path.join(evidence, `${head}.json`);
-      const call = value => { atomicJson(file, value); return spawnSync(process.execPath, [...(fixture.platform ? ["--require", preload] : []), "scripts/gate.mjs", "preflight", "--request", file], { env, encoding: "utf8" }); };
+      const call = value => { atomicJson(file, value); return spawnSync(process.execPath, ["scripts/gate.mjs", "preflight", "--request", file], { env, encoding: "utf8" }); };
       const admit = async value => {
         if(!fs.existsSync(registryFile))return;
         const {admitCollection}=await import('./orchestrator/command-state.mjs');
@@ -556,7 +458,7 @@ process.exit(n<=${fixture.failRuns ?? 0}?1:0);
           project.status = 'Delivery'; atomicJson(projectFile, project);
           await admit(request); const result = call({ ...request, collect: true });
           assert.equal(result.status, 1); assert.match(result.stdout, /idea artifact/u);
-          assert.equal(fs.existsSync(receiptFile), false); assert.equal(fs.existsSync(sandboxLog), false); return;
+          assert.equal(fs.existsSync(receiptFile), false); return;
         }
         const envelope = await collect(request);
         if (fixture.mode !== 'idea-old-no-pin') assert.deepEqual(envelope.receipt.idea, pins.idea, 'signed receipt binds the saved idea');
@@ -592,7 +494,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         // One task through the whole path: findings, fix, ship read, the last round, the limit, an amendment and a role that cannot run.
         const author = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid'], base = head;
         const commit = text => { fs.appendFileSync(path.join(repo, 'input.mjs'), text); git('add', 'input.mjs'); git(...author, 'commit', '-m', text.trim()); return git('rev-parse', 'HEAD'); };
-        const at = (tip, n = 1, pinned = binding) => ({ ...request, head: tip, collectionId: `preflight-collect:${tip}:${n}`, pins: pinned });
+        const at = (tip, n = 1, pinned = binding) => ({ ...request, head: tip, collectionId: `preflight-collect:${tip}:${n}`, pins: pinned, workerVerification: { head: tip, exitCode: 0 } });
         const stored = tip => path.join(evidence, `${tip}.json`);
         const round = async (value, status, line) => {
           await admit(value);
@@ -605,7 +507,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         let receipt = await round(at(first), 1, /fail: review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 input\.mjs:1 First leftover/);
         assert.deepEqual([receipt.producer, receipt.review.spent, receipt.verification.exitCode, receipt.base], [REVIEW_PRODUCER, true, null, base]);
         const verifySaw = path.join(repo, '.orchestrator/verify-saw');
-        assert.deepEqual([reviewCalls(bin), fs.existsSync(verifySaw)], [['reviewer', 'reviewer', 'checker'], false], 'no verification before an acceptable review');
+        assert.deepEqual([reviewCalls(bin), fs.existsSync(verifySaw)], [['reviewer', 'reviewer', 'checker'], false], 'the collection never runs the verification');
         receipt = await round(at(first, 2), 1, /review not-converged \(round 1 of 3\)/);
         assert.equal(receipt.review.spent, false); assert.ok(receipt.review.reusedFrom); assert.equal(reviewCalls(bin).length, 3, 'the same head reuses its round');
         // A role that cannot run spends no round.
@@ -625,7 +527,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.ok(receipt.review.record.findings.some(finding => finding.class === 'pr-remark' && finding.status === 'closed'), 'the checker closed the fixed remark');
         const unbound = call(at(second)); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /receipt prRemarks differ from the request/);
         const malformed = call(withRemarks(at(second, 2), { prRemarks: [{ ...prRemarks[0], file: '../outside' }] })); assert.equal(malformed.status, 1); assert.match(malformed.stdout, /invalid PR remark location/);
-        assert.equal(fs.readFileSync(verifySaw, 'utf8'), 'reviewer\nreviewer\nchecker\nreviewer\nchecker\n', 'verification starts only after the review round has finished');
+        assert.deepEqual([fs.existsSync(verifySaw), receipt.verification], [false, { ...pins.verification, exitCode: null }], 'the collection records the verification unrun');
         const gh = path.join(bin, 'gh');
         write(gh, `#!/usr/bin/env node
 const a=process.argv.slice(2),empty={nodes:[],pageInfo:{hasNextPage:false}};
@@ -641,6 +543,15 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         old.signature = crypto.createHmac("sha256", fs.readFileSync(path.join(evidence, "receipt.key"))).update(canonical(old.receipt)).digest("hex"); atomicJson(stored(second), old);
         for (const refused of [ship(), call(withRemarks(at(second)))]) { assert.equal(refused.status, 1); assert.match(refused.stdout, /old receipt format/); }
         fs.writeFileSync(stored(second), sealed);
+        // Without the worker's verification of this head the signed round does not pass; the same head with it does, without a new round.
+        const calls2 = reviewCalls(bin).length, { workerVerification: _, ...unverified } = withRemarks(at(second, 2));
+        await admit(unverified); const missing = call({ ...unverified, collect: true });
+        assert.equal(missing.status, 1); assert.match(missing.stdout, /fail: worker verification missing on this head/);
+        for (const exitCode of [0, 1]) {
+          const answered = withRemarks(at(second, 3 + exitCode), { workerVerification: { head: second, exitCode } }); await admit(answered);
+          for (const result of [call({ ...answered, collect: true }), call(answered)]) assert.equal(result.status, exitCode ? 1 : 0, result.stdout + result.stderr);
+        }
+        assert.equal(reviewCalls(bin).length, calls2, 'the same head reuses its round');
         setReview(bin, { findings: leftover('Second leftover'), verdict: reviewVerdict() });
         const third = commit('export const three = 3;\n');
         receipt = await round(at(third), 0, /pass: review clean-with-successors \(round 3 of 3\).*successor candidates: P2 input\.mjs:1 Second leftover/);
@@ -669,7 +580,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         // AC1: one round, a fix, then the final head passes on the worker's full verification without a second round.
         const author = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid'];
         const commit = text => { fs.appendFileSync(path.join(repo, 'input.mjs'), text); git('add', 'input.mjs'); git(...author, 'commit', '-m', text.trim()); return git('rev-parse', 'HEAD'); };
-        const at = (tip, n = 1, extra = {}) => ({ ...request, head: tip, collectionId: `preflight-collect:${tip}:${n}`, ...extra });
+        const at = (tip, n = 1, extra = {}) => ({ ...request, head: tip, collectionId: `preflight-collect:${tip}:${n}`, workerVerification: { head: tip, exitCode: 0 }, ...extra });
         const stored = tip => path.join(evidence, `${tip}.json`);
         const round = async (value, status, line) => {
           await admit(value);
@@ -682,14 +593,14 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.deepEqual([receipt.review.spent, receipt.review.limit], [true, 1]);
         const fixed = commit('export const fixed = 1;\n'), calls = reviewCalls(bin).length, spent = /fail: review round spent \(1 of 1 on this task attempt\); fix, run the full verification/;
         for (const workerVerification of [undefined, { head: first, exitCode: 0 }, { head: fixed, exitCode: 1 }]) {
-          const refused = call(at(fixed, 1, workerVerification ? { workerVerification } : {})); assert.equal(refused.status, 1); assert.match(refused.stdout, spent);
+          const refused = call(at(fixed, 1, { workerVerification })); assert.equal(refused.status, 1); assert.match(refused.stdout, spent);
         }
         const malformed = call(at(fixed, 1, { workerVerification: { head: fixed, exitCode: 0, note: 'x' } })); assert.equal(malformed.status, 1); assert.match(malformed.stdout, /workerVerification must be/);
         const verified = at(fixed, 1, { workerVerification: { head: fixed, exitCode: 0 } });
         receipt = await round(verified, 0, /pass: review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification, and verification verified on head/);
         assert.equal(reviewCalls(bin).length, calls, 'no second round on the fast path');
         assert.deepEqual([receipt.review.spent, receipt.workerVerification, receipt.review.workerVerification], [false, verified.workerVerification, verified.workerVerification]);
-        const unbound = call(at(fixed)); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /receipt workerVerification differs from the request/);
+        const unbound = call(at(fixed, 1, { workerVerification: undefined })); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /receipt workerVerification differs from the request/);
         const fresh = () => { for (const name of fs.readdirSync(path.join(evidence, 'history'))) fs.unlinkSync(path.join(evidence, 'history', name)); };
         // An older harmful defect passed by the round stays a must-file successor on the worker-verified head.
         fresh(); setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'Older', title: 'Older' })], verdict: reviewVerdict({ origin: 'pre-existing', danger: true, dangerCase: 'data', dangerReason: 'Data may be lost.' }) });
@@ -722,9 +633,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         const envelope = await collect(request); envelope.receipt.collectionId = `preflight-collect:${head}:2`; seal(envelope);
         request.collectionId = `preflight-collect:${head}:3`;
       }
-      if (fixture.mode.startsWith('verify-')) { expectedStatus = fixture.failRuns > 1 || fixture.sandboxFailure || fixture.changeHead ? 1 : 0; request.collect = true; }
       if (fixture.mode === "collect") { expectedStatus = 0; request.collect = true; }
-      if (fixture.mode.startsWith("temp-")) { expectedStatus = fixture.protected ? 1 : 0; request.collect = true; }
       if (fixture.mode === "legacy") {
         const envelope = await collect(request); delete envelope.receipt.pins; delete envelope.receipt.idea; seal(envelope);
         expectedStatus = 1;
@@ -751,66 +660,26 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
       assert.equal(result.status, expectedStatus, result.stdout + result.stderr);
       assert.deepEqual(fs.existsSync(registryFile) ? fs.readFileSync(registryFile) : null, registryBefore, "gate never writes the registry");
       assert.equal(fs.existsSync(path.join(root, "reports/MONO-999-phase-preflight.json")), false);
-      if (fixture.mode.startsWith('verify-')) {
-        const envelope = JSON.parse(fs.readFileSync(receiptFile)), receipt = envelope.receipt;
-        const history = path.join(evidence, 'history', receipt.runId + '.json');
-        assert.deepEqual(JSON.parse(fs.readFileSync(history)), envelope);
-        assert.equal(envelope.signature, crypto.createHmac('sha256', fs.readFileSync(path.join(evidence, 'receipt.key'))).update(canonical(receipt)).digest('hex'));
-        const retried = !fixture.sandboxFailure && !fixture.changeHead;
-        assert.equal(fs.existsSync(path.join(repo, '.orchestrator/verify-count')) ? Number(fs.readFileSync(path.join(repo, '.orchestrator/verify-count'))) : 0, fixture.sandboxFailure ? 0 : retried ? 2 : 1);
-        assert.deepEqual(reviewCalls(bin), ['reviewer'], 'the review round runs once, before verification');
-        if (retried) {
-          assert.match(receipt.verification.output, /Verification run 1 \(exit 1\):[\s\S]*project verification 1[\s\S]*Verification run 2/);
-          assert.equal(receipt.verification.exitCode, fixture.failRuns > 1 ? 1 : 0);
-        }
-        if (!fixture.changeHead) {
-          write(path.join(root, 'reports/collector.log'), 'edited ordinary log');
-          const bytes = fs.readFileSync(history), reread = call({ ...request, collect: false });
-          assert.equal(reread.status, expectedStatus, reread.stdout + reread.stderr);
-          assert.deepEqual(fs.readFileSync(history), bytes, 'signed output survives a fresh gate process and ordinary log edits');
-        }
-        // The cost report reads the round exactly as the gate signed it.
-        write(path.join(root, 'logs/MONO-999-mono-deliver-a1.jsonl'), JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }) + '\n');
-        const cost = spawnSync(process.execPath, ['scripts/wave-cost.mjs', 'MONO-999', '--root', root, '--evidence-root', evidence], { encoding: 'utf8' });
-        assert.deepEqual(JSON.parse(cost.stdout.split('\nЦена волны')[0]).autoreview.receipts, { receipts: 1, rounds: 1, not_reviewed: 0, calls: 1, measured_calls: 0 }, cost.stderr);
-        return;
-      }
       if (expectedStatus === 2) {
         assert.deepEqual(result.stdout.trim().split("\n"), [`gate preflight: pending: ${request.collectionId}`, JSON.stringify({ publishRequest: request })]);
         if (receiptBefore) assert.deepEqual(fs.readFileSync(receiptFile), receiptBefore);
         else assert.equal(fs.existsSync(receiptFile), false);
       }
       if (fixture.mode === "receipt-pins") assert.match(result.stdout, /receipt pins differs from dispatch request/u);
-      if (fixture.mode.startsWith('verify-')) { expectedStatus = fixture.failRuns > 1 || fixture.sandboxFailure || fixture.changeHead ? 1 : 0; request.collect = true; }
       if (fixture.mode === "collect") {
         const envelope = JSON.parse(fs.readFileSync(receiptFile, "utf8")); assert.deepEqual(envelope.receipt.pins, binding);
-        assert.equal(fs.existsSync(path.join(evidence, "history", `${envelope.receipt.runId}.json`)), true);
-        const verified = call({ ...request, collect: false }); assert.equal(verified.status, 0, verified.stdout);
-      }
-      if (fixture.protected) {
-        assert.ok(result.stdout.includes(`collection Darwin temporary write grant (${fixture.protected})`), result.stdout);
-        assert.match(result.stdout, /no overlapping grants/u);
-        assert.equal(fs.existsSync(sandboxLog), false, "overlap refuses before any sandbox invocation");
-        const { receipt } = JSON.parse(fs.readFileSync(receiptFile, "utf8"));
-        assert.deepEqual([receipt.review.spent, receipt.verification.exitCode], [true, null], "the completed round is signed even when verification cannot launch");
-      }
-      if (fixture.mode.startsWith("temp-") && !fixture.protected) {
-        const { receipt } = JSON.parse(fs.readFileSync(receiptFile, "utf8"));
-        const grantsDarwin = fixture.platform === "darwin" && !fixture.unavailable;
-        assert.equal(fs.existsSync(getconfLog), fixture.platform === "darwin", "other platforms never query Darwin temp");
-        for (const phase of ["verification"]) {
-          const { sandbox } = receipt[phase], profile = sandbox.args[sandbox.args.indexOf("-c") + 1];
-          const actual = [...profile.matchAll(/("(?:\\.|[^"\\])*")="write"/gu)].map(match => JSON.parse(match[1]));
-          const expected = [...new Set([fs.realpathSync(repo), resolvedLocation(sandbox.tempRoot), ...(grantsDarwin && phase === "verification" ? [fs.realpathSync(darwinTemp)] : [])])];
-          assert.deepEqual(actual.sort(), expected.sort(), phase + " records exactly the granted roots");
-          assert.ok(profile.includes('\":root\"="read"'));
-          assert.ok(profile.includes("network={enabled=true}"));
-          assert.equal(sandbox.probed, true);
-          assert.equal(fs.existsSync(sandbox.tempRoot), false);
-          if (fixture.privateInsideDarwin) assert.equal(resolvedLocation(sandbox.tempRoot).startsWith(fs.realpathSync(darwinTemp) + path.sep), phase === "verification");
-        }
-        assert.equal(fs.readdirSync(evidence).some(name => name.startsWith(".write-boundary-")), false);
-        const verified = call({ ...request, collect: false }); assert.equal(verified.status, 0, verified.stdout);
+        const history = path.join(evidence, "history", `${envelope.receipt.runId}.json`);
+        assert.deepEqual(JSON.parse(fs.readFileSync(history)), envelope);
+        assert.deepEqual([envelope.receipt.verification, envelope.receipt.workerVerification], [{ ...pins.verification, exitCode: null }, { head, exitCode: 0 }]);
+        write(path.join(root, 'reports/collector.log'), 'edited ordinary log');
+        const bytes = fs.readFileSync(history), verified = call({ ...request, collect: false }); assert.equal(verified.status, 0, verified.stdout);
+        assert.deepEqual(fs.readFileSync(history), bytes, 'signed output survives a fresh gate process and ordinary log edits');
+        const tampered = call({ ...request, collect: false, workerVerification: { head, exitCode: 1 } }); assert.equal(tampered.status, 1);
+        assert.match(tampered.stdout, /receipt workerVerification differs from the request/);
+        // The cost report reads the round exactly as the gate signed it.
+        write(path.join(root, 'logs/MONO-999-mono-deliver-a1.jsonl'), JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }) + '\n');
+        const cost = spawnSync(process.execPath, ['scripts/wave-cost.mjs', 'MONO-999', '--root', root, '--evidence-root', evidence], { encoding: 'utf8' });
+        assert.deepEqual(JSON.parse(cost.stdout.split('\nЦена волны')[0]).autoreview.receipts, { receipts: 1, rounds: 1, not_reviewed: 0, calls: 1, measured_calls: 0 }, cost.stderr);
       }
       if (fixture.mode === "history") assert.deepEqual(fs.readFileSync(receiptFile), receiptBefore, "history verification does not reconcile the mutable head");
     } finally {

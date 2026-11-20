@@ -190,8 +190,10 @@ Material scope drift parks scope-drift-needs-handoff and goes to owner decision.
 ## Review rounds
 
 A collection runs one read-only review round on the committed head (reviewer
-and checker from different model families), then sandboxed verification, and
-signs one `gate-review-v3` receipt. The collector host needs both the Codex and
+and checker from different model families) and signs one `gate-review-v3`
+receipt with `verification.exitCode: null`: the worker runs the full product
+verification and sends `workerVerification {head, exitCode}`; the receipt passes
+only with exit 0 on its head. Receipts of older attempts keep their sandbox verification. The collector host needs both the Codex and
 Claude CLIs logged in by subscription; a single-family setup gives
 `not-reviewed`, and so does a logged-out CLI whose role has to run (the checker
 runs only when the reviewer reports findings).
@@ -222,9 +224,8 @@ Parks:
   required checks and no open finding harming the main path, data or the owner's
   install; otherwise split the Issue or change the approach in a new attempt. An
   amend keeps the count and adds no rounds.
-- needs-decision, `verification failed on the reviewed head`: decide whether the
-  code or the environment is wrong; a new request on the same head reuses the
-  round and reruns only verification.
+- needs-decision, `verification failed on the reviewed head` (older attempts):
+  decide whether the code or the environment is wrong.
 - blocked, `not-reviewed twice in a row`: restore both CLI logins, then amend to
   resume.
 
@@ -237,7 +238,7 @@ every `must-file` entry of the receipt's `review.successors` list (an older dang
 only for data, security or gate bypass) and decide
 which of the rest become Issues; the gate line and ready certificate repeat the
 list. The collection window (`collectionTimeoutSec`) must cover a round, which
-takes up to 25 minutes on a large risky change, plus verification and one rerun.
+takes up to 25 minutes on a large risky change.
 
 ## Delivery Write Barriers
 
@@ -413,16 +414,14 @@ Validate the single-item confirmation-request against dispatch product, pinned
 installed skillsRoot, risk/critical, verification command, worktree/head/base and
 evidenceRoot. On spawn, pin evidenceRoot and the complete workerWritableRoots in the request/registry. On resume, any extra grant requires an amended dispatch with the complete effective list; the runtime refuses evidence-root overlap and persists effective grants before launch. Build collection and worker verification requests from these current pins, never an earlier dispatch. Use ~/.mono-agent-workflow/evidence/<product>/ outside EVERY
 worker-writable root (including the orchestrator root and temporary grants).
-Only the orchestrator outside all worker sandboxes runs collect:true. The gate first runs the read-only review round ([Review rounds](#review-rounds)) on an export of the pinned tree; only after `clean` or `clean-with-successors` it
-runs verification inside codex sandbox with the worktree and one private temp directory writable. On macOS verification also grants the realpath of `getconf DARWIN_USER_TEMP_DIR` when available: Apple tools write there independently of TMPDIR. Before sandbox launch reject overlap with evidenceRoot, orchestrator root, skillsRoot and packRoot; such a refusal is recorded in the signed receipt, so the completed round is kept. Unavailable Darwin temp leaves the existing verification grants; other platforms are unchanged. Keep TMPDIR/TMP/TEMP in the invocation's private directory. Never use workerWritableRoots as collector grants; keep all orchestrator control state read-only. Exclude skillsRoot/evidenceRoot; a denial probe fails closed if that
-boundary is missing. Record the probe independently of the command exit code. Pause the worker during collection. Repository-configured executable Git filters are unsupported by privileged gate reads: the gate refuses before execution. If a product requires such filters, obtain a trusted isolation policy instead of disabling this check. Reconcile
+Only the orchestrator outside all worker sandboxes runs collect:true. The gate runs the read-only review round ([Review rounds](#review-rounds)) on an export of the pinned tree and runs no verification. Keep all orchestrator control state read-only. Pause the worker during collection. Repository-configured executable Git filters are unsupported by privileged gate reads: the gate refuses before execution. If a product requires such filters, obtain a trusted isolation policy instead of disabling this check. Reconcile
 an existing authenticated receipt matching request.collectionId and all pins before repeating collection; failed
 reviews are completed runs too, not missing actions. Return present evidence as
 {receipt: <evidenceRoot>/history/<runId>.json, receiptDigest: <SHA-256 of canonical envelope>, gate: <exact gate answer>}, including a fail. The runtime checks immutable history identity, digest, signature and collection ID before confirming or accepting confirmation; the mutable head receipt is never confirmation evidence. Fsync that result
 and confirm through the same runtime. Publish and confirm enforce code → preflight → ship: read the latest earlier phase reports and earlier sequence confirmations, allowing only the fingerprint-bound code-report deferral above. Confirmations retain the report snapshot, so overwritten phase files do not erase sequence evidence. Missing or mismatched predecessors refuse before adapter calls. Fallback publication supplies --root; confirmation reads the report directory and root mailbox and refuses conflicting copies. Worker collect:false must pass before ready;
 A review fix uses a new head/write ID. Use write.id=request.collectionId=preflight-collect:<head>:<n>. Increment n for each collection request on that head, including transient retries after a recorded failure; also advance the phase sequence. Never reuse the failed collection ID for a new run; a lost response retains its original ID. Bind confirmation evidence to the immutable history receipt as well as the current head receipt. Never let a worker collect or select new
 pins. Preserve failed receipts. Configure confirmationTimeoutSec BEFORE dispatch
-to cover verification plus review. Defaults: `confirmationTimeoutSec=6300`,
+to cover the review. Defaults: `confirmationTimeoutSec=6300`,
 `collectionTimeoutSec=4500`, `collectionRetries=1` (nonnegative integer).
 Require `collectionTimeoutSec < confirmationTimeoutSec < evidenceLimitSec`.
 Launch pins all three collection/confirmation settings in the registry; old
@@ -443,10 +442,7 @@ On timeout signal the isolated group with TERM, then KILL if necessary, and
 verify no live descendants remain before retry. Unknown/live groups refuse.
 Exhausted retries, insufficient time or stalled reconciliation write `timed-out`
 with the technical reason to the collector log and attention file; preserve
-history for explicit orchestrator recovery. Project verification retries once
-only with a proved sandbox and unchanged head/base; both numbered outputs are
-signed in `verification.output`, with the last exit code. Sandbox or consistency
-failures do not retry; the reviewer still runs at most once per collection.
+history for explicit orchestrator recovery. The reviewer runs at most once per collection.
 Keep it below evidenceLimitSec as a configuration consistency rule. The evidence
 limit runs from the ship attempt's startedAt, while confirmation waiting runs
 separately from the phase report's publishedAt; the inequality does not prove
@@ -454,7 +450,7 @@ evidence freshness.
 Pass the same --config to delivery-state.mjs confirm; its adapter timeout uses confirmationTimeoutSec. The gate locks collection per head in evidenceRoot. Spawn releases the registry lock after durable PID registration, waits for thread.started outside it, and registers the same attempt/PID thread under a short lock. Collector reclaim uses the incarnation/group checks and marker above; never remove a live or unverified lock or start a competing collector. Never extend an in-flight deadline; reconcile any late collector completion. Before the ship gate independently run preflight
 collect:false with the same dispatch request. The pack collector uses the existing receipt key; no key service.
 
-Publish whole-queue confirmations under <root>/confirmations/, outside all worker write grants. The worker wait refuses any confirmation path overlapping capsule.writable_roots. Keep reports as the sole writable mailbox; journal and registry remain outside the sandbox grant. Hostile local operator attestation remains out of scope. Run scripts/sandbox-contract.test.mjs outside a worker sandbox to prove the real Codex CLI boundary; absent CLI and detected nested Seatbelt are explicit skips, never host proof. Other failures block. The routine verify suite includes this test; the orchestrator runs it outside worker sandboxes for the actual boundary proof.
+Publish whole-queue confirmations under <root>/confirmations/, outside all worker write grants. The worker wait refuses any confirmation path overlapping capsule.writable_roots. Keep reports as the sole writable mailbox; journal and registry remain outside the sandbox grant. Hostile local operator attestation remains out of scope.
 
 A confirmation timeout parking the worker as `write-unconfirmed` is an expected
 path while a collection continues. Reconcile the late result with the same

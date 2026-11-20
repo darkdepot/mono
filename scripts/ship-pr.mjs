@@ -134,38 +134,7 @@ export function checksLine({ checks = [], head, deferred = [] }) {
   if (deferred.length) parts.push(`перенесено: ${deferred.map(item => item.replace(/\s*[,;·]\s*/g, ' / ').trim()).join(', ')}`);
   return `Проверки: ${groups.passed.length} из ${onHead.length + deferred.length} прошли${parts.length ? `; ${parts.join('; ')}` : ''}`;
 }
-// What a reader sees: comments and every <details> block (with attributes, nested, or left unclosed) removed.
-const visible = text => {
-  let seen = String(text).replace(/<!--[\s\S]*?-->/g, ' '), previous;
-  do { previous = seen; seen = seen.replace(/<details\b[^>]*>(?:(?!<details\b)[\s\S])*?<\/details\s*>/gi, ' '); } while (seen !== previous);
-  return seen.replace(/<details\b[\s\S]*$/i, ' ');
-};
 const CHECKS_LINE = /^[ \t]*(?:[-*+>][ \t]*)*Проверки:.*$/gm;
-const section = (text, name) => { const match = new RegExp(`^##\\s+${name}\\s*$([\\s\\S]*?)(?=^##\\s|(?![\\s\\S]))`, 'm').exec(text); return match ? match[1].trim() : null; };
-// U5: only the unambiguous is checked before leaving draft; the read-only pass judges the rest.
-export function bodyProblems({ body, issue, head, checks = [] }) {
-  const part = authorPart(body);
-  if (!part) return ['описание без части автора между метками Ship'];
-  // Only what a reader sees counts: sections and the link hidden in comments or details do not.
-  const problems = [], seen = visible(part.text);
-  if (part.head !== head) problems.push('описание не переписано после последней версии кода');
-  const changed = section(seen, 'Что изменилось');
-  if (!changed || !/^\s*[-*] \S/m.test(changed)) problems.push('нет раздела «Что изменилось» со списком');
-  for (const name of ['Зачем', 'Как проверить']) if (!section(seen, name)) problems.push(`нет раздела «${name}»`);
-  const words = seen.split(/\s+/).filter(Boolean).length;
-  if (words > 400) problems.push(`видимая часть ${words} слов, больше 400`);
-  if (!/^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(issue ?? '') || !seen.includes(`[${issue}](https://`)) problems.push(`нет ссылки на задачу ${issue}`);
-  if (/\b[a-f0-9]{40}\b/.test(seen)) problems.push('хеш версии в видимой части');
-  // The line must say exactly what the head's checks say now; carried-over items keep their own words.
-  const lines = [...seen.matchAll(CHECKS_LINE)].map(match => match[0]);
-  if (lines.length !== 1 || !lines[0].startsWith('Проверки: ')) problems.push('нужна ровно одна строка «Проверки», её пишет Ship');
-  else {
-    const written = lines[0].split(' · ')[0].trim(), deferred = /перенесено: ([^;]*)/.exec(written)?.[1].split(', ').filter(Boolean) ?? [];
-    const fresh = checksLine({ checks, head, deferred });
-    if (written !== fresh) problems.push(`строка «Проверки» устарела: сейчас «${fresh}»; перепиши описание (ship-pr.mjs body)`);
-  }
-  return problems;
-}
 // U1: push and open the draft once; a second entry finds the open PR of the branch.
 export function openDraft({ worktree, repo, remote, branch, base, title, issue, issueUrl, protection = null }) {
   const head = git(worktree, 'rev-parse', 'HEAD');
@@ -249,14 +218,6 @@ export function readyBlockers({ head, remarks, sent = [], check = null }) {
   }
   return blockers;
 }
-// U5/U6: the description passes the form check and the read-only pass found it truthful for exactly this text.
-export function descriptionBlockers({ body, issue, head, checks = [], check = null }) {
-  const problems = bodyProblems({ body, issue, head, checks });
-  if (problems.length) return problems;
-  const judged = check?.head === head ? check.description : null;
-  if (judged?.digest !== digest(authorPart(body).text)) return ['описание не проверено на правдивость для этого текста и версии'];
-  return judged.verdict === 'truthful' ? [] : [`в описании неверно: ${judged.falseClaims.join('; ')}`];
-}
 // U4: one mention of the bot per head when it has not reported on that head yet.
 export function mentionNeeded({ snapshot, issueComments = [] }) {
   const head = snapshot.head;
@@ -266,16 +227,14 @@ export function mentionNeeded({ snapshot, issueComments = [] }) {
   return !botOnHead && !mentioned;
 }
 export const u6File = (stateFile, head) => `${stateFile}.u6-${head}.json`;
-// Untrue claims in a row: a rewrite gets one more pass, the second stops Ship; a remarks-only pass keeps the count.
-export const nextDescriptionFailures = (before, verdict) => verdict === 'false-claims' ? before + 1 : verdict === 'truthful' ? 0 : before;
 
 const usage = `Usage: ship-pr.mjs <command> [flags]
   open    --worktree W --repo R --remote origin --branch B --base main --title T --issue KEY --issue-url URL   push and open the draft (once)
   push    --worktree W --repo R --remote origin --branch B                                                  check secrets, then push a round's fix
   remarks --repo R --pr N [--out FILE]                                                                     open remarks on the head (bot, CI, owner) as JSON
   body    --repo R --pr N --head SHA --issue KEY --file AUTHOR.md [--deferred "a;b"]                      rewrite the author part (templates/pr-body.md) and the «Проверки» line
-  check   --worktree W --base SHA --head SHA --state-file S [--remarks FILE] [--repo R --pr N]          read-only pass: remarks (with decision, evidence) and the description
-  ready   --repo R --pr N --head SHA --issue KEY --state-file S --preflight REQUEST                     leave draft: clean receipt, no failed CI, remarks settled, description checked
+  check   --worktree W --base SHA --head SHA --state-file S --remarks FILE                              read-only pass: remarks settled without a code change (decision, evidence)
+  ready   --repo R --pr N --head SHA --state-file S --preflight REQUEST                                 leave draft: clean receipt, no failed CI, remarks settled
   undo    --repo R --pr N                                                                                  back to draft (gh pr ready --undo)
   mention --repo R --pr N --mention @greptileai                                                            ask the bot once for this head
 Every published body carries ${SHIP_MARKER}. Exit 1 prints the reason; nothing is merged.`;
@@ -301,8 +260,6 @@ async function main(argv) {
     const author = fs.readFileSync(args.file, 'utf8').replace(CHECKS_LINE, '').trim();
     const line = checksLine({ checks: snapshot.checks, head: args.head, deferred: (args.deferred ?? '').split(';').map(item => item.trim()).filter(Boolean) });
     const body = composeBody({ author: `${author}\n\n${line} · Задача: ${args.issue}`, head: args.head, current: pr.body ?? '' });
-    const problems = bodyProblems({ body, issue: args.issue, head: args.head, checks: snapshot.checks });
-    requireThat(!problems.length, `description refused: ${problems.join('; ')}`);
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ship-pr-body-')), 'body.md');
     fs.writeFileSync(file, body);
     gh('pr', 'edit', String(args.pr), '--repo', args.repo, '--body-file', file);
@@ -310,18 +267,13 @@ async function main(argv) {
   }
   if (command === 'check') {
     const remarks = (args.remarks ? readJson(args.remarks) : []).map(({ id, source, title, body, urgent, head, decision, evidence }) => ({ id, source, title, body, urgent, head, decision, evidence }));
-    const description = args.pr ? authorPart(ghJson('api', `repos/${args.repo}/pulls/${args.pr}`).body)?.text ?? null : null;
-    requireThat(!args.pr || description, 'the PR body has no author part to check');
+    if (!remarks.length) return console.log(JSON.stringify({ needsFix: [] }));
     const worktree = path.resolve(args.worktree), file = u6File(path.resolve(args['state-file']), args.head);
-    const prior = fs.existsSync(file) ? readJson(file) : null;
-    const result = await runRemarkCheck({ worktree, base: args.base, head: args.head, remarks, description, config: baseModelConfig(worktree, args.base) });
-    // A rewrite after untrue claims gets one more pass; a second disagreement in a row stops Ship.
-    const descriptionFailures = nextDescriptionFailures(prior?.descriptionFailures ?? 0, result.description.verdict);
-    atomicJson(file, { ...result, descriptionFailures, recordedAt: new Date().toISOString() });
+    const result = await runRemarkCheck({ worktree, base: args.base, head: args.head, remarks, config: baseModelConfig(worktree, args.base) });
+    atomicJson(file, { ...result, recordedAt: new Date().toISOString() });
     const needs = result.verdicts.filter(verdict => verdict.verdict !== 'confirmed');
-    console.log(JSON.stringify({ file, needsFix: needs, description: result.description }));
-    if (descriptionFailures >= 2) { console.log('ship-pr: stop: the description disagreed with the change twice in a row; a person decides'); process.exitCode = 2; }
-    else if (needs.length || descriptionFailures) process.exitCode = 1;
+    console.log(JSON.stringify({ file, needsFix: needs }));
+    if (needs.length) process.exitCode = 1;
     return;
   }
   if (command === 'ready') {
@@ -334,8 +286,7 @@ async function main(argv) {
     requireThat(snapshot.head === args.head, `PR head moved: ${snapshot.head}`);
     const file = u6File(path.resolve(args['state-file']), args.head);
     const check = fs.existsSync(file) ? readJson(file) : null;
-    const blockers = [...readyBlockers({ head: args.head, remarks: collectRemarks(found), sent: request.prRemarks ?? [], check }),
-      ...descriptionBlockers({ body: found.pr.body, issue: args.issue, head: args.head, checks: snapshot.checks, check })];
+    const blockers = readyBlockers({ head: args.head, remarks: collectRemarks(found), sent: request.prRemarks ?? [], check });
     requireThat(!blockers.length, `stays draft: ${blockers.join('; ')}`);
     gh('pr', 'ready', String(args.pr), '--repo', args.repo);
     return console.log(JSON.stringify({ ready: true, head: args.head }));

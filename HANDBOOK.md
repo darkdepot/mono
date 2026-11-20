@@ -13,17 +13,18 @@ This handbook is the complete rule reference and owner-rule index. Follow its li
 
 Code review before the PR is a read-only round inside the orchestrator's
 collection: a reviewer and an independent checker from different model families
-read the pinned diff of the committed head, then verification runs in the
-sandbox and one receipt is signed. The change sets the path: Handoff marks
-installer, delivery, deploy and release, product prod scripts, user data and
-migrations, security, public API and review-gate changes `risky` (the strict
-path, at most three rounds per task attempt); everything else, `deep` included,
-takes the fast path with one round, after which the worker fixes, runs the full
-verification and the final head passes on `workerVerification` (exit 0 on that
-head) without another round. A behavior change gets a live run of its main
-scenario before the first round (pack skills and stages: the orchestrator in the
-test Linear workspace). An amendment keeps the count, and every round after the
-first reads only the fixes and open findings. The worker fixes open findings and asks for the next round without
+read the pinned diff of the committed head and one receipt is signed. The
+collection does not verify: the worker runs the full product verification on the
+head and sends `workerVerification {head, exitCode}`, and the receipt passes only
+with exit 0 on its head. The change sets the path: Handoff marks installer,
+delivery, deploy and release, product prod scripts, user data and migrations,
+security, public API and review-gate changes `risky` (the strict path, at most
+three rounds per task attempt); everything else, `deep` included, takes the fast
+path with one round, after which the worker fixes and the final head passes on
+its full verification without another round. A behavior change gets a live run
+of its main scenario before the first round (pack skills and stages: the
+orchestrator in the test Linear workspace). An amendment keeps the count, and
+every round after the first reads only the fixes and open findings. The worker fixes open findings and asks for the next round without
 waiting for anyone. A fixed finding closes when the checker verifies the fix
 and the reviewer stops reporting it. Older defects (on the strict path only
 harmless ones), minor leftovers from the
@@ -42,8 +43,7 @@ Configure `orchestration.delivery.collectionTimeoutSec` (default 4500),
 before dispatch; require `collectionTimeoutSec < confirmationTimeoutSec < evidenceLimitSec`.
 A run is bounded to 4500 seconds by default; a crash before a signed receipt may
 retry once with the same admission, after class/cap and remaining-budget checks.
-Signed failures reconcile without another review. Failed project verification
-reruns once inside the same collection, with both outputs signed.
+Signed failures reconcile without another review.
 The collector-death regression waits through denied process probes within its
 existing deadline, fails on live or unverified groups, and reports scenario and
 cleanup failures separately. Negative controls leave a real descendant alive
@@ -450,7 +450,7 @@ raw idea → recorded owner approval → Project in Idea → owner or delegated 
 6. **Package.** `mono:handoff` reconciles the Brief with approved inputs before recording, reviews and records the package and execution Issues, checks each and sets Ready before its final summary, position and start question. Work starts only on agreement to that question or explicit owner words; delegation needs an explicit request.
 7. **Start.** `mono:implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
 8. **Implement and prepare.** `mono:deliver` sequences `mono:implement`, `mono:preflight`, and `mono:ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, commit, and pass the collection's review round (`clean` or `clean-with-successors`; one round on the fast path, then the worker's full verification on the final head; at most three on `risky`) and verification. Record the ready certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory. The collector auto-confirms empty and collection queues, including carried confirmed writes. New connector writes in a collection queue require present observations in the active report session before collection. Start facts live in the code report; the Russian ready-certificate comment retains its machine block. Review runs only in the external collection on a committed head, for every transport; managed Claude Code's ready certificate also names its stop/resume startup. Preserve phase ownership.
-9. **Ship to green.** Preflight opens the PR as a draft at its first collection request (`scripts/ship-pr.mjs open`, secrets checked before every push where GitHub push protection is off) and feeds the bot remarks, failed CI checks and owner instructions it fixed into the next review round (`prRemarks`), where they close only when the checker verifies the fix. Ship writes the description for people in Russian from `templates/pr-body.md` (`ship-pr.mjs body`, rewritten after every round: the author's part between Ship's markers names its head and publication time (PR activity cannot move Deploy's boundary; republish a legacy body without that time), a bot's block outside them is kept, and Ship itself writes the «Проверки» line in which only finished successful checks are «прошли»), synchronizes accepted drift, settles every other remark and checks every statement of the description through a read-only pass (`ship-pr.mjs check --pr`; a second disagreement in a row stops Ship), leaves draft (`ship-pr.mjs ready`) only with a clean receipt on the head, no failed CI and a description that passes the form check (required sections, up to 400 visible words, the task link, written for this head), and confirms the Linear status/link. A late remark that needs a fix returns the PR to draft and parks not-converged. Ship speaks Russian to the owner: one to three product lines above the certificate name the attempt, the review rounds spent of three and the wait out of its limit. Run by hand in the owner's session, Ship needs a branch with a ready Linear Issue and a signed clean receipt on the current head from the Issue's collection; otherwise it refuses with the reason, and without permission to post replies it stops with «нет права публиковать ответы». Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Wait for current-head CI and the bounded task bot outcome. Emit the green certificate only after all ship conditions and write confirmations pass.
+9. **Ship to green.** Preflight opens the PR as a draft at its first collection request (`scripts/ship-pr.mjs open`, secrets checked before every push where GitHub push protection is off) and feeds the bot remarks, failed CI checks and owner instructions it fixed into the next review round (`prRemarks`), where they close only when the checker verifies the fix. Ship writes the description for people in Russian from `templates/pr-body.md` (`ship-pr.mjs body`, rewritten after every round: the author's part between Ship's markers names its head and publication time (PR activity cannot move Deploy's boundary; republish a legacy body without that time), a bot's block outside them is kept, and Ship itself writes the «Проверки» line in which only finished successful checks are «прошли»), synchronizes accepted drift, settles every other remark through a read-only pass (`ship-pr.mjs check`), leaves draft (`ship-pr.mjs ready`) only with a clean receipt on the head, no failed CI and every remark settled, and confirms the Linear status/link. A late remark that needs a fix returns the PR to draft and parks not-converged. Ship speaks Russian to the owner: one to three product lines above the certificate name the attempt, the review rounds spent of three and the wait out of its limit. Run by hand in the owner's session, Ship needs a branch with a ready Linear Issue and a signed clean receipt on the current head from the Issue's collection; otherwise it refuses with the reason, and without permission to post replies it stops with «нет права публиковать ответы». Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Wait for current-head CI and the bounded task bot outcome. Emit the green certificate only after all ship conditions and write confirmations pass.
 10. **Deploy and close.** `mono:deploy` merges the pinned green head only with an approved deploy.targets block, proves the actual version and checks the Issue scenario/product health. Close the Issue on merge with a truthful comment. New repeated browser failure against a green previous build permits rollback and one repair. Only proven delivery earns a project update; only shipment of its last open Issue may complete a Project. Retire the delivered worker after closeout.
 
 Stages rebuilt under «Mono как продукт» and their shared host reference
@@ -725,7 +725,7 @@ A gate proves only its stated boundary. `mono:review` returns quality/risk findi
 | Package review and approval | Before writing: one Issue, any risk including tiny, both reviewers in one round; wording fixes without a round, P0/P1 substance fixes rechecked by finder or refuted by source. Multiple Issues retain up to three rounds and tiny advisory/reason. Implementation needs start authorization |
 | Pack identity / `gate.mjs start` | Installed pack is compatible under [the versioning rule](references/install.md#compatibility); branch, base and clean worktree match the start request |
 | Start handshake / delivery check | The worker checked snapshot, approvals, resolved findings and context seam; the orchestrator applied/read back lifecycle changes; the amended package is ready for code |
-| `gate.mjs preflight` | Current committed head/merge-base has an authentic receipt with review `clean` or `clean-with-successors` and successful sandboxed verification; missing, stale, fabricated, old-format or incomplete evidence fails |
+| `gate.mjs preflight` | Current committed head/merge-base has an authentic receipt with review `clean` or `clean-with-successors` and the worker's verification exit 0 on that head; missing, stale, fabricated, old-format or incomplete evidence fails |
 | Pre-ship review and check | Diff matches the Issue, readiness is recoverable, required review is complete, artifacts are current and accepted drift is synchronized |
 | `gate.mjs ship` | PR is open on the certified head, mandatory CI covers that head and the task bot wait is settled, threads and bot remarks are resolved/disposed, closure replies are published, no own review draft or outstanding change request remains, and mergeability is acceptable under policy |
 | Independent QA before merge | Connected products require current-head task QA; held final work also requires project QA matching the current build. Ship green precedes this gate. A recipe with `beforeMerge: false` turns it off: QA runs on request and before a release |
@@ -819,9 +819,9 @@ The orchestrator is the single Linear writer for implement/preflight/ship worker
 
 After a lost response, the orchestrator reconciles every write against its durable result and external state, then applies only missing actions. Keep stable write IDs for reconciliation; changed payloads need new IDs. Resume the same context and phase from its capsule with the complete open queue, decisions, head and writable roots. Recheck pack identity on every resume. A head change never drops pending obligations.
 
-The orchestrator runs the review round and preflight verification outside worker sandboxes; workers only read the sealed receipt with `collect:false`. Evidence lives outside every worker-writable root. Reports are the worker mailbox; confirmations and orchestrator control state remain read-only to workers. A timeout parks the delivery with a dictionary reason. Final outcomes are `green` or `parked`, with the latter reflected visibly in Linear; intermediate readiness is never terminal delivery.
+The orchestrator runs the review round outside worker sandboxes; the worker runs the full product verification; workers only read the sealed receipt with `collect:false`. Evidence lives outside every worker-writable root. Reports are the worker mailbox; confirmations and orchestrator control state remain read-only to workers. A timeout parks the delivery with a dictionary reason. Final outcomes are `green` or `parked`, with the latter reflected visibly in Linear; intermediate readiness is never terminal delivery.
 
-On macOS, collection verification also grants the resolved Darwin user temp root for Apple tools that write there independently of `TMPDIR`. Reject overlap with evidence, orchestrator and skills/pack paths; retain the evidence denial probe. The review round runs first, on a read-only export of the pinned tree, and needs no write grant.
+The review round runs on a read-only export of the pinned tree and needs no write grant.
 
 ## Roles and Decisions
 
@@ -875,7 +875,7 @@ before choosing Claude Code:
 | --- | --- | --- |
 | Start confirmation | Waits in place for the orchestrator's read-back under `handshake: wait`, or exits and resumes | Always stops after writing its gate acknowledgement; the orchestrator applies and reads back the moves, then resumes the same session. `wait` is refused |
 | Subscription | Its own provider subscription | Shared with the orchestrator, so an exhausted subscription stops both. A named limitation, not a defect |
-| CLIs on the collector host | Codex and Claude, both logged in by subscription | The same: verification runs in the Codex sandbox and the review pair spans both families |
+| CLIs on the collector host | Codex and Claude, both logged in by subscription | The same: the review pair spans both families |
 
 Phase and collection confirmations still wait in place on both workers, and a missing
 mandatory capability is a refused launch rather than a disclosed difference. The
@@ -924,8 +924,9 @@ The experimental comparison tooling has been retired. Production reviewer select
 ### Review rounds
 
 The preflight and ship gates accept only a `gate-review-v3` receipt for the exact
-head and merge-base: review `clean` or `clean-with-successors`, then verification
-exit 0 with its sandbox proof. Rounds are counted from signed receipts per task
+head and merge-base: review `clean` or `clean-with-successors` and the worker's
+verification exit 0 on that head (`workerVerification`); receipts of older
+attempts keep their sandbox verification. Rounds are counted from signed receipts per task
 attempt over every pins version: three at most, the same head reuses its round,
 `not-reviewed` spends nothing, an accepted amendment keeps the count and the
 record, and a changed base starts a fresh record with the same count. Only round
@@ -936,7 +937,7 @@ line. The orchestrator approves nothing between rounds and after merge decides
 which candidates from the receipt's list become Issues (every `must-file` one does; the task's Linear writer files them): [review rounds](references/orchestration-delivery.md#review-rounds),
 worker [round rule](references/review-admission.md).
 
-Collections keep the sandbox probe line and a bounded verification output tail before signing. Receipts keep the raw usage of every review call: Claude input excludes both cache counters, whereas Codex input includes cached input and has no cache-write counter. A call without usage stays null and counts as unmeasured, never as zero. Old receipts remain valid without usage metadata; those inputs remain unavailable for reproduction.
+Receipts keep the raw usage of every review call: Claude input excludes both cache counters, whereas Codex input includes cached input and has no cache-write counter. A call without usage stays null and counts as unmeasured, never as zero. Old receipts remain valid without usage metadata; those inputs remain unavailable for reproduction.
 
 Count each attempt once: sum per-turn usage, or take the last event when a Codex log reports thread totals (its counters never decrease; `counting` shows which). Cached input is part of input, not another amount to add. An attempt without usage records is unavailable; an unfinished turn makes the attempt incomplete. A wave containing either has an incomplete total. Known completed-turn usage remains a partial subtotal, and absent attempt usage is null, never a measured zero. The static worker reading budget is a separate measure: one union of mandatory, conditional and nested readings, shared files counted once, bounded at **99,882 bytes** with bytes/4 shown as an approximation. The README and this handbook are outside the worker reading list. Explanatory rationale stays outside that list and adds no gates.
 

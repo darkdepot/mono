@@ -1,21 +1,22 @@
 # Review Admission
 
 A collection runs one read-only review round on the committed head (reviewer and
-checker of two model families), then verification. The gate line is the
+checker from different model families). The gate line is the
 result; findings are in the signed receipt under `review.record.findings`.
-A behavior change gets a live run of its main scenario before round 1.
+Behavior changes get a live main-scenario run before round 1.
 
 Pinned risk sets rounds per task attempt: `risky` up to three, others one;
 amendments keep the count and record. Round 1 reads the whole change, later ones
 fixes and open findings. Same head reuses its round; new base, fresh record.
 
-- `review clean` or `clean-with-successors` with verification: pass.
+- `review clean` or `clean-with-successors` with your verification: pass.
 - `review not-converged (round 1|2 of 3)`: fix the error class of each open
   finding, check, commit, request the next round.
 - Fast path after its round (`of 1`): fix, run the full verification on the
   final head, request it with `workerVerification: {head, exitCode: 0}`.
-- `needs-decision:` (round 3 not-converged, raised risk, failed verification):
-  park needs-decision with that line.
+- `worker verification missing`: run it, request again.
+- `needs-decision:` (round 3 not-converged, raised risk): park needs-decision
+  with that line.
 - `not-reviewed:` (a role failed or coverage was incomplete): no round spent;
   request the same head again. `blocked:` (twice in a row): park blocked.
 
