@@ -22,22 +22,20 @@ countercheck. Stage sessions and the orchestrator follow
 Owner intake has three routes: one projectless PR to `mono:issue`, one Project
 idea to `mono:idea`, several Projects to `mono:initiative`. Initiative runs only
 in the owner's session; the orchestrator neither launches nor approves it.
-The stage resumes saved goal, research, model and map choices, records one
-owner approval of the shown version and creates/links map Projects in Idea.
-Any correction after showing requires another showing and approval. It ends
-with order, priorities and dependencies; it never starts Projects.
+The stage first classifies the idea honestly as task, project or initiative and
+routes the first two. For an initiative it sharpens the idea with the owner,
+records the owner's approval of the shown initiative, then proposes a map of
+Projects that each deliver complete value, records approval of the map and
+creates/links map Projects in Idea. It never starts Projects.
 
-The decision's flat map is the approved snapshot. Current linked Projects are
-the map after approval; Project IDs in «Есть проект»/«Заведён» preserve item
-order within each priority. Re-entry shows states from Linear, status first:
-Canceled means отменён; Completed — завершён; Discovery, Ready, Delivery and
-later work states — в работе. Idea with a valid recorded Idea approval means
-разрешён к запуску; Idea without it — утверждён; an item without a Project —
-предложен. Report every other combination as observed, never as start permission.
-The path does not change Initiative status after Planned or close it: completed
-Projects do not prove the goal achieved. Closing by goal and post-delivery
-reassessment remain outside this path. Project body/Brief exception is in
-PC-005/PC-013; stage writing and recovery live in `skills/initiative/`.
+Re-entry resumes from the first missing step and shows Project states from
+Linear, status first: Canceled means отменён; Completed — завершён; Discovery,
+Ready, Delivery and later work states — в работе. Idea with a valid recorded
+Idea approval means разрешён к запуску; Idea without it — заведён; an item
+without a Project — предложен. The path does not change Initiative status after
+Planned or close it: completed Projects do not prove the result. Project
+body/Brief exception is in PC-005/PC-013; stage writing and recovery live in
+`skills/initiative/`.
 
 ## Idea
 
