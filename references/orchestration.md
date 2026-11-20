@@ -69,7 +69,9 @@ owner the start question and the start stays `by=owner`. On resume and every tim
 leave a wait, look for the latest such mark on Projects before Delivery and continue
 the chain from the existing records: the next missing stage, or only the pending
 start question for a Ready Project, asked once. Never relaunch a stage whose current version is
-recorded. The owner's correction in words reopens that stage; your approval of the
+recorded and complete; an unfinished one (e.g. Handoff with its package record but
+without Issues, checks or Ready) re-enters to finish the missing steps, reusing
+existing records without duplicates (`skills/handoff/references/run.md`). The owner's correction in words reopens that stage; your approval of the
 earlier version no longer counts. Stage approval does not
 execute external writes or spending. Configured deploy targets and the owner-approved rollback remain required.
 
