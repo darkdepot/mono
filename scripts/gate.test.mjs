@@ -1047,12 +1047,14 @@ test('historical replies are recovered for every configured bot without acceptin
 test('configured StatusContext bot is identified by its creator', async () => {
   const { isReviewBot, advanceBotWait } = await import('./gate.mjs');
   const now = 4_000_000, s = sample();
-  const status = { __typename: 'StatusContext', context: 'Custom Review', head, state: 'PENDING', createdAt: new Date(now).toISOString(), creator: { login: 'custom-review' } };
+  const status = { __typename: 'StatusContext', context: 'Custom Review', head, state: 'PENDING', createdAt: new Date(now).toISOString(), creator: { __typename: 'Bot', login: 'custom-review' } };
   assert.equal(isReviewBot({ login: 'custom-review[bot]' }, ['Custom Review'], [status]), true, 'GraphQL Bot login without suffix');
-  assert.equal(isReviewBot({ login: 'custom-review[bot]' }, ['Custom Review'], [{ ...status, creator: { login: 'custom-review[bot]' } }]), true);
+  assert.equal(isReviewBot({ login: 'custom-review[bot]' }, ['Custom Review'], [{ ...status, creator: { __typename: 'Bot', login: 'custom-review[bot]' } }]), true);
   assert.equal(isReviewBot({ login: 'vercel[bot]' }, ['Custom Review'], [status]), false);
   assert.equal(isReviewBot({ login: 'custom-review[bot]' }, ['Custom Review'], [{ ...status, creator: null }]), false);
-  assert.equal(isReviewBot({ login: 'sasha' }, ['Custom Review'], [{ ...status, creator: { login: 'sasha' } }]), false, 'a person posting a status is not a review bot');
+  assert.equal(isReviewBot({ login: 'sasha' }, ['Custom Review'], [{ ...status, creator: { __typename: 'User', login: 'sasha' } }]), false, 'a person posting a status is not a review bot');
+  assert.equal(isReviewBot({ login: 'vercel[bot]' }, ['Custom Review'], [{ ...status, creator: { __typename: 'User', login: 'vercel' } }]), false, 'a human creator never lends a bot identity');
+  assert.equal(isReviewBot({ login: 'custom-review[bot]' }, ['Custom Review'], [{ ...status, creator: { login: 'custom-review' } }]), false, 'creator type is required');
   assert.equal(isReviewBot({ login: 'custom-review[bot]' }, ['Other Review'], [status]), false);
   s.checks.pop(); s.checks.push(status); s.botSince = now - 60_000; s.headStartedAt = new Date(now - 30_000).toISOString();
   s.botComments = [{ user: { login: 'custom-review[bot]', type: 'Bot' }, body: 'Reviewed', createdAt: new Date(now).toISOString() }];

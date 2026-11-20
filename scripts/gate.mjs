@@ -574,7 +574,7 @@ export function readShipSnapshot(repo, number, deadline = Infinity, botSince = n
   requireThat(requiredChecks.every(name => typeof name === "string" && name.trim()), "invalid required checks");
   function checksFor(head) {
     let headStartedAt;
-    const checks = pages('query($owner:String!,$name:String!,$head:GitObjectID!,$after:String){repository(owner:$owner,name:$name){object(oid:$head){... on Commit{committedDate statusCheckRollup{contexts(first:100,after:$after){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{commit{oid} app{slug}}} ... on StatusContext{context state createdAt targetUrl creator{login}}} pageInfo{hasNextPage endCursor}}}}}}}',
+    const checks = pages('query($owner:String!,$name:String!,$head:GitObjectID!,$after:String){repository(owner:$owner,name:$name){object(oid:$head){... on Commit{committedDate statusCheckRollup{contexts(first:100,after:$after){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{commit{oid} app{slug}}} ... on StatusContext{context state createdAt targetUrl creator{__typename login}}} pageInfo{hasNextPage endCursor}}}}}}}',
       { owner, name, head }, d => { headStartedAt = d.repository.object.committedDate; return d.repository.object.statusCheckRollup?.contexts ?? { nodes: [], pageInfo: { hasNextPage: false } }; })
       .map(check => ({ ...check, head: check.__typename === "CheckRun" ? check.checkSuite?.commit?.oid : head }));
     return { head, headStartedAt, checks };
@@ -598,9 +598,10 @@ export function readShipSnapshot(repo, number, deadline = Infinity, botSince = n
 }
 
 // CheckRun authors come from their app; a StatusContext (commit status) names its author in creator.
-// Only the app's [bot] account matches, so a person who posts a status never becomes a review bot.
+// Only a Bot creator counts, so a person who posts a status never lends a review bot identity.
 const reviewBotLogin = check => {
-  const login = check.__typename === 'StatusContext' ? check.creator?.login : check.checkSuite?.app?.slug;
+  const login = check.__typename === 'StatusContext'
+    ? (check.creator?.__typename === 'Bot' ? check.creator.login : null) : check.checkSuite?.app?.slug;
   return login ? (login.endsWith('[bot]') ? login : `${login}[bot]`) : null;
 };
 export const isReviewBot = (user, names = ['Greptile Review', 'Devin Review'], checks = []) =>

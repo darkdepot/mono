@@ -603,6 +603,16 @@ test('new certificate ignores only the app bound to the configured custom review
   await f.call('merge'); assert.equal(f.read().merged, true);
 });
 
+test('new certificate ignores a configured custom review posted as a commit status by its creator', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += '\nБот: молчал';
+  const config = JSON.parse(fs.readFileSync(f.config)); config.orchestration = { ship: { botChecks: ['Custom Review'] } }; fs.writeFileSync(f.config, JSON.stringify(config));
+  f.mutate(s => {
+    s.checks.push({ __typename: 'StatusContext', context: 'Custom Review', state: 'PENDING', createdAt: new Date(T - 1000).toISOString(), creator: { __typename: 'Bot', login: 'custom-review' } });
+    s.comments.push({ user: { login: 'custom-review[bot]', type: 'Bot' }, body: 'P1: late review', created_at: new Date(T + 1).toISOString() });
+  });
+  await f.call('merge'); assert.equal(f.read().merged, true);
+});
+
 test('empty configured bot list still ignores a late known review bot after the new certificate', async t => {
   const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += '\nБот: нет';
   const config = JSON.parse(fs.readFileSync(f.config)); config.orchestration = { ship: { botChecks: [] } }; fs.writeFileSync(f.config, JSON.stringify(config));
