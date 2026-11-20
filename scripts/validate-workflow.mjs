@@ -119,10 +119,10 @@ function validateReadBudgetFixtures() {
       "Scout definitions must occur only as subagent reads, never as Idea inputs");
   });
   fixture("Initiative actual mandatory inputs and byte total", () => {
-    const expected = ["skills/initiative/SKILL.md", "skills/initiative/references/run.md"].sort();
+    const expected = ["skills/initiative/SKILL.md"];
     const budget = measureReadBudget(root, { skills: ["initiative"], includeConditional: false });
     require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
-      "Initiative mandatory file set must exclude conditional research, approval and project rules");
+      "Initiative mandatory file set must exclude the conditional Linear record and project rules");
     const total = expected.reduce((sum, file) => Buffer.byteLength(read(file)) + sum, 0);
     require(budget.bytes === total && total <= 20_480, "Initiative actual mandatory total differs or exceeds 20 KB");
   });
@@ -6228,16 +6228,15 @@ const REQUIRED_HEADINGS = [
   ["skills/initiative/SKILL.md", "Как ты думаешь"],
   ["skills/initiative/SKILL.md", "Как ты говоришь"],
   ["skills/initiative/SKILL.md", "Кто что решает"],
-  ["skills/initiative/references/run.md", "Вход"],
-  ["skills/initiative/references/run.md", "Части инициативы"],
-  ["skills/initiative/references/run.md", "Карта проектов"],
-  ["skills/initiative/references/run.md", "Повторный вход"],
-  ["skills/initiative/references/model.md", "Варианты модели"],
-  ["skills/initiative/references/record.md", "После ответа"],
-  ["skills/initiative/references/record.md", "Команда проверки"],
-  ["skills/initiative/references/projects.md", "Два прохода"],
-  ["skills/initiative/references/projects.md", "Повторный вход и состояния S10"],
-  ["skills/initiative/references/projects.md", "Итог после согласия"],
+  ["skills/initiative/SKILL.md", "1. Что это: задача, проект или инициатива"],
+  ["skills/initiative/SKILL.md", "2. Разогнать"],
+  ["skills/initiative/SKILL.md", "3. Оформить и утвердить"],
+  ["skills/initiative/SKILL.md", "4. Нарезать на проекты"],
+  ["skills/initiative/SKILL.md", "5. Повторный вход"],
+  ["skills/initiative/references/linear.md", "Утверждение"],
+  ["skills/initiative/references/linear.md", "Карта в «Решении»"],
+  ["skills/initiative/references/linear.md", "Создание проектов"],
+  ["skills/initiative/references/linear.md", "Состояния проектов при повторном входе"],
   ["skills/tech-evaluation/SKILL.md", "mono:tech-evaluation"],
   ["skills/tech-evaluation/references/spec.md", "Вход для исправления записи"],
   ["skills/tech-evaluation/SKILL.md", "Как ты думаешь"],
