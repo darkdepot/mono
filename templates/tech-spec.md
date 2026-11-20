@@ -4,8 +4,8 @@ Use Russian for Linear Tech Spec content and section headings. Keep code
 identifiers, file paths, commands, product labels, and UI copy in their native
 language.
 
-Choose only sections that carry a decision; never publish empty headings or
-repeat the PRD. Failures, release and rollback are conditional, not a checklist.
+Only sections that carry a decision; no empty headings, no PRD retelling;
+up to 15 KB. Failures, release and rollback only when relevant.
 
 ```markdown
 ## Кратко
@@ -28,8 +28,7 @@ When relevant, add populated sections: «Исходные требования»
 object shapes and edge records with sampling date/version, or the first probe.
 
 Apply `references/contracts/tech-spec.md`: stable U IDs, R/AE or cross-cutting
-trace, deferred unknowns. Directional diagrams/pseudocode only; no copy-paste
-code/shell choreography.
+trace, deferred unknowns. Directional pseudocode only; no copy-paste code.
 
 Optional nested manifest: indented path/hash items and blank lines are allowed;
 column-zero fences contain raw UTF-8 with final LF;
