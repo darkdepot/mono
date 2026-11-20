@@ -1,81 +1,86 @@
 # Ship Feedback Loop
 
-`mono:ship` takes the draft PR out of draft and stabilizes it; deploy owns merge/version proof/checks/rollback/outcome and closeout.
+`mono:ship` stabilizes the draft PR; deploy owns merge, delivery and closeout.
 
 ## Inputs
 
-Inputs: package/preflight, PR number/URL/head, docs/feedback, Linear snapshot.
+Approved package, current-head preflight, PR, docs/feedback and Linear snapshot.
 
 ## Review Bot Configuration Check
 
-Inspect bot re-review-on-push/re-request first. Fix repetition through config or record the environment; no round goes to bot config.
+Check re-review-on-push/re-request; fix config or record its absence, without a review round.
+`orchestration.ship.botChecks` pins unique check names, default ["Greptile Review"].
+An empty list means no bot; workers cannot override pins. Bots must not be branch-required CI.
 
 ## Loop
 
-1. Match PR to Issue/package/preflight; check bot config.
-2. Refresh head before waits/docs. Run docs on each head; a docs push restarts docs/review.
-3. Poll checks/reviews/threads/Greptile to terminal/timeout; prefer Greptile MCP, else identifying GitHub checks/statuses.
-4. No actionable feedback: quiet period. Otherwise settle it per skills/ship step 8 (`scripts/ship-pr.mjs`); no external resolver.
-5. Repeat to terminal. A remark already settled (fixed, declined with evidence) is closed with a published reply citing the prior thread/commit; it consumes no round. Never weaken/delete/bypass tests.
+1. Match PR/Issue/preflight. Refresh head before docs/waits; each new head needs docs/proof.
+2. Run gate.mjs ship while polling CI and feedback. Its task-level Ship bot state stores
+   startedAt at the first fully green mandatory CI (red/pending CI never opens it).
+   Recover earlier green PR heads of this attempt on entry.
+   Thirty minutes later silence becomes «молчал», without park or amendment.
+   Restart, fixes and new gate state files never reset this task clock. With []: «нет».
+3. Timely reply: fix P1 in this PR; fix P2 or publish a reasoned reply. Keep decisions
+   in judgment.botRemarks; threads need published closure replies. Subsequent heads
+   need CI/proof, but never another bot wait. Outcome remains «ответил».
+4. Settle feedback via skills/ship step 8 and ship-pr.mjs. Previously settled findings
+   get a published reference to the prior reply/commit, without a round. Never weaken tests.
+5. Finish the quiet period and gates; pending CI is never green.
 
 ## Defaults
 
 orchestration.delivery: pollSec=10, quietSec=120, evidenceLimitSec=7200 (positive
-seconds). Review rounds are counted per task attempt, at most three. The PR-attempt
-deadline survives heads; head/evidence changes restart quiet time. Use the
-installed gate, never another prose timer.
+seconds); at most three review rounds. Evidence and quiet clocks remain separate
+from the fixed bot limit. Bot waiting can extend the evidence deadline through
+its thirty minutes and quiet pause; CI/read failures still expire.
 
 ## Authorized Ship Fix
 
-Orchestrator's ship-fix amendment names the next ship-gate attempt: new
-head/stateFile/preflight proof, preserved old state, same task attempt. No machine bound on ship-gate attempts; the unchanged window waives nothing, costing time.
-The fixed head needs one narrow review round within the attempt's three. Never reset old deadlines.
-
-Required bots: attempt pins from orchestration.ship.botChecks (default
-["Greptile Review"]). Only orchestrator accept.mjs amend --bot-unavailable "<reason>"
-grants unavailability for this task attempt. Worker policy cannot weaken these
-requirements; absent a decision, wait for head bot evidence until the deadline.
+A ship-fix amendment names the next gate attempt, new head/stateFile/proof; preserve
+old state and task attempt. No gate-attempt cap; one narrow round within the task's
+three. Task bot state stays in reports/<Issue>-a<attempt>-ship-bot.json (standalone:
+ship-bot-<owner>-<repo>-<PR>.json beside stateFile, retain it). Never reset it or old evidence deadlines.
 
 ## Published Replies
 
-Publish closure rationale; drafts remain unresolved. Before green check own reviews:
+Publish rationale; drafts stay unresolved. Own pending reviews must be empty:
 
 ```bash
 gh api repos/<owner>/<repo>/pulls/<n>/reviews --jq '.[] | select(.state=="PENDING")'
 ```
 
-Worker-owned output must be empty.
-
 ## Green Exit
 
-Run installed gate.mjs ship --request <json>: open PR/stable head; docs on head,
-unchanged or authorized unavailable; pre-ship review/readiness passed; head CI
-green/accepted terminal non-blocking; head Greptile complete/authorized unavailable;
-no unresolved threads, own drafts, change requests or unaddressed bot remarks;
-published closure rationale; quiet pause before deadline. Require MERGEABLE/CLEAN,
-or UNSTABLE only for accepted terminal failures with nothing pending. Await
-UNKNOWN/empty rollups. CheckRun/StatusContext must prove head bot checks, not old
-reviews. Before judgment record sealed head/merge-base preflight proof; heads stale
-proof. Return gate reason. Record Rules API 403/404 unavailable; keep other gates.
-Retry other reads to deadline; evidence-limit parks, waiving nothing.
+Installed gate.mjs ship --request <json>: open stable head; sealed head/merge-base
+preflight; pre-ship review/readiness passed; docs run/unchanged/authorized unavailable;
+CI green/accepted terminal non-blocking; bot replied/timed out/absent; no unresolved
+threads, own drafts, change requests or unaddressed remarks; published replies;
+quiet pause. MERGEABLE/CLEAN, or UNSTABLE only for accepted failures. Await UNKNOWN
+and empty rollups. Rules API 403/404 is unavailable, not proof of success.
+Other reads retry to the evidence deadline; their expiry still parks.
 
 ## Green Certificate
 
-Store full `mono-ship green certificate` from `skills/ship/SKILL.md`
-in Linear for recovery, including successors/published replies.
+Store the full skill certificate in Linear, including replies/successors and exactly
+one «Бот: ответил|молчал|нет» from the gate's bot outcome. Deploy uses this line to
+ignore unfinished bot checks and bot remarks after Ship; CI and owner remarks always
+block. Without the line Deploy retains the legacy behavior.
 
 ## Review Status Reporting
 
-Report preflight/pre-ship (including missing/skipped), docs/head/reviewers, fixes/commit, thread count/unknown, refreshed head/merge/CI, certificate recorded/not. Separate blockers/nits/product-UX-scope. Name unrun manual/browser/prod/mobile/deploy/acceptance; green proves none.
+Name preflight/pre-ship, docs/head/reviewers, fixes, threads, CI/merge, bot outcome and
+certificate publication. Disclose unrun manual/browser/prod/mobile/deploy/acceptance.
 
 ## Needs-Human Exit
 
-`needs-human`: repeated failed/skipped Greptile, merge conflicts, product/UX/business/scope decisions, unrelated dirty files or another actor changing head during fixes. Deploy owns approval; it never gates ship.
+Conflicts, product/UX/scope decisions, unrelated dirty files or another writer's head
+change need a decision. Deploy owns merge approval.
 
 ## Blocked Or Timed Out
 
-`blocked`: missing tools/auth/PR/Linear context; name next action. `timed-out`: checks/reviews/Greptile/loop expire; expiry precedes needs-human unless a human decision is known.
+Missing tools/auth/context: blocked. CI/read deadlines: timed-out/evidence-limit.
+Bot silence alone never parks a new attempt.
 
 ## Linear Comments
 
-Queue Russian comments: PR/review, docs/head, completion/stop, certificate recorded/blocked, decisions. Human decisions need exact question/PR link.
+Queue Russian results/decisions/certificate; dispatch writes follow worker-contract.

@@ -397,8 +397,8 @@ export function positive(value, fallback, name) {
 }
 export function shipBotChecks(config = {}) {
   const checks = config.orchestration?.ship?.botChecks === undefined ? ["Greptile Review"] : config.orchestration.ship.botChecks;
-  if (!Array.isArray(checks) || !checks.length || checks.some(name => typeof name !== "string" || !name.trim() || name !== name.trim()) ||
-      new Set(checks).size !== checks.length) throw new Error("orchestration.ship.botChecks must be a nonempty list of unique bot names");
+  if (!Array.isArray(checks) || checks.some(name => typeof name !== "string" || !name.trim() || name !== name.trim()) ||
+      new Set(checks).size !== checks.length) throw new Error("orchestration.ship.botChecks must be a list of unique bot names");
   return [...checks];
 }
 

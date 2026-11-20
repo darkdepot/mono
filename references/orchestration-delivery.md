@@ -299,16 +299,36 @@ The adapter recomputes the report/write digests, verifies the active session and
 returns unknown for absent/stale/foreign observations. apply prints a connector
 instruction on stderr and returns no success result. No command writes to Linear.
 
-Ship pins capture orchestration.ship.botChecks from the immutable project base
-(default ["Greptile Review"], nonempty unique names). A worker cannot override this
-list. For a confirmed bot outage, use accept.mjs amend --bot-unavailable "<reason>"
-with the current --issue/--attempt and recovery --text; the decision is scoped to
-that task attempt and does not carry into another attempt. A new amendment or a retry of a prepared,
-undelivered amendment with `--bot-unavailable` is refused when the current HEAD, base and review contract
-have a reusable completed round and at least `ROUND_LIMIT − 1` rounds are spent. A ship-fix amendment
-names the next ship-gate attempt number; the worker keeps the old state and uses
-a new stateFile for the new head within the same task attempt. Ship-gate attempts
-have no machine bound; review/class/cap gates and evidence-window code are unchanged.
+Ship pins capture orchestration.ship.botChecks from the immutable base: unique
+names, default ["Greptile Review"], [] means no bot. Workers cannot override them.
+New attempts use the pinned Ship gate's persistent thirty-minute bot clock from
+first fully green mandatory CI; no reset on fixes/restart, no bot-timeout park.
+Timely P1 is fixed in the PR, P2 fixed or answered in botRemarks; no re-wait on later heads.
+The certificate records Бот: ответил|молчал|нет; installed Deploy waives only bot
+checks/late bot remarks with that line. CI and owner remarks remain blockers.
+Bot checks must not be required by branch protection (Mono requires only validate).
+Products set [] only after installing this compatible release and restarting orchestration.
+
+Old pinned attempts keep their old gate: thirty minutes after first fully green
+mandatory CI, apply accept.mjs amend --bot-unavailable "<reason>" with current
+--issue/--attempt and --text. If accept refuses because the unchanged HEAD/base/
+review contract has a completed round and ROUND_LIMIT − 1 rounds spent, start a new
+attempt on that head. Never leave indefinite bot waiting. Retain ROUND_LIMIT=3,
+REVIEW_PRODUCER, verification fields, PR body marker and amendment protocol.
+A ship-fix still names a new gate attempt/stateFile/head/proof and preserves old
+state; task bot clock in reports/<Issue>-a<attempt>-ship-bot.json survives all of them.
+
+### Late bot feedback
+
+At every product deploy and orchestrator restoration, read bot reviews/comments
+on merged PRs from the last processed point in the journal: last update time and id.
+Read all pages and select updates after that point, with no age window; include inline reviews.
+For reviews without updatedAt, reread prior reviews and compare their bodies and inline
+comments with the last processed version; an edit is new feedback even for an older id.
+Turn every late P1/P2 into a correction Issue, deduplicating by
+PR/review id and finding. Record/read back the Issue before advancing the journal
+cursor. Failed writes leave the point unchanged. On first adoption, create the four
+known outstanding P1 Issues immediately; the PR worker does not own these writes.
 
 Launch pins are immutable. `accept.mjs amend --root DIR --issue KEY --attempt N
 --text TEXT` writes `pins.v<n>.json` and prepares a resume file/request before

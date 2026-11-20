@@ -45,7 +45,7 @@ implement/preflight. Нужна утверждённая задача Linear: н
    круга, перед `ready` и перед зелёным. Каждое из `remarks`: исправлено в чистом
    круге или решено без кода `check --pr` (он же проверяет описание; назван в
    botRemarks evidence). Затем `ready`; бот молчит: один `mention`. In Review и
-   чип PR в очередь после выхода из черновика.
+   чип PR в очередь после выхода из черновика; при `botChecks: []` mention не нужен.
 7. Documentation workflow после выхода из черновика; нет процесса: недоступен с причиной.
 8. Позднее замечание или упавший CI: решено без кода через `check` или неопасное
    стало наследником; нужна правка: `undo`, стоп «не сошлось». Комментарий
@@ -80,7 +80,7 @@ Preflight: <certificate reference + status>
 Pre-ship review: <run/skipped + outcome>
 Documentation workflow: <run/skipped/not configured + head SHA effect>
 CI: <green/non-blocking summary>
-Greptile: <completed/unavailable + outcome>
+Бот: <ответил|молчал|нет>
 Unresolved review threads: <0/count/unknown>
 Merge state: <clean/blocked/conflict/unknown>
 Checked: <states inspected>

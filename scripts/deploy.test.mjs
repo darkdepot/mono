@@ -43,19 +43,20 @@ if(name==='gh') {
   if(q.includes('reviewThreads')) send({data:{repository:{pullRequest:{reviewThreads:conn(s.threads)}}}});
   if(q.includes('reviews(')) send({data:{repository:{pullRequest:{reviews:s.reviewPages?s.reviewPages[a.some(v=>v.startsWith('after='))?1:0]:conn(s.reviewBodies||s.reviews.map(r=>({...r,commit:{oid:r.commit_id},submittedAt:r.submitted_at,updatedAt:r.updated_at||r.submitted_at})))}}}});
   if(q.includes('node(id:')) {const id=a.find(x=>x.startsWith('id=')).slice(3); send({data:{node:{comments:conn(s.threads.find(t=>t.id===id).comments)}}});}
-  if(q.includes('statusCheckRollup')) send({data:{repository:{object:{statusCheckRollup:{contexts:conn(s.checks)}}}}});
+  if(q.includes('statusCheckRollup')) { const head=a.find(x=>x.startsWith('head=')).slice(5); send({data:{repository:{object:{committedDate:s.headStartedAt,statusCheckRollup:{contexts:conn(s.historicalChecks?.[head]||s.checks)}}}}}); }
   send({data:{repository:{pullRequest:{headRefOid:s.head,state:s.merged?'MERGED':'OPEN',mergeStateStatus:s.mergeState||'CLEAN',mergeable:'MERGEABLE',baseRefName:'main',baseRefOid:s.main,baseRef:null}}}});
  }
  if(a[1]==='user') send({login:'owner'});
- if(endpoint?.includes('/rules/')) send([]);
+ if(endpoint?.includes('/rules/')) send(s.requiredRules || []);
  if(endpoint?.endsWith('/reviews')) send([s.reviews]);
  if(endpoint?.endsWith('/comments')) send([endpoint.includes('/issues/')?s.comments:s.reviewComments]);
+ if(endpoint?.endsWith('/commits')) send([s.commitHistory||[]]);
  if(endpoint?.endsWith('/files')) { if(s.filesError) fail('PR file list unavailable'); send([s.files]); }
  if(endpoint?.endsWith('/commits/main')) send({sha:s.main});
  if(endpoint?.includes('/commits/v')) send({sha:s.tags?.[endpoint.split('/').at(-1)]||'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'});
  if(endpoint?.includes('/compare/')) { const pair=endpoint.split('/compare/')[1]; send(s.comparisons[pair]||{status:pair.split('...')[0]===pair.split('...')[1]?'identical':'behind',files:[]}); }
  if(endpoint?.includes('/check-runs')) send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'completed',conclusion:s.landingRed?'failure':'success',completed_at:new Date(s.clock).toISOString()}]});
- if(endpoint?.endsWith('/pulls/1')) send({number:1,changed_files:Object.hasOwn(s,'changedFiles')?s.changedFiles:s.files.length,user:{login:'owner'},head:{sha:s.head},base:{ref:'main',repo:{full_name:'test/product'}},state:s.merged?'closed':'open',merged:s.merged,mergeable_state:s.mergeState==='BLOCKED'?'blocked':'clean',merged_at:s.merged?new Date(s.clock- (s.mergeAge||0)).toISOString():null,merge_commit_sha:s.merge});
+ if(endpoint?.endsWith('/pulls/1')) send({number:1,changed_files:Object.hasOwn(s,'changedFiles')?s.changedFiles:s.files.length,user:{login:'owner'},head:{sha:s.head},base:{ref:'main',repo:{full_name:'test/product'}},state:s.merged?'closed':'open',merged:s.merged,mergeable_state:(s.mergeState||'CLEAN').toLowerCase(),merged_at:s.merged?new Date(s.clock- (s.mergeAge||0)).toISOString():null,merge_commit_sha:s.merge});
  fail('unexpected gh '+JSON.stringify(a));
 }
 if(name==='vercel') {
@@ -500,4 +501,121 @@ test('a3-r2 F10: old red attempt cannot combine with one red on restarted proces
  const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);await f.call('merge');await f.call('local');await f.check('scenario','red',M,'local',2);
  f.mutate(s=>{s.clock++;s.local.startedAt=s.clock;});await f.call('local');await f.check('scenario','red',M,'local',1);
  assert.equal((await f.call('local')).state,'awaiting-local-scenario-repeat');assert.equal(f.read().calls.some(c=>c[0]==='local'&&c[1]==='restore'),false);
+});
+
+
+for (const outcome of ['ответил', 'молчал', 'нет']) test(`new Ship certificate ${outcome} admits pending bot and late bot remarks, retaining exact-head merge`, async t => {
+  const f = fixture(t, [{ kind: 'pack' }]);
+  f.request.certificate += `\nБот: ${outcome}`;
+  f.mutate(s => {
+    s.checks.push({ __typename: 'CheckRun', name: 'Greptile Review', status: 'IN_PROGRESS', conclusion: null, checkSuite: { commit: { oid: H } } });
+    s.comments.push({ user: { login: 'greptile-apps[bot]', type: 'Bot' }, body: 'P1: late finding', created_at: new Date(T + 1).toISOString() });
+  });
+  await f.call('merge'); assert.equal(f.read().merged, true);
+});
+for (const scenario of ['pending bot', 'late bot', 'red CI', 'pending CI', 'owner', 'CI remark']) test(`Ship bot policy keeps ${scenario} blocked where required`, async t => {
+  const f = fixture(t, [{ kind: 'pack' }]);
+  if (!['pending bot', 'late bot'].includes(scenario)) f.request.certificate += '\nБот: молчал';
+  f.mutate(s => {
+    if (scenario === 'pending bot') s.checks.push({ __typename: 'CheckRun', name: 'Greptile Review', status: 'IN_PROGRESS', conclusion: null, checkSuite: { commit: { oid: H } } });
+    if (scenario === 'red CI') s.checks[0].conclusion = 'FAILURE';
+    if (scenario === 'pending CI') s.checks[0].status = 'IN_PROGRESS';
+    if (['late bot', 'owner', 'CI remark'].includes(scenario)) s.comments.push({ user: { login: scenario === 'late bot' ? 'greptile-apps[bot]' : scenario === 'owner' ? 'owner' : 'github-actions[bot]', type: scenario === 'owner' ? 'User' : 'Bot' }, body: 'fix the broken path', created_at: new Date(T + 1).toISOString() });
+  });
+  await assert.rejects(f.call('merge'), /checks|new remarks/);
+  assert.equal(f.read().merged, false);
+});
+
+
+test('new bot certificate never waives branch-required bot checks', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += '\nБот: молчал';
+  f.mutate(s => {
+    s.requiredRules = [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'Greptile Review' }] } }];
+    s.checks.push({ __typename: 'CheckRun', name: 'Greptile Review', status: 'IN_PROGRESS', conclusion: null, checkSuite: { commit: { oid: H } } });
+  });
+  await assert.rejects(f.call('merge'), /checks/); assert.equal(f.read().merged, false);
+});
+for (const ownerReply of [false, true]) test(`late bot thread is ignored but owner reply blocks: ${ownerReply}`, async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += '\nБот: ответил';
+  f.mutate(s => {
+    s.threads = [{ id: 'late-thread', isResolved: false, comments: [{ id: 'bot-comment', author: { login: 'greptile-apps[bot]' }, body: 'P1: late thread', publishedAt: new Date(T + 1).toISOString() }] }];
+    s.reviewComments = [{ node_id: 'bot-comment', user: { login: 'greptile-apps[bot]', type: 'Bot' }, body: 'P1: late thread', created_at: new Date(T + 1).toISOString() }];
+    if (ownerReply) s.reviewComments.push({ node_id: 'owner-comment', user: { login: 'owner' }, body: 'please fix this', created_at: new Date(T + 2).toISOString() });
+  });
+  if (ownerReply) await assert.rejects(f.call('merge'), /new remarks/); else await f.call('merge');
+  assert.equal(f.read().merged, !ownerReply);
+});
+for (const line of ['Бот: unknown', 'Бот: молчал\nБот: ответил', 'Бот:нет']) test(`invalid bot certificate cannot waive checks: ${line}`, async t => {
+  const f = fixture(t); f.request.certificate += `\n${line}`;
+  await assert.rejects(f.call('merge'), /certificate/); assert.equal(f.read().merged, false);
+});
+
+test('GitHub snapshot retains CI automation for disposition while distinguishing review bots', async t => {
+  const f = fixture(t);
+  f.mutate(s => s.comments.push(
+    { node_id: 'CI', user: { login: 'github-actions[bot]', type: 'Bot' }, body: 'CI warning', created_at: new Date(T).toISOString() },
+    { node_id: 'BOT', user: { login: 'greptile-apps[bot]', type: 'Bot' }, body: 'Review complete', created_at: new Date(T).toISOString() }
+  ));
+  const { readShipSnapshot } = await import('./gate.mjs');
+  const snapshot = readShipSnapshot('test/product', 1);
+  assert.equal(snapshot.botComments.find(comment => comment.id === 'CI').reviewBot, false);
+  assert.equal(snapshot.botComments.find(comment => comment.id === 'BOT').reviewBot, true);
+});
+
+for (const login of ['vercel[bot]', 'buildkite[bot]', 'codecov[bot]']) test(`new certificate still blocks CI app remarks: ${login}`, async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += '\nБот: молчал';
+  f.mutate(s => s.comments.push({ user: { login, type: 'Bot' }, body: 'CI failed', created_at: new Date(T + 1).toISOString() }));
+  await assert.rejects(f.call('merge'), /new remarks/); assert.equal(f.read().merged, false);
+});
+for (const outcome of ['ответил', 'молчал', 'нет']) test(`new certificate permits UNSTABLE caused only by excluded bot: ${outcome}`, async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += `\nБот: ${outcome}`;
+  f.mutate(s => { s.mergeState = 'UNSTABLE'; s.checks.push({ __typename: 'CheckRun', name: 'Greptile Review', status: 'IN_PROGRESS', checkSuite: { commit: { oid: H } } }); });
+  await f.call('merge'); assert.equal(f.read().merged, true);
+});
+test('UNSTABLE without an excluded bot remains blocked', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += '\nБот: молчал';
+  f.mutate(s => s.mergeState = 'UNSTABLE');
+  await assert.rejects(f.call('merge'), /merge state/); assert.equal(f.read().merged, false);
+});
+
+test('GitHub first entry reads earlier commit checks and a pre-CI review comment', async t => {
+  const f = fixture(t); f.mutate(s => {
+    s.headStartedAt = new Date(T - 5000).toISOString();
+    s.checks[0].completedAt = new Date(T - 1000).toISOString();
+    s.commitHistory = [{ sha: F }, { sha: H }];
+    s.historicalChecks = { [F]: [{ ...s.checks[0], completedAt: new Date(T - 3000).toISOString(), checkSuite: { commit: { oid: F } } }] };
+    s.comments.push({ node_id: 'early', user: { login: 'greptile-apps[bot]', type: 'Bot' }, body: 'Reviewed', created_at: new Date(T - 4000).toISOString() });
+  });
+  const { readShipSnapshot, advanceBotWait } = await import('./gate.mjs');
+  const snapshot = readShipSnapshot('test/product', 1, Infinity, T - 9000);
+  assert.equal(snapshot.ciHistory.length, 1);
+  const clock = advanceBotWait(null, snapshot, { botChecks: ['Greptile Review'] }, T);
+  assert.equal(clock.startedAt, T - 3000); assert.equal(clock.outcome, 'ответил');
+});
+
+test('new certificate ignores only the app bound to the configured custom review check', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += '\nБот: молчал';
+  const config = JSON.parse(fs.readFileSync(f.config)); config.orchestration = { ship: { botChecks: ['Custom Review'] } }; fs.writeFileSync(f.config, JSON.stringify(config));
+  f.mutate(s => {
+    s.checks.push({ __typename: 'CheckRun', name: 'Custom Review', status: 'IN_PROGRESS', conclusion: null, checkSuite: { app: { slug: 'custom-review' }, commit: { oid: H } } });
+    s.comments.push({ user: { login: 'custom-review[bot]', type: 'Bot' }, body: 'P1: late review', created_at: new Date(T + 1).toISOString() });
+  });
+  await f.call('merge'); assert.equal(f.read().merged, true);
+});
+
+test('new certificate ignores a configured custom review posted as a commit status by its creator', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += '\nБот: молчал';
+  const config = JSON.parse(fs.readFileSync(f.config)); config.orchestration = { ship: { botChecks: ['Custom Review'] } }; fs.writeFileSync(f.config, JSON.stringify(config));
+  f.mutate(s => {
+    s.checks.push({ __typename: 'StatusContext', context: 'Custom Review', state: 'PENDING', createdAt: new Date(T - 1000).toISOString(), creator: { __typename: 'Bot', login: 'custom-review' } });
+    s.comments.push({ user: { login: 'custom-review[bot]', type: 'Bot' }, body: 'P1: late review', created_at: new Date(T + 1).toISOString() });
+  });
+  await f.call('merge'); assert.equal(f.read().merged, true);
+});
+
+test('empty configured bot list still ignores a late known review bot after the new certificate', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += '\nБот: нет';
+  const config = JSON.parse(fs.readFileSync(f.config)); config.orchestration = { ship: { botChecks: [] } }; fs.writeFileSync(f.config, JSON.stringify(config));
+  f.mutate(s => s.comments.push({ user: { login: 'greptile-apps[bot]', type: 'Bot' }, body: 'late review', created_at: new Date(T + 1).toISOString() }));
+  await f.call('merge'); assert.equal(f.read().merged, true);
 });
