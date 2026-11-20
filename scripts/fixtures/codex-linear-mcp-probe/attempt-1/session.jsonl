@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"01a1fb2a-dbeb-74e0-b06d-234d9d8a3af8"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/owner/.codex/config.toml."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Выполню вызовы Linear MCP в указанном порядке, без повторов. При ошибке или отказе сразу остановлюсь.\n"}}
+{"type":"item.started","item":{"id":"item_2","type":"mcp_tool_call","server":"linear","tool":"save_comment","arguments":{"issueId":"MONO-449","body":"Проба MONO-449 nonce 44f1b1649bb7b1aa: исполнитель Codex пишет в Linear из песочницы"},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"linear","tool":"save_comment","arguments":{"issueId":"MONO-449","body":"Проба MONO-449 nonce 44f1b1649bb7b1aa: исполнитель Codex пишет в Linear из песочницы"},"result":null,"error":{"message":"MCP tool call requires approval, but approval policy is never"},"status":"failed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"### mcp__linear__save_comment({\"issueId\":\"MONO-449\",\"body\":\"Проба MONO-449 nonce 44f1b1649bb7b1aa: исполнитель Codex пишет в Linear из песочницы\"})\n\n```text\nMCP tool call requires approval, but approval policy is never\n```"}}
+{"type":"turn.completed","usage":{"input_tokens":159057,"cached_input_tokens":127744,"cache_write_input_tokens":0,"output_tokens":297,"reasoning_output_tokens":0}}
