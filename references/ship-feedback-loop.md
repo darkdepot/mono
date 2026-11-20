@@ -17,6 +17,7 @@ An empty list means no bot; workers cannot override pins. Bots must not be branc
 1. Match PR/Issue/preflight. Refresh head before docs/waits; each new head needs docs/proof.
 2. Run gate.mjs ship while polling CI and feedback. Its task-level Ship bot state stores
    startedAt at the first fully green mandatory CI (red/pending CI never opens it).
+   Recover earlier green PR heads of this attempt on entry.
    Thirty minutes later silence becomes «молчал», without park or amendment.
    Restart, fixes and new gate state files never reset this task clock. With []: «нет».
 3. Timely reply: fix P1 in this PR; fix P2 or publish a reasoned reply. Keep decisions

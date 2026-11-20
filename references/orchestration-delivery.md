@@ -321,9 +321,11 @@ state; task bot clock in reports/<Issue>-a<attempt>-ship-bot.json survives all o
 ### Late bot feedback
 
 At every product deploy and orchestrator restoration, read bot reviews/comments
-on merged PRs from the last processed point in the journal: review time and id.
-Read all pages after that point, with no age window; include inline reviews and
-edited feedback. Turn every late P1/P2 into a correction Issue, deduplicating by
+on merged PRs from the last processed point in the journal: last update time and id.
+Read all pages and select updates after that point, with no age window; include inline reviews.
+For reviews without updatedAt, reread prior reviews and compare their bodies and inline
+comments with the last processed version; an edit is new feedback even for an older id.
+Turn every late P1/P2 into a correction Issue, deduplicating by
 PR/review id and finding. Record/read back the Issue before advancing the journal
 cursor. Failed writes leave the point unchanged. On first adoption, create the four
 known outstanding P1 Issues immediately; the PR worker does not own these writes.

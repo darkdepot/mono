@@ -192,9 +192,12 @@ export async function runDeploy(command, request, clock = {}) {
       if (!pr.merged) {
         const snapshot = readShipSnapshot(request.repo, binding.pr);
         need(snapshot.head === request.head && snapshot.state === 'OPEN', 'head changed; back to Ship');
-        need(snapshot.mergeStateStatus === 'CLEAN' && pr.mergeable_state === 'clean', 'merge state is not clean');
         const bots = binding.bot ? shipBotChecks(config) : [];
-        need(snapshot.checks.filter(check => !binding.bot || !isBotCheck(check.name ?? check.context, snapshot, { botChecks: bots })).every(check => check.head === request.head && (check.__typename === 'StatusContext' ? check.state === 'SUCCESS' : check.status === 'COMPLETED' && ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion))), 'checks unfinished or red');
+        const waived = check => !!binding.bot && isBotCheck(check.name ?? check.context, snapshot, { botChecks: bots });
+        const excludedBot = snapshot.checks.some(check => waived(check) && (check.__typename === 'StatusContext' ? check.state !== 'SUCCESS' : check.status !== 'COMPLETED' || check.conclusion !== 'SUCCESS'));
+        need((snapshot.mergeStateStatus === 'CLEAN' && pr.mergeable_state === 'clean') ||
+          (excludedBot && snapshot.mergeable === 'MERGEABLE' && snapshot.mergeStateStatus === 'UNSTABLE' && pr.mergeable_state === 'unstable'), 'merge state is not clean');
+        need(snapshot.checks.filter(check => !waived(check)).every(check => check.head === request.head && (check.__typename === 'StatusContext' ? check.state === 'SUCCESS' : check.status === 'COMPLETED' && ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion))), 'checks unfinished or red');
         need(!afterShip({ snapshot, ...readPrPublications(request.repo, binding.pr, { includeReviews: true }) }, request.head, !!binding.bot).length, 'new remarks after Ship');
         requireQaPassed({ root: request.root, config, issue: request.issue, head: request.head, shipCertificate: certificate });
         if (config.landing?.validation) {

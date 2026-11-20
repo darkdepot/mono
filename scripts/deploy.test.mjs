@@ -43,19 +43,20 @@ if(name==='gh') {
   if(q.includes('reviewThreads')) send({data:{repository:{pullRequest:{reviewThreads:conn(s.threads)}}}});
   if(q.includes('reviews(')) send({data:{repository:{pullRequest:{reviews:s.reviewPages?s.reviewPages[a.some(v=>v.startsWith('after='))?1:0]:conn(s.reviewBodies||s.reviews.map(r=>({...r,commit:{oid:r.commit_id},submittedAt:r.submitted_at,updatedAt:r.updated_at||r.submitted_at})))}}}});
   if(q.includes('node(id:')) {const id=a.find(x=>x.startsWith('id=')).slice(3); send({data:{node:{comments:conn(s.threads.find(t=>t.id===id).comments)}}});}
-  if(q.includes('statusCheckRollup')) send({data:{repository:{object:{statusCheckRollup:{contexts:conn(s.checks)}}}}});
+  if(q.includes('statusCheckRollup')) { const head=a.find(x=>x.startsWith('head=')).slice(5); send({data:{repository:{object:{committedDate:s.headStartedAt,statusCheckRollup:{contexts:conn(s.historicalChecks?.[head]||s.checks)}}}}}); }
   send({data:{repository:{pullRequest:{headRefOid:s.head,state:s.merged?'MERGED':'OPEN',mergeStateStatus:s.mergeState||'CLEAN',mergeable:'MERGEABLE',baseRefName:'main',baseRefOid:s.main,baseRef:null}}}});
  }
  if(a[1]==='user') send({login:'owner'});
  if(endpoint?.includes('/rules/')) send(s.requiredRules || []);
  if(endpoint?.endsWith('/reviews')) send([s.reviews]);
  if(endpoint?.endsWith('/comments')) send([endpoint.includes('/issues/')?s.comments:s.reviewComments]);
+ if(endpoint?.endsWith('/commits')) send([s.commitHistory||[]]);
  if(endpoint?.endsWith('/files')) { if(s.filesError) fail('PR file list unavailable'); send([s.files]); }
  if(endpoint?.endsWith('/commits/main')) send({sha:s.main});
  if(endpoint?.includes('/commits/v')) send({sha:s.tags?.[endpoint.split('/').at(-1)]||'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'});
  if(endpoint?.includes('/compare/')) { const pair=endpoint.split('/compare/')[1]; send(s.comparisons[pair]||{status:pair.split('...')[0]===pair.split('...')[1]?'identical':'behind',files:[]}); }
  if(endpoint?.includes('/check-runs')) send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'completed',conclusion:s.landingRed?'failure':'success',completed_at:new Date(s.clock).toISOString()}]});
- if(endpoint?.endsWith('/pulls/1')) send({number:1,changed_files:Object.hasOwn(s,'changedFiles')?s.changedFiles:s.files.length,user:{login:'owner'},head:{sha:s.head},base:{ref:'main',repo:{full_name:'test/product'}},state:s.merged?'closed':'open',merged:s.merged,mergeable_state:s.mergeState==='BLOCKED'?'blocked':'clean',merged_at:s.merged?new Date(s.clock- (s.mergeAge||0)).toISOString():null,merge_commit_sha:s.merge});
+ if(endpoint?.endsWith('/pulls/1')) send({number:1,changed_files:Object.hasOwn(s,'changedFiles')?s.changedFiles:s.files.length,user:{login:'owner'},head:{sha:s.head},base:{ref:'main',repo:{full_name:'test/product'}},state:s.merged?'closed':'open',merged:s.merged,mergeable_state:(s.mergeState||'CLEAN').toLowerCase(),merged_at:s.merged?new Date(s.clock- (s.mergeAge||0)).toISOString():null,merge_commit_sha:s.merge});
  fail('unexpected gh '+JSON.stringify(a));
 }
 if(name==='vercel') {
@@ -559,4 +560,35 @@ test('GitHub snapshot retains CI automation for disposition while distinguishing
   const snapshot = readShipSnapshot('test/product', 1);
   assert.equal(snapshot.botComments.find(comment => comment.id === 'CI').reviewBot, false);
   assert.equal(snapshot.botComments.find(comment => comment.id === 'BOT').reviewBot, true);
+});
+
+for (const login of ['vercel[bot]', 'buildkite[bot]', 'codecov[bot]']) test(`new certificate still blocks CI app remarks: ${login}`, async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += '\nБот: молчал';
+  f.mutate(s => s.comments.push({ user: { login, type: 'Bot' }, body: 'CI failed', created_at: new Date(T + 1).toISOString() }));
+  await assert.rejects(f.call('merge'), /new remarks/); assert.equal(f.read().merged, false);
+});
+for (const outcome of ['ответил', 'молчал', 'нет']) test(`new certificate permits UNSTABLE caused only by excluded bot: ${outcome}`, async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += `\nБот: ${outcome}`;
+  f.mutate(s => { s.mergeState = 'UNSTABLE'; s.checks.push({ __typename: 'CheckRun', name: 'Greptile Review', status: 'IN_PROGRESS', checkSuite: { commit: { oid: H } } }); });
+  await f.call('merge'); assert.equal(f.read().merged, true);
+});
+test('UNSTABLE without an excluded bot remains blocked', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += '\nБот: молчал';
+  f.mutate(s => s.mergeState = 'UNSTABLE');
+  await assert.rejects(f.call('merge'), /merge state/); assert.equal(f.read().merged, false);
+});
+
+test('GitHub first entry reads earlier commit checks and a pre-CI review comment', async t => {
+  const f = fixture(t); f.mutate(s => {
+    s.headStartedAt = new Date(T - 5000).toISOString();
+    s.checks[0].completedAt = new Date(T - 1000).toISOString();
+    s.commitHistory = [{ sha: F }, { sha: H }];
+    s.historicalChecks = { [F]: [{ ...s.checks[0], completedAt: new Date(T - 3000).toISOString(), checkSuite: { commit: { oid: F } } }] };
+    s.comments.push({ node_id: 'early', user: { login: 'greptile-apps[bot]', type: 'Bot' }, body: 'Reviewed', created_at: new Date(T - 4000).toISOString() });
+  });
+  const { readShipSnapshot, advanceBotWait } = await import('./gate.mjs');
+  const snapshot = readShipSnapshot('test/product', 1, Infinity, T - 9000);
+  assert.equal(snapshot.ciHistory.length, 1);
+  const clock = advanceBotWait(null, snapshot, { botChecks: ['Greptile Review'] }, T);
+  assert.equal(clock.startedAt, T - 3000); assert.equal(clock.outcome, 'ответил');
 });

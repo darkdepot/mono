@@ -514,7 +514,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   return { reason, receipt: { path: verifiedReceiptFile, runId: receipt.runId, digest: digest(receipt) } };
 }
 
-export function readShipSnapshot(repo, number, deadline = Infinity) {
+export function readShipSnapshot(repo, number, deadline = Infinity, botSince = null) {
   const gh = (...args) => {
     const remaining = deadline - Date.now();
     requireThat(remaining > 0, "evidence-limit: предел доказательств");
@@ -571,9 +571,17 @@ export function readShipSnapshot(repo, number, deadline = Infinity) {
     }),
   ])];
   requireThat(requiredChecks.every(name => typeof name === "string" && name.trim()), "invalid required checks");
-  const checks = pages('query($owner:String!,$name:String!,$head:GitObjectID!,$after:String){repository(owner:$owner,name:$name){object(oid:$head){... on Commit{statusCheckRollup{contexts(first:100,after:$after){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{commit{oid}}} ... on StatusContext{context state createdAt targetUrl}} pageInfo{hasNextPage endCursor}}}}}}}',
-    { owner, name, head }, d => d.repository.object.statusCheckRollup?.contexts ?? { nodes: [], pageInfo: { hasNextPage: false } })
-    .map(check => ({ ...check, head: check.__typename === "CheckRun" ? check.checkSuite?.commit?.oid : head }));
+  function checksFor(head) {
+    let headStartedAt;
+    const checks = pages('query($owner:String!,$name:String!,$head:GitObjectID!,$after:String){repository(owner:$owner,name:$name){object(oid:$head){... on Commit{committedDate statusCheckRollup{contexts(first:100,after:$after){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{commit{oid}}} ... on StatusContext{context state createdAt targetUrl}} pageInfo{hasNextPage endCursor}}}}}}}',
+      { owner, name, head }, d => { headStartedAt = d.repository.object.committedDate; return d.repository.object.statusCheckRollup?.contexts ?? { nodes: [], pageInfo: { hasNextPage: false } }; })
+      .map(check => ({ ...check, head: check.__typename === "CheckRun" ? check.checkSuite?.commit?.oid : head }));
+    return { head, headStartedAt, checks };
+  }
+  const { checks, headStartedAt } = checksFor(head);
+  // Recover green heads already pushed during Preflight; amendments keep launch pins.
+  const ciHistory = botSince === null ? [] : gh('api', '--paginate', '--slurp', `repos/${repo}/pulls/${number}/commits`).flat()
+    .filter(commit => commit.sha !== head).map(commit => checksFor(commit.sha));
   const threads = pages('query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){nodes{id isResolved isOutdated} pageInfo{hasNextPage endCursor}}}}}', variables, d => d.repository.pullRequest.reviewThreads);
   for (const thread of threads) {
     thread.comments = pages('query($id:ID!,$after:String){node(id:$id){... on PullRequestReviewThread{comments(first:100,after:$after){nodes{id body publishedAt author{login} pullRequestReview{state}} pageInfo{hasNextPage endCursor}}}}}', { id: thread.id }, d => d.node.comments);
@@ -582,14 +590,15 @@ export function readShipSnapshot(repo, number, deadline = Infinity) {
   const reviews = gh("api", "--paginate", "--slurp", `repos/${repo}/pulls/${number}/reviews`).flat();
   const comments = gh("api", "--paginate", "--slurp", `repos/${repo}/issues/${number}/comments`).flat();
   const botComments = [...comments, ...reviews].filter(comment => (comment.user?.type === "Bot" || isReviewBot(comment.user)) && comment.body?.trim())
-    .map(comment => ({ id: comment.node_id, body: comment.body, reviewBot: isReviewBot(comment.user), head: comment.commit_id, createdAt: comment.created_at ?? comment.submitted_at, updatedAt: comment.updated_at ?? comment.submitted_at }));
+    .map(comment => ({ id: comment.node_id, body: comment.body, user: comment.user, reviewBot: isReviewBot(comment.user), head: comment.commit_id, createdAt: comment.created_at ?? comment.submitted_at, updatedAt: comment.updated_at ?? comment.submitted_at }));
   const final = graphql('query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid state mergeStateStatus mergeable baseRefName baseRefOid baseRef{branchProtectionRule{requiredStatusCheckContexts}}}}}', variables).repository.pullRequest;
   requireThat(final.headRefOid === head && final.baseRefName === pr.baseRefName && final.baseRefOid === pr.baseRefOid && canonical(final.baseRef) === canonical(pr.baseRef), "head/base policy changed during GitHub read");
-  return { ...final, head, rules: rulesEvidence, requiredChecks, checks, threads, viewer, reviews, botComments };
+  return { ...final, head, headStartedAt, ciHistory, botSince, rules: rulesEvidence, requiredChecks, checks, threads, viewer, reviews, botComments };
 }
 
-export const isReviewBot = user => user?.login !== 'github-actions[bot]' &&
-  (user?.type === 'Bot' || /\[bot\]$|greptile|devin/i.test(user?.login ?? ''));
+export const isReviewBot = (user, names = ['Greptile Review', 'Devin Review']) =>
+  (names.includes('Greptile Review') && ['greptile-apps[bot]', 'greptile[bot]'].includes(user?.login)) ||
+  (names.includes('Devin Review') && ['devin-ai-integration[bot]', 'devin-ai[bot]'].includes(user?.login));
 export const isBotCheck = (name, snapshot, policy) => [...(policy.botChecks ?? []), 'Greptile Review', 'Devin Review'].includes(name) &&
   ![...(snapshot.requiredChecks ?? []), ...(policy.requiredChecks ?? [])].includes(name);
 const greenCheck = check => check.__typename === 'CheckRun'
@@ -603,20 +612,28 @@ export function advanceBotWait(previous, snapshot, policy, now) {
   if (!names.length) return { ...state, outcome: 'нет' };
   if (state.outcome) return state;
   const required = [...new Set([...(snapshot.requiredChecks ?? []), ...(policy.requiredChecks ?? [])])];
-  const ci = snapshot.checks.filter(check => !isBotCheck(check.name ?? check.context, snapshot, policy));
-  const mandatory = required.length ? snapshot.checks.filter(check => required.includes(check.name ?? check.context)) : ci;
-  if (state.startedAt === null && mandatory.length && mandatory.every(check => check.head === snapshot.head && greenCheck(check)) &&
-      required.every(name => mandatory.some(check => (check.name ?? check.context) === name))) {
-    const completed = mandatory.map(check => Date.parse(check.completedAt ?? check.createdAt));
-    state.startedAt = completed.every(time => Number.isFinite(time) && time <= now) ? Math.max(...completed) : now;
+  if (state.startedAt === null) {
+    const greens = [snapshot, ...(snapshot.ciHistory ?? [])].flatMap(candidate => {
+      const ci = candidate.checks.filter(check => !isBotCheck(check.name ?? check.context, snapshot, policy));
+      const mandatory = required.length ? candidate.checks.filter(check => required.includes(check.name ?? check.context)) : ci;
+      if (!mandatory.length || !mandatory.every(check => check.head === candidate.head && greenCheck(check)) ||
+        !required.every(name => mandatory.some(check => (check.name ?? check.context) === name))) return [];
+      const completed = mandatory.map(check => Date.parse(check.completedAt ?? check.createdAt));
+      const time = completed.every(time => Number.isFinite(time) && time <= now) ? Math.max(...completed) : candidate === snapshot ? now : null;
+      return time !== null && (candidate === snapshot || time >= (snapshot.botSince ?? 0)) ? [time] : [];
+    });
+    if (greens.length) state.startedAt = Math.min(...greens);
   }
   const deadline = state.startedAt === null ? Infinity : state.startedAt + 30 * 60_000;
   const replied = names.every(name => snapshot.checks.some(check => (check.name ?? check.context) === name &&
     check.head === snapshot.head && greenCheck(check) && (Date.parse(check.completedAt ?? check.createdAt) || now) <= deadline));
-  const comment = names.length === 1 && snapshot.botComments?.some(item => item.reviewBot !== false &&
-    (item.head === snapshot.head || (!item.head && state.startedAt !== null && Date.parse(item.createdAt) >= state.startedAt)) &&
+  const comment = names.length === 1 && snapshot.botComments?.some(item => item.reviewBot !== false && (!item.user || isReviewBot(item.user, names)) &&
+    (item.head === snapshot.head || (!item.head && Date.parse(item.createdAt) >= Date.parse(snapshot.headStartedAt))) &&
     (Date.parse(item.createdAt ?? item.updatedAt) || now) <= deadline);
-  if (replied || comment) state.outcome = 'ответил';
+  const review = names.length === 1 && snapshot.reviews?.some(item => isReviewBot(item.user, names) &&
+    ['COMMENTED', 'APPROVED', 'CHANGES_REQUESTED'].includes(item.state) && item.commit_id === snapshot.head &&
+    Date.parse(item.submitted_at) <= deadline);
+  if (replied || comment || review) state.outcome = 'ответил';
   else if (now >= deadline || policy.botUnavailable?.trim()) state.outcome = 'молчал';
   return state;
 }
@@ -633,10 +650,12 @@ export function evaluateShip(snapshot, judgment, policy = {}) {
   let pendingReason = s.checks.length ? null : "checks not created on head";
   const pending = reason => { pendingReason ??= reason; };
   const successful = new Set(), botSuccessful = new Set(), pendingChecks = new Set();
-  let acceptedFailure = false;
+  let acceptedFailure = false, excludedBotFailure = false;
   for (const check of s.checks) {
     const name = check.name ?? check.context;
-    if ((policy.botOutcome || policy.botUnavailable?.trim()) && isBotCheck(name, s, policy)) continue;
+    if ((policy.botOutcome || policy.botUnavailable?.trim()) && isBotCheck(name, s, policy)) {
+      excludedBotFailure ||= !greenCheck(check); continue;
+    }
     requireThat(check.head === s.head, `check ${name} belongs to an old head`);
     const pass = check.__typename === "CheckRun"
       ? check.status === "COMPLETED" && ["SUCCESS", "SKIPPED", "NEUTRAL"].includes(check.conclusion)
@@ -689,7 +708,7 @@ export function evaluateShip(snapshot, judgment, policy = {}) {
     ["MERGEABLE", "UNKNOWN"].includes(s.mergeable)) throw Object.assign(new ShipPending(pendingReason), { botWaiting: pendingReason.startsWith("bot ") });
   if (s.mergeable === "UNKNOWN" || s.mergeStateStatus === "UNKNOWN") throw new ShipPending("mergeability pending (UNKNOWN)");
   requireThat(s.mergeable === "MERGEABLE" && (s.mergeStateStatus === "CLEAN" ||
-    (s.mergeStateStatus === "UNSTABLE" && acceptedFailure)), "merge state is not clean");
+    (s.mergeStateStatus === "UNSTABLE" && (acceptedFailure || excludedBotFailure))), "merge state is not clean");
   return "all ship conditions satisfied";
 }
 export function advanceEvidence(previous, snapshot, now) {
@@ -732,19 +751,25 @@ export async function shipGate(request) {
   // A restart after pure bot waiting still gets one bounded final read/quiet pause.
   const recoveryDeadline = bot?.startedAt != null && Date.now() >= bot.startedAt + 30 * 60_000 &&
     previous.pendingReason?.startsWith('bot ') ? Date.now() + config.quietSec * 1000 + 30_000 : 0;
-  const deadlineFor = () => Math.max(evidenceDeadline, recoveryDeadline, bot?.startedAt == null || ['ответил', 'нет'].includes(bot.outcome) ? 0 : bot.startedAt + 30 * 60_000 + config.quietSec * 1000 + config.pollSec * 1000);
+  const botLimit = () => bot.startedAt + 30 * 60_000 + (config.quietSec + config.pollSec) * 1000;
+  let botDeadline = Math.max(previous.botDeadline ?? 0, bot?.startedAt != null && !bot.outcome ? botLimit() : 0);
+  const deadlineFor = () => Math.max(evidenceDeadline, recoveryDeadline, botDeadline);
   let deadline = deadlineFor();
   while (true) {
     requireThat(Date.now() < deadline, "evidence-limit: предел доказательств");
     try {
-      const snapshot = readShipSnapshot(request.repo, request.number, deadline);
+      const since = request.preflight.pins?.file
+        ? fs.statSync(path.join(path.dirname(request.preflight.pins.file), 'pins.json')).mtimeMs : previous.startedAt;
+      const snapshot = readShipSnapshot(request.repo, request.number, deadline, bot?.startedAt == null ? since : null);
       requireThat(request.preflight?.collect === false, "ship requires preflight collect:false request");
       const proof = await verifyPreflight(request.preflight, snapshot);
       const judgment = readJson(request.judgmentFile);
       const now = Date.now();
       bot = { ...advanceBotWait(bot, snapshot, policy, now), scope: botScope };
-      atomicJson(botFile, bot); deadline = deadlineFor();
-      const state = { ...advanceEvidence(previous, { ...snapshot, preflightReceipt: proof.receipt, judgment, policy }, now), scope, preflightReceipt: proof.receipt, rules: snapshot.rules, bot };
+      atomicJson(botFile, bot);
+      if (bot.startedAt != null && !bot.outcome) botDeadline = Math.max(botDeadline, botLimit());
+      deadline = deadlineFor();
+      const state = { ...advanceEvidence(previous, { ...snapshot, preflightReceipt: proof.receipt, judgment, policy }, now), scope, preflightReceipt: proof.receipt, rules: snapshot.rules, bot, botDeadline };
       atomicJson(request.stateFile, state); previous = state;
       requireThat(now < deadline, "evidence-limit: предел доказательств");
       evaluateShip(snapshot, judgment, { ...policy, botOutcome: bot.outcome });
