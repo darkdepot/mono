@@ -550,9 +550,10 @@ export function readShipSnapshot(repo, number, deadline = Infinity, botSince = n
   }
   requireThat(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) && Number.isInteger(number) && number > 0, "repo and PR required");
   const [owner, name] = repo.split("/"); const variables = { owner, name, number };
-  const pr = graphql('query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid state mergeStateStatus mergeable baseRefName baseRefOid baseRef{branchProtectionRule{requiredStatusCheckContexts}}}}}', variables).repository.pullRequest;
+  const pr = graphql('query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid createdAt state mergeStateStatus mergeable baseRefName baseRefOid baseRef{branchProtectionRule{requiredStatusCheckContexts}}}}}', variables).repository.pullRequest;
   requireThat(pr?.headRefOid, "PR not found");
   const head = pr.headRefOid;
+  if (botSince === 0 && Number.isFinite(Date.parse(pr.createdAt))) botSince = Date.parse(pr.createdAt);
   requireThat(pr.baseRefName, "PR base branch unavailable");
   let rules = [], rulesEvidence;
   try {
@@ -573,7 +574,7 @@ export function readShipSnapshot(repo, number, deadline = Infinity, botSince = n
   requireThat(requiredChecks.every(name => typeof name === "string" && name.trim()), "invalid required checks");
   function checksFor(head) {
     let headStartedAt;
-    const checks = pages('query($owner:String!,$name:String!,$head:GitObjectID!,$after:String){repository(owner:$owner,name:$name){object(oid:$head){... on Commit{committedDate statusCheckRollup{contexts(first:100,after:$after){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{commit{oid}}} ... on StatusContext{context state createdAt targetUrl}} pageInfo{hasNextPage endCursor}}}}}}}',
+    const checks = pages('query($owner:String!,$name:String!,$head:GitObjectID!,$after:String){repository(owner:$owner,name:$name){object(oid:$head){... on Commit{committedDate statusCheckRollup{contexts(first:100,after:$after){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{commit{oid} app{slug}}} ... on StatusContext{context state createdAt targetUrl}} pageInfo{hasNextPage endCursor}}}}}}}',
       { owner, name, head }, d => { headStartedAt = d.repository.object.committedDate; return d.repository.object.statusCheckRollup?.contexts ?? { nodes: [], pageInfo: { hasNextPage: false } }; })
       .map(check => ({ ...check, head: check.__typename === "CheckRun" ? check.checkSuite?.commit?.oid : head }));
     return { head, headStartedAt, checks };
@@ -591,14 +592,16 @@ export function readShipSnapshot(repo, number, deadline = Infinity, botSince = n
   const comments = gh("api", "--paginate", "--slurp", `repos/${repo}/issues/${number}/comments`).flat();
   const botComments = [...comments, ...reviews].filter(comment => (comment.user?.type === "Bot" || isReviewBot(comment.user)) && comment.body?.trim())
     .map(comment => ({ id: comment.node_id, body: comment.body, user: comment.user, reviewBot: isReviewBot(comment.user), head: comment.commit_id, createdAt: comment.created_at ?? comment.submitted_at, updatedAt: comment.updated_at ?? comment.submitted_at }));
-  const final = graphql('query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid state mergeStateStatus mergeable baseRefName baseRefOid baseRef{branchProtectionRule{requiredStatusCheckContexts}}}}}', variables).repository.pullRequest;
+  const final = graphql('query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid createdAt state mergeStateStatus mergeable baseRefName baseRefOid baseRef{branchProtectionRule{requiredStatusCheckContexts}}}}}', variables).repository.pullRequest;
   requireThat(final.headRefOid === head && final.baseRefName === pr.baseRefName && final.baseRefOid === pr.baseRefOid && canonical(final.baseRef) === canonical(pr.baseRef), "head/base policy changed during GitHub read");
   return { ...final, head, headStartedAt, ciHistory, botSince, rules: rulesEvidence, requiredChecks, checks, threads, viewer, reviews, botComments };
 }
 
-export const isReviewBot = (user, names = ['Greptile Review', 'Devin Review']) =>
+export const isReviewBot = (user, names = ['Greptile Review', 'Devin Review'], checks = []) =>
   (names.includes('Greptile Review') && ['greptile-apps[bot]', 'greptile[bot]'].includes(user?.login)) ||
-  (names.includes('Devin Review') && ['devin-ai-integration[bot]', 'devin-ai[bot]'].includes(user?.login));
+  (names.includes('Devin Review') && ['devin-ai-integration[bot]', 'devin-ai[bot]'].includes(user?.login)) ||
+  (user?.login !== 'github-actions[bot]' && checks.some(check => names.includes(check.name ?? check.context) &&
+    check.checkSuite?.app?.slug && user?.login === `${check.checkSuite.app.slug}[bot]`));
 export const isBotCheck = (name, snapshot, policy) => [...(policy.botChecks ?? []), 'Greptile Review', 'Devin Review'].includes(name) &&
   ![...(snapshot.requiredChecks ?? []), ...(policy.requiredChecks ?? [])].includes(name);
 const greenCheck = check => check.__typename === 'CheckRun'
@@ -612,8 +615,11 @@ export function advanceBotWait(previous, snapshot, policy, now) {
   if (!names.length) return { ...state, outcome: 'нет' };
   if (state.outcome) return state;
   const required = [...new Set([...(snapshot.requiredChecks ?? []), ...(policy.requiredChecks ?? [])])];
+  const candidates = [snapshot, ...(snapshot.ciHistory ?? [])].filter(candidate => candidate === snapshot ||
+    Date.parse(candidate.headStartedAt) >= (snapshot.botSince ?? 0) || candidate.checks.some(check =>
+      Date.parse(check.completedAt ?? check.createdAt ?? check.startedAt) >= (snapshot.botSince ?? 0)));
   if (state.startedAt === null) {
-    const greens = [snapshot, ...(snapshot.ciHistory ?? [])].flatMap(candidate => {
+    const greens = candidates.flatMap(candidate => {
       const ci = candidate.checks.filter(check => !isBotCheck(check.name ?? check.context, snapshot, policy));
       const mandatory = required.length ? candidate.checks.filter(check => required.includes(check.name ?? check.context)) : ci;
       if (!mandatory.length || !mandatory.every(check => check.head === candidate.head && greenCheck(check)) ||
@@ -625,15 +631,19 @@ export function advanceBotWait(previous, snapshot, policy, now) {
     if (greens.length) state.startedAt = Math.min(...greens);
   }
   const deadline = state.startedAt === null ? Infinity : state.startedAt + 30 * 60_000;
-  const replied = names.every(name => snapshot.checks.some(check => (check.name ?? check.context) === name &&
-    check.head === snapshot.head && greenCheck(check) && (Date.parse(check.completedAt ?? check.createdAt) || now) <= deadline));
-  const comment = names.length === 1 && snapshot.botComments?.some(item => item.reviewBot !== false && (!item.user || isReviewBot(item.user, names)) &&
-    (item.head === snapshot.head || (!item.head && Date.parse(item.createdAt) >= Date.parse(snapshot.headStartedAt))) &&
-    (Date.parse(item.createdAt ?? item.updatedAt) || now) <= deadline);
-  const review = names.length === 1 && snapshot.reviews?.some(item => isReviewBot(item.user, names) &&
-    ['COMMENTED', 'APPROVED', 'CHANGES_REQUESTED'].includes(item.state) && item.commit_id === snapshot.head &&
-    Date.parse(item.submitted_at) <= deadline);
-  if (replied || comment || review) state.outcome = 'ответил';
+  const checks = candidates.flatMap(candidate => candidate.checks);
+  const heads = new Set(candidates.map(candidate => candidate.head));
+  const commits = candidates.map(candidate => Date.parse(candidate.headStartedAt)).filter(Number.isFinite);
+  const replySince = Math.max(snapshot.botSince ?? 0, commits.length ? Math.min(...commits) : Infinity);
+  const replied = names.every(name => checks.some(check => (check.name ?? check.context) === name &&
+    heads.has(check.head) && greenCheck(check) && (Date.parse(check.completedAt ?? check.createdAt) || now) <= deadline) ||
+    snapshot.botComments?.some(item => (item.user ? isReviewBot(item.user, [name], checks) : names.length === 1 && item.reviewBot !== false) &&
+      (heads.has(item.head) || (!item.head && Date.parse(item.createdAt) >= replySince)) &&
+      Date.parse(item.createdAt ?? item.updatedAt) <= deadline) ||
+    snapshot.reviews?.some(item => isReviewBot(item.user, [name], checks) &&
+      ['COMMENTED', 'APPROVED', 'CHANGES_REQUESTED'].includes(item.state) && heads.has(item.commit_id) &&
+      Date.parse(item.submitted_at) >= (snapshot.botSince ?? 0) && Date.parse(item.submitted_at) <= deadline));
+  if (replied) state.outcome = 'ответил';
   else if (now >= deadline || policy.botUnavailable?.trim()) state.outcome = 'молчал';
   return state;
 }
@@ -759,8 +769,8 @@ export async function shipGate(request) {
     requireThat(Date.now() < deadline, "evidence-limit: предел доказательств");
     try {
       const since = request.preflight.pins?.file
-        ? fs.statSync(path.join(path.dirname(request.preflight.pins.file), 'pins.json')).mtimeMs : previous.startedAt;
-      const snapshot = readShipSnapshot(request.repo, request.number, deadline, bot?.startedAt == null ? since : null);
+        ? fs.statSync(path.join(path.dirname(request.preflight.pins.file), 'pins.json')).mtimeMs : 0;
+      const snapshot = readShipSnapshot(request.repo, request.number, deadline, !bot?.outcome ? since : null);
       requireThat(request.preflight?.collect === false, "ship requires preflight collect:false request");
       const proof = await verifyPreflight(request.preflight, snapshot);
       const judgment = readJson(request.judgmentFile);

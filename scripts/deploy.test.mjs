@@ -592,3 +592,20 @@ test('GitHub first entry reads earlier commit checks and a pre-CI review comment
   const clock = advanceBotWait(null, snapshot, { botChecks: ['Greptile Review'] }, T);
   assert.equal(clock.startedAt, T - 3000); assert.equal(clock.outcome, 'ответил');
 });
+
+test('new certificate ignores only the app bound to the configured custom review check', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += '\nБот: молчал';
+  const config = JSON.parse(fs.readFileSync(f.config)); config.orchestration = { ship: { botChecks: ['Custom Review'] } }; fs.writeFileSync(f.config, JSON.stringify(config));
+  f.mutate(s => {
+    s.checks.push({ __typename: 'CheckRun', name: 'Custom Review', status: 'IN_PROGRESS', conclusion: null, checkSuite: { app: { slug: 'custom-review' }, commit: { oid: H } } });
+    s.comments.push({ user: { login: 'custom-review[bot]', type: 'Bot' }, body: 'P1: late review', created_at: new Date(T + 1).toISOString() });
+  });
+  await f.call('merge'); assert.equal(f.read().merged, true);
+});
+
+test('empty configured bot list still ignores a late known review bot after the new certificate', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); f.request.certificate += '\nБот: нет';
+  const config = JSON.parse(fs.readFileSync(f.config)); config.orchestration = { ship: { botChecks: [] } }; fs.writeFileSync(f.config, JSON.stringify(config));
+  f.mutate(s => s.comments.push({ user: { login: 'greptile-apps[bot]', type: 'Bot' }, body: 'late review', created_at: new Date(T + 1).toISOString() }));
+  await f.call('merge'); assert.equal(f.read().merged, true);
+});

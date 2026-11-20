@@ -827,7 +827,7 @@ test('ship-next-attempt-after-fix: new gate window retains task bot outcome acro
     const gate = path.join(scripts, 'gate.mjs');
     // Isolate GitHub and sealed-preflight I/O; run the actual window/state loop.
     let source = fs.readFileSync(gate, 'utf8');
-    source = source.replace('const snapshot = readShipSnapshot(request.repo, request.number, deadline, bot?.startedAt == null ? since : null);', 'const snapshot = readJson(request.fixtureSnapshot);');
+    source = source.replace('const snapshot = readShipSnapshot(request.repo, request.number, deadline, !bot?.outcome ? since : null);', 'const snapshot = readJson(request.fixtureSnapshot);');
     source = source.replace('const proof = await verifyPreflight(request.preflight, snapshot);', 'const proof = { receipt: { path: "fixture-sealed-proof" } };');
     fs.writeFileSync(gate, source);
     const { shipGate } = await import(pathToFileURL(gate));
@@ -1017,4 +1017,29 @@ test('first Ship recovers the earliest green head from this attempt before fixes
   assert.equal(advanceBotWait(null, s, { botChecks: ['Greptile Review'] }, now).startedAt, now - 60_000, 'earlier attempt does not open the clock');
   s.ciHistory[0].checks[0].conclusion = 'FAILURE'; s.botSince = firstGreen - 1000;
   assert.equal(advanceBotWait(null, s, { botChecks: ['Greptile Review'] }, now).startedAt, now - 60_000);
+  s.ciHistory[0].checks[0].conclusion = 'SUCCESS'; s.botSince = 0;
+  assert.equal(advanceBotWait(null, s, { botChecks: ['Greptile Review'] }, now).startedAt, firstGreen, 'manual PR boundary predates Ship entry');
+});
+
+test('historical replies are recovered for every configured bot without accepting CI apps', async () => {
+  const { advanceBotWait, isReviewBot } = await import('./gate.mjs');
+  const now = 4_000_000, first = now - 120_000, s = sample(), old = 'b'.repeat(40);
+  s.checks.pop(); s.requiredChecks = ['validate']; s.botSince = first - 1000;
+  s.headStartedAt = new Date(now - 30_000).toISOString(); s.checks[0].completedAt = new Date(now).toISOString();
+  s.ciHistory = [{ head: old, headStartedAt: new Date(first).toISOString(), checks: [{ ...s.checks[0], head: old, completedAt: new Date(first + 10_000).toISOString() }] }];
+  const policy = { botChecks: ['Greptile Review'] };
+  s.reviews = [{ user: { login: 'greptile-apps[bot]' }, state: 'COMMENTED', body: '', commit_id: old, submitted_at: new Date(first + 20_000).toISOString() }];
+  assert.equal(advanceBotWait(null, s, policy, now).outcome, 'ответил');
+  s.reviews = []; s.botComments = [{ user: { login: 'greptile-apps[bot]' }, body: 'Reviewed H1', createdAt: new Date(first + 20_000).toISOString() }];
+  assert.equal(advanceBotWait(null, s, policy, now).outcome, 'ответил');
+  s.botComments = []; s.ciHistory[0].checks.push({ __typename: 'CheckRun', name: 'Greptile Review', head: old, status: 'COMPLETED', conclusion: 'SUCCESS', completedAt: new Date(first + 20_000).toISOString() });
+  assert.equal(advanceBotWait(null, s, policy, now).outcome, 'ответил');
+  s.botSince = now - 10_000;
+  assert.equal(advanceBotWait(null, s, policy, now).outcome, null, 'reply before the pinned attempt is excluded');
+  const app = { __typename: 'CheckRun', name: 'Custom Review', head, status: 'IN_PROGRESS', checkSuite: { app: { slug: 'custom-review' } } };
+  assert.equal(isReviewBot({ login: 'custom-review[bot]' }, ['Custom Review'], [app]), true);
+  assert.equal(isReviewBot({ login: 'vercel[bot]' }, ['Custom Review'], [app]), false);
+  s.checks.push(app); s.checks[0].completedAt = new Date(now).toISOString();
+  s.botComments = [{ user: { login: 'custom-review[bot]', type: 'Bot' }, body: 'Reviewed', createdAt: new Date(now).toISOString() }];
+  assert.equal(advanceBotWait(null, s, { botChecks: ['Custom Review', 'Devin Review'] }, now).outcome, 'ответил', 'combine configured app reply with the other bot check');
 });
