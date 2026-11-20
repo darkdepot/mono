@@ -37,9 +37,10 @@ comments/certificates; apply worker snapshot/queue rules.
    Final diff/approved risk: higher wins.
 3. `review round`: the orchestrator's collection runs it read-only on the
    committed head with [role:code-review](references/model-policy.md#roles) and
-   [role:code-review-checker](references/model-policy.md#roles), then
-   verification. No in-worker review or substitute.
-4. Commit; first request: `scripts/ship-pr.mjs open` (draft, once). Later: `push`,
+   [role:code-review-checker](references/model-policy.md#roles). No in-worker
+   review or substitute.
+4. Commit, run the pinned verification, send `workerVerification`;
+   first request: `scripts/ship-pr.mjs open` (draft, once). Later: `push`,
    then `remarks`; all fixed this attempt go in the request's `prRemarks`. Run the pinned
    gate.mjs preflight collect:false, publish its returned request, confirm, rerun.
 5. Follow the gate line per references/review-admission.md: open findings → fix,

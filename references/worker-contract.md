@@ -188,7 +188,7 @@ payload.request, kind=confirmation-request:
 id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
 target=<head>, payload={request}. Adapter: immutable receipt path/digest/gate even
 on failure; confirmation proves completion only. Verify collect:false.
-Collection = review round, then verification. Follow the gate line per
+Collection = review round; verification is yours. Follow the gate line per
 references/review-admission.md: fix/recommit/request, or park.
 Same head: increment n/sequence; its round is reused.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,

@@ -75,12 +75,6 @@ await admitCollection(root,{...entry,phase:'preflight',sequence:1,kind:'confirma
     return result;
   };
 }
-function controlledDarwinTemp(bin, root) {
-  const temp = path.join(root, "darwin-temp"); fs.mkdirSync(temp);
-  const getconf = path.join(bin, "getconf");
-  write(getconf, `#!${process.execPath}\nconsole.log(${JSON.stringify(temp)});\n`);
-  fs.chmodSync(getconf, 0o700);
-}
 
 test("delivery config defaults confirmation to 6300 seconds and keeps it below the evidence limit", async () => {
   const { deliveryConfig } = await import("./runtime.mjs");
@@ -101,7 +95,6 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
   const oldPath = process.env.PATH;
   try {
     copyPluginFixture(skills);
-    controlledDarwinTemp(bin, root);
     const runtime = path.join(skills, "scripts");
     for (const script of ["gate.mjs", "delivery-state.mjs", "orchestrator/spawn.mjs", "orchestrator/resume.mjs", "orchestrator/consume-gate-ack.mjs"]) {
       pass(run(process.execPath, [path.join(runtime, script), "--help"], root, env));
@@ -154,22 +147,11 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
 
     assert.equal(fs.existsSync(monitorMarker), false);
 
-    // Model the outside orchestrator's sandbox launcher. Nested OS sandboxes
-    // cannot be launched from this test worker; permission bits model the denial.
-    // The real outside collector must pass its write-denial probe at deployment.
-    installReviewClis(bin, { codexStub: `
-const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path');
-const a=process.argv.slice(2);if(!a.includes('mono-collector'))process.exit(71);
-const command=a.slice(a.indexOf('--')+1),p=JSON.parse(command.at(-1));
-const profile=a.find(v=>v.startsWith('permissions.mono-collector='));
-const grants=[...profile.matchAll(/("[^"]+")="write"/g)].map(m=>JSON.parse(m[1]));
-const protectedRoot=path.dirname(p.probe);if(grants.some(g=>protectedRoot===g||protectedRoot.startsWith(g+path.sep)))process.exit(72);
-const open=process.env.MONO_FIXTURE_OPEN_SANDBOX==='1';if(!open)fs.chmodSync(protectedRoot,0o500);let r;
-try{r=cp.spawnSync(command[0],command.slice(1),{stdio:'inherit'});}finally{if(!open)fs.chmodSync(protectedRoot,0o700);}
-process.exit(r.status===null?1:r.status);` });
+    // The collection runs only the review roles; any other codex call fails the fixture.
+    installReviewClis(bin);
     const blocking = [reviewFinding("tracked.txt")];
     fs.mkdirSync(mailbox, { recursive: true });
-    const preflight = { product: "fixture", collectionId: `preflight-collect:${head}:1`, root: state, worktree: repo, head, skillsRoot: skills, risk: "risky", critical: null, baseRef: "HEAD", evidenceRoot: path.join(root, "evidence"), workerWritableRoots: [repo, mailbox], collect: false,
+    const preflight = { product: "fixture", workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:1`, root: state, worktree: repo, head, skillsRoot: skills, risk: "risky", critical: null, baseRef: "HEAD", evidenceRoot: path.join(root, "evidence"), workerWritableRoots: [repo, mailbox], collect: false,
       verification: { command: process.execPath, args: ["-e", "const fs=require('node:fs'),os=require('node:os');fs.writeFileSync(fs.mkdtempSync(os.tmpdir()+'/fixture-')+'/temp','ok')"] } };
     write(gateRequest, preflight);
     const preflightCall = installedAdmissionFixture(runtime, gateRequest, root, env);
@@ -232,7 +214,7 @@ process.exit(r.status===null?1:r.status);` });
     function writeFileRequest(request) { write(gateRequest, request); }
     write(gateRequest, preflight); pass(preflightCall());
     const receiptFile = path.join(preflight.evidenceRoot, `${head}.json`), envelope = json(receiptFile);
-    assert.deepEqual([envelope.receipt.producer, envelope.receipt.review.outcome, envelope.receipt.review.round, envelope.receipt.verification.sandbox.probed], ["gate-review-v3", "clean", 1, true]);
+    assert.deepEqual([envelope.receipt.producer, envelope.receipt.review.outcome, envelope.receipt.review.round, envelope.receipt.verification.exitCode], ["gate-review-v3", "clean", 1, null]);
     assert.deepEqual(reviewCalls(bin), ["reviewer", "reviewer"], "the gate ran the review round itself: a risky first round adds the ordinary pass");
     const roundTampered = structuredClone(envelope); roundTampered.receipt.review.round = 2;
     write(receiptFile, roundTampered); write(gateRequest, preflight);
@@ -267,7 +249,6 @@ process.exit(r.status===null?1:r.status);` });
     write(gateRequest, preflight); assert.match(preflightCall().stdout, /old receipt format/, "receipts of the previous producer are refused");
     write(receiptFile, envelope);
 
-    assert.equal(fs.existsSync(envelope.receipt.verification.sandbox.tempRoot), false);
     assert.equal(envelope.receipt.base, head);
     assert.equal(validateCollectionConfirmation(collectionReport, firstConfirmation), true, "later collection preserves earlier confirmation identity");
     setReview(bin, { findings: blocking });
@@ -278,14 +259,6 @@ process.exit(r.status===null?1:r.status);` });
     // Request pins describe the worker boundary; they never become collector grants.
     const broadRequest = { ...preflight, collect: true, workerWritableRoots: [repo, state, path.join(state, "confirmations")] };
     write(gateRequest, broadRequest); pass(preflightCall());
-    const narrow = json(receiptFile).receipt;
-    for (const [phase, command] of Object.entries({ verification: narrow.verification })) {
-      const profile = command.sandbox.args.find(arg => arg.startsWith("permissions.mono-collector="));
-      const grants = [...profile.matchAll(/("[^"]+")="write"/g)].map(match => JSON.parse(match[1]));
-      assert.deepEqual(grants.sort(), [fs.realpathSync(repo), command.sandbox.tempRoot,
-        ...(process.platform === "darwin" && phase === "verification" ? [path.join(root, "darwin-temp")] : [])].map(p => fs.realpathSync(path.dirname(p)) + path.sep + path.basename(p)).sort());
-      assert.ok(!grants.some(grant => grant === state || grant.startsWith(state + path.sep)));
-    }
     write(gateRequest, { ...broadRequest, collect: false }); pass(preflightCall());
     setReview(bin, { findings: blocking });
     write(gateRequest, { ...preflight, collect: true });
@@ -302,24 +275,9 @@ process.exit(r.status===null?1:r.status);` });
     const alternate = pass(run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit-tree", tree, "-m", "alternate"], repo, env)).stdout.trim();
     const baseRef = "refs/heads/review-base";
     pass(run("git", ["update-ref", baseRef, head], repo, env));
-    const changedBase = { ...preflight, baseRef, collectionId: `preflight-collect:${head}:3`, verification: {
-      command: "git", args: ["update-ref", baseRef, alternate] } };
-    write(gateRequest, { ...changedBase, collect: true });
-    assert.match(preflightCall().stdout, /collection consistency failed/);
-    assert.equal(json(receiptFile).receipt.consistency.passed, false);
-    assert.equal(json(receiptFile).receipt.review.outcome, "clean");
-    pass(run("git", ["update-ref", baseRef, head], repo, env));
-    write(gateRequest, changedBase);
-    assert.match(preflightCall().stdout, /collection consistency failed/);
     write(receiptFile, envelope); write(gateRequest, preflight);
     write(receiptFile, { receipt: envelope.receipt, signature: "hand-made" });
     assert.match(preflightCall().stdout, /hand-made or modified/); write(receiptFile, envelope);
-    env.MONO_FIXTURE_OPEN_SANDBOX = "1";
-    write(gateRequest, { ...preflight, collect: true });
-    assert.match(preflightCall().stdout, /fail: needs-decision: verification failed on the reviewed head/);
-    assert.match(json(receiptFile).receipt.verification.output, /sandbox permits evidence writes/);
-    assert.equal(json(receiptFile).receipt.verification.sandbox.probed, false);
-    delete env.MONO_FIXTURE_OPEN_SANDBOX;
     const retry = { ...preflight, collectionId: `preflight-collect:${head}:2` };
     write(gateRequest, retry);
     assert.match(preflightCall().stdout, /receipt collectionId differs/);
@@ -357,9 +315,8 @@ process.exit(r.status===null?1:r.status);` });
     const attack = path.join(preflight.evidenceRoot, "untrusted-proof");
     write(gateRequest, { ...preflight, collect: true, verification: { command: process.execPath,
       args: ["-e", `require('node:fs').writeFileSync(${JSON.stringify(attack)},'forged')`] } });
-    assert.match(preflightCall().stdout, /fail: needs-decision: verification failed on the reviewed head/);
-    assert.equal(fs.existsSync(attack), false);
-    assert.equal(json(receiptFile).receipt.verification.sandbox.probed, true);
+    pass(preflightCall());
+    assert.equal(fs.existsSync(attack), false, "the collection never runs the verification command");
     write(receiptFile, envelope); write(gateRequest, preflight); pass(preflightCall());
     const sealed = structuredClone(envelope); sealed.receipt.review.outcome = "clean-with-successors"; write(receiptFile, sealed);
     assert.equal(preflightCall().status, 1, "tampered review outcome refused"); write(receiptFile, envelope);
@@ -480,6 +437,7 @@ console.log(JSON.stringify(result));
       [r => { r.producer = "gate-autoreview-v2"; }, /old receipt format/],
       [r => { r.review.outcome = "not-converged"; }, /review not-converged \(round 1 of 3\)/],
       [r => { r.verification.exitCode = 1; }, /needs-decision: verification failed/],
+      [r => { r.workerVerification.exitCode = 1; }, /receipt workerVerification differs from the request/],
     ]) {
       const invalid = structuredClone(envelope.receipt); change(invalid); saveFixtureReceipt(invalid);
       assert.match(shipCall().stdout, reason);
@@ -1147,7 +1105,6 @@ test('installed collector takes review roles from the immutable BASE config; one
     PATH:bin+path.delimiter+process.env.PATH,GIT_AUTHOR_NAME:'Fixture',GIT_AUTHOR_EMAIL:'fixture@example.invalid',GIT_COMMITTER_NAME:'Fixture',GIT_COMMITTER_EMAIL:'fixture@example.invalid'};
   try {
     copyPluginFixture(skills);
-    controlledDarwinTemp(bin, root);
     const runtime=path.join(skills,'scripts');
     const {requiredPairings,resolveModelRoutes}=await import(pathToFileURL(path.join(runtime,'runtime.mjs')));
     installReviewClis(bin,{packRoot:skills,codexStub:`
@@ -1165,7 +1122,7 @@ fs.chmodSync(root,0o500);let r;try{r=cp.spawnSync(command[0],command.slice(1),{s
     const config={models:{roles:{'code-review-checker':{engine:'codex',model:JSON.parse(fs.readFileSync(path.join(bin,'review.json'),'utf8')).model}}}};
     config.models.pairingAccepted=requiredPairings(config,{packRoot:skills,reviewerRole:'code-review'}).map(pair=>({...pair,linearDecision:'https://linear.app/example/issue/TEST-1#decision',by:'owner',date:'2026-11-10'}));
     const base=commit('base with one family',config),head=commit('head config differs',{});
-    const request=(baseRef,n)=>({product:'fixture',collectionId:`preflight-collect:${head}:${n}`,root:state,worktree:repo,head,skillsRoot:skills,risk:'risky',critical:null,baseRef,evidenceRoot:path.join(root,'evidence'),
+    const request=(baseRef,n)=>({product:'fixture',workerVerification:{ head:head, exitCode:0 }, collectionId:`preflight-collect:${head}:${n}`,root:state,worktree:repo,head,skillsRoot:skills,risk:'risky',critical:null,baseRef,evidenceRoot:path.join(root,'evidence'),
       workerWritableRoots:[repo,state],collect:true,modelRoutes:resolveModelRoutes(repo,baseRef,'worker-default'),verification:{command:process.execPath,args:['-e','process.exit(0)']}});
     const file=path.join(root,'request.json'),call=installedAdmissionFixture(runtime,file,repo,env),receiptPath=path.join(root,'evidence',head+'.json');
     write(file,request(base,1));
