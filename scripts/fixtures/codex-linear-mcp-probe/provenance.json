@@ -1,0 +1,76 @@
+{
+  "date": "2026-11-20",
+  "issue": "MONO-449",
+  "codexCliVersion": "0.159.2",
+  "verdict": "прошла",
+  "blockingSetting": {
+    "attempt": 1,
+    "error": "MCP tool call requires approval, but approval policy is never",
+    "cause": "user config approval_policy=\"never\" with Linear write tools left at their default approval mode",
+    "unblockedBy": [
+      "mcp_servers.linear.tools.save_comment.approval_mode=\"approve\"",
+      "mcp_servers.linear.tools.save_issue.approval_mode=\"approve\""
+    ]
+  },
+  "commentByteCompare": {
+    "expectedSha256": "d4f10cf628b312d45103ec4a63f0dfb9ad7a7e7d56e93b696428ac4cc65b1d36",
+    "sentSha256": "d4f10cf628b312d45103ec4a63f0dfb9ad7a7e7d56e93b696428ac4cc65b1d36",
+    "hostSha256": "d4f10cf628b312d45103ec4a63f0dfb9ad7a7e7d56e93b696428ac4cc65b1d36",
+    "byteEqual": true,
+    "hostStatus": "In Progress",
+    "hostStatusType": "started"
+  },
+  "omittedIssueDescription": {
+    "bytes": 5965,
+    "sha256": "6a099a9e0039d7765c74d98f06720a3c7bcd08966c215192b103ad9d1aaf578b"
+  },
+  "files": [
+    {
+      "path": "attempt-1/invocation.json",
+      "sha256": "bb22102704c7676c0f6618ebbcc118ce8bc8d8cbe50e9a066ceabc908272433e"
+    },
+    {
+      "path": "attempt-1/session.jsonl",
+      "sha256": "74f45185c4525385361c87aa8dd83f3b65d35004e7a052d58b9d654476f2b0ee",
+      "sourceSha256": "994d1345e12b821077b9a2079036eae1ad6d841db2d3b758fbb230fe6d993f43",
+      "normalization": "Applied the redaction table; no other change."
+    },
+    {
+      "path": "attempt-2/invocation.json",
+      "sha256": "4bbda7e4971ab70034e136eaa118d060d706b1370e0f9e30e2262e6ae8f3cd22"
+    },
+    {
+      "path": "attempt-2/session.jsonl",
+      "sha256": "79fcf322b6f51f794e9d8a6e24da579a8b796077f6f0b0a2297374dd14564683",
+      "sourceSha256": "64c1381479dc6606e3da03f12ff604f69bd0a6e58ba96b1e208c2854a979c976",
+      "normalization": "Applied the redaction table; the issue description string inside the save_issue response and the agent's echo of it was replaced by a placeholder with its byte length and sha256 (it carried workspace URLs and project links). Started items kept; no other change."
+    },
+    {
+      "path": "host-reread/list_comments-before-attempt-2.json",
+      "sha256": "b2f9d4de2fb63e25d2c835445c831bababf292646953289d5624dc67fdef4d01"
+    },
+    {
+      "path": "host-reread/list_comments.json",
+      "sha256": "a9396919d3c79fd720d9cba1a8c0e36397f90201689d8f81a13f29bb3db29c55"
+    },
+    {
+      "path": "host-reread/get_issue-status.json",
+      "sha256": "68a388190dd7ccb1cbc3c816494e8b1620bb68167689192fa64468b66c21be5f"
+    }
+  ],
+  "redaction": {
+    "worktreePath": "/Users/owner/worktree",
+    "probeScratchDirectory": "/tmp/codex-linear-mcp-probe",
+    "homeDirectory": "/Users/owner",
+    "linearUserName": "REDACTED",
+    "linearUserId": "00000000-0000-4000-8000-000000000000",
+    "linearWorkspaceUrlPrefix": "linear.app/workspace/",
+    "gitBranchUserPrefix": "owner/",
+    "linearProjectName": "REDACTED project",
+    "linearProjectId": "00000000-0000-4000-8000-000000000001",
+    "linearTeamId": "00000000-0000-4000-8000-000000000002"
+  },
+  "omitted": [
+    "codex stderr of both attempts: only startup errors of unrelated MCP servers from the user config (expired OAuth refresh, HTTP 403); none for the Linear server"
+  ]
+}

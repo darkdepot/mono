@@ -5470,7 +5470,8 @@ function modelActiveFiles(base) {
       const child = path.posix.join(relative, entry.name);
       if (entry.isDirectory()) walk(child);
       else if (entry.isFile() && !/^scripts\/fixtures\/idea-gate\/probe\/(?:claude-code|codex)\/(?:get_project\.json|list_comments(?:\.limit4)?\.page-[1-3]\.json|calls\.json|README\.md|MANIFEST\.sha256)$/.test(child) &&
-        !/^scripts\/fixtures\/claude-pr-replies\/(?:attempt-1\/MONO-322-mono-deliver-a1\.jsonl|attempt-2\/MONO-322-mono-deliver-a2\.jsonl|attempt-[12]\/launch\/(?:entry|invocation|settings|startup-check)\.json)$/.test(child)) files.push(child);
+        !/^scripts\/fixtures\/claude-pr-replies\/(?:attempt-1\/MONO-322-mono-deliver-a1\.jsonl|attempt-2\/MONO-322-mono-deliver-a2\.jsonl|attempt-[12]\/launch\/(?:entry|invocation|settings|startup-check)\.json)$/.test(child) &&
+        !/^scripts\/fixtures\/codex-linear-mcp-probe\/attempt-[12]\/invocation\.json$/.test(child)) files.push(child);
     }
   }
   for (const directory of ["skills", "references", "templates", "scripts"]) walk(directory);
