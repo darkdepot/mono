@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { evaluateShip, validatePreflight, advanceEvidence, botRemarkDigest, reviewHistory, roundOutcome, reviewContext } from "./gate.mjs";
+import { evaluateShip, validatePreflight, advanceEvidence, botRemarkDigest, reviewHistory, roundOutcome, reviewContext, roundLimit, ROUND_LIMIT } from "./gate.mjs";
 import { REVIEW_PRODUCER, digest } from "./runtime.mjs";
 import { installReviewClis, setReview, reviewCalls, reviewFinding, reviewVerdict } from "./test-fixtures/review-clis.mjs";
 import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
@@ -168,6 +168,23 @@ test("review outcome mapping: what leaves the rounds as a successor candidate", 
     assert.equal(result.outcome, expected, name);
     assert.deepEqual(result.successors.map(item => item.key), expected === 'clean-with-successors' ? ['k1'] : [], name);
   }
+});
+test("the pinned risk sets the round limit and the strict path holds older harmful defects too", () => {
+  assert.deepEqual(['tiny', 'standard', 'deep', 'risky'].map(roundLimit), [1, 1, 1, 3]);
+  assert.equal(ROUND_LIMIT, 3, 'the installed constant is unchanged');
+  const older = extra => ({ outcome: 'not-converged', findings: [reviewed({ origin: 'pre-existing', ...extra })] });
+  // AE3: on the strict path an older defect harming the main path, data or install never leaves as a successor.
+  for (const round of [1, 2, 3]) assert.equal(roundOutcome(older({ danger: true, dangerCase: 'readiness' }), round, true).outcome, 'not-converged');
+  assert.equal(roundOutcome(older({ weight: 'P3', danger: true, dangerCase: 'data' }), 2, true).outcome, 'not-converged');
+  assert.equal(roundOutcome(older({ danger: true, dangerCase: 'readiness' }), 1).outcome, 'clean-with-successors', 'the fast path keeps must-file successors');
+  assert.equal(roundOutcome(older({}), 1, true).successors[0].line, 'P2 a.mjs:3 Leftover', 'a harmless older defect still passes');
+  assert.equal(roundOutcome(older({ weight: 'P3', danger: true, dangerCase: 'silent-result' }), 1, true).outcome, 'clean-with-successors');
+  const head = "a".repeat(40), base = "b".repeat(40), workerVerification = { head, exitCode: 0 };
+  const fast = review => ({ producer: REVIEW_PRODUCER, head, base, consistency: { passed: true, error: null },
+    verification: { exitCode: 0, sandbox: { mode: "workspace-write", probed: true } }, review: { round: 1, limit: 1, successors: [], record: { findings: [reviewed()] }, ...review } });
+  assert.match(validatePreflight(fast({ outcome: 'clean', workerVerification }), head, base), /^review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification, and verification/);
+  assert.throws(() => validatePreflight(fast({ outcome: 'clean', workerVerification: { head: base, exitCode: 0 } }), head, base), /worker verification is not on this head/);
+  assert.throws(() => validatePreflight(fast({ outcome: 'not-converged' }), head, base), { message: /^review not-converged \(round 1 of 1\); fix, run the full verification on the final head/ });
 });
 test("review refusal and successor lines: an older dangerous defect must be filed, a long list stays readable by the collector", () => {
   const older = roundOutcome({ outcome: 'not-converged', findings: [reviewed({ origin: 'pre-existing', danger: true, dangerCase: 'data' })] }, 1);
@@ -449,8 +466,10 @@ const assert=require('node:assert/strict'),path=require('node:path');
 assert.equal(process.env.TMPDIR,process.env.TMP);assert.equal(process.env.TMPDIR,process.env.TEMP);
 assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
 `];
-      if (fixture.mode === "review-rounds") {
+      if (fixture.mode.startsWith("review-")) {
         git("branch", "review-base"); pins.baseRef = "review-base";
+        // The strict path keeps up to three rounds; the fast path has one.
+        if (fixture.mode === "review-rounds") pins.risk = "risky";
         pins.verification.args = ["-e", `const fs=require('node:fs');fs.mkdirSync('.orchestrator',{recursive:true});fs.writeFileSync('.orchestrator/verify-saw',fs.readFileSync(${JSON.stringify(path.join(bin, "review.log"))},'utf8'))`];
       }
       if (fixture.mode.startsWith('verify-')) pins.verification.args = ['-e', `
@@ -586,9 +605,9 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         let receipt = await round(at(first), 1, /fail: review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 input\.mjs:1 First leftover/);
         assert.deepEqual([receipt.producer, receipt.review.spent, receipt.verification.exitCode, receipt.base], [REVIEW_PRODUCER, true, null, base]);
         const verifySaw = path.join(repo, '.orchestrator/verify-saw');
-        assert.deepEqual([reviewCalls(bin), fs.existsSync(verifySaw)], [['reviewer', 'checker'], false], 'no verification before an acceptable review');
+        assert.deepEqual([reviewCalls(bin), fs.existsSync(verifySaw)], [['reviewer', 'reviewer', 'checker'], false], 'no verification before an acceptable review');
         receipt = await round(at(first, 2), 1, /review not-converged \(round 1 of 3\)/);
-        assert.equal(receipt.review.spent, false); assert.ok(receipt.review.reusedFrom); assert.equal(reviewCalls(bin).length, 2, 'the same head reuses its round');
+        assert.equal(receipt.review.spent, false); assert.ok(receipt.review.reusedFrom); assert.equal(reviewCalls(bin).length, 3, 'the same head reuses its round');
         // A role that cannot run spends no round.
         setReview(bin, { loggedOut: 'codex' });
         const offline = commit('export const offline = 0;\n');
@@ -606,7 +625,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.ok(receipt.review.record.findings.some(finding => finding.class === 'pr-remark' && finding.status === 'closed'), 'the checker closed the fixed remark');
         const unbound = call(at(second)); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /receipt prRemarks differ from the request/);
         const malformed = call(withRemarks(at(second, 2), { prRemarks: [{ ...prRemarks[0], file: '../outside' }] })); assert.equal(malformed.status, 1); assert.match(malformed.stdout, /invalid PR remark location/);
-        assert.equal(fs.readFileSync(verifySaw, 'utf8'), 'reviewer\nchecker\nreviewer\nchecker\n', 'verification starts only after the review round has finished');
+        assert.equal(fs.readFileSync(verifySaw, 'utf8'), 'reviewer\nreviewer\nchecker\nreviewer\nchecker\n', 'verification starts only after the review round has finished');
         const gh = path.join(bin, 'gh');
         write(gh, `#!/usr/bin/env node
 const a=process.argv.slice(2),empty={nodes:[],pageInfo:{hasNextPage:false}};
@@ -644,6 +663,41 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.equal(receipt.review.outcome, 'refused'); assert.equal(reviewCalls(bin).length, calls, 'an amendment keeps the count: no fourth round');
         assert.notEqual(receipt.review.contractDigest, launchContract, 'a full-snapshot amendment supplies the reviewed contract');
         assert.equal(receipt.review.contractDigest, digest('# MONO-999\n\nNarrowed fixture contract.\n\n\n## Orchestrator amendment 1\nNarrow: only input.mjs.\n\n## issue-only note\nKept.'), 'the reviewer reads the amendment text with the Issue');
+        return;
+      }
+      if (fixture.mode === 'review-fast') {
+        // AC1: one round, a fix, then the final head passes on the worker's full verification without a second round.
+        const author = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid'];
+        const commit = text => { fs.appendFileSync(path.join(repo, 'input.mjs'), text); git('add', 'input.mjs'); git(...author, 'commit', '-m', text.trim()); return git('rev-parse', 'HEAD'); };
+        const at = (tip, n = 1, extra = {}) => ({ ...request, head: tip, collectionId: `preflight-collect:${tip}:${n}`, ...extra });
+        const stored = tip => path.join(evidence, `${tip}.json`);
+        const round = async (value, status, line) => {
+          await admit(value);
+          for (const result of [call({ ...value, collect: true }), call(value)]) { assert.equal(result.status, status, result.stdout + result.stderr); assert.match(result.stdout, line); }
+          return JSON.parse(fs.readFileSync(stored(value.head), 'utf8')).receipt;
+        };
+        setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'First leftover', title: 'First leftover' })] });
+        const first = commit('export const one = 1;\n');
+        let receipt = await round(at(first), 1, /fail: review not-converged \(round 1 of 1\); fix, run the full verification on the final head and request it with workerVerification/);
+        assert.deepEqual([receipt.review.spent, receipt.review.limit], [true, 1]);
+        const fixed = commit('export const fixed = 1;\n'), calls = reviewCalls(bin).length, spent = /fail: review round spent \(1 of 1 on this task attempt\); fix, run the full verification/;
+        for (const workerVerification of [undefined, { head: first, exitCode: 0 }, { head: fixed, exitCode: 1 }]) {
+          const refused = call(at(fixed, 1, workerVerification ? { workerVerification } : {})); assert.equal(refused.status, 1); assert.match(refused.stdout, spent);
+        }
+        const malformed = call(at(fixed, 1, { workerVerification: { head: fixed, exitCode: 0, note: 'x' } })); assert.equal(malformed.status, 1); assert.match(malformed.stdout, /workerVerification must be/);
+        const verified = at(fixed, 1, { workerVerification: { head: fixed, exitCode: 0 } });
+        receipt = await round(verified, 0, /pass: review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification, and verification verified on head/);
+        assert.equal(reviewCalls(bin).length, calls, 'no second round on the fast path');
+        assert.deepEqual([receipt.review.spent, receipt.workerVerification, receipt.review.workerVerification], [false, verified.workerVerification, verified.workerVerification]);
+        const unbound = call(at(fixed)); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /receipt workerVerification differs from the request/);
+        // A raised risk from the round is the orchestrator's decision, never the worker's word.
+        setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'Raised', title: 'Raised' })], verdict: reviewVerdict({ riskRaised: true }) });
+        const evidenceFiles = fs.readdirSync(path.join(evidence, 'history'));
+        for (const name of evidenceFiles) fs.unlinkSync(path.join(evidence, 'history', name));
+        const raised = commit('export const raised = 1;\n');
+        await round(at(raised), 1, /fail: review not-converged \(round 1 of 1\)/);
+        const after = commit('export const after = 1;\n');
+        await round(at(after, 1, { workerVerification: { head: after, exitCode: 0 } }), 1, /fail: needs-decision: the review round found work outside the task or a higher risk/);
         return;
       }
       let expectedField = null, expectedValue = null, expectedStatus = 2;

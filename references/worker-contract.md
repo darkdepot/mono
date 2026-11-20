@@ -188,15 +188,12 @@ payload.request, kind=confirmation-request:
 id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
 target=<head>, payload={request}. Adapter: immutable receipt path/digest/gate even
 on failure; confirmation proves completion only. Verify collect:false.
-Collection = review round, then verification. Follow the gate line per
-references/review-admission.md: fix/recommit/request, or park.
-Same head: increment n/sequence; its round is reused.
+Follow the gate line per references/review-admission.md. Same head: increment n/sequence.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,
 readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify sealed
 head/merge-base receipt before judgment; no string substitutes.
 Orchestrator rechecks preflight before ship. Ship-fix amendment: next ship-gate
-attempt, new head/stateFile; preserve old state/task attempt. No gate-attempt cap;
-the new head needs one narrow review round within the attempt's three.
+attempt, new head/stateFile; preserve old state/task attempt. No gate-attempt cap.
 
 ## Implementation exit evidence
 

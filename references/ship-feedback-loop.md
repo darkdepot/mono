@@ -30,15 +30,15 @@ An empty list means no bot; workers cannot override pins. Bots must not be branc
 ## Defaults
 
 orchestration.delivery: pollSec=10, quietSec=120, evidenceLimitSec=7200 (positive
-seconds); at most three review rounds. Evidence and quiet clocks remain separate
+seconds). Evidence and quiet clocks remain separate
 from the fixed bot limit. Bot waiting can extend the evidence deadline through
 its thirty minutes and quiet pause; CI/read failures still expire.
 
 ## Authorized Ship Fix
 
 A ship-fix amendment names the next gate attempt, new head/stateFile/proof; preserve
-old state and task attempt. No gate-attempt cap; one narrow round within the task's
-three. Task bot state stays in reports/<Issue>-a<attempt>-ship-bot.json (standalone:
+old state and task attempt. No gate-attempt cap; rounds per review-admission.md.
+Task bot state stays in reports/<Issue>-a<attempt>-ship-bot.json (standalone:
 ship-bot-<owner>-<repo>-<PR>.json beside stateFile, retain it). Never reset it or old evidence deadlines.
 
 ## Published Replies
