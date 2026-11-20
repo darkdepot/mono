@@ -883,6 +883,13 @@ test('ship-next-attempt-after-fix: new gate window retains task bot outcome acro
     answered.startedAt = Date.now() - 7_201_000; answered.botDeadline = 0; delete answered.pendingReason;
     atomicJson(timed.stateFile, answered);
     await assert.rejects(shipGate(timed), /evidence-limit/, 'an already answered bot does not grant a fresh window for unrelated evidence');
+    // Same head reused by a new attempt: the green bot check predates botSince, so Ship keeps waiting.
+    atomicJson(botFile, { scope: { repo: request.repo, number: request.number }, startedAt: Date.now() - 200_000, outcome: null });
+    snapshot.botSince = Date.now() - 100_000; snapshot.checks.at(-1).completedAt = new Date(Date.now() - 3_600_000).toISOString();
+    atomicJson(request.fixtureSnapshot, snapshot);
+    const reused = { ...timed, attempt: 5, watch: false, stateFile: path.join(scratch, 'ship-5.json') };
+    await assert.rejects(shipGate(reused), /bot reply not seen in this attempt/);
+    assert.equal(JSON.parse(fs.readFileSync(botFile)).outcome, null);
 
 
 

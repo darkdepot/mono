@@ -793,6 +793,8 @@ export async function shipGate(request) {
       atomicJson(request.stateFile, state); previous = state;
       requireThat(now < deadline, "evidence-limit: предел доказательств");
       evaluateShip(snapshot, judgment, { ...policy, botOutcome: bot.outcome });
+      // A green bot check from before this attempt is not a reply: keep waiting until the window settles it.
+      if (!bot.outcome) throw Object.assign(new ShipPending('bot reply not seen in this attempt'), { botWaiting: true });
       if (now - state.lastEventAt >= config.quietSec * 1000) return `current-head evidence complete and quiet period passed; Бот: ${bot.outcome}; preflight receipt: ${proof.receipt.path}`;
       requireThat(request.watch === true, "current-head evidence quiet period pending");
     } catch (error) {
