@@ -1712,6 +1712,31 @@ function u7DocumentFixture(t,host='claude',intent='agree') {
 for(const host of ['claude','codex'])for(const intent of ['agree','correction'])test(`U7 ${host}: short native PRD summary, alternate wording and body-hash binding (${intent})`,t=>{
  const f=u7DocumentFixture(t,host,intent);f.attest();assert.equal(f.check().status,'passed',f.check().reason);
 });
+for(const host of ['claude','codex'])for(const mode of ['foreign-document','own-document','own-comment','no-project'])test(`MONO-331 ${host}: document discussion belongs to the current project (${mode})`,t=>{
+ const f=u7DocumentFixture(t,host);
+ Object.assign(f.expected,{role:'clarification',question:{anchors:['PRD']},reply:'А почему одна колонка?',outcome:{approval:false,startNext:false},response:{anchors:['Одной колонки достаточно'],forbidden:[],question:false}});
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[]);
+ f.request.presentationBindings=f.request.approvalBindings;f.request.approvalBindings=[];
+ f.events.splice(4,f.events.length-4,f.user(f.expected.reply),f.assistant('Одной колонки достаточно для источника.'));
+ if(mode==='foreign-document'){
+  const shown={...f.old,id:'foreign-doc',projectId:'00000000-0000-4000-8000-000000000002',url:'https://linear.app/monotest/document/foreign-prd'};
+  f.events[0]=f.call('shown','mcp__monotest__get_document',{id:shown.id});f.events[1]=f.result('shown',shown);
+  f.events[2]=f.assistant(`Источник после имени; советую одну колонку. [PRD](${shown.url})\nПринимаем этот PRD?`);
+ }
+ if(mode==='own-comment'){
+  const shown={id:'shown-comment',body:f.shown,createdAt:date,updatedAt:date};
+  f.events[0]=f.call('shown','mcp__monotest__list_comments',{projectId});f.events[1]=f.result('shown',{comments:[shown],hasNextPage:false});
+  f.events[2]=f.assistant(`Источник после имени; советую одну колонку. [PRD](${f.project.url}#comment-${shown.id})\nПринимаем этот PRD?`);
+  f.page('comments','comments',[shown]);f.request.presentationBindings[0].currentRecordId=shown.id;
+ }
+ if(mode==='no-project'){
+  delete f.request.project;f.request.projectName=f.project.name;f.request.expectedRecords=[];
+  f.page('projects','projects',[]);
+ }
+ if(['foreign-document','no-project'].includes(mode)){
+  const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/record outside current project/);assert.equal(result.rubricDigest,undefined);
+ }else{f.attest();assert.equal(f.check().status,'passed',JSON.stringify(f.check()));}
+});
 for(const host of ['claude','codex'])for(const mode of ['body-change','id-change','forged-quote','wrong-question','extra-turn','early-record','extra-change','stale-rubric','missing-rubric','summary-meaning','response-meaning','correction-meaning','unnamed-transition'])test(`U7 ${host}: rejects ${mode} while retaining valid anchors`,t=>{
  const f=u7DocumentFixture(t,host,mode.includes('correction')||mode==='extra-change'?'correction':'agree');
  if(mode==='body-change'){f.fresh.content+=' Mutation';f.events[6]=f.result('read',f.fresh);f.save('documents/doc.json',f.fresh);}
