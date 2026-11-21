@@ -23,7 +23,8 @@
     "transport": "codex-cli",
     "maxParallelWorkers": 3,
     "delivery": {
-      "evidenceLimitSec": 5400
+      "evidenceLimitSec": 5400,
+      "hostVerification": true
     },
     "preapply": {
       "mandate": "https://linear.app/darkdepot/project/deshyovye-volny-melkaya-zadacha-prohodit-pak-bez-lishnih-krugov-7568245cece3#comment-bffb2598-8fc2-4c90-8ac7-51d61442efdb"

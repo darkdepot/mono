@@ -27,6 +27,7 @@ export function renderDispatch(template, values) {
   let source = template.replace(/<!-- generator:start -->[\s\S]*?<!-- generator:end -->\s*/u, "");
   if (values.landing_paths === undefined) source = source.replace(/<!-- landing:start -->[\s\S]*?<!-- landing:end -->\s*/u, "");
   if (values.transport !== "claude-cli") source = source.replace(/<!-- claude-delivery:start -->[\s\S]*?<!-- claude-delivery:end -->\s*/u, "");
+  if (values.host_verification !== true) source = source.replace(/<!-- host-verification:start -->[\s\S]*?<!-- host-verification:end -->\s*/u, "");
   const rendered = source.replace(/\{\{([^{}]*)\}\}/gu, (_, key) => {
     if (!Object.hasOwn(values, key) || values[key] === undefined || values[key] === null || String(values[key]).trim() === "")
       throw new Error(`unfilled dispatch placeholder: ${key}`);
@@ -123,7 +124,9 @@ async function prepareDispatch(args) {
   const modelFile = path.join(output, "model-request.json"); atomicJson(modelFile, { ...gate, role });
   const modelRoutes = JSON.parse(run("spawn.mjs", ["--pins", modelFile]));
   const pins = { ...gate, release, modelRoutes, shipBotChecks: shipBotChecks(baseConfig), product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
-    risk, critical, afk, openDecisions, workerWritableRoots: roots, packageKind: seam.package_kind };
+    risk, critical, afk, openDecisions, workerWritableRoots: roots, packageKind: seam.package_kind,
+    // From BASE, immutable for the attempt: the collection runs the full verification on the host.
+    ...(deliveryConfig(baseConfig).hostVerification ? { hostVerification: true } : {}) };
   atomicJson(gateFile, gate); atomicJson(movesFile, moves);
   const snapshot = path.join(output, "snapshot"), preparedSnapshot = fs.mkdtempSync(path.join(output, "snapshot-"));
   let designSnapshot, chainSnapshot;
@@ -165,7 +168,7 @@ async function prepareDispatch(args) {
     baseRef: pins.baseRef, evidenceRoot, modelRoutes: pins.modelRoutes, verification: pins.verification, risk: pins.risk, critical: pins.critical,
     workerWritableRoots: pins.workerWritableRoots, idea: pins.idea, pins: { file: pinsFile, digest: pinsDigest }, collect: false };
   const values = { issue, title: body.split("\n")[0].replace(/^#+\s*/u, ""), attempt, handshake, profile, pins_file: pinsFile, pins_digest: pinsDigest,
-    collection_request: JSON.stringify(collectionRequest, null, 2),
+    collection_request: JSON.stringify(collectionRequest, null, 2), host_verification: pins.hostVerification === true,
     gate_request: gateFile, runtime_scripts: path.resolve(directory, ".."), product, evidence_root: evidenceRoot, model_routes: JSON.stringify(modelRoutes),
     preflight_pins: JSON.stringify(pins), writable_roots: JSON.stringify(roots),
     round_request: path.join(args.root, "reports", `${issue}-round-a${attempt}.json`),

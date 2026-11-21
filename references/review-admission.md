@@ -13,8 +13,8 @@ open findings. Same head reuses its round; new base, fresh record.
 - `review clean` or `clean-with-successors` with your verification: pass.
 - `review not-converged (round 1|2 of 3)`: fix the error class of each open
   finding, check, commit, request the next round.
-- Fast path after its round (`of 1`): fix, run the full verification on the
-  final head, request it with `workerVerification: {head, exitCode: 0}`.
+- Fast path after its round (`of 1`): fix; verify and request the final head
+  as the line says (`hostVerification`: just request).
 - `worker verification missing`: run it, request again.
 - `needs-decision:` (round 3 not-converged, raised risk): park with that line.
 - `not-reviewed:` (a role failed or coverage incomplete): no round spent;
