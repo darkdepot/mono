@@ -197,7 +197,7 @@ verification and sends `workerVerification {head, exitCode}`; the receipt passes
 only with exit 0 on its head. Receipts of older attempts keep their sandbox verification.
 Host verification (pinned `hostVerification` from BASE
 `orchestration.delivery.hostVerification`): the collection itself runs the pinned
-verification on the committed head outside the worker sandbox before the round,
+verification in a clean checkout of the committed head (never the worker's copy) outside the worker sandbox before the round,
 in its own process group (stopped whole when the command exits) with a private
 temporary directory and a `.running` marker, and records
 `verification {host: true, exitCode, log, tail}`; a red head spends no round and
