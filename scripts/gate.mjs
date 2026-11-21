@@ -141,7 +141,9 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest }) {
     .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)));
   const completed = mine.filter(receipt => receipt.review.spent === true);
   const same = receipt => receipt.base === base && receipt.review.contractDigest === contractDigest;
-  const onHead = mine.filter(receipt => receipt.head === head && receipt.pins.file === pins.file && receipt.review.outcome !== 'refused');
+  // A not-reviewed streak belongs to one contract: a task change after restoring the CLIs may try again.
+  const onHead = mine.filter(receipt => receipt.head === head && receipt.pins.file === pins.file && receipt.review.outcome !== 'refused' &&
+    receipt.review.contractDigest === contractDigest);
   let notReviewed = 0;
   for (let index = onHead.length - 1; index >= 0 && onHead[index].review.outcome === 'not-reviewed'; index--) notReviewed++;
   return { spent: completed.length, notReviewed, reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,
@@ -205,7 +207,7 @@ export function validatePreflight(receipt, head, base) {
 const ROUND_LIMIT_REACHED = `review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); split the Issue or change approach in a new attempt`;
 // Fast path: the spent round needs the worker's full verification on the final head instead of another round.
 const limitRefusal = limit => limit === ROUND_LIMIT ? `needs-decision: ${ROUND_LIMIT_REACHED}` : `review round spent (1 of 1 on this task attempt); ${FAST_FIX}`;
-const NOT_REVIEWED_TWICE = "not-reviewed twice in a row on this head; check that both review CLIs are logged in";
+const NOT_REVIEWED_TWICE = "not-reviewed twice in a row on this head; check that both review CLIs are logged in, then resume with a task change";
 // Other issues' and older receipts share this folder: only this attempt's pins files are read further;
 // unreadable or irregular files are skipped, never counted. No worker grant reaches evidenceRoot.
 function receiptHistory(evidenceRoot, pinsFile) {

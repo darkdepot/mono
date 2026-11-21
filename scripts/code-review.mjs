@@ -375,8 +375,11 @@ function runInvocation(invocation, prompt, timeoutMs) {
       const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
       const interrupt = () => { interrupted = true; kill(); };
       process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
-      const cleanup = () => { clearTimeout(timer); process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', interrupt); };
+      let drain;
+      const cleanup = () => { clearTimeout(timer); clearTimeout(drain); process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', interrupt); };
       const timer = setTimeout(() => { exceeded = true; kill(); }, timeoutMs);
+      // A helper outside the role's group may keep its pipes open after it exits: close them shortly after exit.
+      child.once('exit', () => { drain = setTimeout(() => { kill(); child.stdout.destroy(); child.stderr.destroy(); }, 5000); });
       child.stdout.on('data', data => { stdoutBytes += data.length; if (stdoutBytes > 16 * 1024 * 1024) { exceeded = true; kill(); } else stdout.push(data); });
       child.stderr.on('data', data => { stderrBytes += data.length; if (stderrBytes > 1024 * 1024) { exceeded = true; kill(); } else stderr.push(data); });
       child.stdin.on('error', error => { if (error.code !== 'EPIPE') reject(new Error('role process input failed')); });

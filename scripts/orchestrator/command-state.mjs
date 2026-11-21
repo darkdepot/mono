@@ -312,7 +312,8 @@ export function admitUnderLock(root, round, reportsDir = path.join(root, "report
     const mismatch = collectionPinMismatch(request, pins);
     if (mismatch) throw new Error(`collection pin mismatch: ${mismatch.field}`);
   } catch (error) { refusal = error.message; }
-  const admission = admitRound(root, entry.issue, entry.attempt, request, { manifestDigest: digest(pins) });
+  // The refusal is part of the admission: a collector restart records it, never runs the request.
+  const admission = admitRound(root, entry.issue, entry.attempt, request, { manifestDigest: digest(pins), refusal });
   return { admission, refusal };
 }
 

@@ -154,6 +154,11 @@ async function collection(options, entry, admission) {
   return { receipt: found.file, receiptDigest: digest(found.envelope), gate };
 }
 async function runRound(options, entry, admission) {
+  if (admission.refusal !== null && admission.refusal !== undefined) {
+    recordResult(options.root, options.issue, options.attempt, admission, { status: "refused", reason: admission.refusal });
+    log(options, `round ${admission.ordinal} ${admission.collectionId}: refused: ${admission.refusal}`);
+    return;
+  }
   try {
     const evidence = await collection(options, entry, admission);
     recordResult(options.root, options.issue, options.attempt, admission, { status: "done", ...evidence });
@@ -190,14 +195,8 @@ export async function collectOnce(options) {
     if (!(error instanceof CollectionAdmissionRefusal) && !/invalid round request/.test(error.message)) throw error;
     attention(options, "request", error.message); return;
   }
-  const { admission, refusal } = admitted;
-  log(options, `admitted round ${admission.ordinal} ${admission.collectionId}`);
-  if (refusal) {
-    recordResult(options.root, options.issue, options.attempt, admission, { status: "refused", reason: refusal });
-    log(options, `round ${admission.ordinal} ${admission.collectionId}: refused: ${refusal}`);
-    return;
-  }
-  return runRound(options, entry, admission);
+  log(options, `admitted round ${admitted.admission.ordinal} ${admitted.admission.collectionId}`);
+  return runRound(options, entry, admitted.admission);
 }
 export async function collectorStart(options) {
   registryEntry(options.root, options.issue, options.attempt);

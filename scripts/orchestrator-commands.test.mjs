@@ -879,6 +879,16 @@ test("collector finishes an admitted round before reading a newer request", asyn
   });
 });
 
+test("collector-refusal-persisted: a refused admission is recorded after a restart and never runs", async () => {
+  await collectorAttentionFixture(async f => {
+    const { admitRound } = await import("./review-rounds.mjs");
+    admitRound(f.options.root, f.options.issue, 1, f.request(1), { refusal: "collection pin mismatch: packRoot" });
+    await f.signedHistory(f.request(1)); await f.poll();
+    const [only] = readLedger(f.options.root, f.options.issue, 1);
+    assert.deepEqual([only.result.status, only.result.reason, only.result.gate], ["refused", "collection pin mismatch: packRoot", undefined]);
+  });
+});
+
 test("collector launch lock error records nothing", async () => {
   await collectorAttentionFixture(async f => {
     atomicJson(f.roundFile, f.round(1));

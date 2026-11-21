@@ -230,7 +230,7 @@ Parks:
 - needs-decision, `verification failed on the reviewed head` (older attempts):
   decide whether the code or the environment is wrong.
 - blocked, `not-reviewed twice in a row`: restore both CLI logins, then resume
-  the worker.
+  the worker with a task change (the streak belongs to one contract; the count stays).
 
 `clean-with-successors` passes. Its candidates are older defects (on the strict
 path only harmless ones), minor P3

@@ -200,7 +200,7 @@ test("review refusal and successor lines: an older dangerous defect must be file
     review: { outcome: 'not-converged', round: 1, successors: [], record: { findings: many } } };
   assert.throws(() => validatePreflight(receipt, head, base), error => error.message.length < 48000 && /^review not-converged \(round 1 of 3\); fix and request the next round; 200 open: /.test(error.message) && / more in the next round$/.test(error.message));
 });
-test("review rounds are counted per task attempt from signed history", () => {
+test("review rounds are counted per task attempt from receipt history", () => {
   const pins = { file: '/root/dispatch/MONO-1-a1/pins.json', digest: 'd' }, base = 'b'.repeat(40), contractDigest = 'c'.repeat(64);
   const heads = ['1', '2', '3', '4'].map(digit => digit.repeat(40));
   let clock = 0;
@@ -219,13 +219,12 @@ test("review rounds are counted per task attempt from signed history", () => {
   assert.deepEqual([read(failed).spent, read(failed).notReviewed, read(failed, heads[1]).notReviewed], [0, 2, 1], 'not-reviewed spends nothing and counts in a row per head');
   assert.equal(read([...failed, receipt(heads[0], 'clean')]).notReviewed, 0);
   assert.equal(read([...failed, receipt(heads[0], 'refused')]).notReviewed, 2, 'a refusal is not a review attempt');
-  assert.equal(reviewHistory(failed, { pins: { file: '/root/dispatch/MONO-1-a1/pins.v1.json', digest: 'e' }, head: heads[0], base, contractDigest }).notReviewed, 0, 'an amendment clears the failure streak');
-  const amended = { file: '/root/dispatch/MONO-1-a1/pins.v1.json', digest: 'e' }, amendedContract = 'f'.repeat(64);
-  assert.deepEqual(reviewHistory(three, { pins: amended, head: heads[3], base, contractDigest: amendedContract }), { spent: 3, notReviewed: 0, reuse: null, record: three[2].review.record },
-    'an amendment keeps the count and continues the record');
-  assert.equal(reviewHistory(three, { pins: amended, head: heads[2], base, contractDigest: amendedContract }).reuse, null, 'a changed contract never reuses a round');
-  assert.equal(reviewHistory([...three.slice(0, 2), { ...three[2], pins: amended }], { pins, head: heads[3], base, contractDigest }).spent, 3, 'rounds under every pins version of the attempt count');
-  assert.deepEqual(read(three.slice(0, 2), heads[1], { contractDigest: amendedContract }), { spent: 2, notReviewed: 0, reuse: null, record: three[1].review.record }, 'a new contract continues the record');
+  const changedContract = 'f'.repeat(64);
+  assert.equal(read(failed, heads[0], { contractDigest: changedContract }).notReviewed, 0, 'a task change clears the failure streak');
+  assert.deepEqual(read(three, heads[3], { contractDigest: changedContract }), { spent: 3, notReviewed: 0, reuse: null, record: three[2].review.record },
+    'a task change keeps the count and continues the record');
+  assert.equal(read(three, heads[2], { contractDigest: changedContract }).reuse, null, 'a changed contract never reuses a round');
+  assert.deepEqual(read(three.slice(0, 2), heads[1], { contractDigest: changedContract }), { spent: 2, notReviewed: 0, reuse: null, record: three[1].review.record }, 'a new contract continues the record');
   assert.deepEqual(read(three.slice(0, 2), heads[1], { base: 'e'.repeat(40) }), { spent: 2, notReviewed: 0, reuse: null, record: null }, 'a new base starts a fresh record and keeps the count');
   const foreign = [{ ...three[0], producer: 'gate-autoreview-v2' }, { ...three[1], pins: { file: '/root/dispatch/MONO-2-a1/pins.json', digest: 'd' } },
     { ...three[2], pins: { file: '/root/dispatch/MONO-1-a2/pins.json', digest: 'd' } }, { producer: REVIEW_PRODUCER, pins }, null];
