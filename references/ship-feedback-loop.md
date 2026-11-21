@@ -20,11 +20,11 @@ An empty list means no bot; workers cannot override pins. Bots must not be branc
    Recover earlier green PR heads of this attempt on entry.
    Thirty minutes later silence becomes «молчал», without park.
    Restart, fixes and new gate state files never reset this task clock. With []: «нет».
-3. Timely reply: fix P1 in this PR; fix P2 or publish a reasoned reply. Keep decisions
-   in judgment.botRemarks; threads need published closure replies. Subsequent heads
-   need CI/proof, but never another bot wait. Outcome remains «ответил».
-4. Settle feedback via skills/ship step 8 and ship-pr.mjs. Previously settled findings
-   get a published reference to the prior reply/commit, without a round. Never weaken tests.
+3. Timely reply: P1 fixed, P2 fixed or answered, per skills/ship step 8; decisions in
+   judgment.botRemarks, threads closed by published replies. Later heads need CI/proof,
+   never another bot wait; outcome stays «ответил».
+4. Previously settled findings get a published reference to the prior reply/commit,
+   without a round. Never weaken tests.
 5. Finish the quiet period and gates; pending CI is never green.
 
 ## Defaults
@@ -36,8 +36,8 @@ its thirty minutes and quiet pause; CI/read failures still expire.
 
 ## Authorized Ship Fix
 
-A ship fix names the next gate attempt, new head/stateFile/proof; preserve
-old state and task attempt. No gate-attempt cap; rounds per review-admission.md.
+A ship fix stays in the worker session and names the next gate attempt, new
+head/stateFile/proof; preserve old state and task attempt. No gate-attempt cap.
 Task bot state stays in reports/<Issue>-a<attempt>-ship-bot.json (standalone:
 ship-bot-<owner>-<repo>-<PR>.json beside stateFile, retain it). Never reset it or old evidence deadlines.
 
@@ -64,7 +64,7 @@ Other reads retry to the evidence deadline; their expiry still parks.
 Store the full skill certificate in Linear, including replies/successors and exactly
 one «Бот: ответил|молчал|нет» from the gate's bot outcome. Deploy uses this line to
 ignore unfinished bot checks and bot remarks after Ship; CI and owner remarks always
-block. Without the line Deploy retains the legacy behavior.
+block.
 
 ## Review Status Reporting
 
