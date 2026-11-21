@@ -1092,7 +1092,7 @@ for(const host of ['claude','codex'])for(const intent of ['agree','correction','
  const f=textFixture(t,host,intent),r=f.check();assert.equal(r.status,'passed',r.reason);
 });
 for(const host of ['claude','codex'])for(const mode of ['forged-quote','wrong-question','no-reply','early-record','extra-change','deferred-start','clarification'])test(`${host}: text record rejects ${mode}`,t=>{
- const f=textFixture(t,host,mode==='extra-change'?'correction':mode==='deferred-start'?'defer':'agree');
+ const f=textFixture(t,host,mode==='extra-change'?'correction':['deferred-start','clarification'].includes(mode)?'defer':'agree');
  if(mode==='wrong-question')f.events[0]=f.assistant(f.draft+'\nДругой вопрос?');
  if(mode==='no-reply')f.events[2]=f.user('');
  if(mode==='early-record'){const write=f.events.splice(5,2);f.events.splice(2,0,...write);}
@@ -1104,7 +1104,8 @@ for(const host of ['claude','codex'])for(const mode of ['forged-quote','wrong-qu
  if(mode==='extra-change'){f.events[4]=f.result('read',{id:'doc',content:f.approved+' Постороннее.'});f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content:f.approved+' Постороннее.'});}
  if(mode==='deferred-start')f.events.push(f.call('next','Skill',{skill:'mono:research'}));
  f.request.nextSkill='mono:research';
- const r=f.check();assert.equal(r.status,'failed',r.reason);
+ const r=f.check();assert.equal(r.status,'failed',r.reason??JSON.stringify(r));
+ if(mode==='clarification')assert.match(r.reason,/scenario reply does not authorize this record/);
 });
 
 for(const host of ['claude','codex'])for(const intent of ['question','continuation','unclear','refuse'])test(`${host}: ${intent} continues without approval; an approval is rejected`,t=>{
