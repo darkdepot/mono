@@ -1530,8 +1530,26 @@ test('retry-stuck-gate: a gate stuck past the safety ceiling is stopped and the 
     const { collectOnce } = await import('./orchestrator/collector.mjs');
     f.publish(); await collectOnce({ ...f.options, gateStuckMs: 800 });
     assert.equal(f.result().status, 'failed'); assert.match(f.result().reason, /retries exhausted/);
-    assert.match(fs.readFileSync(path.join(f.options.root, 'reports/MONO-999-collector-a1.log'), 'utf8'), /gate stuck past the safety ceiling/);
+    assert.match(fs.readFileSync(path.join(f.options.root, 'reports/MONO-999-collector-a1.log'), 'utf8'), /gate stuck past the safety ceiling|gate terminated without an answer/);
     const gate = readJson(f.startFile).gate; assert.throws(() => process.kill(-gate.processGroup, 0), { code: 'ESRCH' });
+  });
+});
+test('retry-stuck-gate-collector-death: the gate holds the wall-clock ceiling itself after its collector dies', async () => {
+  await collectionRetryFixture('hang', async f => {
+    f.entry.collectionRetries = 0; atomicJson(f.registry, { [f.options.issue]: f.entry }); f.publish();
+    const module = new URL('./orchestrator/collector.mjs', import.meta.url).href;
+    const parent = spawn(process.execPath, ['--input-type=module', '-e', `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify({ ...f.options, gateStuckMs: 2500 })});`], { stdio: 'ignore', detached: true });
+    const closed = new Promise(resolve => parent.once('close', resolve));
+    const live = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    let gate;
+    try {
+      for (let i = 0; i < 160 && !gate; i++) { await new Promise(r => setTimeout(r, 50)); try { gate = readJson(f.startFile).gate; } catch {} }
+      assert.ok(gate, 'the gate registers before the collector dies');
+      parent.kill('SIGKILL'); await closed;
+      assert.equal(live(-gate.processGroup), true, 'the stuck gate outlives its collector until the ceiling');
+      for (let i = 0; i < 120 && live(-gate.processGroup); i++) await new Promise(r => setTimeout(r, 50));
+      assert.equal(live(-gate.processGroup), false, 'the gate group ends at its own ceiling');
+    } finally { parent.kill('SIGKILL'); if (gate && live(-gate.processGroup)) process.kill(-gate.processGroup, 'SIGKILL'); }
   });
 });
 for (const mode of ['orphan', 'orphan-pipe']) test(`retry-${mode}-group: a descendant left by a finished gate is stopped before reconciliation, even holding its pipes`, async () => {

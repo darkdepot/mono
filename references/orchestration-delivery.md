@@ -342,7 +342,8 @@ Launch pins are immutable with their fingerprint (`effectivePins`, round binding
 pins versions no longer exist and an amended registry entry from an older pack is
 refused. A task change: write the «Изменение задачи» comment on the Issue in
 words, then resume the same session with `resume.mjs` request `{root, issue,
-resumeFile, taskChange: <comment link>}`, the link quoted in the resume file.
+resumeFile, taskChange: <comment link>}`; the resume file repeats the comment's
+words and its link, since reviewers cannot open Linear.
 Resume records the delivered text append-only in `dispatch/KEY-aN/task-changes.json`
 and the review round reads it with the Issue; a refused resume records nothing.
 Resume carries no grants or network override: a risk, critical or grant change is

@@ -247,7 +247,7 @@ Workflow states:
      with `scripts/orchestrator/collector.mjs start --root DIR --issue KEY
      --attempt N` and read its reports log. A task change: write «Изменение
      задачи» on the Issue in words, then resume.mjs with taskChange set to its
-     link; a risk or grant change is a new attempt on the same branch.
+     link and those words in the resume file; a risk or grant change is a new attempt on the same branch.
      Grant workers reports/ only. The collector host needs both the Codex and Claude CLIs logged in by subscription, from different model families; a single-family setup gives `not-reviewed`. Approve nothing between rounds ([Review rounds](../../references/orchestration-delivery.md#review-rounds)); recheck collect:false before ship.
      Never send a stage-resume prompt to a worker waiting on a round.
    - Validate each terminal verification_items list against every Issue line;

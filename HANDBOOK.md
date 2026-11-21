@@ -779,7 +779,7 @@ is no report confirmation command and no `amend`. Launch pins stay immutable wit
 their fingerprint (`effectivePins`, round binding); `pins.v<n>.json` and
 `pinsVersion` are gone, and a registry entry amended by an older pack is refused. A
 task change is an «Изменение задачи» comment on the Issue plus `resume.mjs` with
-`taskChange` set to its link (quoted in the resume file): resume records the
+`taskChange` set to its link (the resume file repeats the comment's words and link): resume records the
 delivered text in `dispatch/KEY-aN/task-changes.json` and the review round reads it
 with the Issue. Resume carries no grants or network override; a risk, critical or
 grant change is a new attempt on the same branch. Registry changes and collector

@@ -67,9 +67,13 @@ async function runGate(options, request, heldLock = null, startedFile = null) {
   const script = packLayout(request.packRoot ?? request.skillsRoot).script("gate.mjs");
   // Release the isolated gate only after its incarnation is durably registered.
   // Parent death before release closes stdin, so no unregistered gate can run.
-  // Each reviewer role has its own time limit, so a hung CLI ends the gate.
+  // Each reviewer role has its own time limit, so a hung CLI ends the gate. The gate also
+  // holds the safety ceiling itself, on wall-clock time (sleep pauses timers), so it ends
+  // even when its collector died.
+  const ceilingAt = Date.now() + (options.gateStuckMs ?? GATE_STUCK_MS);
   const runner = `let token=""; for await (const chunk of process.stdin) token += chunk;
 if (token !== "go\\n") process.exit(1);
+setInterval(() => { if (Date.now() >= ${ceilingAt}) { try { process.kill(-process.pid, 'SIGKILL'); } catch { process.exit(1); } } }, 1000).unref();
 process.argv = ${JSON.stringify([process.execPath, script, "preflight", "--request", file])};
 try { await import(${JSON.stringify(pathToFileURL(script).href)}); }
 catch (error) { console.error(error); process.exitCode = 1; }`;
@@ -100,9 +104,9 @@ catch (error) { console.error(error); process.exitCode = 1; }`;
   let stuck = false, ceiling;
   await new Promise((resolve, reject) => {
     child.once("error", reject); child.once("exit", resolve);
-    ceiling = setTimeout(() => { stuck = true; resolve(); }, options.gateStuckMs ?? GATE_STUCK_MS);
+    ceiling = setInterval(() => { if (Date.now() >= ceilingAt) { stuck = true; resolve(); } }, 250);
   });
-  clearTimeout(ceiling);
+  clearInterval(ceiling);
   if (stuck) await stopGate(gate);
   const settle = ms => Promise.race([closed.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), ms))]);
   const drained = await settle(2000);
