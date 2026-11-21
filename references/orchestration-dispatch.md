@@ -268,7 +268,7 @@ Protocol:
    --ack <path> --moves <json-file> --config <cfg>`: deadline is ack mtime +
    `ackWaitSec`; expiry parks `write-unconfirmed`, then exit/resume recovery.
    Validate own issue/attempt, ackDigest and each dispatched moveDigest/read-back.
-   Applied read-backs amend the snapshot; run the post-move delivery check,
+   Applied read-backs update the snapshot; run the post-move delivery check,
    without rerunning identity in the same process. On `blocked`, write ack then
    the Blocked-path stage report before stopping; ack alone strands the Issue
    until the watcher expires and enters liveness healing:

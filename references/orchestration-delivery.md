@@ -201,10 +201,11 @@ runs only when the reviewer reports findings).
 
 Between rounds do nothing: the worker fixes open findings and requests the next
 round itself. The pinned risk sets the completed rounds per task attempt (`risky`
-three, the fast path one), counted from the attempt's receipts;
-rounds after the first read only the fixes and open findings; the same head
+three, the fast path one plus one per task change, even on an unchanged head),
+counted from the attempt's receipts; rounds after the first read only the fixes
+and open findings, except the first round after a task change; the same head
 reuses its round; `not-reviewed` spends nothing. `ROUND_LIMIT` stays 3 and
-`reviewContext` counts as before, for the installed `accept.mjs`.
+`reviewContext` in `gate.mjs` counts from the receipt history.
 
 Fast path: after its round the worker fixes, runs the full verification on the
 final head and requests it with `workerVerification: {head, exitCode: 0}`; the
@@ -357,8 +358,8 @@ A review fix uses a new head and collectionId: preflight-collect:<head>:<n>, wit
 The gate locks collection per head in evidenceRoot. Spawn releases the registry lock after durable PID registration, waits for thread.started outside it, and registers the same attempt/PID thread under a short lock. Collector reclaim uses the incarnation/group checks and marker above; never remove a live or unverified lock or start a competing collector. Before the ship gate independently run preflight collect:false with the same dispatch request; Preflight and merge stay bound to the head (`deploy.mjs --match-head-commit`).
 Keep reports as the sole writable mailbox; journal, registry and the round ledger remain outside the sandbox grant. Hostile local operator attestation remains out of scope.
 
-The worker keeps in-phase order: drift sync before PR, ready certificate before
-formal review, In Review after PR. Keep phase=code|preflight|ship and the same
+The worker keeps in-phase order: drift sync before leaving draft (`ship-pr.mjs
+ready`), ready certificate before formal review, In Review after leaving draft. Keep phase=code|preflight|ship and the same
 delivery context/log. A retry after terminal parked archives a reconciled capsule
 only after the new attempt has read the Issue's Linear state back; never erase old
 receipts.
@@ -403,9 +404,11 @@ directory's history; retired Issues' logs are outside its scope.
   `watcher-required` gives the start command; refusal registers no attempt and
   consumes no attempt allowance. Read-only `spawn --pins` is exempt.
   The common launch path rechecks the pulse before spawn under the same lock.
-  Amendments record possible delivery only at that boundary; pre-spawn refusals
-  and failed process creation leave no marker, while an indeterminate real
-  launch retains its recovery evidence and refuses an automatic duplicate.
+  Pre-spawn refusals register no attempt. At that boundary a launch registers its
+  attempt and registry entry and keeps them if process creation then fails (the
+  attempt is spent); a resume records its task change and drops it when the process
+  never started. An indeterminate real launch retains its recovery evidence and
+  refuses an automatic duplicate.
   If the session and watcher disappear together while a worker runs, the pack
   cannot detect that loss; the orchestrator environment owns that supervision.
 - Each changed phase report file emits `phase`, regardless of stage order.

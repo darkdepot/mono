@@ -56,10 +56,10 @@ denied: <worktree>/.orchestrator, same name, never both.
 Unique/nonempty gate names. gates-passed: exact set/all pass; blocked: nonempty
 subset/one blocked. Blocked ack precedes report (missing blocked; adverse needs-human),
 no move. Passed: no code/move/write/report. Codex wait-ack expires at ack mtime +
-ackWaitSec → write-unconfirmed. Applied read-backs amend state; delivery check,
+ackWaitSec → write-unconfirmed. Applied read-backs update state; delivery check,
 no identity rerun. Resume: Codex exits; desktop/fallback retains session; all move
 read-backs and identity/check rerun. Never repeat moves. No-move retry: current
-snapshot, no ack/amendment. Consumption is not approval.
+snapshot, no ack/update. Consumption is not approval.
 
 `claude-cli` has no Linear MCP: dispatch refuses its delivery.
 
@@ -69,8 +69,8 @@ Workspace-write/network: worktree, derived/common Git dirs, <root>/reports
 (--add-dir spawn; writable_roots resume); copy grants to capsule.writable_roots.
 codex 0.153.4 guards linked-worktree metadata. Orchestrator
 root/registry/control/consumed/logs: read-only.
-No PR/push/unrelated network before the first round request; then preflight
-pushes and opens the draft via scripts/ship-pr.mjs open|push (secrets first).
+No PR/push/unrelated network before preflight prepares the first round request;
+it opens the draft, then pushes via scripts/ship-pr.mjs open|push (secrets first).
 Standalone implement network by exception; preflight/ship network/.git. Exact hidden grants. Log disabled sandbox in
 orchestrator ledger. Denied mailbox: same uncommitted JSON fallback.
 
@@ -161,9 +161,9 @@ reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json or denied-write .orchestrat
 never both. Final fields + phase/increasing positive sequence/kind:phase/head/
 phase_result; capsule phase/head match; reports never wait. Publish:
 delivery-state.mjs. Resume dispatch/capsule/branch; keep done/foreign changes; no
-reset/repeat applied moves/writes; a task change is a link to an «Изменение
-задачи» comment: read and follow it.
-Green needs all obligations: drift before PR, ready before review, In Review after PR.
+reset/repeat applied moves/writes; a task change links an «Изменение
+задачи» comment: follow it, then request a round.
+Green needs all obligations: drift before ready, ready before review, In Review after ready.
 
 Pin product/evidenceRoot/packRoot/skillsRoot/risk/critical/verification/grants.
 ~/.mono-agent-workflow/evidence/<product>/ outside ALL grants, including

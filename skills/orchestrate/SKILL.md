@@ -35,7 +35,7 @@ Read when — load the file only when its condition is true for this run:
 - `templates/orchestrator-dispatch.md` — when a worker dispatch is prepared.
 - `templates/orchestrator-brief.md` — before writing a status, wave report or decision brief.
 - `templates/orchestrator-report.md` — when a worker report, phase capsule or registry entry is read, validated or written.
-- `references/lifecycle.md` — when a Linear lifecycle move is sequenced or a queued lifecycle mutation is applied.
+- `references/lifecycle.md` — when a Linear lifecycle move is sequenced or a start move from a gate acknowledgement is applied.
 - `references/readiness-gates.md` — when a risk class or a stage readiness gate has to be decided for a wave.
 - `references/questioning.md` — when this run escalates a decision to the owner.
 - `templates/project-update.md` — when this run publishes or edits a Linear project update, including the update it writes for a project sweep or for a project completed by hand.
