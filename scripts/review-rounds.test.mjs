@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { admitRound, recordResult, readLedger, inFlight, waitForRound, requestDigest, roundRequestName, collectorLock, hostRunMarker, evidenceSnapshot, recoverHostRun } from "./review-rounds.mjs";
+import { admitRound, recordResult, readLedger, inFlight, waitForRound, requestDigest, roundRequestName, collectorLock, hostRunMarker, hostRunCheckout, evidenceSnapshot, recoverHostRun } from "./review-rounds.mjs";
 import { processStart } from "./runtime.mjs";
 
 const scripts = path.dirname(fileURLToPath(import.meta.url));
@@ -71,6 +71,24 @@ test("wait-round: returns the result bound to this request, refuses a foreign on
     try { process.kill(-holder.pid, "SIGKILL"); } catch {}
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+// MONO-462: the host run executes in a clean checkout of the head beside the marker; recovery after a dead gate
+// removes it once the group is confirmed stopped, and keeps it while the group may live.
+test("host run recovery removes the head checkout only after the group is stopped", async () => {
+  const evidence = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-checkout-")));
+  const pinsFile = "/orchestrator/dispatch/MONO-999-a1/pins.json", id = `preflight-collect:${head}:1`;
+  const marker = hostRunMarker(evidence, id), checkout = hostRunCheckout(evidence, id);
+  try {
+    assert.equal(checkout, marker.replace(/\.running$/, ".checkout"));
+    fs.mkdirSync(path.join(checkout, ".git"), { recursive: true }); fs.writeFileSync(path.join(checkout, "a.txt"), "a\n");
+    fs.writeFileSync(marker, JSON.stringify({ collectionId: id, group: 99999, snapshot: [] }));
+    await assert.rejects(recoverHostRun(evidence, id, pinsFile), /without a start identity/);
+    assert.equal(fs.existsSync(checkout), true, "kept while the group may live");
+    fs.writeFileSync(marker, JSON.stringify({ collectionId: id, group: null, snapshot: [] }));
+    assert.equal(await recoverHostRun(evidence, id, pinsFile), "host run interrupted");
+    assert.deepEqual([fs.existsSync(checkout), fs.existsSync(marker)], [false, false]);
+  } finally { fs.rmSync(evidence, { recursive: true, force: true }); }
 });
 
 test("host run recovery: a gate that died mid-run leaves no planted or edited receipt and no live group", async () => {

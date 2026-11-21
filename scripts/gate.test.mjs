@@ -298,11 +298,14 @@ test("preflight accepts only a v3 receipt with an accepted review, exact head/ba
     [{ verification: { exitCode: 0, sandbox: { mode: "workspace-write", probed: false } } }, /sandbox proof missing/],
     [{ consistency: { passed: false, error: 'head or base changed during verification' } }, /consistency failed or missing: head or base changed/],
     // MONO-457: a host verification receipt needs its own exit 0; neither the worker's word nor a sandbox proof replaces it.
-    [{ verification: { host: true, exitCode: 1, log: '/e/v.log', tail: 'ps:\n  failed' }, workerVerification: { head, exitCode: 0 } },
+    [{ verification: { host: true, head, exitCode: 1, log: '/e/v.log', tail: 'ps:\n  failed' }, workerVerification: { head, exitCode: 0 } },
       /^verification failed on this head on the host \(exit 1\); fix and request again, the same head too for a flaky run; log \/e\/v\.log; tail: ps: failed$/],
     [{ verification: { host: true, exitCode: null, sandbox: { mode: "workspace-write", probed: true } } }, /^verification failed on this head on the host \(exit null\)/],
+    // MONO-462: a green host run counts only bound to the head its clean checkout held.
+    [{ verification: { host: true, exitCode: 0, log: '/e/v.log' } }, /^host verification is not bound to this head: request a new collection$/],
+    [{ verification: { host: true, head: "c".repeat(40), exitCode: 0, log: '/e/v.log' } }, /^host verification is not bound to this head/],
   ]) assert.throws(() => validatePreflight(receipt(extra), head, base), { message: refusal });
-  assert.match(validatePreflight(receipt({ verification: { host: true, exitCode: 0, log: '/e/v.log' } }), head, base),
+  assert.match(validatePreflight(receipt({ verification: { host: true, head, exitCode: 0, log: '/e/v.log' } }), head, base),
     /^review clean \(round 1 of 3\) and host verification verified on head$/);
   // The collection no longer verifies: its receipt passes only with the worker's full verification of this head.
   assert.match(validatePreflight(receipt({ verification: { command: 'node', args: ['verify.mjs'], exitCode: null }, workerVerification: { head, exitCode: 0 } }), head, base),
@@ -385,13 +388,17 @@ test("named collection fixtures through the gate CLI", async t => {
         pins.verification.args = ["-e", `const fs=require('node:fs');fs.mkdirSync('.orchestrator',{recursive:true});fs.writeFileSync('.orchestrator/verify-saw',fs.readFileSync(${JSON.stringify(path.join(bin, "review.log"))},'utf8'))`];
       }
       if (fixture.mode === "review-host") {
+        // MONO-462: Git routing inherited by the collection never reaches the command (it would read the worker's copy).
+        Object.assign(env, { GIT_DIR: path.join(repo, ".git"), GIT_WORK_TREE: repo });
         // MONO-457: the verification exits with the code in verify-exit, logs where and how it ran, and on verify-tamper
-        // plants a receipt for this attempt in the evidence history.
+        // plants a receipt for this attempt in the evidence history. MONO-462: on verify-probe (the QA probe) it writes an
+        // uncommitted fix into the worker's copy, reads input.mjs where it runs, puts the copy back and fails without the fix.
         pins.hostVerification = true;
         const control = JSON.stringify(scratch), history = JSON.stringify(path.join(evidence, "history"));
         pins.verification.args = ["-e", `const fs=require('node:fs'),p=require('node:path'),d=${control};
 const read=n=>{try{return fs.readFileSync(p.join(d,n),'utf8').trim()}catch{return null}};
-fs.appendFileSync(p.join(d,'verify-runs'),JSON.stringify({cwd:process.cwd(),tmp:process.env.TMPDIR})+'\\n');
+fs.appendFileSync(p.join(d,'verify-runs'),JSON.stringify({cwd:process.cwd(),tmp:process.env.TMPDIR,gitDir:process.env.GIT_DIR??null,head:require('node:child_process').execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()})+'\\n');
+const w=read('verify-probe');if(w){const f=p.join(w,'input.mjs'),kept=fs.readFileSync(f);fs.writeFileSync(f,kept+'// uncommitted fix\\n');const seen=fs.readFileSync('input.mjs','utf8');fs.writeFileSync(f,kept);if(!seen.includes('uncommitted fix')){console.log('FAIL add broken');process.exit(1);}}
 const t=read('verify-tamper');if(t){const x=JSON.parse(t);fs.writeFileSync(p.join(${history},'planted.json'),JSON.stringify({receipt:{producer:'gate-review-v3',pins:{file:x.pins},collectionId:x.collectionId,verification:{host:true,exitCode:0}}}));fs.appendFileSync(x.edit,' ');}
 if(read('verify-child')){const c=require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>require("node:fs").writeFileSync('+JSON.stringify(read('verify-child'))+',"{}"),1500)'],{stdio:'ignore'});c.unref();}
 const code=Number(read('verify-exit')??0);if(code)console.log('FAIL fixture step');console.log('host verify output: process table read');process.exit(code);`];
@@ -593,6 +600,12 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         };
         const runs = () => fs.existsSync(path.join(scratch, 'verify-runs')) ? fs.readFileSync(path.join(scratch, 'verify-runs'), 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
         setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'First leftover', title: 'First leftover' })] });
+        // MONO-462: the checkout is a repository of its own: worker Git configuration that would apply only there
+        // (a conditional include for the checkout's Git directory turning on a smudge filter) never runs.
+        const smudged = path.join(scratch, 'smudged'), included = path.join(scratch, 'checkout-include.gitconfig');
+        write(included, `[filter "probe"]\n\tsmudge = "sh -c 'touch ${smudged} && cat'"\n`);
+        for (const pattern of ['gitdir:**/worktrees/**', 'gitdir:**/*.checkout/**']) git('config', `includeIf.${pattern}.path`, included);
+        write(path.join(repo, '.gitattributes'), 'input.mjs filter=probe\n'); git('add', '.gitattributes');
         const first = commit('export const one = 1;\n');
         assert.equal(call(at(first)).status, 2, 'pending without workerVerification: the round verifies');
         // A red head: no review call, no round spent, the line names the log and its tail.
@@ -601,12 +614,22 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.deepEqual([reviewCalls(bin).length, receipt.review.outcome, receipt.review.spent, receipt.verification.host, receipt.verification.exitCode], [0, 'refused', false, true, 1]);
         assert.match(fs.readFileSync(receipt.verification.log, 'utf8'), /host verify output/);
         const [ran] = runs();
-        assert.equal(ran.cwd, fs.realpathSync(repo)); assert.match(path.basename(ran.tmp), /^mono-host-verify-/);
+        // MONO-462: the run executes in a clean checkout of exactly the head beside the marker, removed afterwards.
+        assert.equal(ran.cwd, path.join(fs.realpathSync(evidence), 'verification', `preflight-collect-${first}-1.checkout`));
+        assert.deepEqual([ran.head, receipt.verification.head, fs.existsSync(ran.cwd), ran.gitDir], [first, first, false, null]);
+        assert.equal(git('worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ')).length, 1, 'no checkout left registered');
+        assert.match(path.basename(ran.tmp), /^mono-host-verify-/);
+        assert.equal(fs.existsSync(smudged), false, 'no worker filter ran for the checkout');
         assert.equal(fs.existsSync(ran.tmp), false, 'the private temporary directory is removed');
+        // MONO-462 (QA probe): an uncommitted fix placed in the worker's copy during the run and put back before its end
+        // does not turn the red head green; the worker's tree is clean at the end, so only the checkout catches it.
+        write(path.join(scratch, 'verify-exit'), '0'); write(path.join(scratch, 'verify-probe'), repo);
+        receipt = await round(at(first, 2), 1, /fail: verification failed on this head on the host \(exit 1\).*tail: FAIL add broken$/m);
+        assert.deepEqual([reviewCalls(bin).length, receipt.review.spent, receipt.consistency.passed, git('status', '--porcelain')], [0, false, true, '']);
+        fs.unlinkSync(path.join(scratch, 'verify-probe'));
         // The same head again (a flaky run): the verification reruns, then the round runs.
-        write(path.join(scratch, 'verify-exit'), '0');
-        receipt = await round(at(first, 2), 1, /fail: review not-converged \(round 1 of 1\); fix and request the final head; the collection runs the full verification on the host/);
-        assert.deepEqual([runs().length, receipt.review.spent, receipt.verification.exitCode], [2, true, 0]);
+        receipt = await round(at(first, 3), 1, /fail: review not-converged \(round 1 of 1\); fix and request the final head; the collection runs the full verification on the host/);
+        assert.deepEqual([runs().length, receipt.review.spent, receipt.verification.exitCode], [3, true, 0]);
         // Fast path: the fixed head passes on the host verification without a second round.
         const fixed = commit('export const fixed = 1;\n'), calls = reviewCalls(bin).length;
         assert.equal(call(at(fixed)).status, 2, 'the spent round still admits the fixed head for host verification');

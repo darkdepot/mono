@@ -935,18 +935,29 @@ from BASE and pins it for the attempt (`hostVerification` in the launch pins;
 the dispatch adds a «Проверка на хосте» block), so neither the worker's branch
 nor its round request can switch it.
 
-With the pin, every collection first runs the pinned `verification` command on
-the committed head in the worktree, outside the sandbox, in a process group of
-its own that is stopped as a whole when the command exits, with a private
-temporary directory, and writes its output to
-`<evidenceRoot>/verification/<collectionId>.log`. While it runs, a
+With the pin, every collection first runs the pinned `verification` command
+outside the sandbox in a clean checkout of exactly the request's committed head:
+a fresh repository at `<evidenceRoot>/verification/<collectionId>.checkout`,
+outside every worker grant, that reads the head's objects from the worker
+repository but none of its configuration, hooks, filters or sparse patterns, so
+the worker's working copy (including an uncommitted edit made and reverted
+during the run) never feeds the result. The checkout holds only committed files
+and the detached head, without branches or remotes: a product whose
+verification needs untracked inputs such as `node_modules` installs them in its
+command. The run
+has a process group of its own that is stopped as a whole when the command
+exits and a private temporary directory, writes its output to
+`<evidenceRoot>/verification/<collectionId>.log`, and the checkout is removed
+afterwards. While it runs, a
 `<collectionId>.running` marker beside the log holds the evidence snapshot
 taken before the run and the group, registered before the command is released:
 no receipt of that collection is read while the marker exists, and if the gate
 dies mid-run, collector recovery confirms the group stopped (or keeps the round
-in flight), settles the evidence against the snapshot like the gate would,
-quarantines what was written for that collection and runs it again. The receipt records
-`verification {host: true, exitCode, log, tail}` (the tail prefers failing lines):
+in flight), removes the checkout, settles the evidence against the snapshot like
+the gate would, quarantines what was written for that collection and runs it
+again. The receipt records `verification {host: true, head, exitCode, log, tail}`
+(the tail prefers failing lines); a host run counts only with `head` equal to
+the reviewed head:
 
 - exit 0: the review round runs as usual, and on the fast path a fixed head
   passes on this run instead of `workerVerification`;
