@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { captureCriteria, publishPhase, validatePhase, confirmQueue } from './delivery-state.mjs';
+import { captureCriteria, publishPhase, validatePhase } from './delivery-state.mjs';
+import { implementationComment } from './implementation-comment.mjs';
 
 test('criteria-relative-root resolves from the working copy before persisting', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-relative-root-'));
@@ -66,7 +67,7 @@ for (const fixture of ['missing-criteria', 'ambiguous-criteria', 'unsupported-la
         command: 'node scripts/delivery-state.mjs capture-criteria ...', exit: 1, reason: 'Захват отказал: неоднозначный или отсутствующий раздел' });
       const out = publishPhase(r, path.join(root, 'reports/stop.json'));
       assert.deepEqual(out.criteria, []);
-      const body = out.linear_mutations_pending[0].payload.body;
+      const body = implementationComment(out).payload.body;
       assert.match(body, /# Критерии приемки/); assert.match(body, /Готово, когда:/);
       assert.match(body, /Захват отказал/);
       if (fixture === 'ambiguous-criteria') assert.doesNotMatch(body, /Недостающие метки/);
@@ -86,9 +87,9 @@ test('stop-after-start-refusal publishes blocked or integrity stop before captur
       r.phase_result = status;
       const out = publishPhase(r, path.join(root, 'reports/stop.json'));
       assert.deepEqual(out.criteria, []);
-      assert.match(out.linear_mutations_pending[0].payload.body, /Проверка старта отказала/);
-      assert.match(out.linear_mutations_pending[0].payload.body, /# Критерии приемки/);
-      assert.doesNotMatch(out.linear_mutations_pending[0].payload.body, /Недостающие метки/);
+      assert.match(implementationComment(out).payload.body, /Проверка старта отказала/);
+      assert.match(implementationComment(out).payload.body, /# Критерии приемки/);
+      assert.doesNotMatch(implementationComment(out).payload.body, /Недостающие метки/);
       assert.throws(() => publishPhase({ ...r, kind: 'confirmation-request' }, path.join(root, 'reports/bad.json')), /implementation report/);
       assert.throws(() => publishPhase({ ...r, pre_capture_stop: { ...r.pre_capture_stop, exit: 0, verdict: 'pass' } }, path.join(root, 'bad.json')), /implementation report/);
       const incomplete = { ...r, pre_capture_stop: { ...r.pre_capture_stop } }; delete incomplete.pre_capture_stop.verdict;
@@ -122,14 +123,10 @@ test('saved-capture-refusal survives source refresh or deletion without changing
       fs.writeFileSync(source,fs.readFileSync('scripts/fixtures/implementation-missing-criteria-issue.md'));
       const candidate=preCaptureReport(root,{kind:'capture-refused',issue_file:source,command:'capture-criteria',exit:1,reason:'Раздел отсутствует'});
       const output=path.join(root,'reports/MONO-993-phase-code.json');
-      const saved=publishPhase(candidate,output),body=saved.linear_mutations_pending[0].payload.body;
+      const saved=publishPhase(candidate,output),body=implementationComment(saved).payload.body;
       if(change==='refresh')fs.writeFileSync(source,fs.readFileSync(approvedIssue));else fs.unlinkSync(source);
       assert.doesNotThrow(()=>validatePhase(saved));
-      const ack=await confirmQueue(saved,root,async(action,write)=>{
-        assert.equal(action,'reconcile');assert.equal(write.payload.body,body);
-        return {state:'present',evidence:'fixture read-back of the original unchanged refusal comment'};
-      });
-      assert.equal(ack.status,'confirmed');
+      assert.equal(implementationComment(saved).payload.body,body,'the worker posts the original unchanged refusal comment');
       assert.deepEqual(publishPhase(saved,output),saved,'lost-response replay preserves the exact saved report');
     } finally {fs.rmSync(root,{recursive:true,force:true});}
   }
@@ -144,7 +141,7 @@ test('ambiguous-heading-level reports refusal without inventing missing labels',
     assert.throws(()=>capture(root,source),/duplicate acceptance section/);
     const r=preCaptureReport(root,{kind:'capture-refused',issue_file:source,command:'capture-criteria',exit:1,reason:'Неоднозначный раздел'});
     const out=publishPhase(r,path.join(root,'reports/out.json'));
-    assert.doesNotMatch(out.linear_mutations_pending[0].payload.body,/Недостающие метки/);
+    assert.doesNotMatch(implementationComment(out).payload.body,/Недостающие метки/);
   } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
 function capture(root, source = approvedIssue) {

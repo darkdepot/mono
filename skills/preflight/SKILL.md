@@ -26,7 +26,7 @@ Read when:
 - `references/review-admission.md` — review rounds, findings or parks.
 
 Before work/resume: identity, package/config/checks, git/diff/base, start
-comments/certificates; apply worker snapshot/queue rules.
+comments/certificates; apply worker snapshot/Linear Writes rules.
 
 ## Workflow
 
@@ -42,14 +42,14 @@ comments/certificates; apply worker snapshot/queue rules.
 4. Commit, run the pinned verification, send `workerVerification`;
    first request: `scripts/ship-pr.mjs open` (draft, once). Later: `push`,
    then `remarks`; all fixed this attempt go in the request's `prRemarks`. Run the pinned
-   gate.mjs preflight collect:false, publish its returned request, confirm, rerun.
+   gate.mjs preflight collect:false, publish its returned request, wait, rerun.
 5. Behavior change: live-run the main scenario before the first round. Follow
    the gate line per references/review-admission.md; `needs-decision:`/`blocked:`
    → park. No broad/release-sensitive rewrites or weakened tests.
 6. Reclassify fixes. Pass needs review clean|clean-with-successors and
    verification on this head; missing/hand-made/old/stale proof fails.
 7. Record safe commit/action; full `mono-preflight certificate` in
-   Linear, dispatch append #/certificate once. Keep Issue verification/recovery/lead.
+   Linear once, read back. Keep Issue verification/recovery/lead.
 
 Statuses: ready, blocked, drift-candidate, needs-human. Ship judges unconfirmed
 drift; package expansion needs handoff/atomic repair. Apply lane freeze/exit and

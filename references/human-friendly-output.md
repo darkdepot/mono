@@ -80,7 +80,7 @@ Greptile: «внешний авто-ревьюер PR»; head SHA: «точна�
 
 ## Linear Exit Comments
 
-Blocked/needs-human/scope-drift-needs-handoff/timed-out: short Russian Issue (Idea: Project) comment, result/stop/`Нужно от тебя: <точное решение или unblock>`. Keep happy-path comments/certificates; queue under dispatch.
+Blocked/needs-human/scope-drift-needs-handoff/timed-out: short Russian Issue (Idea: Project) comment, result/stop/`Нужно от тебя: <точное решение или unblock>`. Keep happy-path comments/certificates; a dispatched worker writes them itself.
 
 ## Machine Blocks In Linear Comments
 

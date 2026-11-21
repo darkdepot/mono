@@ -4,7 +4,7 @@ import { qaDeliveryState, requireQaPassed } from '../qa-gate.mjs';
 import path from "node:path";
 import crypto from "node:crypto";
 import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, shipBotChecks, baseModelConfig, processStart } from "../runtime.mjs";
-import { validatePhase, requirePredecessors, classifyQueue, confirmationPath, validateConfirmation, resolveWrite } from "../delivery-state.mjs";
+import { validatePhase, requirePredecessors, classifyQueue } from "../delivery-state.mjs";
 import { checkIdea, IDEA_GATE_DEFAULT_SINCE } from '../idea-gate.mjs';
 
 export function dispatchIdea(directory, config, issue, lane = null) {
@@ -110,10 +110,6 @@ export function correlatedPhase(root, file) {
   return { report, entry };
 }
 
-export function expandedWrite(write, report) {
-  return resolveWrite(write, report);
-}
-
 // Validate the full queue without adapter calls or confirmation side effects.
 export async function validateReportBarriers(root, report, reportsDir) {
   requirePredecessors(report, root, reportsDir, "confirming");
@@ -145,7 +141,8 @@ export function confirmedShip(root, entry) {
   const { report } = correlatedPhase(root, files[0]);
   if (report.issue !== entry.issue || report.attempt !== entry.attempt || report.phase !== "ship" || report.status !== "green")
     throw new Error("ship report is not green for this attempt");
-  validateConfirmation(report, readJson(confirmationPath(report, root)));
+  // A ship report carries no queue: the worker wrote and read back its certificate.
+  if (report.capsule.open_queue.length) throw new Error("ship report must not carry queued writes");
   validateShipCertificate(report);
   return { report };
 }

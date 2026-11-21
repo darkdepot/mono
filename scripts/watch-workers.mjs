@@ -1170,7 +1170,7 @@ function checkPhase(log, entry, nowMs) {
   const latest = phases[0]; if (!latest) return false;
   if (!requiresConfirmation(latest.report)) return { waiting: false, pending: false };
   const confirmation = confirmationPath(latest.report, args.root);
-  try { validateConfirmation(latest.report, JSON.parse(fs.readFileSync(confirmation, "utf8"))); return false; } catch { /* still awaiting whole queue */ }
+  try { validateConfirmation(latest.report, JSON.parse(fs.readFileSync(confirmation, "utf8"))); return false; } catch { /* still awaiting the collection confirmation */ }
   const timeout = entry.confirmationTimeoutSec ?? deliveryConfig().confirmationTimeoutSec;
   const withinDeadline = Number.isFinite(timeout) && timeout > 0 && nowMs - latest.publishedAtMs >= 0 && nowMs - latest.publishedAtMs <= timeout * 1000;
   const transport = workerTransport(entry.transport);

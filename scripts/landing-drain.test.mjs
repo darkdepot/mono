@@ -201,7 +201,7 @@ test("landing U7 attempt state: conservative order and stopped landed identity",
   f.entry.pid = 99999999;
   f.report.attempt = 2; f.publish(); assert.equal(classify().state, "active", "foreign report is active");
   fs.writeFileSync(f.reportFile, "unreadable JSON"); assert.equal(classify().state, "active");
-  f.report.attempt = 1; f.publish(); fs.unlinkSync(f.confirmFile); assert.equal(classify().state, "active", "unconfirmed certificate is active");
+  f.report.attempt = 1; f.publish(); fs.unlinkSync(f.confirmFile); assert.equal(classify().state, "landed", "a green ship report needs no confirmation: the worker read its certificate back");
   f.publish(); const mergeSha = f.record.mergeSha; f.record.mergeSha = "invalid"; atomicJson(f.pending, [f.record]);
   assert.equal(classify().state, "active", "malformed landing is uncertain"); f.record.mergeSha = mergeSha;
   f.publish(); f.record.attempt = 2; atomicJson(f.pending, [f.record]); assert.equal(classify().state, "active", "another attempt's landing cannot release this one");
@@ -228,7 +228,7 @@ test("landing U7 record authenticates merged PR and preserves first guard outcom
   f.mock.pr.merge_commit_sha = f.tip; f.github(); r = f.run("record", args); assert.equal(r.status, 1); assert.match(r.stderr, /conflict/);
 });
 
-for (const scenario of ["foreign-repo", "different-pr-same-head", "wrong-branch", "wrong-head", "not-merged", "unconfirmed", "foreign-certificate"]) {
+for (const scenario of ["foreign-repo", "different-pr-same-head", "wrong-branch", "wrong-head", "not-merged", "queued-write", "foreign-certificate"]) {
   test(`landing U7 record rejects ${scenario}`, t => {
     const f = fixture(t); let pr = "901";
     if (scenario === "foreign-repo") f.mock.pr.base.repo.full_name = "other/repo";
@@ -236,10 +236,14 @@ for (const scenario of ["foreign-repo", "different-pr-same-head", "wrong-branch"
     if (scenario === "wrong-branch") f.mock.pr.base.ref = "other";
     if (scenario === "wrong-head") f.mock.pr.head.sha = "b".repeat(40);
     if (scenario === "not-merged") f.mock.pr.merged = false;
-    if (scenario === "unconfirmed") fs.unlinkSync(f.confirmFile);
+    if (scenario === "queued-write") {
+      const id = `preflight-collect:${f.head}:1`;
+      f.report.linear_mutations_pending = f.report.capsule.open_queue = [{ id, operation: "preflight-collect", target: f.head, payload: { request: { collectionId: id } } }];
+      f.publish();
+    }
     if (scenario === "foreign-certificate") { f.report.certificate = f.report.certificate.replace(f.issue, "MONO-902"); f.publish(); }
     f.github(); const r = f.run("record", ["--issue", f.issue, "--attempt", "1", "--pr", pr]);
-    assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.stderr, /mismatch|certificate|ENOENT/); assert.equal(fs.existsSync(f.pending), false);
+    assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.stderr, /mismatch|certificate|ENOENT|queued writes/); assert.equal(fs.existsSync(f.pending), false);
   });
 }
 
@@ -523,7 +527,7 @@ test("landing U7 resuming a landed release cannot bypass another active release"
   writeWatcherFixture(f.root);
   const skills = path.join(f.scratch, "skills"); fs.mkdirSync(skills); fs.mkdirSync(path.join(f.scratch, "evidence"));
   copyPluginFixture(skills); f.entry.packRoot = skills; f.entry.skillsRoot = skills;
-  f.entry.surfaceRevision = 5; // Current protocol from U2; the report must share this identity.
+  f.entry.surfaceRevision = 6; // Current protocol from MONO-450; the report must share this identity.
   f.report.surfaceRevision = f.entry.surfaceRevision; f.publish();
   f.entry.model_launch = { model_parameter: "fixture", effort_parameter: "high" }; f.entry.model_policy = { role: "worker-default" };
   f.entry.log = path.join(f.root, "logs/fixture.jsonl"); fs.mkdirSync(path.dirname(f.entry.log)); fs.writeFileSync(f.entry.log, "");

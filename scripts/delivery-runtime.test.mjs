@@ -196,14 +196,15 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     const collectionEvidence = new Map(); let collectionRuns = 0;
     const collectionAdapter = async (action, write) => {
       assert.equal(write.operation, "preflight-collect"); assert.equal(write.target, head);
-      if (action === "apply") {
+      assert.equal(action, "reconcile", "the collector only reconciles; the worker writes Linear itself");
+      if (!collectionEvidence.has(write.id)) {
         writeFileRequest(write.payload.request);
         const answer = pass(preflightCall()).stdout.trim();
         const sealed = json(path.join(preflight.evidenceRoot, `${head}.json`));
         const immutableReceipt = path.join(preflight.evidenceRoot, "history", `${sealed.receipt.runId}.json`);
         collectionRuns++; collectionEvidence.set(write.id, { receipt: immutableReceipt, receiptDigest: receiptDigest(json(immutableReceipt)), gate: answer });
       }
-      return collectionEvidence.has(write.id) ? { state: "present", evidence: collectionEvidence.get(write.id) } : { state: "missing" };
+      return { state: "present", evidence: collectionEvidence.get(write.id) };
     };
     const firstConfirmation = await confirmCollection(collectionReport, state, collectionAdapter);
     const mutableConfirmation = structuredClone(firstConfirmation);
@@ -667,6 +668,10 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     const argv = json(capture); assert.ok(argv.includes(`model=${JSON.stringify(entry.model)}`));
     assert.ok(argv.includes(`model_reasoning_effort=${JSON.stringify(entry.effort)}`));
     assert.ok(argv.includes('sandbox_workspace_write.network_access=true'));
+    const linearGrants = args => args.filter(arg => arg.startsWith('mcp_servers.'));
+    assert.deepEqual(linearGrants(argv), ['mcp_servers.linear.tools.save_comment.approval_mode="approve"',
+      'mcp_servers.linear.tools.save_issue.approval_mode="approve"'], 'the worker may write only its comments and statuses');
+    assert.ok(!argv.includes('--ignore-user-config'), 'the worker keeps the user Linear MCP login');
     assert.equal(argv[argv.indexOf('--add-dir') + 1], mailbox);
     assert.ok(!entry.workerWritableRoots.includes(state));
     assert.equal(argv.at(-1), fs.readFileSync(dispatchFile, "utf8"));
@@ -746,6 +751,7 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     assert.deepEqual(resumedArgs.slice(0, 3), ["exec", "resume", "fixture-thread"]);
     assert.ok(resumedArgs.includes(`model=${JSON.stringify(entry.model)}`));
     assert.ok(resumedArgs.includes('sandbox_workspace_write.network_access=false'));
+    assert.deepEqual(linearGrants(resumedArgs), linearGrants(argv), 'resume keeps the same Linear write grants');
     assert.ok(resumedArgs.includes(`model_reasoning_effort=${JSON.stringify(entry.effort)}`));
     assert.ok(!resumedArgs.includes("--sandbox") && !resumedArgs.includes("--cd") && !resumedArgs.includes("--add-dir"));
     process.kill(livePid, "SIGTERM"); livePid = null;
@@ -1459,10 +1465,11 @@ await import(${JSON.stringify(pathToFileURL(path.join(checkout, 'scripts/watch-w
     check('expired continuation window');
     write(path.join(root, 'workers.json'), { [issue]: { ...entry, gates: undefined, confirmationTimeoutSec: 1200 } });
     const head = 'b'.repeat(40);
-    write(path.join(root, 'reports', `${issue}-phase-code.json`), { ...entry, head, phase: 'code', sequence: 1,
-      kind: 'phase', publishedAt: new Date(Date.now() - 1_300_000).toISOString(), linear_mutations_pending: [],
-      capsule: { phase: 'code', head, decisions: [], open_queue: [], writable_roots: [entry.worktree] } });
-    check('expired phase confirmation');
+    const collect = [{ id: `preflight-collect:${head}:1`, operation: 'preflight-collect', target: head, payload: { request: { collectionId: `preflight-collect:${head}:1` } } }];
+    write(path.join(root, 'reports', `${issue}-phase-preflight.json`), { ...entry, head, phase: 'preflight', sequence: 1,
+      kind: 'confirmation-request', publishedAt: new Date(Date.now() - 1_300_000).toISOString(), linear_mutations_pending: collect,
+      capsule: { phase: 'preflight', head, decisions: [], open_queue: collect, writable_roots: [entry.worktree] } });
+    check('expired collection confirmation');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

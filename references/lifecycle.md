@@ -292,8 +292,9 @@ Required:
   Delegated stages never run in Codex. See `references/orchestration-stages.md`.
 - Launch task identifies the owner. Stage records/read-backs itself and returns
   its selected transition; orchestrator starts the next session, not the stage.
-- Single Linear writer only for implement/preflight/ship workers: orchestrator
-  applies their queued mutations. Pre-delivery stage agents write their own records.
+- Delivery workers write and read back their own Issue reports, comments and
+  statuses; the orchestrator writes only start moves and «Изменение задачи».
+  Pre-delivery stage agents write their own records.
 - Idea always waits for owner agreement in words. Delegated Projects per PC-019 allow autonomous
   Research/work start and approvals with reason/countercheck; ordinary Projects do not.
   «Веди до Handoff» allows the same up to Handoff; work start stays `by=owner`.
@@ -318,4 +319,4 @@ Forbidden:
 
 ## One Delivery Context
 
-For orchestrated work dispatch mono:deliver once. Its code, preflight and ship phases retain the owners and order above. Each phase publishes its full write queue and capsule; only confirmation after durable per-write read-back permits progression. In-phase barriers preserve drift-before-PR, certificate-before-formal-review and In-Review-after-PR ordering. Recover the same phase after interruption; final status is green or parked with a dictionary reason, reflected in Linear in the same orchestrator turn.
+For orchestrated work dispatch mono:deliver once. Its code, preflight and ship phases retain the owners and order above. Each phase publishes its capsule; the worker writes its Linear records and advances only after reading them back, and a collection request waits for its confirmation. In-phase barriers preserve drift-before-PR, certificate-before-formal-review and In-Review-after-PR ordering. Recover the same phase after interruption; final status is green or parked with a dictionary reason, read back from Linear in the same orchestrator turn.

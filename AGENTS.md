@@ -10,7 +10,7 @@ Stages in `scripts/russian-stages.mjs` and `references/owner-dialog.md`: Russian
 
 - Linear holds the Project, PRD (what and why), Tech Spec (how), Issue (one-PR contract) and every owner approval as a comment. Obligations live in `references/contracts/`, shape in `templates/`.
 - GitHub holds branch, PR, review, CI and merge history.
-- Each skill's description and the [handbook](HANDBOOK.md#skills) Skills table route between stages. The orchestrator launches the same pre-delivery stage sessions and answers as delegated owner; each stage writes and reads back its own Linear records. The orchestrator is the sole Linear writer for implement, preflight and ship workers, which queue mutations in reports. Ordinary Project work needs owner start after Handoff; delegated Project work allows orchestrator start with reason. Issue-only work needs owner approval through `mono:issue`.
+- Each skill's description and the [handbook](HANDBOOK.md#skills) Skills table route between stages. The orchestrator launches the same pre-delivery stage sessions and answers as delegated owner; each stage writes and reads back its own Linear records. Delivery workers write and read back their own Issue reports, comments and statuses through Linear MCP; the orchestrator writes only their start moves and «Изменение задачи». Ordinary Project work needs owner start after Handoff; delegated Project work allows orchestrator start with reason. Issue-only work needs owner approval through `mono:issue`.
 
 ## Skill Design Rules
 

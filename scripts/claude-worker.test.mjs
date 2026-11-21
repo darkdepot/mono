@@ -176,7 +176,7 @@ async function fixture(run, { auth, config, missingTool = false, shortWindow = f
       OPENAI_API_KEY: secret, CLAUDE_CODE_OAUTH_TOKEN: secret });
     const roots = [repo, path.join(repo, ".git"), path.join(root, "reports"), temp].sort();
     const request = { root, issue: "MONO-999", worktree: repo, branch: "fixture", base: git("rev-parse", "HEAD"),
-      packRoot: pack, skillsRoot: skills, packVersion: fs.readFileSync(path.join(pack, "VERSION"), "utf8").trim(), surfaceRevision: 5,
+      packRoot: pack, skillsRoot: skills, packVersion: fs.readFileSync(path.join(pack, "VERSION"), "utf8").trim(), surfaceRevision: 6,
       role: "worker-claude", transport: "claude-cli", dispatchFile: path.join(root, "task.md"),
       evidenceRoot: path.join(scratch, "evidence"), writable_roots: [temp], workerWritableRoots: roots,
       gates: [], lifecycle_moves: [], config: path.join(repo, ".agents/mono-workflow.config.json"),
@@ -469,7 +469,7 @@ test("Claude startup grants bind the immutable pins file, including symlink targ
   });
 });
 
-test("installed dispatch selects Claude role and transport from immutable BASE", async () => {
+test("installed dispatch refuses Claude delivery: its worker has no Linear MCP for its own writes", async () => {
   await fixture(async ({ scratch, repo, root, pack, request, registry, git }) => {
     const config = JSON.parse(fs.readFileSync(request.config));
     config.projectName = "Fixture";
@@ -490,17 +490,10 @@ test("installed dispatch selects Claude role and transport from immutable BASE",
     const result = spawnSync(process.execPath, [path.join(pack, "scripts/orchestrator/dispatch.mjs"),
       "--issue", request.issue, "--root", root, "--config", request.config, "--snapshot", snapshot,
       "--full-snapshot", "--skills-root", request.skillsRoot, "--worker-writable-roots", extras], { encoding: "utf8", timeout: 20_000 });
-    assert.equal(result.status, 0, result.stderr + result.stdout);
-    const entry = registry()["MONO-999"];
-    assert.equal(entry.transport, "claude-cli");
-    assert.equal(entry.model_policy.role, "worker-claude");
-    const dispatch = fs.readFileSync(path.join(root, "dispatch/MONO-999-a1/dispatch.md"), "utf8");
-    assert.match(dispatch, /Transport: claude-cli/);
-    assert.match(dispatch, /### Claude Code delivery differences/);
-    assert.match(dispatch, /Never print credential values/);
-    assert.match(dispatch, /The review round runs only in external collection/);
-    assert.equal(entry.model_launch.delivery_differences.length, 2);
-    assert.equal(entry.handshake, "resume");
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, /claude-cli delivery workers have no Linear MCP to write and read back their own comments and statuses/);
+    assert.equal(registry()["MONO-999"], undefined, "a refused dispatch registers no attempt");
+    assert.equal(fs.existsSync(path.join(root, "attempts.json")) ? JSON.parse(fs.readFileSync(path.join(root, "attempts.json"), "utf8"))["MONO-999"] : undefined, undefined);
   });
 });
 

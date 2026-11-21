@@ -83,4 +83,4 @@ Bot silence alone never parks a new attempt.
 
 ## Linear Comments
 
-Queue Russian results/decisions/certificate; dispatch writes follow worker-contract.
+Write Russian results/decisions/certificate yourself; dispatch writes follow worker-contract Linear Writes.

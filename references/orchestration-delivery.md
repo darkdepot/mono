@@ -2,8 +2,8 @@
 
 Part of the `mono:orchestrate` control-plane policy. `references/orchestration.md`
 holds the always-read part and the map of parts. Read this part before the watcher
-starts, while `workers.json` holds an entry or a worker report, capsule or queued
-write is unreconciled, and before QA, merge or deploy of a shipped Issue.
+starts, while `workers.json` holds an entry or a worker report or capsule is
+unreconciled, and before QA, merge or deploy of a shipped Issue.
 
 ## Independent QA before merge
 
@@ -117,7 +117,7 @@ Do not repair product code in the tester session or silently waive a disputed it
 After green Ship and Independent QA above, invoke `mono:deploy` in this product's
 session; its script owns the merge, version proof, checks, rollback and outcome.
 It closes the Issue on merge and publishes an update only after delivery; retain
-proof/queued writes and retire the worker after closeout. No deploy worker.
+proof and retire the worker after closeout. No deploy worker.
 
 ## Monitoring Protocol
 
@@ -148,9 +148,9 @@ rename before gates removal; tombstones never authorize cleanup.
 
 A fresh passed startup ack is a contracted pause, not death. Any stall/dead while
 its ack remains unconsumed is a consumption boundary: reconcile writer/mailbox
-before healing. Phase event: validate capsule/attempt and consume its whole queue
-through the barrier below; do not resume a worker waiting on a confirmation file.
-The watcher suppresses phase liveness only for the bounded confirmation wait.
+before healing. Phase event: validate capsule/attempt; a collection request goes
+through the collector below; do not resume a worker waiting on a confirmation file.
+The watcher suppresses phase liveness only for the bounded collection wait.
 Startup suppression remains stallSec × 4 from log silence. With --config, watcher
 --stall-sec defaults to product stallSec (120); an explicit flag overrides, minimum
 90. Config ackWaitSec (420) must be ≤ stallSec × 4 − pollSec (10); watcher startup
@@ -244,14 +244,12 @@ takes up to 25 minutes on a large risky change.
 
 ## Delivery Write Barriers
 
-Only the generated implemented-needs-preflight code-report Issue comment skips
-waiting. Unknown/other writes and stopped reports wait; no start-comment queue.
-Use the worker-contract closed list: pending code comments carry into Preflight,
-new versions replace them and mark old comments stale. Preflight's whole queue
-confirms before formal review; timeout parks write-unconfirmed. Predecessor
-checks verify report fingerprints even for deferred code. This adds no Ship gate.
-The watcher emits the code phase event but does not treat that deferred comment
-as a blocked writer; other phase waits keep their existing deadline/liveness rules.
+The worker is the sole writer of its Issue's reports, comments and statuses: it
+writes them through Linear MCP and reads each back before advancing. The
+orchestrator neither queues nor confirms them; it writes only the handshake start
+moves (`lifecycle_moves`) and «Изменение задачи». Only a preflight
+confirmation-request with its one collection write waits for confirmation;
+timeout parks write-unconfirmed. Other reports never wait.
 
 Poll phase reports as well as events; events accelerate, never prove application.
 Use installed `scripts/orchestrator/accept.mjs ack --root DIR --issue KEY
@@ -264,8 +262,7 @@ completes rename/gate cleanup without a new plan; contradictory records refuse.
 
 Run installed `scripts/orchestrator/collector.mjs start|stop|status --root DIR
 --issue KEY --attempt N` outside all worker sandboxes. Start once per attempt;
-stop at retirement. It confirms empty and collection-only phase queues, never
-connector queues. Inspect `reports/KEY-collector-aN.log` for refusals/results.
+stop at retirement. It confirms collection requests; other reports need none. Inspect `reports/KEY-collector-aN.log` for refusals/results.
 `reports/KEY-collect-attention-aN.json` signals an admission refusal to the orchestrator once per report digest/current registry pinsVersion/current decision digest tuple, persists across restarts, and clears when the current collection-only preflight report is admitted, including a replacement for the refused report.
 The attempt lock `reports/KEY-collector-aN.lock` stores pid/procStart and the
 active gate incarnation. Start reclaims only a dead holder and dead gate tree;
@@ -297,27 +294,10 @@ ends collection retries; immutable history wins over mutable head evidence.
 Reclaim a stale per-head lock only through
 its exclusive `.reclaim` marker after proving holder/group descendants dead.
 Live or unverified holders refuse. History-first receipt order and gate semantics
-remain unchanged; all queue confirmations use delivery-state's existing barriers.
+remain unchanged; collection confirmations use delivery-state's existing barriers.
 
-Use `scripts/orchestrator/accept.mjs report --root DIR --report FILE` for connector
-queues. For nonempty queues, before opening or printing writes it uses the existing
-delivery-state barriers to validate all predecessor reports/confirmations; a refusal
-exposes no connector instructions or new session. Empty queues establish the session
-first, then validate predecessors during the real confirmation. Session setup failure
-leaves no confirmation. No predecessor rules are duplicated.
-It opens `{sessionId, openedAt, reportDigest}` under
-`consumed/KEY-aN/sessions/<sessionId>/session.json`; `current-<reportDigest>.json`
-identifies the active session. A retry first prints the reread list (find comments
-by marker before republication), then opens a fresh session and prints expanded
-certificate writes. Supply --session UUID and repeated --observe 'writeId=JSON'
-(or writeId=@file) observations with sessionId, writeId, reportDigest, writeDigest,
-observedAt, state and evidence. Fresh means at/after publication and session opening;
-missing additionally requires absent:true. Complete present observations delegate
-delivery-state confirm with MONO_ACCEPT_ROOT, MONO_ACCEPT_SESSION and
-MONO_ACCEPT_REPORT, using the pack `scripts/orchestrator/linear-adapter.mjs`.
-The adapter recomputes the report/write digests, verifies the active session and
-returns unknown for absent/stale/foreign observations. apply prints a connector
-instruction on stderr and returns no success result. No command writes to Linear.
+No report confirmation command exists: the worker's own Linear read-back replaces
+it. No command writes to Linear.
 
 Ship pins capture orchestration.ship.botChecks from the immutable base: unique
 names, default ["Greptile Review"], [] means no bot. Workers cannot override them.
@@ -394,25 +374,9 @@ bindings remain; attention also tracks current decision state. Registered launch
 require request pins. Identical previously admitted requests remain recoverable under their
 original version. MONO-96 owns receipt collection/recovery, not these commands.
 
-Validate identity/attempt/head/sequence and full queue, including comments and
-certificates. Use installed delivery-state.mjs confirm with the orchestrator-owned
-pack Linear adapter above. The adapter receives action=reconcile|apply, issue, attempt,
-idempotencyKey and write via stdin; stdout JSON returns state=present|missing|unknown
-and read-back evidence. Reconcile compares desired payload/target, locates comments
-by stable marker/idempotency key, and returns unknown on ambiguity/read failure.
-Apply never means confirmed: the runtime reconciles again afterward. Implement
-observations with the configured Linear connector; never give adapter authority to a worker.
+Validate identity/attempt/head/sequence and the queue: at most one collection write.
 
-Runtime fsyncs an applying intent, then the exact per-write present result under
-consumed/<ISSUE-KEY>-a<N>/<id>.json before whole-queue confirmation. On recovery
-reconcile ALL Linear writes against Linear, even local successes, applying only missing
-ones. Keep IDs/payloads stable; conflicting payload for an old ID refuses. Read-back
-must prove the desired effect, not merely a successful API response. Retry only
-after reconciliation; missing confirmations cannot duplicate comments. Never claim
-an unavailable adapter completed a queue: leave pending and park at the deadline.
-
-For operation=preflight-collect, route the adapter to the gate, never Linear.
-Validate the single-item confirmation-request against dispatch product, pinned
+For the preflight-collect write the collector returns the gate receipt. Validate the single-item confirmation-request against dispatch product, pinned
 installed skillsRoot, risk/critical, verification command, worktree/head/base and
 evidenceRoot. On spawn, pin evidenceRoot and the complete workerWritableRoots in the request/registry. On resume, any extra grant requires an amended dispatch with the complete effective list; the runtime refuses evidence-root overlap and persists effective grants before launch. Build collection and worker verification requests from these current pins, never an earlier dispatch. Use ~/.mono-agent-workflow/evidence/<product>/ outside EVERY
 worker-writable root (including the orchestrator root and temporary grants).
@@ -420,7 +384,7 @@ Only the orchestrator outside all worker sandboxes runs collect:true. The gate r
 an existing authenticated receipt matching request.collectionId and all pins before repeating collection; failed
 reviews are completed runs too, not missing actions. Return present evidence as
 {receipt: <evidenceRoot>/history/<runId>.json, receiptDigest: <SHA-256 of canonical envelope>, gate: <exact gate answer>}, including a fail. The runtime checks immutable history identity, digest, signature and collection ID before confirming or accepting confirmation; the mutable head receipt is never confirmation evidence. Fsync that result
-and confirm through the same runtime. Publish and confirm enforce code → preflight → ship: read the latest earlier phase reports and earlier sequence confirmations, allowing only the fingerprint-bound code-report deferral above. Confirmations retain the report snapshot, so overwritten phase files do not erase sequence evidence. Missing or mismatched predecessors refuse before adapter calls. Fallback publication supplies --root; confirmation reads the report directory and root mailbox and refuses conflicting copies. Worker collect:false must pass before ready;
+and confirm through the same runtime. Publish and confirm enforce code → preflight → ship: read the latest earlier phase reports; a report that carried a collection request needs its confirmation before the next publication. Confirmations retain the report snapshot, so overwritten phase files do not erase sequence evidence. Missing or mismatched predecessors refuse before adapter calls. Fallback publication supplies --root; confirmation reads the report directory and root mailbox and refuses conflicting copies. Worker collect:false must pass before ready;
 A review fix uses a new head/write ID. Use write.id=request.collectionId=preflight-collect:<head>:<n>. Increment n for each collection request on that head, including transient retries after a recorded failure; also advance the phase sequence. Never reuse the failed collection ID for a new run; a lost response retains its original ID. Bind confirmation evidence to the immutable history receipt as well as the current head receipt. Never let a worker collect or select new
 pins. Preserve failed receipts. Configure confirmationTimeoutSec BEFORE dispatch
 to cover the review. Defaults: `confirmationTimeoutSec=6300`,
@@ -449,25 +413,25 @@ Keep it below evidenceLimitSec as a configuration consistency rule. The evidence
 limit runs from the ship attempt's startedAt, while confirmation waiting runs
 separately from the phase report's publishedAt; the inequality does not prove
 evidence freshness.
-Pass the same --config to delivery-state.mjs confirm; its adapter timeout uses confirmationTimeoutSec. The gate locks collection per head in evidenceRoot. Spawn releases the registry lock after durable PID registration, waits for thread.started outside it, and registers the same attempt/PID thread under a short lock. Collector reclaim uses the incarnation/group checks and marker above; never remove a live or unverified lock or start a competing collector. Never extend an in-flight deadline; reconcile any late collector completion. Before the ship gate independently run preflight
+The gate locks collection per head in evidenceRoot. Spawn releases the registry lock after durable PID registration, waits for thread.started outside it, and registers the same attempt/PID thread under a short lock. Collector reclaim uses the incarnation/group checks and marker above; never remove a live or unverified lock or start a competing collector. Never extend an in-flight deadline; reconcile any late collector completion. Before the ship gate independently run preflight
 collect:false with the same dispatch request. The pack collector uses the existing receipt key; no key service.
 
-Publish whole-queue confirmations under <root>/confirmations/, outside all worker write grants. The worker wait refuses any confirmation path overlapping capsule.writable_roots. Keep reports as the sole writable mailbox; journal and registry remain outside the sandbox grant. Hostile local operator attestation remains out of scope.
+Publish collection confirmations under <root>/confirmations/, outside all worker write grants. The worker wait refuses any confirmation path overlapping capsule.writable_roots. Keep reports as the sole writable mailbox; journal and registry remain outside the sandbox grant. Hostile local operator attestation remains out of scope.
 
 A confirmation timeout parking the worker as `write-unconfirmed` is an expected
 path while a collection continues. Reconcile the late result with the same
-collection ID, then confirm the original queue and resume the worker; do not
+collection ID, then confirm the original request and resume the worker; do not
 create a replacement request for a response that was merely late.
 
-Publish confirmation only for the entire digest-bound queue, including empty
-queues. Preserve in-phase order: drift sync before PR, ready certificate before
-formal review, In Review/PR chip after PR. Keep phase=code|preflight|ship and the
-same delivery context/log. A retry after terminal parked archives a reconciled
-capsule only after remapping outstanding obligations to its new attempt through
-Linear reconciliation; never erase old receipts or replay from an empty queue.
+A confirmation binds the report digest. The worker keeps in-phase order: drift
+sync before PR, ready certificate before formal review, In Review after PR. Keep
+phase=code|preflight|ship and the same delivery context/log. A retry after
+terminal parked archives a reconciled capsule only after the new attempt has read
+the Issue's Linear state back; never erase old receipts.
 
-Consume final green only after current preflight/ship gates and all confirmations. For parked,
-write the reason/text and next action to Linear in this SAME turn, read it back,
+Consume final green only after current preflight/ship gates. For parked, read
+the worker's park comment back; if the worker died without one, write the
+reason/text and next action to Linear in this SAME turn, read it back,
 and then decide/escalate; missing write access remains an explicit pending action,
 never a hidden stop. No report → recovery, never implicit green.
 

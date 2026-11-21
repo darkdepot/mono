@@ -103,6 +103,7 @@ async function prepareDispatch(args) {
   if (!transport?.workerRoles.includes(role)) throw new Error("unsupported managed worker role/transport on BASE");
   if (role === transport.complexRole && !reason?.trim()) throw new Error("complex worker requires --reason");
   if (!transport.handshakeModes.includes(handshake)) throw new Error(transport.transport + " requires handshake " + transport.handshakeModes.join(" or "));
+  if (transport.linearWrites !== true) throw new Error(transport.transport + " delivery workers have no Linear MCP to write and read back their own comments and statuses; set orchestration.transport to codex-cli on BASE");
   if (!fs.existsSync(worktree)) git(repo, "worktree", "add", "-b", branch, worktree, base);
   const actualBranch = git(worktree, "branch", "--show-current");
   if (actualBranch !== branch) throw new Error("existing dispatch worktree has another branch");
