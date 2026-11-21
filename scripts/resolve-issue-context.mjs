@@ -453,23 +453,22 @@ function computeScope(issueText) {
 
 // Read (never re-derive) the authoritative risk class recorded in the Issue's
 // review-gate section. When the gate names more than one class (a "standard→deep"
-// re-tier), the HIGHEST wins — ambiguity moves upward, never downward. Returns
-// null when the section names no known class. The marker's Risk class field is
-// then required to match this, so the marker cannot silently downgrade the Issue.
-function extractReviewGateClass(issueText) {
+// re-tier), the HIGHEST wins — ambiguity moves upward, never downward. Return
+// distinct classes highest first, or an empty list when no known class is named.
+// The marker must match the first class, so it cannot silently downgrade the Issue.
+function extractReviewGateClasses(issueText) {
   const body = stripMarkerBlock(issueText);
   // Count EXACT authoritative review-gate headings (fenced and HTML-commented ones
   // don't count). Zero → nothing to verify against; two or more → an ambiguous
-  // duplicate. Either way return null so the resolver fails closed.
+  // duplicate. Either way return [] so the resolver fails closed.
   let count = 0;
   for (const { text: line, inFence } of contentTokens(body)) {
     if (inFence) continue;
     const h = /^ {0,3}#{1,6}\s+(.*?)(?:\s+#+)?\s*$/.exec(line);
     if (h && REVIEW_GATE_HEADING_RE.test(h[1].trim())) count += 1;
   }
-  if (count !== 1) return null;
+  if (count !== 1) return [];
   const text = normalizeLines(extractSection(body, REVIEW_GATE_HEADING_RE)).toLowerCase();
-  const classAt = (cls) => RISK_CLASSES.indexOf(cls);
   // The review-gate is free text with no structured class field, so the only
   // fail-closed reading is the HIGHEST class mentioned anywhere in the section —
   // ambiguity moves upward, never downward. Reading the first word (or only
@@ -477,8 +476,7 @@ function extractReviewGateClass(issueText) {
   // Risk class: risky" or "risky; history: tiny→standard"; over-reading only ever
   // routes to the safe project-first lane.
   const classes = [...text.matchAll(/\b(tiny|standard|deep|risky)\b/g)].map((m) => m[1]);
-  if (classes.length === 0) return null;
-  return classes.reduce((hi, cls) => (classAt(cls) > classAt(hi) ? cls : hi));
+  return [...RISK_CLASSES].reverse().filter((cls) => classes.includes(cls));
 }
 
 // Indices of every REAL standalone marker line: 0-3 space indent, and outside any
@@ -722,12 +720,16 @@ function resolve(args) {
   // downgrades it. A marker claiming a lower class than the Issue's review-gate
   // (e.g. "standard" on a deep Issue) is rejected, closing the risk-downgrade
   // bypass of the Phase-1 envelope.
-  const reviewGateClass = extractReviewGateClass(issueText);
+  const reviewGateClasses = extractReviewGateClasses(issueText);
+  const reviewGateClass = reviewGateClasses[0] ?? null;
   if (reviewGateClass === null) {
     violation("broken marker: issue body has no review-gate risk class to verify the marker against");
   }
   if (riskClass !== reviewGateClass) {
-    violation(`broken marker: marker Risk class "${riskClass}" does not match the Issue review-gate class "${reviewGateClass}"`);
+    const hint = reviewGateClasses.length > 1
+      ? `; review-gate classes: ${reviewGateClasses.join(", ")}; leave exactly one class in the review-gate section`
+      : "";
+    violation(`broken marker: marker Risk class "${riskClass}" does not match the Issue review-gate class "${reviewGateClass}"${hint}`);
   }
 
   const scope = computeScope(issueText);

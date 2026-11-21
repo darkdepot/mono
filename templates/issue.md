@@ -68,6 +68,7 @@ Rules:
 - Do not attach PRD or Tech Spec docs to the Issue.
 - Include validation commands or exact manual checks.
 - Include risk classification, whether `mono:review` was required/advisory/skipped, verdict, review evidence or comment link, finding disposition, owner workflow, and next step.
+- For an issue-only Issue, `Ревью-гейт` contains exactly one risk-class word; put negations, history and comparisons with other classes in other sections.
 - Only Handoff splits, by verifiable behavior and one recorded reason per extra Issue (`too-big`, `shared-base`, `probe`); at most three without the owner. `Зависимости` names that reason; Issues touching the same surfaces are chained.
 - Keep the Issue durable: avoid line numbers, stale-prone edit choreography, and instructions that assume today's internal file layout will survive. File paths belong in read-first context when they are stable surfaces, and in `Где менять` marked «на момент нарезки <дата>».
 - Without a Tech Spec, an Issue integrating an external service carries live response samples in `Ключевые контракты`, or it is blocked by its probe Issue.

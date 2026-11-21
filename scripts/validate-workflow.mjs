@@ -2244,6 +2244,45 @@ function validateIssueOnlyLaneBehavior() {
       fail("resolve-issue-context must read the recorded review-gate class (standard), not a later 'deep' mention");
     }
 
+    // A negated higher class still wins, but the mismatch now explains how to
+    // repair the gate before approval. Preserve the exact old single-class error.
+    const mismatchPrefix = 'issue-only-lane: broken marker: marker Risk class "standard" does not match the Issue review-gate class "risky"';
+    for (const [name, gate, suffix] of [
+      ["negated-risk", "Риск: standard.\nЗапрос только читает, поэтому не risky.", "; review-gate classes: risky, standard; leave exactly one class in the review-gate section"],
+      ["repeated-classes", "standard tiny deep risky standard tiny risky", "; review-gate classes: risky, deep, standard, tiny; leave exactly one class in the review-gate section"],
+      ["single-class-mismatch", "Риск: risky.", ""],
+    ]) {
+      const gatePath = path.join(dir, `issue-${name}.md`);
+      const gateMarkerPath = path.join(dir, `marker-${name}.md`);
+      fs.writeFileSync(gatePath, reGateA.replace("\nstandard\n", `\n${gate}\n`));
+      const gateFp = emitFingerprint(gatePath);
+      fs.writeFileSync(gateMarkerPath, `${["mono-issue-only marker", "Marker version: 1", `Scope fingerprint: ${gateFp}`, "Acceptance IDs: AC1", "Risk class: standard", `Approval: ${gateFp}`].join("\n")}\n`);
+      const result = spawnSync(process.execPath, [
+        "scripts/resolve-issue-context.mjs", "--issue", gatePath, "--marker", gateMarkerPath,
+        "--config", enableConfigPath, "--label", "issue-only", "--approval-verified", gateFp,
+      ], { cwd: root, encoding: "utf8" });
+      if (result.status !== 1 || result.stdout !== "" || result.stderr.trim() !== mismatchPrefix + suffix) {
+        fail(`resolve-issue-context ${name} must preserve the mismatch and append only the distinct descending classes hint when needed`);
+      }
+    }
+
+    // The intake check uses the existing resolver with a separate draft marker:
+    // Approval:none and no label must stay project-first, yet catch broken/stale.
+    const draftMarkerPath = path.join(dir, "marker-draft.md");
+    fs.writeFileSync(draftMarkerPath, `${["mono-issue-only marker", "Marker version: 1", `Scope fingerprint: ${rgaFp}`, "Acceptance IDs: AC1", "Risk class: standard", "Approval: none"].join("\n")}\n`);
+    const draftArgs = ["scripts/resolve-issue-context.mjs", "--issue", reGateAPath, "--marker", draftMarkerPath, "--config", enableConfigPath];
+    if (JSON.parse(runNode(draftArgs)).package_kind !== "project-first") {
+      fail("resolve-issue-context draft marker must validate without activating issue-only before approval");
+    }
+    fs.writeFileSync(reGateAPath, reGateA.replace("\nstandard\n", "\nРиск: standard.\nЗапрос только читает, поэтому не risky.\n"));
+    const draftFp = emitFingerprint(reGateAPath);
+    fs.writeFileSync(draftMarkerPath, fs.readFileSync(draftMarkerPath, "utf8").replace(rgaFp, draftFp));
+    expectCommandFailure("resolve-issue-context draft marker catches multiple classes before approval", () => runNode(draftArgs), mismatchPrefix + "; review-gate classes: risky, standard; leave exactly one class in the review-gate section");
+    fs.writeFileSync(reGateAPath, reGateA + "\nChanged body after draft.\n");
+    fs.writeFileSync(draftMarkerPath, fs.readFileSync(draftMarkerPath, "utf8").replace(draftFp, rgaFp));
+    expectCommandFailure("resolve-issue-context draft marker catches stale live body before approval", () => runNode(draftArgs), "issue-only-lane: stale marker");
+    fs.writeFileSync(reGateAPath, reGateA);
+
     // And an explicit re-tier "standard→deep" records the target deep (out of the
     // Phase-1 envelope → project-first).
     const reGateB = reGateA.replace("standard", "standard→deep (new abstraction)");
