@@ -33,7 +33,7 @@ else {console.error('unexpected gh call '+a.join(' '));process.exit(9);}
 console.log(JSON.stringify(out));
 `;
 
-for (const risk of ['standard', 'risky']) test(`bot P2 with a code fix reaches green in the same attempt without a park (${risk})`, async () => {
+for (const [risk, host] of [['standard', false], ['risky', false], ['standard', true]]) test(`bot P2 with a code fix reaches green in the same attempt without a park (${risk}${host ? ', host verification' : ''})`, async () => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-ship-fix-'));
   try {
     const repo = path.join(scratch, 'repo'), root = path.join(scratch, 'orchestrator'), evidence = path.join(scratch, 'evidence'),
@@ -57,6 +57,8 @@ for (const risk of ['standard', 'risky']) test(`bot P2 with a code fix reaches g
     fs.writeFileSync(path.join(path.dirname(pinsFile), `snapshot/issue-${issue}.md`), `# ${issue}\n\nFixture task contract.\n`);
     const pins = { product: 'fixture', root, worktree: repo, skillsRoot: skills, baseRef: 'review-base', evidenceRoot: evidence,
       risk, critical: null, verification: { command: process.execPath, args: ['-e', 'process.exit(0)'] }, workerWritableRoots: [repo] };
+    // MONO-457: with host verification the collection runs the verification; the worker sends none.
+    if (host) pins.hostVerification = true;
     atomicJson(pinsFile, pins);
     const binding = { file: pinsFile, digest: sha256File(pinsFile) };
     atomicJson(path.join(root, 'workers.json'), { [issue]: { issue, attempt: 1, stage: 'mono-deliver', worktree: repo,
@@ -64,7 +66,7 @@ for (const risk of ['standard', 'risky']) test(`bot P2 with a code fix reaches g
 
     const requestFile = path.join(scratch, 'request.json');
     const gate = (name, value) => { atomicJson(requestFile, value); return spawnSync(process.execPath, ['scripts/gate.mjs', name, '--request', requestFile], { env, encoding: 'utf8' }); };
-    const at = (tip, extra = {}) => ({ ...pins, head: tip, collect: false, collectionId: `preflight-collect:${tip}:1`, pins: binding, workerVerification: { head: tip, exitCode: 0 }, ...extra });
+    const at = (tip, extra = {}) => ({ ...pins, head: tip, collect: false, collectionId: `preflight-collect:${tip}:1`, pins: binding, ...(host ? {} : { workerVerification: { head: tip, exitCode: 0 } }), ...extra });
     // The collector: admit the worker's round request, run the collection, record the result.
     const round = (value, line) => {
       for (const { admission } of inFlight(readLedger(root, issue, 1))) recordResult(root, issue, 1, admission, { status: 'done' });
@@ -116,6 +118,7 @@ for (const risk of ['standard', 'risky']) test(`bot P2 with a code fix reaches g
     const fixRequest = at(fixed, { prRemarks });
     const receipt = round(fixRequest, risk === 'risky'
       ? /pass: review clean \(round 2 of 3\) and verification verified on head/
+      : host ? /pass: review clean \(round 1 of 1\), fixes after it confirmed by the full verification on the host/
       : /pass: review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification/);
     assert.deepEqual(receipt.prRemarks, prRemarks);
     if (risk === 'risky') assert.ok(reviewCalls(bin).length > reviewersAfterRound1, 'the strict path spends its next round on the fix');
