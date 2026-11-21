@@ -32,13 +32,13 @@ function saveRequests(root, source) {
     write(root, `dump/comments-${n}.request.json`, Object.hasOwn(args, 'cursor') ? { cursor: args.cursor } : {});
   }
 }
-function setup(root, host, language = 'Russian') {
+function setup(root, host, language = 'Russian', draftOverride) {
   const source = new URL(`./fixtures/idea-gate/probe/${host}/`, import.meta.url);
   const project = json(new URL('get_project.json', source));
   const pages = [1, 2, 3].map(n => json(new URL(`list_comments.limit4.page-${n}.json`, source)));
   const existing = pages.flatMap(page => page.comments).find(c => c.body.includes('mono-idea: approved'));
   assert.ok(existing, 'live probe has an approval record');
-  let draft = existing.body.split('```mono-idea-snapshot\n')[1].split('\n```')[0];
+  let draft = draftOverride ?? existing.body.split('```mono-idea-snapshot\n')[1].split('\n```')[0];
   if (language === 'English') for (const [ru, en] of [['Что', 'What'], ['Зачем', 'Why'], ['Образ результата', 'Target outcome'], ['Неизвестные', 'Unknowns']]) draft = draft.replace(`## ${ru}\n`, `## ${en}\n`);
   write(root, 'draft.md', draft);
   write(root, 'config.json', { languages: { linear: language } });
@@ -69,6 +69,18 @@ function verify(args, code) {
   return verdict;
 }
 for (const host of ['claude-code', 'codex']) {
+  test(`${host}: verify accepts a saved project with a blank line before the approved list`, () => sandbox(root => {
+    const draft = '## Что\n\nОписание\n* пункт один\n* пункт два\n\n## Зачем\n\nПроблема\n\n## Образ результата\n\nРезультат\n\n## Неизвестные\n\nВопрос';
+    const s = setup(root, host, 'Russian', draft);
+    const before = verify(s.verify, 'pass');
+    s.project.description = s.body.replace('Описание\n*', 'Описание\n\n*');
+    assert.notEqual(s.project.description, s.body);
+    write(root, 'dump/project.json', s.project);
+    assert.deepEqual(verify(s.verify, 'pass'), before);
+    assert.equal(before.fingerprint, ideaFingerprint(draft));
+    assert.ok(s.comment.includes(`sha256=${before.fingerprint}`));
+    assert.equal(fs.readFileSync(path.join(root, 'comment.md'), 'utf8'), s.comment);
+  }));
   test(`${host}: record body and comment round trip through complete live-shaped pages`, () => sandbox(root => {
     const s = setup(root, host);
     assert.equal((s.body.match(/^## /gm) ?? []).length, 3);

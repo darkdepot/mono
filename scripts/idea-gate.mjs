@@ -228,7 +228,7 @@ function normalized(section) {
   let prose = [];
   const flush = () => { if (prose.length) lines.push(...ordinary(prose.join('\n'))); prose = []; };
   for (const block of section) {
-    if (block.fenced) { flush(); lines.push({ text: block.text, list: false, literal: true }); }
+    if (block.fenced) { flush(); lines.push({ text: block.text, list: false, literal: true, fenced: true }); }
     else prose.push(block.text);
   }
   flush();
@@ -240,12 +240,20 @@ function normalized(section) {
     if (result.length && next < lines.length && !(result.at(-1).list && lines[next].list)) result.push({ text: '', list: false });
     i = next - 1;
   }
-  return result.map(line => line.text).join('\n');
+  return result;
+}
+
+function freshnessText(section) {
+  const lines = normalized(section);
+  return lines.filter((line, index) => {
+    const previous = lines[index - 1], next = lines[index + 1];
+    return !(line.text === '' && previous?.text && !previous.fenced && !previous.list && next?.list);
+  }).map(line => line.text).join('\n');
 }
 
 function fingerprintSections(found, headings) {
   const dictionary = headingDictionary(headings);
-  return sha256(KEYS.map(key => `## ${dictionary[key]}\n\n${normalized(found[key])}`).join('\n\n'));
+  return sha256(KEYS.map(key => `## ${dictionary[key]}\n\n${normalized(found[key]).map(line => line.text).join('\n')}`).join('\n\n'));
 }
 
 export function ideaFingerprint(markdown, headings = 'ru') {
@@ -316,7 +324,9 @@ export function checkIdea({ mode, project, records, approval, since = IDEA_GATE_
     if (mode === 'fresh') {
       const live = sections(project.body, headings, false);
       live.unknowns = selected.found.unknowns;
-      if (fingerprintSections(live, headings) !== selected.fingerprint) return verdict('stale', projectId, selected.recordId, selected.fingerprint);
+      if (fingerprintSections(live, headings) !== selected.fingerprint &&
+          KEYS.some(key => freshnessText(live[key]) !== freshnessText(selected.found[key])))
+        return verdict('stale', projectId, selected.recordId, selected.fingerprint);
     }
     return verdict('pass', projectId, selected.recordId, selected.fingerprint);
   } catch (error) {

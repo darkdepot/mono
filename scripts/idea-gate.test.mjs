@@ -100,6 +100,73 @@ test('fresh compares three live sections plus recorded unknowns; approved allows
   assert.notEqual(ideaFingerprint(idea()), ideaFingerprint(idea().replace('Важный вопрос', 'Новый вопрос')));
 });
 
+test('fresh accepts the blank line Linear inserts between prose and a list', () => {
+  const snapshot = idea('Описание\n* пункт один\n* пункт два');
+  const options = { ...input(), mode: 'fresh' };
+  options.records.comments = [record(snapshot)];
+  options.project.body = snapshot.replace('Описание\n*', 'Описание\n\n*');
+  const result = expectCode(options, 'pass');
+  assert.equal(result.fingerprint, ideaFingerprint(snapshot));
+  assert.deepEqual(result, checkIdea({ ...options, mode: 'approved' }));
+});
+
+test('fresh tolerates prose-list spacing in either direction with inline code and every list marker', () => {
+  for (const heading of ['Что', 'Зачем', 'Образ результата']) {
+    for (const prose of ['Описание', 'Описание `code`']) {
+      for (const marker of ['*', '+', '-', '1.', '1)']) {
+        const compact = idea().replace(`## ${heading}\n\n`, `## ${heading}\n\n${prose}\n${marker} пункт\n\n`);
+        const spaced = compact.replace(`${prose}\n${marker}`, `${prose}\n\n\n${marker}`);
+        for (const [snapshot, live] of [[compact, spaced], [spaced, compact]]) {
+          const options = { ...input(), mode: 'fresh' };
+          options.records.comments = [record(snapshot)];
+          options.project.body = live;
+          assert.deepEqual(expectCode(options, 'pass'), checkIdea({ ...options, mode: 'approved' }));
+        }
+      }
+    }
+  }
+});
+
+test('fresh keeps prose, list content, paragraph boundaries and fenced bytes significant', () => {
+  const what = 'Описание\n* пункт один\n* пункт два\n\nПервый абзац\n\nВторой абзац\n\n```text\nКод\n\n* буквальный пункт\n```\n\n* после кода';
+  const snapshot = idea(what);
+  for (const [before, after] of [
+    ['Описание', 'Другое описание'],
+    ['пункт один', 'другой пункт'],
+    ['Первый абзац\n\nВторой абзац', 'Первый абзац\nВторой абзац'],
+    ['Второй абзац\n\n```', 'Второй абзац\n```'],
+    ['Код\n\n* буквальный', 'Код\n* буквальный'],
+    ['```\n\n* после', '```\n* после'],
+    ['* пункт два\n\nПервый', '* пункт два\nПервый'],
+    ['Второй абзац', 'Второй абзац\n\nЛишний абзац'],
+  ]) {
+    for (const reverse of [false, true]) {
+      const changed = snapshot.replace(before, after).replace('Описание\n*', 'Описание\n\n*');
+      const options = { ...input(), mode: 'fresh' };
+      options.records.comments = [record(reverse ? changed : snapshot)];
+      options.project.body = reverse ? snapshot : changed;
+      expectCode(options, 'stale');
+      expectCode({ ...options, mode: 'approved' }, 'pass');
+    }
+  }
+});
+
+test('fresh does not hide a forged snapshot hash behind prose-list equivalence', () => {
+  const snapshot = idea('Описание\n* пункт');
+  const saved = record(snapshot);
+  const options = { ...input(), mode: 'fresh' };
+  options.records.comments = [{ ...saved, body: saved.body.replace('Описание\n*', 'Описание\n\n*') }];
+  options.project.body = snapshot;
+  expectCode(options, 'bad-record');
+});
+
+test('fingerprint retains the pre-fix hashes with and without a prose-list blank line', () => {
+  assert.equal(ideaFingerprint(idea('Описание\n* пункт один\n* пункт два')),
+    '95f9112b3f4336c93a188ea907cdc4b195e4e294b3e7f8b914883103074eb904');
+  assert.equal(ideaFingerprint(idea('Описание\n\n* пункт один\n* пункт два')),
+    '56034cd7abd7a05de954b88b165b6c8b184ef1487266d428bcd9136b9243df42');
+});
+
 test('cutoff requires both dates strictly before since and an approval bound to a project comment', () => {
   const options = input();
   options.project.createdAt = '2026-10-16T00:00:00Z';
