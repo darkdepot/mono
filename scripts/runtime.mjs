@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 
 export const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 export const SURFACE_REVISION = 6;
-// Signed collection receipts: review round first, sandboxed verification second.
+// Collection receipts: the review round on the head; the worker runs the verification (exitCode null).
 export const REVIEW_PRODUCER = "gate-review-v3";
 export function runtimePackRoot() {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');

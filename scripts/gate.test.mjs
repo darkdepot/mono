@@ -207,7 +207,7 @@ test("review rounds are counted per task attempt from receipt history", () => {
   const receipt = (at, outcome, extra = {}) => ({ producer: REVIEW_PRODUCER, recordedAt: new Date(Date.UTC(2026, 10, 10, 0, clock++)).toISOString(), runId: `run-${clock}`, pins, head: at, base,
     ...extra, review: { outcome, spent: !['not-reviewed', 'refused'].includes(outcome), contractDigest, record: { run: clock }, ...extra.review } });
   const read = (receipts, at = heads[0], other = {}) => reviewHistory(receipts, { pins, head: at, base, contractDigest, ...other });
-  assert.deepEqual(read([]), { spent: 0, notReviewed: 0, reuse: null, record: null });
+  assert.deepEqual(read([]), { spent: 0, onContract: 0, notReviewed: 0, reuse: null, record: null });
   const three = [receipt(heads[0], 'not-converged'), receipt(heads[1], 'not-converged'), receipt(heads[2], 'clean-with-successors')];
   assert.equal(read(three, heads[3]).spent, 3, 'a fourth head finds the limit spent');
   assert.equal(read(three, heads[3]).reuse, null);
@@ -221,11 +221,11 @@ test("review rounds are counted per task attempt from receipt history", () => {
   assert.equal(read([...failed, receipt(heads[0], 'refused')]).notReviewed, 2, 'a refusal is not a review attempt');
   const changedContract = 'f'.repeat(64);
   assert.equal(read(failed, heads[0], { contractDigest: changedContract }).notReviewed, 0, 'a task change clears the failure streak');
-  assert.deepEqual(read(three, heads[3], { contractDigest: changedContract }), { spent: 3, notReviewed: 0, reuse: null, record: three[2].review.record },
-    'a task change keeps the count and continues the record');
+  assert.deepEqual(read(three, heads[3], { contractDigest: changedContract }), { spent: 3, onContract: 0, notReviewed: 0, reuse: null, record: three[2].review.record },
+    'a task change keeps the count, starts the count on its contract and continues the record');
   assert.equal(read(three, heads[2], { contractDigest: changedContract }).reuse, null, 'a changed contract never reuses a round');
-  assert.deepEqual(read(three.slice(0, 2), heads[1], { contractDigest: changedContract }), { spent: 2, notReviewed: 0, reuse: null, record: three[1].review.record }, 'a new contract continues the record');
-  assert.deepEqual(read(three.slice(0, 2), heads[1], { base: 'e'.repeat(40) }), { spent: 2, notReviewed: 0, reuse: null, record: null }, 'a new base starts a fresh record and keeps the count');
+  assert.deepEqual(read(three.slice(0, 2), heads[1], { contractDigest: changedContract }), { spent: 2, onContract: 0, notReviewed: 0, reuse: null, record: three[1].review.record }, 'a new contract continues the record');
+  assert.deepEqual(read(three.slice(0, 2), heads[1], { base: 'e'.repeat(40) }), { spent: 2, onContract: 2, notReviewed: 0, reuse: null, record: null }, 'a new base starts a fresh record and keeps the count');
   const foreign = [{ ...three[0], producer: 'gate-autoreview-v2' }, { ...three[1], pins: { file: '/root/dispatch/MONO-2-a1/pins.json', digest: 'd' } },
     { ...three[2], pins: { file: '/root/dispatch/MONO-1-a2/pins.json', digest: 'd' } }, { producer: REVIEW_PRODUCER, pins }, null];
   assert.equal(read(foreign).spent, 0, 'old receipts, other tasks and other attempts are never counted');
@@ -586,7 +586,32 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.equal(reviewCalls(bin).length, calls, 'no second round on the fast path');
         assert.deepEqual([receipt.review.spent, receipt.workerVerification, receipt.review.workerVerification], [false, verified.workerVerification, verified.workerVerification]);
         const unbound = call(at(fixed, 1, { workerVerification: undefined })); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /collection request mismatch: admission; expected "the admitted round request for collectionId"/);
-        const fresh = () => { for (const name of fs.readdirSync(path.join(evidence, 'history'))) fs.unlinkSync(path.join(evidence, 'history', name)); };
+        // A task change («Изменение задачи» plus resume) after the spent round: the reviewer gets exactly one round on the
+        // new contract, on the same head, reading the whole change; the next requests pass on the worker's verification again.
+        const changeTask = n => { const url = `https://linear.app/darkdepot/issue/MONO-999/x#comment-${n}`;
+          recordTaskChange(path.dirname(pinsFile), url, `Изменение задачи: ${url}\nRound ${n}: round the result.`); };
+        const reviewers = () => reviewCalls(bin).filter(role => role === 'reviewer').length;
+        changeTask(1); setReview(bin, { findings: [], verdict: reviewVerdict({ outcome: 'rejected', closed: true }) });
+        const stale = call(verified); assert.equal(stale.status, 1); assert.match(stale.stdout, /the task changed after this review round/);
+        let before = reviewers();
+        receipt = await round(at(fixed, 2), 0, /pass: review clean \(round 1 of 1\) and verification verified on head/);
+        assert.equal(reviewers() - before, 1, 'the task change gets one review round on the unchanged head');
+        assert.deepEqual([receipt.review.spent, receipt.review.round, receipt.review.record.rounds.length, receipt.review.record.rounds.at(-1).scope, receipt.review.record.rounds.at(-1).reviewedFiles],
+          [true, 1, 2, 'full', ['input.mjs']], 'the round after a task change reads the whole change');
+        assert.equal(receipt.review.contractDigest, digest(`# MONO-999\n\nFixture task contract.\n\n\n## Изменение задачи 1 (https://linear.app/darkdepot/issue/MONO-999/x#comment-1)\nИзменение задачи: https://linear.app/darkdepot/issue/MONO-999/x#comment-1\nRound 1: round the result.`));
+        before = reviewers();
+        await round(at(fixed, 3), 0, /pass: review clean \(round 1 of 1\)/);
+        const afterChange = commit('export const afterChange = 1;\n');
+        const spentAgain = call(at(afterChange, 1, { workerVerification: undefined })); assert.equal(spentAgain.status, 1); assert.match(spentAgain.stdout, spent);
+        await round(at(afterChange), 0, /pass: review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification/);
+        assert.equal(reviewers(), before, 'no second round without another task change');
+        // Each further task change gets its round while the stage record has room (three rounds), then it needs a new attempt.
+        changeTask(2); receipt = await round(at(afterChange, 2), 0, /pass: review clean \(round 1 of 1\) and verification verified on head/);
+        assert.deepEqual([reviewers() - before, receipt.review.record.rounds.length], [1, 3]);
+        changeTask(3); before = reviewers();
+        const full = call(at(afterChange, 3)); assert.equal(full.status, 1); assert.match(full.stdout, /fail: needs-decision: review round limit reached \(3 of 3 on this task attempt\)/);
+        assert.equal(reviewers(), before);
+        const fresh =() => { for (const name of fs.readdirSync(path.join(evidence, 'history'))) fs.unlinkSync(path.join(evidence, 'history', name)); };
         // An older harmful defect passed by the round stays a must-file successor on the worker-verified head.
         fresh(); setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'Older', title: 'Older' })], verdict: reviewVerdict({ origin: 'pre-existing', danger: true, dangerCase: 'data', dangerReason: 'Data may be lost.' }) });
         const olderHead = commit('export const older = 1;\n');

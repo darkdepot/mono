@@ -201,8 +201,9 @@ runs only when the reviewer reports findings).
 
 Between rounds do nothing: the worker fixes open findings and requests the next
 round itself. The pinned risk sets the completed rounds per task attempt (`risky`
-three, the fast path one), counted from the attempt's receipts;
-rounds after the first read only the fixes and open findings; the same head
+three, the fast path one plus one per task change, even on an unchanged head),
+counted from the attempt's receipts; rounds after the first read only the fixes
+and open findings, except the first round after a task change; the same head
 reuses its round; `not-reviewed` spends nothing. `ROUND_LIMIT` stays 3 and
 `reviewContext` in `gate.mjs` counts from the receipt history.
 

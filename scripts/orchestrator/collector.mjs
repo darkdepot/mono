@@ -45,9 +45,11 @@ class GateAlive extends Error {}
 // (for example a blocking Git read). Past it the gate group is stopped and the round fails.
 export const GATE_STUCK_MS = 2 * 60 * 60 * 1000;
 async function stopGate(gate) {
+  // macOS answers a group signal with EPERM once every member is a zombie, and a gate that just ended
+  // stays one until this event loop reaps it: probe again after waiting, as for a live group.
   const signal = name => {
     try { process.kill(-gate.processGroup, name); }
-    catch (error) { if (error.code !== 'ESRCH' && !lockTreeDead(gate)) throw error; }
+    catch (error) { if (!['ESRCH', 'EPERM'].includes(error.code) && !lockTreeDead(gate)) throw error; }
   };
   for (const name of ['SIGTERM', 'SIGKILL']) {
     try { if (lockTreeDead(gate)) return; } catch {} // Unknown telemetry still requires termination.

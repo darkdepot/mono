@@ -161,8 +161,8 @@ reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json or denied-write .orchestrat
 never both. Final fields + phase/increasing positive sequence/kind:phase/head/
 phase_result; capsule phase/head match; reports never wait. Publish:
 delivery-state.mjs. Resume dispatch/capsule/branch; keep done/foreign changes; no
-reset/repeat applied moves/writes; a task change is a link to an «Изменение
-задачи» comment: read and follow it.
+reset/repeat applied moves/writes; a task change links an «Изменение
+задачи» comment: follow it, then request a round.
 Green needs all obligations: drift before ready, ready before review, In Review after ready.
 
 Pin product/evidenceRoot/packRoot/skillsRoot/risk/critical/verification/grants.
