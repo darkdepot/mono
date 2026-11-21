@@ -826,7 +826,7 @@ function correlatedReport(log, reportsDir, registryEntry) {
   }
   if (report.stage === "mono-deliver" && (report.attempt !== log.attempt ||
       !correlatedDeliveryReport(report, reportStat, registryEntry, log.stat, args.stallSec))) return null;
-  return { reportPath, stat: reportStat };
+  return { reportPath, stat: reportStat, report };
 }
 
 function checkReport(log, report, nowMs) {
@@ -1208,12 +1208,8 @@ function stopDetail(value) {
 function checkStop(log, entry, report, latestPhase, nowMs) {
   const candidates = [];
   if (latestPhase) candidates.push({ file: latestPhase.file, stat: latestPhase.stat, report: latestPhase.report });
-  if (report !== null) {
-    try {
-      if (report.stat.size <= 4 * 1024 * 1024)
-        candidates.push({ file: report.reportPath, stat: report.stat, report: JSON.parse(fs.readFileSync(report.reportPath, "utf8")) });
-    } catch { /* unreadable now: the next scan sees the settled file */ }
-  }
+  // The snapshot correlatedReport already checked: no second read that a replacement could split.
+  if (report !== null) candidates.push({ file: report.reportPath, stat: report.stat, report: report.report });
   const at = candidate => { const ms = Date.parse(candidate.report?.publishedAt); return Number.isFinite(ms) ? ms : candidate.stat.mtimeMs; };
   candidates.sort((a, b) => at(b) - at(a));
   const source = candidates[0];

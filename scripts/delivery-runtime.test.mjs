@@ -1229,6 +1229,21 @@ test('watcher wakes the orchestrator on a parked or green attempt and repeats wh
     write(stageReport, { ...entry, status: 'parked', reason: 'needs-decision', next: 'orchestrator', text: 'pick one', capsule: { phase: 'code' },
       publishedAt: new Date(Date.now() + 500).toISOString() });
     assert.match(watch(), new RegExp(`EVENT:parked ${issue} reason=needs-decision next=orchestrator phase=code .*report=${issue}-mono-deliver.json`));
+    // The event reflects the stage report snapshot correlation checked, even if the file is replaced between reads.
+    const runner = path.join(root, 'replace-runner.mjs');
+    write(runner, `import fs from 'node:fs';
+const read = fs.readFileSync; let reads = 0;
+fs.readFileSync = function (file, ...rest) {
+  const text = read.call(fs, file, ...rest);
+  if (String(file).endsWith('${issue}-mono-deliver.json') && ++reads > 1)
+    return JSON.stringify({ ...JSON.parse(text), status: 'green', phase_result: 'green', reason: null, capsule: { phase: 'ship' } });
+  return text;
+};
+await import(${JSON.stringify(pathToFileURL(path.join(checkout, 'scripts/watch-workers.mjs')).href)});
+`);
+    const snapshot = pass(run(process.execPath, [runner, '--root', root, '--once'], checkout, env)).stdout;
+    assert.match(snapshot, new RegExp(`EVENT:parked ${issue} reason=needs-decision`), snapshot);
+    assert.doesNotMatch(snapshot, /EVENT:green/);
     fs.unlinkSync(stageReport);
 
     // A normal transition is not a stop.
