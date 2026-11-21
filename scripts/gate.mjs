@@ -9,7 +9,7 @@ import { atomicJson, canonical, digest, readJson, flags, identity, isMain, proce
 import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
-import { hostRunMarker, evidenceSnapshot, evidenceTouched, stopHostGroup } from './review-rounds.mjs';
+import { hostRunMarker, hostRunCheckout, removeHostCheckout, evidenceSnapshot, evidenceTouched, stopHostGroup } from './review-rounds.mjs';
 
 export { reviewEnvironment } from "./model-environment.mjs";
 
@@ -195,18 +195,25 @@ const hostFailure = verification => `verification failed on this head on the hos
 const failureLines = text => text.split("\n").filter(line => /^\s*(FAIL\b|not ok\b|✖)|AssertionError|Error:/.test(line)).join("\n");
 // Pinned hostVerification: the product's full verification needs the host (for example the process table),
 // so the collection runs it on the committed head outside the worker sandbox, before the review round.
-// It runs worker-authored code with host rights: the owner opts in per product. The run gets its own process
-// group and a private temporary directory. The marker (review-rounds.mjs) holds the evidence snapshot and,
+// It runs worker-authored code with host rights: the owner opts in per product. The run gets a clean checkout of
+// exactly the request's head (a fresh repository beside the marker, outside every worker grant, reading objects
+// from the worker repository but none of its configuration, hooks, filters or sparse patterns; only committed
+// files, so untracked inputs such as node_modules are the command's own job), its own process group and a
+// private temporary directory; the worker's working copy never feeds the result. The marker (review-rounds.mjs) holds the evidence snapshot and,
 // before the command is released, the group: a receipt of that collection is not trusted while it exists,
 // the group is stopped as a whole and the evidence settled when the command exits (here) or after a gate
 // that died mid-run (collector recovery).
-export async function runHostVerification({ command, args }, repo, evidenceRoot, collectionId, pinsFile) {
-  const marker = hostRunMarker(evidenceRoot, collectionId), log = marker.replace(/\.running$/, ".log");
+// Inherited Git routing would point the command's Git back at the worker repository whatever its directory.
+const GIT_ROUTING = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX"];
+export async function runHostVerification({ command, args }, repo, head, evidenceRoot, collectionId, pinsFile) {
+  const marker = hostRunMarker(evidenceRoot, collectionId), log = marker.replace(/\.running$/, ".log"), checkout = hostRunCheckout(evidenceRoot, collectionId);
   fs.mkdirSync(path.dirname(marker), { recursive: true });
   atomicJson(marker, { collectionId, group: null, startedAt: new Date().toISOString(), snapshot: evidenceSnapshot(evidenceRoot, pinsFile) });
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-verify-"));
   const fd = fs.openSync(log, "w", 0o644);
   const startedAt = Date.now();
+  // The checkout goes only once nothing of the run can still use it; otherwise recovery removes it after the group stop.
+  let stopped = false;
   // The wrapper leads the group and runs the command only after "go": the group is durable in the marker first,
   // and a gate that dies before that closes stdin, so nothing unregistered runs.
   // Fixed code: the command arrives as data in argv, never inside the code.
@@ -215,10 +222,24 @@ const [command,...args]=JSON.parse(process.argv[1]);
 const r=require("node:child_process").spawnSync(command,args,{stdio:["ignore","inherit","inherit"]});
 if(r.error)console.error(r.error.message);process.exit(r.status??(r.signal?128:1));})()`;
   try {
+    // The marker exists before the checkout, so a gate that dies here leaves it to collector recovery.
+    try {
+      removeHostCheckout(evidenceRoot, collectionId);
+      const objects = path.resolve(repo, git(repo, "rev-parse", "--git-common-dir"), "objects");
+      fs.mkdirSync(checkout, { recursive: true });
+      execFileSync("git", [...safeGitArgs, "init", "--quiet", "--template="], { cwd: checkout, env: safeGitEnv(), stdio: "ignore" });
+      fs.writeFileSync(path.join(checkout, ".git/objects/info/alternates"), objects + "\n");
+      git(checkout, "-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", head);
+      requireThat(git(checkout, "rev-parse", "HEAD") === head && git(checkout, "status", "--porcelain", "--untracked-files=all") === "", "the checkout is not the clean head");
+    } catch (cause) {
+      const error = `clean checkout of the head failed: ${cause.message}`;
+      fs.writeSync(fd, error + "\n"); stopped = true;
+      return { command, args, host: true, head, exitCode: 1, error, durationMs: Date.now() - startedAt, log, tail: error };
+    }
     let group = null, registered = null;
     const { exitCode, error } = await new Promise(resolve => {
-      const child = spawn(process.execPath, ["--input-type=commonjs", "-e", wrapper, JSON.stringify([command, ...args])], { cwd: repo, detached: true, stdio: ["pipe", fd, fd],
-        env: { ...process.env, TMPDIR: tempRoot, TMP: tempRoot, TEMP: tempRoot } });
+      const child = spawn(process.execPath, ["--input-type=commonjs", "-e", wrapper, JSON.stringify([command, ...args])], { cwd: checkout, detached: true, stdio: ["pipe", fd, fd],
+        env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !GIT_ROUTING.includes(key))), TMPDIR: tempRoot, TMP: tempRoot, TEMP: tempRoot } });
       child.stdin.on("error", () => {});
       child.once("error", cause => resolve({ exitCode: null, error: cause.message }));
       child.once("exit", (code, signal) => resolve({ exitCode: code ?? (signal ? 128 : null), error: signal ? `signal ${signal}` : null }));
@@ -232,12 +253,14 @@ if(r.error)console.error(r.error.message);process.exit(r.status??(r.signal?128:1
     fs.closeSync(fd);
     // Descendants left by the command could still write evidence: the whole group ends before the evidence check.
     const descendants = group ? await stopHostGroup(group) : null;
+    stopped = !descendants;
     const text = fs.readFileSync(log, "utf8");
-    return { command, args, host: true, exitCode: registered === true ? exitCode ?? 1 : 1, ...(error ? { error } : {}),
+    return { command, args, host: true, head, exitCode: registered === true ? exitCode ?? 1 : 1, ...(error ? { error } : {}),
       ...(registered !== true ? { error: `verification group registration failed: ${registered}` } : {}), ...(descendants ? { descendants } : {}),
       durationMs: Date.now() - startedAt, log, tail: (failureLines(text) || text).slice(-4000) };
   } finally {
     try { fs.closeSync(fd); } catch {}
+    if (stopped) removeHostCheckout(evidenceRoot, collectionId);
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }
@@ -250,7 +273,11 @@ export function validatePreflight(receipt, head, base) {
   // Otherwise the collection does not verify (exitCode null): only the worker's full verification of this head, exit 0, passes it.
   // Older receipts keep their own sandbox verification.
   const host = receipt.verification?.host === true;
-  if (host) requireThat(receipt.verification.exitCode === 0, hostFailure(receipt.verification));
+  if (host) {
+    requireThat(receipt.verification.exitCode === 0, hostFailure(receipt.verification));
+    // Bound to the SHA its clean checkout held; MONO-457 receipts without it need a new collection.
+    requireThat(receipt.verification.head === head, "host verification is not bound to this head: request a new collection");
+  }
   else if (receipt.verification?.exitCode === null) requireThat(receipt.workerVerification?.head === head && receipt.workerVerification.exitCode === 0,
     "worker verification missing on this head: run the full verification and request with workerVerification {head, exitCode: 0}");
   else {
@@ -479,7 +506,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     let verification = { command: request.verification.command, args: request.verification.args, exitCode: null };
     // Skipped only where the answer is the blocked refusal anyway (not-reviewed twice, no stored round to reuse).
     if (hostVerify && (prior.reuse || prior.notReviewed < 2)) {
-      verification = await runHostVerification(request.verification, repo, evidenceRoot, request.collectionId, request.pins.file);
+      verification = await runHostVerification(request.verification, repo, head, evidenceRoot, request.collectionId, request.pins.file);
       const touched = evidenceTouched(readJson(hostRunMarker(evidenceRoot, request.collectionId)).snapshot, evidenceRoot, request.pins.file) ?? verification.descendants ?? null;
       if (touched) { consistency.passed = false; consistency.error = touched; }
       // Touched evidence is already put back or quarantined; a group that may still live keeps the marker.
@@ -829,7 +856,7 @@ preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,ri
   workerVerification: the worker's own run of the pinned full verification on this head; a receipt passes only with exitCode 0 on its head.
   collect:true runs the read-only review round first (reviewer and checker from different model families, both CLIs logged in by subscription),
   and records verification unrun (exitCode null); one gate-review-v3 receipt per collectionId.
-  Pinned hostVerification (BASE orchestration.delivery.hostVerification): collect:true first runs the pinned verification on the head
+  Pinned hostVerification (BASE orchestration.delivery.hostVerification): collect:true first runs the pinned verification in a clean checkout of the head
   outside the worker sandbox (log in <evidenceRoot>/verification/); exit 0 passes in place of workerVerification, a red head spends no round.
   Rounds per task attempt from the pinned risk (risky 3 with task changes counted, else 1 per contract: a task change gets one round), counted from receipt history; rounds after the first review only the fixes and open findings; the same head reuses its round; not-reviewed spends nothing.
   Refusals are receipts too: fix and request the next round, or park on a needs-decision:/blocked: line.

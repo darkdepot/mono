@@ -17,6 +17,10 @@ export const requestDigest = request => digest({ ...request, collect: false });
 // gate (normal end) and collector recovery (gate died mid-run) settle the same way.
 export const hostRunMarker = (evidenceRoot, collectionId) =>
   path.join(evidenceRoot, "verification", `${collectionId.replace(/[^A-Za-z0-9.-]+/g, "-")}.running`);
+// The clean checkout of the request's committed head that the host run executes in (a repository of its own, never
+// the worker's working copy). Derived like the marker, so recovery never removes a path read from a file.
+export const hostRunCheckout = (evidenceRoot, collectionId) => hostRunMarker(evidenceRoot, collectionId).replace(/\.running$/, ".checkout");
+export const removeHostCheckout = (evidenceRoot, collectionId) => fs.rmSync(hostRunCheckout(evidenceRoot, collectionId), { recursive: true, force: true });
 export function quarantineEvidence(evidenceRoot, file) {
   const target = path.join(evidenceRoot, "quarantine", `${Date.now()}-${path.basename(file)}`);
   fs.mkdirSync(path.dirname(target), { recursive: true }); fs.renameSync(file, target);
@@ -72,10 +76,13 @@ export async function stopHostGroup(group, procStart = null) {
   return "verification descendants still live after SIGKILL";
 }
 // Collector recovery after a gate that died during its host run: stop the group (or refuse while it may live),
-// settle the evidence against the stored snapshot, quarantine anything left for this collection, drop the marker.
+// remove the head checkout, settle the evidence against the stored snapshot, quarantine anything left for this
+// collection, drop the marker.
 export async function recoverHostRun(evidenceRoot, collectionId, pinsFile) {
+  if (!fs.existsSync(hostRunMarker(evidenceRoot, collectionId))) return null;
+  // The gate snapshots the resolved evidence root: a request path through a symlink must compare the same files.
+  evidenceRoot = fs.realpathSync(evidenceRoot);
   const marker = hostRunMarker(evidenceRoot, collectionId);
-  if (!fs.existsSync(marker)) return null;
   const state = readJson(marker);
   // A marker without a group was written before the run was released: nothing ran.
   if (state.group !== null) {
@@ -83,6 +90,7 @@ export async function recoverHostRun(evidenceRoot, collectionId, pinsFile) {
     const failure = Number.isInteger(state.group) && state.group > 0 && state.procStart ? await stopHostGroup(state.group, state.procStart) : "verification group without a start identity";
     if (failure) throw new Error(`host verification group of ${collectionId} not confirmed stopped: ${failure}`);
   }
+  removeHostCheckout(evidenceRoot, collectionId);
   const touched = evidenceTouched(state.snapshot ?? [], evidenceRoot, pinsFile);
   for (const directory of [evidenceRoot, path.join(evidenceRoot, "history")]) if (fs.existsSync(directory))
     for (const name of fs.readdirSync(directory).filter(name => name.endsWith(".json"))) {
