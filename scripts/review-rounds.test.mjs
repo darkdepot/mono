@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { admitRound, recordResult, readLedger, inFlight, waitForRound, requestDigest, roundRequestName, collectorLock } from "./review-rounds.mjs";
+import { admitRound, recordResult, readLedger, inFlight, waitForRound, requestDigest, roundRequestName, collectorLock, hostRunMarker, evidenceSnapshot, recoverHostRun } from "./review-rounds.mjs";
 import { processStart } from "./runtime.mjs";
 
 const scripts = path.dirname(fileURLToPath(import.meta.url));
@@ -70,5 +70,41 @@ test("wait-round: returns the result bound to this request, refuses a foreign on
   } finally {
     try { process.kill(-holder.pid, "SIGKILL"); } catch {}
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("host run recovery: a gate that died mid-run leaves no planted or edited receipt and no live group", async () => {
+  const evidence = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-recovery-")));
+  const pinsFile = "/orchestrator/dispatch/MONO-999-a1/pins.json", id = `preflight-collect:${head}:1`;
+  const receipt = (collectionId, extra = {}) => JSON.stringify({ receipt: { producer: "gate-review-v3", pins: { file: pinsFile }, collectionId, ...extra } });
+  let writer;
+  try {
+    fs.mkdirSync(path.join(evidence, "history"), { recursive: true });
+    const earlier = path.join(evidence, "history", "earlier.json"), kept = receipt(`preflight-collect:${"d".repeat(40)}:1`);
+    fs.writeFileSync(earlier, kept);
+    fs.writeFileSync(path.join(evidence, "history", "foreign.json"), JSON.stringify({ receipt: { pins: { file: "/orchestrator/dispatch/MONO-1-a1/pins.json" } } }));
+    // The run: a detached group still alive, receipts planted for the next collection and this one, an earlier one edited.
+    writer = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { detached: true, stdio: "ignore" });
+    const marker = hostRunMarker(evidence, id);
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+    fs.writeFileSync(marker, JSON.stringify({ collectionId: id, group: writer.pid, snapshot: evidenceSnapshot(evidence, pinsFile) }));
+    fs.writeFileSync(path.join(evidence, "history", "next.json"), receipt(`preflight-collect:${head}:2`, { verification: { host: true, exitCode: 0 } }));
+    fs.writeFileSync(path.join(evidence, `${head}.json`), receipt(id));
+    fs.appendFileSync(earlier, " ");
+    assert.match(await recoverHostRun(evidence, id, pinsFile), /evidence changed during host verification/);
+    if (writer.exitCode === null && writer.signalCode === null) await new Promise(resolve => writer.once("exit", resolve));
+    assert.equal(writer.signalCode, "SIGKILL", "the run's group is stopped");
+    assert.deepEqual(fs.readdirSync(path.join(evidence, "history")).sort(), ["earlier.json", "foreign.json"]);
+    assert.equal(fs.readFileSync(earlier, "utf8"), kept, "the edited receipt of this attempt is put back");
+    assert.equal(fs.existsSync(path.join(evidence, `${head}.json`)), false);
+    assert.equal(fs.readdirSync(path.join(evidence, "quarantine")).length, 2);
+    assert.equal(fs.existsSync(marker), false);
+    assert.equal(await recoverHostRun(evidence, id, pinsFile), null, "nothing to settle without a marker");
+    // A marker written before the run was released names no group: nothing ran, nothing is signalled.
+    fs.writeFileSync(marker, JSON.stringify({ collectionId: id, group: null, snapshot: evidenceSnapshot(evidence, pinsFile) }));
+    assert.equal(await recoverHostRun(evidence, id, pinsFile), "host run interrupted");
+  } finally {
+    try { process.kill(-writer?.pid, "SIGKILL"); } catch {}
+    fs.rmSync(evidence, { recursive: true, force: true });
   }
 });

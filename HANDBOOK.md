@@ -13,10 +13,13 @@ This handbook is the complete rule reference and owner-rule index. Follow its li
 
 Code review before the PR is a read-only round inside the orchestrator's
 collection: a reviewer and an independent checker from different model families
-read the pinned diff of the committed head and one receipt is written. The
-collection does not verify: the worker runs the full product verification on the
-head and sends `workerVerification {head, exitCode}`, and the receipt passes only
-with exit 0 on its head. The change sets the path: Handoff marks installer,
+read the pinned diff of the committed head and one receipt is written. By
+default the collection does not verify: the worker runs the full product
+verification on the head and sends `workerVerification {head, exitCode}`, and the
+receipt passes only with exit 0 on its head. A product whose full verification
+needs the host (Mono's own reads the process table, which the Codex sandbox
+forbids) sets `orchestration.delivery.hostVerification: true`; see
+[host verification](#host-verification). The change sets the path: Handoff marks installer,
 delivery, deploy and release, product prod scripts, user data and migrations,
 security, public API and review-gate changes `risky` (the strict path, at most
 three rounds per task attempt); everything else, `deep` included, takes the fast
@@ -906,7 +909,8 @@ The experimental comparison tooling has been retired. Production reviewer select
 
 The preflight and ship gates accept only a `gate-review-v3` receipt for the exact
 head and merge-base: review `clean` or `clean-with-successors` and the worker's
-verification exit 0 on that head (`workerVerification`); receipts of older
+verification exit 0 on that head (`workerVerification`), or with host
+verification the collection's own run exit 0 on that head; receipts of older
 attempts keep their sandbox verification. Rounds are counted from receipts per task
 attempt: three at most, the same head reuses its round,
 `not-reviewed` spends nothing, a task change continues the record (on the
@@ -919,6 +923,49 @@ Refusals are receipts too and reach the worker as a `gate preflight: fail:`
 line. The orchestrator approves nothing between rounds and after merge decides
 which candidates from the receipt's list become Issues (every `must-file` one does; the task's Linear writer files them): [review rounds](references/orchestration-delivery.md#review-rounds),
 worker [round rule](references/review-admission.md).
+
+### Host verification
+
+Some product verification cannot run in the worker's Codex sandbox: Mono's own
+`node scripts/verify.mjs` reads the process table, and the sandbox refuses the
+setuid `ps` under any seatbelt profile. Such a product sets
+`orchestration.delivery.hostVerification: true` in its config. Dispatch reads it
+from BASE and pins it for the attempt (`hostVerification` in the launch pins;
+the dispatch adds a «Проверка на хосте» block), so neither the worker's branch
+nor its round request can switch it.
+
+With the pin, every collection first runs the pinned `verification` command on
+the committed head in the worktree, outside the sandbox, in a process group of
+its own that is stopped as a whole when the command exits, with a private
+temporary directory, and writes its output to
+`<evidenceRoot>/verification/<collectionId>.log`. While it runs, a
+`<collectionId>.running` marker beside the log holds the evidence snapshot
+taken before the run and the group, registered before the command is released:
+no receipt of that collection is read while the marker exists, and if the gate
+dies mid-run, collector recovery confirms the group stopped (or keeps the round
+in flight), settles the evidence against the snapshot like the gate would,
+quarantines what was written for that collection and runs it again. The receipt records
+`verification {host: true, exitCode, log, tail}` (the tail prefers failing lines):
+
+- exit 0: the review round runs as usual, and on the fast path a fixed head
+  passes on this run instead of `workerVerification`;
+- non-zero: no reviewer runs and no round is spent; the worker gets
+  `verification failed on this head on the host (exit N)` with the log path and
+  tail, fixes and requests again (the same head with the next collection number
+  for a flaky run);
+- the head, base or worktree changed, a history receipt changed, or a receipt
+  bound to this attempt appeared or changed during the run: the collection's
+  consistency fails; this attempt's earlier receipts get their bytes back and
+  new ones go to `<evidenceRoot>/quarantine/`, so no later collection reads them.
+
+The worker runs focused checks, reports the full verification as deferred to the
+round and requests without `workerVerification`; it never parks for it.
+Trade-off: the run executes worker-authored code with the orchestrator's rights,
+outside the sandbox that otherwise keeps the evidence out of the worker's reach.
+The group stop, the marker and the evidence check catch a run that plants or
+edits this attempt's receipts, including through leftover children, but not
+code that deliberately escapes into a new session or touches other host state;
+this is why the switch is per product and off by default.
 
 Receipts keep the raw usage of every review call: Claude input excludes both cache counters, whereas Codex input includes cached input and has no cache-write counter. A call without usage stays null and counts as unmeasured, never as zero. Old receipts remain valid without usage metadata; those inputs remain unavailable for reproduction.
 

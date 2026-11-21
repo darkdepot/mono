@@ -44,8 +44,7 @@ Linear: worker-contract Linear Writes; every write read back before advancing.
 
 ready/implemented-needs-preflight: intermediate; keep context/dispatch.
 Publish: delivery-state.mjs publish --report <candidate> --output <own phase path>.
-Round wait: delivery-state.mjs wait-round --request <reports/KEY-round-aN.json>,
-foreground. Re-read capsule; progress only on exit 0.
+Round wait: foreground; re-read capsule; progress only on exit 0.
 
 Final: worker Report green/parked, every verification item.
 Report before stops except passed startup pause; park comment is yours.
