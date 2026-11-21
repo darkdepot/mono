@@ -1737,6 +1737,18 @@ for(const host of ['claude','codex'])for(const mode of ['foreign-document','own-
   const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/record outside current project/);assert.equal(result.rubricDigest,undefined);
  }else{f.attest();assert.equal(f.check().status,'passed',JSON.stringify(f.check()));}
 });
+for(const host of ['claude','codex'])test(`MONO-331 ${host}: project description discussion fails when the dump has no project`,t=>{
+ const f=u7DocumentFixture(t,host),shown={...f.project,description:f.shown};
+ Object.assign(f.expected,{role:'clarification',question:{anchors:['Источник']},reply:'А почему одна колонка?',outcome:{approval:false,startNext:false},response:{anchors:['Одной колонки достаточно'],forbidden:[],question:false}});
+ delete f.request.project;f.request.projectName=f.project.name;f.request.expectedRecords=[];
+ f.page('projects','projects',[]);f.page('comments','comments',[]);
+ f.request.presentationBindings=f.request.approvalBindings;f.request.approvalBindings=[];
+ f.events.splice(0,f.events.length,f.call('shown','mcp__monotest__get_project',{id:projectId}),f.result('shown',shown),f.assistant(`Источник после имени; советую одну колонку. [Описание проекта](${shown.url})\nОставляем Источник?`),f.terminal,f.user(f.expected.reply),f.assistant('Одной колонки достаточно для источника.'));
+ const result=f.check();
+ assert.equal(result.status,'failed',JSON.stringify(result));
+ assert.match(result.reason,/shown record outside current project/);assert.ok(result.reason.includes(projectId));
+ assert.equal(result.rubricDigest,undefined);
+});
 for(const host of ['claude','codex'])for(const mode of ['body-change','id-change','forged-quote','wrong-question','extra-turn','early-record','extra-change','stale-rubric','missing-rubric','summary-meaning','response-meaning','correction-meaning','unnamed-transition'])test(`U7 ${host}: rejects ${mode} while retaining valid anchors`,t=>{
  const f=u7DocumentFixture(t,host,mode.includes('correction')||mode==='extra-change'?'correction':'agree');
  if(mode==='body-change'){f.fresh.content+=' Mutation';f.events[6]=f.result('read',f.fresh);f.save('documents/doc.json',f.fresh);}
