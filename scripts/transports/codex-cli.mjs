@@ -64,13 +64,15 @@ function startIdentity(event) {
 // The worker writes its own Issue comments and statuses through the user's
 // logged-in Linear MCP server. approval_policy=never rejects tools that need
 // approval, so exactly these write tools are pre-approved (MONO-449 probe).
+// Built-in ChatGPT apps are disabled: otherwise the model may pick the
+// codex_apps Linear connector, whose writes these grants do not cover (MONO-460).
 export const LINEAR_WRITE_TOOLS = Object.freeze(["save_comment", "save_issue"]);
 
 function invocation(entry, { reportsDir, roots, prompt, resume }) {
   const model = entry.model_launch.model_parameter, effort = entry.model_launch.effort_parameter;
   const args = resume ? ["exec", "resume", entry.thread_id, "--json"] : ["exec", "--json", "--cd", entry.worktree];
   if (!resume) args.push("--add-dir", reportsDir);
-  args.push("-c", `model=${JSON.stringify(model)}`, "-c", `model_reasoning_effort=${JSON.stringify(effort)}`,
+  args.push("--disable", "apps", "-c", `model=${JSON.stringify(model)}`, "-c", `model_reasoning_effort=${JSON.stringify(effort)}`,
     "-c", 'sandbox_mode="workspace-write"', "-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(roots)}`,
     "-c", `sandbox_workspace_write.network_access=${entry.network_access === true}`,
     ...LINEAR_WRITE_TOOLS.flatMap(tool => ["-c", `mcp_servers.linear.tools.${tool}.approval_mode="approve"`]), prompt);

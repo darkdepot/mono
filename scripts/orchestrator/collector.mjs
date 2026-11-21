@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, isMain, withLock, reclaimLock, lockTreeDead, processStart, resolvedLocation, validateEvidenceGrants, packLayout, deliveryConfig, REVIEW_PRODUCER } from "../runtime.mjs";
 import { commandFlags, allowedFlags, registryEntry, admitCollection, CollectionAdmissionRefusal } from "./command-state.mjs";
-import { readLedger, inFlight, admissionFor, recordResult, roundRequestName, collectorLock, requestDigest } from "../review-rounds.mjs";
+import { readLedger, inFlight, admissionFor, recordResult, roundRequestName, collectorLock, requestDigest, hostRunMarker, recoverHostRun } from "../review-rounds.mjs";
 
 const lockPath = ({ root, issue, attempt }) => collectorLock(root, issue, attempt);
 const logPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.log`);
@@ -31,6 +31,20 @@ function verifyReceipt(file, request) {
   for (const [name, value] of Object.entries(expected)) if (canonical(receipt[name] ?? null) !== canonical(value)) throw new Error(`receipt binding mismatch: ${name}`);
   if (canonical({ command: receipt.verification?.command, args: receipt.verification?.args }) !== canonical(request.verification)) throw new Error("receipt binding mismatch: verification");
   return envelope;
+}
+// A gate that died during its host verification left the marker: what that run may have written is never a
+// receipt. Its group is stopped and the evidence settled before any receipt is read; while the group may
+// still live, the round stays in flight.
+async function settleHostRun(options, request, started) {
+  if (!fs.existsSync(hostRunMarker(request.evidenceRoot, request.collectionId))) return;
+  const gate = fs.existsSync(started) ? readJson(started).gate : null;
+  let dead = true;
+  try { dead = !gate || lockTreeDead(gate); } catch { dead = false; }
+  if (!dead) throw new GateAlive("gate with a host verification run live/unverified; retry refused");
+  let settled;
+  try { settled = request.pins?.file ? await recoverHostRun(request.evidenceRoot, request.collectionId, request.pins.file) : null; }
+  catch (error) { throw new GateAlive(error.message); }
+  if (settled) log(options, `collection ${request.collectionId}: interrupted host verification settled: ${settled}`);
 }
 function historyReceipt(request) {
   const history = path.join(request.evidenceRoot, "history");
@@ -134,6 +148,7 @@ async function collection(options, entry, admission) {
   const headLock = path.join(evidenceRoot, `${request.head}.collect.lock`);
   const retries = entry.collectionRetries ?? deliveryConfig().collectionRetries;
   const started = path.join(options.root, "consumed", `${options.issue}-a${options.attempt}`, "collections", `${admission.collectionId}.json`);
+  await settleHostRun(options, request, started);
   let found = historyReceipt(request);
   while (!found) {
     const prior = fs.existsSync(started) ? readJson(started) : null;
@@ -160,6 +175,7 @@ async function collection(options, entry, admission) {
       try { dead = !active || lockTreeDead(active); } catch { dead = false; }
       if (!dead) throw new GateAlive('gate descendants live/unverified; retry refused');
     }
+    await settleHostRun(options, request, started);
     found = historyReceipt(request);
   }
   const gate = await withLock(headLock, async () => {

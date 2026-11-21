@@ -194,7 +194,18 @@ A collection runs one read-only review round on the committed head (reviewer
 and checker from different model families) and writes one `gate-review-v3`
 receipt with `verification.exitCode: null`: the worker runs the full product
 verification and sends `workerVerification {head, exitCode}`; the receipt passes
-only with exit 0 on its head. Receipts of older attempts keep their sandbox verification. The collector host needs both the Codex and
+only with exit 0 on its head. Receipts of older attempts keep their sandbox verification.
+Host verification (pinned `hostVerification` from BASE
+`orchestration.delivery.hostVerification`): the collection itself runs the pinned
+verification on the committed head outside the worker sandbox before the round,
+in its own process group (stopped whole when the command exits) with a private
+temporary directory and a `.running` marker, and records
+`verification {host: true, exitCode, log, tail}`; a red head spends no round and
+runs no reviewer, a change to the head, worktree or this attempt's receipts
+during the run fails consistency (receipts restored or quarantined), recovery
+after a gate that died mid-run quarantines that collection's receipts, and the
+fast path accepts a fixed head on this run. No orchestrator step: the worker requests without
+`workerVerification` ([HANDBOOK](../HANDBOOK.md#host-verification)). The collector host needs both the Codex and
 Claude CLIs logged in by subscription; a single-family setup gives
 `not-reviewed`, and so does a logged-out CLI whose role has to run (the checker
 runs only when the reviewer reports findings).
@@ -210,7 +221,9 @@ reuses its round; `not-reviewed` spends nothing. `ROUND_LIMIT` stays 3 and
 Fast path: after its round the worker fixes, runs the full verification on the
 final head and requests it with `workerVerification: {head, exitCode: 0}`; the
 collection accepts that head without another round (`review clean (round 1 of 1),
-fixes after it confirmed by the worker's full verification`), unless the round
+fixes after it confirmed by the worker's full verification`; with host
+verification the worker only requests the fixed head and the collection's run
+confirms it), unless the round
 found out-of-contract work or a raised risk (needs-decision). The bot sees the
 result on the PR.
 
