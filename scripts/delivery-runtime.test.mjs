@@ -617,6 +617,7 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     assert.deepEqual(linearGrants(argv), ['mcp_servers.linear.tools.save_comment.approval_mode="approve"',
       'mcp_servers.linear.tools.save_issue.approval_mode="approve"'], 'the worker may write only its comments and statuses');
     assert.ok(!argv.includes('--ignore-user-config'), 'the worker keeps the user Linear MCP login');
+    assert.equal(argv[argv.indexOf('--disable') + 1], 'apps', 'built-in apps stay off so Linear goes through the linear server');
     assert.equal(argv[argv.indexOf('--add-dir') + 1], mailbox);
     assert.ok(!entry.workerWritableRoots.includes(state));
     assert.equal(argv.at(-1), fs.readFileSync(dispatchFile, "utf8"));
@@ -695,6 +696,7 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     assert.ok(resumedArgs.includes(`model=${JSON.stringify(entry.model)}`));
     assert.ok(resumedArgs.includes('sandbox_workspace_write.network_access=true'));
     assert.deepEqual(linearGrants(resumedArgs), linearGrants(argv), 'resume keeps the same Linear write grants');
+    assert.equal(resumedArgs[resumedArgs.indexOf('--disable') + 1], 'apps', 'resume keeps built-in apps off');
     assert.ok(resumedArgs.includes(`model_reasoning_effort=${JSON.stringify(entry.effort)}`));
     assert.ok(!resumedArgs.includes("--sandbox") && !resumedArgs.includes("--cd") && !resumedArgs.includes("--add-dir"));
     process.kill(livePid, "SIGTERM"); livePid = null;
