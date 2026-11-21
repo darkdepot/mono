@@ -180,6 +180,10 @@ test('delivery configuration shares stall and ack clocks and rejects incompatibl
   assert.throws(() => deliveryConfig({ orchestration: { delivery: { stallSec: 90, ackWaitSec: 351, pollSec: 10 } } }), /ackWaitSec.*stallSec/);
   for (const [field, value] of [['stallSec', 0], ['ackWaitSec', -1], ['ackWaitSec', Infinity]])
     assert.throws(() => deliveryConfig({ orchestration: { delivery: { [field]: value } } }), /invalid/);
+  // MONO-457: host verification is off unless the product opts in with a boolean.
+  assert.equal(deliveryConfig().hostVerification, false);
+  assert.equal(deliveryConfig({ orchestration: { delivery: { hostVerification: true } } }).hostVerification, true);
+  for (const value of ['true', 1, {}]) assert.throws(() => deliveryConfig({ orchestration: { delivery: { hostVerification: value } } }), /hostVerification must be true or false/);
 });
 
 test('pre-rename stage fixture: queued certificate comments are refused and the code comment is printed for the worker', async () => {

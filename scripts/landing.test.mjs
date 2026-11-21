@@ -95,6 +95,10 @@ test("landing U2 dispatch renders landing block only with BASE policy", () => {
   const template = "before\n<!-- landing:start -->\n## Посадка\n{{landing_paths}}\n{{landing_fragments}}\n{{landing_release}}\n<!-- landing:end -->\nafter";
   assert.equal(renderDispatch(template, {}), "before\nafter");
   assert.match(renderDispatch(template, { landing_paths: "CHANGELOG.md", landing_fragments: "changelog.d", landing_release: "false" }), /## Посадка/);
+  // MONO-457: the host verification block only for an attempt pinned with hostVerification.
+  const host = "a\n<!-- host-verification:start -->\n## Проверка на хосте\n<!-- host-verification:end -->\nb";
+  assert.equal(renderDispatch(host, {}), "a\nb");
+  assert.equal(renderDispatch(host, { host_verification: true }), "a\n<!-- host-verification:start -->\n## Проверка на хосте\n<!-- host-verification:end -->\nb");
 });
 
 test("landing U2 installed dispatch validates release and reserves a single release for direct spawn", async t => {

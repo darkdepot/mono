@@ -297,7 +297,13 @@ test("preflight accepts only a v3 receipt with an accepted review, exact head/ba
     [{ verification: { exitCode: null }, workerVerification: { head: "c".repeat(40), exitCode: 0 } }, /^worker verification missing on this head/],
     [{ verification: { exitCode: 0, sandbox: { mode: "workspace-write", probed: false } } }, /sandbox proof missing/],
     [{ consistency: { passed: false, error: 'head or base changed during verification' } }, /consistency failed or missing: head or base changed/],
+    // MONO-457: a host verification receipt needs its own exit 0; neither the worker's word nor a sandbox proof replaces it.
+    [{ verification: { host: true, exitCode: 1, log: '/e/v.log', tail: 'ps:\n  failed' }, workerVerification: { head, exitCode: 0 } },
+      /^verification failed on this head on the host \(exit 1\); fix and request again, the same head too for a flaky run; log \/e\/v\.log; tail: ps: failed$/],
+    [{ verification: { host: true, exitCode: null, sandbox: { mode: "workspace-write", probed: true } } }, /^verification failed on this head on the host \(exit null\)/],
   ]) assert.throws(() => validatePreflight(receipt(extra), head, base), { message: refusal });
+  assert.match(validatePreflight(receipt({ verification: { host: true, exitCode: 0, log: '/e/v.log' } }), head, base),
+    /^review clean \(round 1 of 3\) and host verification verified on head$/);
   // The collection no longer verifies: its receipt passes only with the worker's full verification of this head.
   assert.match(validatePreflight(receipt({ verification: { command: 'node', args: ['verify.mjs'], exitCode: null }, workerVerification: { head, exitCode: 0 } }), head, base),
     /^review clean \(round 1 of 3\) and verification verified on head$/);
@@ -377,6 +383,18 @@ test("named collection fixtures through the gate CLI", async t => {
         // The strict path keeps up to three rounds; the fast path has one.
         if (fixture.mode === "review-rounds") pins.risk = "risky";
         pins.verification.args = ["-e", `const fs=require('node:fs');fs.mkdirSync('.orchestrator',{recursive:true});fs.writeFileSync('.orchestrator/verify-saw',fs.readFileSync(${JSON.stringify(path.join(bin, "review.log"))},'utf8'))`];
+      }
+      if (fixture.mode === "review-host") {
+        // MONO-457: the verification exits with the code in verify-exit, logs where and how it ran, and on verify-tamper
+        // plants a receipt for this attempt in the evidence history.
+        pins.hostVerification = true;
+        const control = JSON.stringify(scratch), history = JSON.stringify(path.join(evidence, "history"));
+        pins.verification.args = ["-e", `const fs=require('node:fs'),p=require('node:path'),d=${control};
+const read=n=>{try{return fs.readFileSync(p.join(d,n),'utf8').trim()}catch{return null}};
+fs.appendFileSync(p.join(d,'verify-runs'),JSON.stringify({cwd:process.cwd(),tmp:process.env.TMPDIR})+'\\n');
+const t=read('verify-tamper');if(t){const x=JSON.parse(t);fs.writeFileSync(p.join(${history},'planted.json'),JSON.stringify({receipt:{producer:'gate-review-v3',pins:{file:x.pins},collectionId:x.collectionId,verification:{host:true,exitCode:0}}}));fs.appendFileSync(x.edit,' ');}
+if(read('verify-child')){const c=require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>require("node:fs").writeFileSync('+JSON.stringify(read('verify-child'))+',"{}"),1500)'],{stdio:'ignore'});c.unref();}
+const code=Number(read('verify-exit')??0);if(code)console.log('FAIL fixture step');console.log('host verify output: process table read');process.exit(code);`];
       }
       if (fixture.mode.startsWith('idea-')) {
         pins.packVersion = fixture.mode === 'idea-old-no-pin' ? '0.31.1' : '0.32.0';
@@ -559,6 +577,68 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         git('checkout', '-q', third);
         const stale = call(at(third)); assert.equal(stale.status, 1, 'a clean round from before the task change no longer counts');
         assert.match(stale.stdout, /the task changed after this review round/);
+        return;
+      }
+      if (fixture.mode === 'review-host') {
+        // MONO-457: pinned hostVerification. The collection runs the full verification on the committed head outside the
+        // worker sandbox, before the review round; the worker sends no workerVerification and never parks for it.
+        const author = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid'];
+        const commit = text => { fs.appendFileSync(path.join(repo, 'input.mjs'), text); git('add', 'input.mjs'); git(...author, 'commit', '-m', text.trim()); return git('rev-parse', 'HEAD'); };
+        const { workerVerification: _, ...base } = request;
+        const at = (tip, n = 1) => ({ ...base, head: tip, collectionId: `preflight-collect:${tip}:${n}` });
+        const round = async (value, status, line) => {
+          await admit(value);
+          for (const result of [call({ ...value, collect: true }), call(value)]) { assert.equal(result.status, status, result.stdout + result.stderr); assert.match(result.stdout, line); }
+          return JSON.parse(fs.readFileSync(path.join(evidence, `${value.head}.json`), 'utf8')).receipt;
+        };
+        const runs = () => fs.existsSync(path.join(scratch, 'verify-runs')) ? fs.readFileSync(path.join(scratch, 'verify-runs'), 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
+        setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'First leftover', title: 'First leftover' })] });
+        const first = commit('export const one = 1;\n');
+        assert.equal(call(at(first)).status, 2, 'pending without workerVerification: the round verifies');
+        // A red head: no review call, no round spent, the line names the log and its tail.
+        write(path.join(scratch, 'verify-exit'), '1');
+        let receipt = await round(at(first), 1, /fail: verification failed on this head on the host \(exit 1\); fix and request again, the same head too for a flaky run; log .*preflight-collect-[a-f0-9]{40}-1\.log; tail: FAIL fixture step$/m);
+        assert.deepEqual([reviewCalls(bin).length, receipt.review.outcome, receipt.review.spent, receipt.verification.host, receipt.verification.exitCode], [0, 'refused', false, true, 1]);
+        assert.match(fs.readFileSync(receipt.verification.log, 'utf8'), /host verify output/);
+        const [ran] = runs();
+        assert.equal(ran.cwd, fs.realpathSync(repo)); assert.match(path.basename(ran.tmp), /^mono-host-verify-/);
+        assert.equal(fs.existsSync(ran.tmp), false, 'the private temporary directory is removed');
+        // The same head again (a flaky run): the verification reruns, then the round runs.
+        write(path.join(scratch, 'verify-exit'), '0');
+        receipt = await round(at(first, 2), 1, /fail: review not-converged \(round 1 of 1\); fix and request the final head; the collection runs the full verification on the host/);
+        assert.deepEqual([runs().length, receipt.review.spent, receipt.verification.exitCode], [2, true, 0]);
+        // Fast path: the fixed head passes on the host verification without a second round.
+        const fixed = commit('export const fixed = 1;\n'), calls = reviewCalls(bin).length;
+        assert.equal(call(at(fixed)).status, 2, 'the spent round still admits the fixed head for host verification');
+        receipt = await round(at(fixed), 0, /pass: review clean \(round 1 of 1\), fixes after it confirmed by the full verification on the host, and host verification verified on head/);
+        assert.deepEqual([reviewCalls(bin).length, receipt.review.spent, receipt.review.hostVerified, receipt.workerVerification], [calls, false, true, undefined]);
+        // A run that plants a receipt for the next collection and edits an earlier one fails consistency; no review runs,
+        // the planted receipt goes to quarantine and the edited one gets its bytes back, so the next request is pending.
+        const history = path.join(evidence, 'history'), earlier = path.join(history, fs.readdirSync(history).sort()[0]), kept = fs.readFileSync(earlier);
+        write(path.join(scratch, 'verify-tamper'), JSON.stringify({ pins: pinsFile, collectionId: `preflight-collect:${fixed}:3`, edit: earlier }));
+        receipt = await round(at(fixed, 2), 1, /fail: collection consistency failed: evidence changed during host verification: history\/[^,]+\.json, history\/planted\.json/);
+        assert.deepEqual([reviewCalls(bin).length, receipt.consistency.passed], [calls, false]);
+        assert.deepEqual([fs.existsSync(path.join(history, 'planted.json')), fs.readdirSync(path.join(evidence, 'quarantine')).some(name => name.endsWith('-planted.json'))], [false, true]);
+        assert.deepEqual(fs.readFileSync(earlier), kept, 'the edited receipt of this attempt is put back');
+        fs.unlinkSync(path.join(scratch, 'verify-tamper'));
+        assert.equal(call(at(fixed, 3)).status, 2, 'no planted receipt answers the next collection');
+        // A descendant the command leaves behind is stopped with its group before it can write.
+        const late = path.join(history, 'late.json'); write(path.join(scratch, 'verify-child'), late);
+        await round(at(fixed, 3), 0, /pass: review clean \(round 1 of 1\)/);
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        assert.equal(fs.existsSync(late), false, 'the descendant was stopped before writing');
+        fs.unlinkSync(path.join(scratch, 'verify-child'));
+        assert.equal(fs.readdirSync(path.join(evidence, 'verification')).some(name => name.endsWith('.running')), false, 'no marker after finished runs');
+        // A receipt of a collection whose host run did not finish (marker left by a dead gate) is never read.
+        const markerFile = path.join(evidence, 'verification', `preflight-collect-${fixed}-3.running`);
+        write(markerFile, JSON.stringify({ collectionId: `preflight-collect:${fixed}:3`, group: null }));
+        const unfinished = call(at(fixed, 3)); assert.equal(unfinished.status, 1); assert.match(unfinished.stdout, /host verification of this collection did not finish/);
+        fs.unlinkSync(markerFile);
+        // The pin decides: a receipt without the host run (older sandbox form) never passes a pinned attempt.
+        const stored = path.join(evidence, `${fixed}.json`), passing = JSON.parse(fs.readFileSync(history + '/' + fs.readdirSync(history).find(name => JSON.parse(fs.readFileSync(path.join(history, name))).receipt.collectionId === `preflight-collect:${fixed}:1`)));
+        passing.receipt.verification = { ...pins.verification, exitCode: 0, sandbox: { mode: 'workspace-write', probed: true } };
+        atomicJson(stored, passing);
+        const sandboxed = call(at(fixed)); assert.equal(sandboxed.status, 1); assert.match(sandboxed.stdout, /host verification missing on this head/);
         return;
       }
       if (fixture.mode === 'review-fast') {

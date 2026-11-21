@@ -418,9 +418,12 @@ export function deliveryConfig(source) {
     stallSec: positive(config.stallSec, 120, "stallSec"),
     ackWaitSec: positive(config.ackWaitSec, 420, "ackWaitSec"),
     attemptCap: positive(config.attemptCap, 3, "attemptCap"),
+    // The product's full verification needs the host (for example the process table): the collection runs it.
+    hostVerification: config.hostVerification ?? false,
   };
   if (!Number.isSafeInteger(result.collectionRetries) || result.collectionRetries < 0)
     throw new Error("invalid collectionRetries");
+  if (typeof result.hostVerification !== "boolean") throw new Error("orchestration.delivery.hostVerification must be true or false");
   if (result.ackWaitSec > result.stallSec * 4 - result.pollSec) {
     throw new Error("ackWaitSec must be <= stallSec * 4 - pollSec");
   }

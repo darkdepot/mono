@@ -53,6 +53,21 @@ compares `git show <sha>` blobs to that block and the snapshot manifest at start
 
 <!-- landing:end -->
 
+<!-- host-verification:start -->
+## Проверка на хосте
+
+Pinned `hostVerification: true`: the full verification (the pinned
+`verification` command) needs the host, so the collection runs it on the
+committed head outside your sandbox, before the review round, and the round
+receipt carries its exit code. Do not run it in the sandbox and do not park for
+it: run focused checks, report the full verification as `unverified` /
+`deferred` with the reason «проверка на хосте в круге ревью», then commit and
+request the round without `workerVerification`. The line
+`verification failed on this head on the host` is a fix: read the named log,
+fix, commit and request again (a flaky run: the same head with the next
+collection number). Readiness cites the receipt's host verification.
+
+<!-- host-verification:end -->
 ## Запрос сбора
 
 Use this pinned preflight request; replace HEAD in head/collectionId with the
