@@ -154,10 +154,10 @@ add another Research gate.
 Dispatch saves idea files, approval/context and selected-record.json plus the
 cutoff/headings policy; pins.idea binds path/projectId/recordId/fingerprint/digest/
 artifactDigest/verdict. artifactDigest covers canonical contents of every saved
-idea file and its approval/context (or issue-only envelope). Amend/resume keeps
-this binding unchanged; a new idea record needs a new attempt. Collection requests
+idea file and its approval/context (or issue-only envelope). Resume keeps this
+binding unchanged; a new idea record needs a new attempt. Collection requests
 must carry the same idea. Preflight collection and ship reread files and require
-the semantic/artifact digests and signed receipt binding to match. Launch pins
+the semantic/artifact digests and receipt binding to match. Launch pins
 before 0.32.0 may omit idea; newer launches cannot. The worker still judges
 authenticated approval and delivery readiness at its gates.
 
@@ -293,7 +293,7 @@ Protocol:
    Worker Report and gate-ack machine shapes stay unchanged; launch/registry
    fields additionally pin `handshake` (`wait|resume`, default `resume`),
    `profile` (`short|full`, default `full`), `pins {file, digest}` (SHA-256 of
-   dispatch pins bytes), `pinsVersion: 0`, and `procStart` at `thread.started`
+   dispatch pins bytes, immutable for the attempt), and `procStart` at `thread.started`
    registration (`ps -p <pid> -o lstart=`, trimmed). Short requires tiny/standard,
    `critical: null`, orchestrator-supplied `afk: true` and `openDecisions: 0`.
    Legacy full/resume launches may omit pins; wait/short requires them. Ack delivery follows the same sandbox
@@ -444,9 +444,9 @@ Protocol:
 
    In legacy resume mode, the orchestrator resumes the same worker with a
    resume signal that names each applied move together with its read-back
-   result, explicitly as an amendment of the dispatch snapshot. Every
+   result, explicitly as an update of the dispatch snapshot. Every
    post-resume check — including `mono:check delivery` — is evaluated against
-   that amended post-move state. The pack identity gate runs again after the
+   that post-move state. The pack identity gate runs again after the
    resume, unchanged: resuming is a stage resume, so the gate is mandatory.
 
    First, the immediate post-resume registry update that records the new
@@ -489,7 +489,7 @@ handshake.
 | Consume `.blocked` | Only after the correlated stage report is present and valid: atomically publish the private consumption record with `outcome: blocked`, rename every ack candidate, then remove `gates` and route the report. |
 | Malformed `gates` on a gate-carrying entry | Treat it as a producer contract error and terminate the attempt; verified-respawn a NEW gate attempt with a correct list. |
 | `gates` retained after startup consumption | Reconcile the private consumption record and finish cleanup before processing phase reports. |
-| Phase advance | Reconcile startup ack first; preserve delivery stage/log; a collection request goes to the collector. Never dispatch a new stage. |
+| Phase advance | Reconcile startup ack first; preserve delivery stage/log; a round request goes to the attempt's collector. Never dispatch a new stage. |
 | Crash after consumption-record publication | Resume treats the well-formed private CURRENT-attempt record as intent: finish renaming every remaining ack candidate to the suffix selected by `outcome`, then remove stale `gates`. Tombstones and mailbox files never authorize either action. |
 
 Blocked path: a gate that fails makes the ack `status: blocked`, and the worker
@@ -515,7 +515,7 @@ Both transports, because the pause and the resume differ in mechanism only:
 - `codex-cli`: `handshake: wait` keeps the process blocked in wait-ack within
   ackWaitSec; consumption releases it. Expiry parks write-unconfirmed and exits.
   `resume` (default) retains exit/same-thread `codex exec resume` with the
-  amendment prompt. No user interaction.
+  read-back prompt. No user interaction.
 - `claude-code-desktop` and `fallback`: the worker writes the ack and ends its
   turn; the session stays open and is continued with a session message
   carrying the resume signal. Transport price, named plainly: in
@@ -554,7 +554,7 @@ in full for both audiences. Never substitute a checkout's `SURFACE_REVISION`.
 A mono:deliver process needs the union of phase capabilities from launch:
 workspace-write, network, writable worktree, the worktree-specific Git directory and the common Git directory, derived from the worktree, and only <root>/reports as mailbox.
 codex 0.153.4 protects the metadata directory of an explicitly listed linked worktree.
-Keep <root>/confirmations, workers.json, attempts.json, control.json, consumed/,
+Keep workers.json, attempts.json, control.json, consumed/,
 logs/ and dispatch/ outside worker grants. Spawn uses --add-dir <root>/reports;
 resume uses the supported writable_roots config override. Persist the complete
 write-grant list in the launch capsule; phase capsules copy these dispatch pins.
@@ -632,7 +632,7 @@ separate from the policy target:
   commands, allow only GitHub domains and the system certificate service, and deny
   WebFetch/WebSearch. Bind internal temp storage to a short granted root; refuse
   long paths and deny ungranted system fallbacks. Strict empty MCP, no Chrome, closed built-in tools, no user,
-  project or local setting sources. The Bash timeout exceeds phase confirmation.
+  project or local setting sources. The Bash timeout exceeds a review round.
   Resume regenerates settings from attempt pins, keeps the same session/model and
   refuses a live writer. Never adopt current project settings. Startup uses stop/resume:
   the worker writes its gate acknowledgement and stops; the orchestrator applies
@@ -642,13 +642,13 @@ separate from the policy target:
   model_launch.delivery_differences and the ready certificate disclose both facts.
   Never print credentials: native session transcripts retain command output
   outside journal redaction. A refused shell command follows report-before-stop.
-  Collection confirmations use the plain pack blocking wait command
+  Review rounds use the plain pack blocking `wait-round` command
   in the foreground under the raised Bash timeout ceiling. The seam proves an
   outstanding Bash call by session, Issue/attempt, current runner PID/procStart
   and call ID. Each runner writes a mono.worker-instance marker before CLI output;
   a resume discards old outstanding calls. A tool result (including background
-  handoff), permission denial or turn result closes the wait. Stale, foreign or
-  partial confirmations never advance the phase; existing deadlines apply.
+  handoff), permission denial or turn result closes the wait. A result bound to
+  another request never advances the phase.
   Log mtime supplies liveness, including tool_progress appends during a command.
   A turn result without a correlated report is completion without a report,
   never green or parked. Sum result.usage once per completed turn across resumes;
@@ -729,4 +729,4 @@ A review finding on manifest files parks blocked with exact replacement bytes.
 Project-first: mono:handoff repairs the Spec under repair-machine classification
 by meaning, with every class effect; issue-only: mono:issue renews the Issue
 through create-then-approve. Dispatch the approved replacement as a NEW attempt
-with --preapply; `accept amend --preapply` always refuses and names that route.
+with --preapply; resume carries text only and never applies files.

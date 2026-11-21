@@ -148,7 +148,7 @@ test('watch-phase-regress one-shot scan preserves the live observer pulse', asyn
   } finally { if (watcher) await stopped(watcher.pid); await f.cleanup(); }
 });
 
-test('launch-watcher-required through amendment resume', async t => {
+test('launch-watcher-required through task-change resume: a refused resume records no task change', async t => {
   for (const name of ['missing', 'stale', 'future', 'dead', 'reused']) await t.test(name, async () => {
     const f = fixture();
     try {
@@ -162,15 +162,16 @@ test('launch-watcher-required through amendment resume', async t => {
         if (name === 'reused') p.procStart = 'another incarnation';
         atomicJson(file, p);
       }
-      const r = f.call('orchestrator/accept.mjs', 'amend', '--root', f.root, '--issue', f.issue, '--attempt', '1', '--text', 'Resume the approved scope.');
+      const url = `https://linear.app/fixture/issue/${f.issue}/x#comment-1`;
+      const resumeFile = path.join(f.scratch, 'task-change.md'); put(resumeFile, `Изменение задачи: ${url}\n`);
+      const request = path.join(f.scratch, 'task-change.json'); atomicJson(request, { root: f.root, issue: f.issue, resumeFile, taskChange: url });
+      const changes = path.join(f.root, 'dispatch', `${f.issue}-a1`, 'task-changes.json');
+      const r = f.call('orchestrator/resume.mjs', '--request', request);
       assert.notEqual(r.status, 0); assert.match(r.stdout + r.stderr, /watcher-required:/);
       assert.equal(f.entry().pid, entry.pid); assert.equal(f.entry().last_resume, undefined);
-      assert.equal(read(path.join(f.root, 'attempts.json'))[f.issue], 1);
-      const pending = path.join(f.root, 'dispatch', `${f.issue}-a1`, 'amendment.pending.json');
-      assert.equal(read(pending).launchMayHaveStartedAt, undefined, 'observer refusal happens before possible-launch bookkeeping');
-      pulse(f.root);
-      const retried = f.call('orchestrator/accept.mjs', 'amend', '--root', f.root, '--issue', f.issue, '--attempt', '1', '--text', 'Resume the approved scope.');
-      pass(retried);
+      assert.equal(fs.existsSync(changes), false, 'an undelivered task change is not recorded');
+      pulse(f.root); pass(f.call('orchestrator/resume.mjs', '--request', request));
+      assert.deepEqual(read(changes).map(change => change.url), [url]);
       assert.equal(read(path.join(f.root, 'attempts.json'))[f.issue], 1, 'restoring the watcher resumes the same attempt');
     } finally { await f.cleanup(); }
   });
@@ -186,26 +187,19 @@ test('dispatch creates only active launch pins', async () => {
   } finally { await f.cleanup(); }
 });
 
-test('launch-watcher-required after launch preparation and before amendment resume', async t => {
-  for (const mode of ['spawn', 'resume', 'amend']) await t.test(mode, async () => {
+test('launch-watcher-required after launch preparation and before resume', async t => {
+  for (const mode of ['spawn', 'resume']) await t.test(mode, async () => {
     const f = fixture();
     try {
       pulse(f.root);
       if (mode !== 'spawn') { pass(f.dispatch()); await stopped(f.entry().pid); }
       const launch = path.join(f.pack, 'scripts/orchestrator/launch.mjs'), source = fs.readFileSync(launch, 'utf8');
-      const resume = path.join(f.pack, 'scripts/orchestrator/resume.mjs'), resumeSource = fs.readFileSync(resume, 'utf8');
       const anchor = mode === 'spawn' ? 'const gates = request.gates ?? [];' : 'const updated = { ...entry, capsule:';
-      if (mode === 'amend') {
-        const prefix = `import fs from 'node:fs';\nconst input=JSON.parse(fs.readFileSync(process.argv[process.argv.indexOf('--request')+1]));fs.unlinkSync(input.root+'/watcher.json');\n`;
-        put(resume, prefix + resumeSource.replace(/^#![^\n]*\n/u, ''));
-      } else {
-        assert.ok(source.includes(anchor));
-        put(launch, source.replace(anchor, `fs.unlinkSync(path.join(request.root, 'watcher.json')); ${anchor}`));
-      }
+      assert.ok(source.includes(anchor));
+      put(launch, source.replace(anchor, `fs.unlinkSync(path.join(request.root, 'watcher.json')); ${anchor}`));
       const resumeFile = path.join(f.scratch, 'race-resume.md'); put(resumeFile, 'Continue.');
       const request = path.join(f.scratch, 'race-resume.json'); atomicJson(request, { root: f.root, issue: f.issue, resumeFile });
-      const run = () => mode === 'spawn' ? f.dispatch() : mode === 'resume' ? f.call('orchestrator/resume.mjs', '--request', request) :
-        f.call('orchestrator/accept.mjs', 'amend', '--root', f.root, '--issue', f.issue, '--attempt', '1', '--text', 'Retry watcher race.');
+      const run = () => mode === 'spawn' ? f.dispatch() : f.call('orchestrator/resume.mjs', '--request', request);
       const refused = run(); assert.notEqual(refused.status, 0); assert.match(refused.stdout + refused.stderr, /watcher-required:/);
       if (mode === 'spawn') {
         assert.deepEqual(read(path.join(f.root, 'workers.json')), {});
@@ -213,11 +207,6 @@ test('launch-watcher-required after launch preparation and before amendment resu
       } else {
         assert.equal(read(path.join(f.root, 'attempts.json'))[f.issue], 1);
         assert.equal(f.entry().last_resume, undefined);
-      }
-      if (mode === 'amend') {
-        const pending = path.join(f.root, 'dispatch', `${f.issue}-a1`, 'amendment.pending.json');
-        assert.equal(read(pending).launchMayHaveStartedAt, undefined);
-        put(resume, resumeSource);
       }
       put(launch, source); pulse(f.root); pass(run());
       assert.equal(read(path.join(f.root, 'attempts.json'))[f.issue], 1);

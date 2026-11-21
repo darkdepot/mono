@@ -47,10 +47,7 @@ test("landing U2 named gate fixtures", async t => {
       const file = path.join(scratch, "request.json");
       const refused = ["file-edit", "prefix-edit", "rename", "forged-release", "branch-removes-policy", "no-pins"].includes(scenario);
       if (refused && scenario !== "no-pins") {
-        const queue = [{ id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } }];
-        await admitCollection(root, { issue: "MONO-999", attempt: 1, stage: "mono-deliver", packVersion: "fixture", sourceCommit: launchBase, surfaceRevision: 4,
-          phase: "preflight", sequence: 1, kind: "confirmation-request", head, linear_mutations_pending: queue,
-          capsule: { phase: "preflight", head, decisions: [], open_queue: queue, writable_roots: pins.workerWritableRoots } });
+        await admitCollection(root, { issue: "MONO-999", attempt: 1, request: { ...request, collect: false } });
       }
       for (const collect of refused ? [false, true] : [false]) {
         atomicJson(file, { ...request, collect });
@@ -69,15 +66,14 @@ test("landing U2 named gate fixtures", async t => {
   });
 });
 
-test("landing U2 amendment cannot change release", () => {
+test("landing U2 release stays the launch pin; an amended attempt is refused", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-landing-pins-"));
   try {
     const file = path.join(root, "pins.json"); atomicJson(file, { release: false });
-    const entry = { pins: { file, digest: sha256File(file) }, pinsVersion: 1 };
-    atomicJson(path.join(root, "pins.v1.json"), { pinsVersion: 1, risk: "deep" });
+    const entry = { pins: { file, digest: sha256File(file) } };
     assert.equal(effectivePins(entry).release, false);
     atomicJson(path.join(root, "pins.v1.json"), { pinsVersion: 1, release: true });
-    assert.throws(() => effectivePins(entry), /release.*immutable/);
+    assert.throws(() => effectivePins({ ...entry, pinsVersion: 1 }), /pins versions no longer exist/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

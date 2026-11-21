@@ -4,7 +4,8 @@ import { qaDeliveryState, requireQaPassed } from '../qa-gate.mjs';
 import path from "node:path";
 import crypto from "node:crypto";
 import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, shipBotChecks, baseModelConfig, processStart } from "../runtime.mjs";
-import { validatePhase, requirePredecessors, classifyQueue, confirmationPath } from "../delivery-state.mjs";
+import { validatePhase, requirePredecessors } from "../delivery-state.mjs";
+import { readLedger, inFlight, admissionFor, admitRound, requestDigest, validRoundRequest } from "../review-rounds.mjs";
 import { checkIdea, IDEA_GATE_DEFAULT_SINCE } from '../idea-gate.mjs';
 
 export function dispatchIdea(directory, config, issue, lane = null) {
@@ -110,27 +111,17 @@ export function correlatedPhase(root, file) {
   return { report, entry };
 }
 
-// Validate the full queue without adapter calls or confirmation side effects.
-export async function validateReportBarriers(root, report, reportsDir) {
-  requirePredecessors(report, root, reportsDir, "confirming");
-  const dir = attemptDirectory(root, report);
-  await withLock(path.join(dir, "queue.lock"), () => classifyQueue(report, root));
-}
-
+// Launch pins are immutable: a task change is a Linear comment plus resume, a risk or grant change a new attempt.
 export function effectivePins(entry) {
   if (!entry.pins || sha256File(entry.pins.file) !== entry.pins.digest) throw new Error("launch pins digest mismatch");
-  const base = readJson(entry.pins.file), version = entry.pinsVersion ?? 0;
-  if (!Number.isInteger(version) || version < 0) throw new Error("invalid pinsVersion");
-  const amendment = version ? readJson(path.join(path.dirname(entry.pins.file), `pins.v${version}.json`)) : {};
-  if (version && amendment.pinsVersion !== version) throw new Error("amendment version mismatch");
+  if ((entry.pinsVersion ?? 0) !== 0) throw new Error("amended attempt from an older pack: pins versions no longer exist; start a new attempt on the same branch");
+  const base = readJson(entry.pins.file);
   if (base.release !== undefined && typeof base.release !== "boolean") throw new Error("release pin must be boolean");
-  if (amendment.release !== undefined && amendment.release !== (base.release ?? false)) throw new Error("release pin is immutable");
-  if (Object.hasOwn(amendment, 'idea') && canonical(amendment.idea) !== canonical(base.idea)) throw new Error('idea pin is immutable; new idea requires a new attempt');
   // The first release containing the machine idea gate is 0.32.0. Compare the
   // launch identity, never the current pack/config, to finish older attempts.
   const versionParts = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/u.exec(base.packVersion ?? entry.packVersion ?? '');
   if (!base.idea && versionParts && (Number(versionParts[1]) > 0 || Number(versionParts[2]) >= 32)) throw new Error('idea pin required for this pack version');
-  return { ...base, ...amendment, pinsVersion: version };
+  return base;
 }
 
 // Consumes sealed ship evidence, never the open-PR gate: that PR may be merged.
@@ -141,14 +132,11 @@ export function confirmedShip(root, entry) {
   const { report } = correlatedPhase(root, files[0]);
   if (report.issue !== entry.issue || report.attempt !== entry.attempt || report.phase !== "ship" || report.status !== "green")
     throw new Error("ship report is not green for this attempt");
-  // A ship report carries no queue: the worker wrote and read back its certificate.
-  // The phase chain still holds: earlier reports exist and a collection request is confirmed.
-  if (report.capsule.open_queue.length) throw new Error("ship report must not carry queued writes");
+  // The phase chain still holds: earlier reports of this attempt exist.
   requirePredecessors(report, root, path.dirname(files[0]), "landing");
-  // Host-owned admissions: no admitted review round may stay unconfirmed, even if
-  // the worker overwrote that preflight request with a later report.
-  const unconfirmed = admittedUnconfirmed(root, report, Infinity);
-  if (unconfirmed.length) throw new Error(`collection ${unconfirmed[0]} is not confirmed; landing waits for every admitted review round`);
+  // Host-owned round ledger: every admitted review round has a terminal result (done, refused or failed).
+  const open = inFlight(readLedger(root, entry.issue, entry.attempt));
+  if (open.length) throw new Error(`review round ${open[0].admission.collectionId} has no result yet; landing waits for every admitted round`);
   validateShipCertificate(report);
   return { report };
 }
@@ -229,9 +217,8 @@ export function attemptState(root, entry, config) {
   } catch (error) { return active(error.message); }
 }
 
-export function collectionPinsBinding(entry, version = entry.pinsVersion ?? 0) {
-  const file = version ? path.join(path.dirname(entry.pins.file), `pins.v${version}.json`) : entry.pins.file;
-  return { file, digest: sha256File(file) };
+export function collectionPinsBinding(entry) {
+  return { file: entry.pins.file, digest: sha256File(entry.pins.file) };
 }
 export function collectionPinMismatch(request, pins) {
   for (const key of ["product", "root", "worktree", "packRoot", "skillsRoot", "baseRef", "evidenceRoot", "modelRoutes", "verification", "risk", "critical", "workerWritableRoots", "idea"]) {
@@ -263,13 +250,11 @@ export function checkCollectionRequest(request) {
     return null;
   }
   if (!/^[a-f0-9]{40}$/.test(request.head??'') || !new RegExp(`^preflight-collect:${request.head}:[1-9][0-9]*$`,'u').test(request.collectionId ?? "")) requestMismatch("collectionId", "preflight-collect:<head>:<n>");
-  const admissionFile = path.join(attemptDirectory(root, entry), "admissions", `${request.collectionId}.json`);
-  const admission = fs.existsSync(admissionFile) ? readJson(admissionFile) : null;
-  const version = admission?.pinsVersion ?? entry.pinsVersion ?? 0;
-  const pins = effectivePins({ ...entry, pinsVersion: version });
-  if (admission && (admission.collectionId !== request.collectionId || admission.manifestDigest !== digest(pins))) requestMismatch("admission", "registered manifest for collectionId");
-  const expected = collectionPinsBinding(entry, version);
-  if (expected.file !== path.join(root, "dispatch", `${entry.issue}-a${entry.attempt}`, version ? `pins.v${version}.json` : "pins.json")) requestMismatch("pins.file", "registered dispatch pins file");
+  const admission = admissionFor(readLedger(root, entry.issue, entry.attempt), request.collectionId)?.admission ?? null;
+  const pins = effectivePins(entry);
+  if (admission && admission.requestDigest !== requestDigest(request)) requestMismatch("admission", "the admitted round request for collectionId");
+  const expected = collectionPinsBinding(entry);
+  if (expected.file !== path.join(root, "dispatch", `${entry.issue}-a${entry.attempt}`, "pins.json")) requestMismatch("pins.file", "registered dispatch pins file");
   if (!request.pins) requestMismatch("pins", expected);
   if (request.pins.file !== expected.file) requestMismatch("pins.file", expected.file);
   if (canonical(request.pins) !== canonical(expected)) requestMismatch("pins.digest", expected.digest);
@@ -277,7 +262,7 @@ export function checkCollectionRequest(request) {
   if (mismatch) requestMismatch(mismatch.field, mismatch.expected);
   if (request.collect !== false && request.collect !== true) requestMismatch("collect", false);
   if(request.collect===true) {
-    if(!admission)requestMismatch('admission','orchestrator admission before collection');
+    if(!admission)requestMismatch('admission','collector admission of the round request before collection');
     if(collectionExecuted(pins,request.collectionId))
       throw new Error('collection already executed; reconcile the same request with collect:false');
   }
@@ -292,11 +277,7 @@ export function pinnedShipPolicy(request) {
   const entry = registryEntry(root, entries[0].issue, entries[0].attempt), pins = effectivePins(entry);
   const config = pins.shipBotChecks === undefined ? (pins.base ? baseModelConfig(request.worktree, pins.base) : {}) :
     { orchestration: { ship: { botChecks: pins.shipBotChecks } } };
-  const botChecks = shipBotChecks(config);
-  const decision = pins.botUnavailable;
-  if (decision != null && (decision.issue !== entry.issue || decision.attempt !== entry.attempt ||
-      typeof decision.reason !== "string" || !decision.reason.trim())) throw new Error("bot unavailability decision belongs to another attempt or is invalid");
-  return { botChecks, botUnavailable: decision?.reason ?? null };
+  return { botChecks: shipBotChecks(config), botUnavailable: null };
 }
 function collectionExecuted(pins,collectionId) {
   const history=path.join(pins.evidenceRoot,'history');
@@ -304,136 +285,56 @@ function collectionExecuted(pins,collectionId) {
     .some(name=>readJson(path.join(history,name)).receipt?.collectionId===collectionId);
 }
 
-// This exported seam is also the collector's admission transaction (MONO-96).
-// Both callers and amend serialize on launch.lock; callers must not nest it.
+// The collector's admission transaction, serialized on launch.lock. A round request is
+// admitted into the host-owned ledger only when it matches the launch pins and every
+// earlier round has a terminal result; a refused request still gets its terminal result.
 export class CollectionAdmissionRefusal extends Error {}
-export async function admitCollection(root, report) {
-  return withLock(path.join(root, "launch.lock"), () => admitUnderLock(root, report));
+export async function admitCollection(root, round, reportsDir = path.join(root, "reports")) {
+  return withLock(path.join(root, "launch.lock"), () => admitUnderLock(root, round, reportsDir));
 }
-export function admitUnderLock(root, report) {
-  validatePhase(report);
-  const entry = registryEntry(root, report.issue, report.attempt);
-  const pins = effectivePins(entry), admitted = [];
-  for (const write of report.capsule.open_queue.filter(item => item.operation === "preflight-collect")) {
-    const file = path.join(attemptDirectory(root, report), "admissions", `${write.id}.json`);
-    const reportDigest = digest(report);
-    if (fs.existsSync(file)) {
-      const prior = readJson(file);
-      if (prior.collectionId !== write.id || prior.reportDigest !== reportDigest) throw new CollectionAdmissionRefusal("conflicting collection admission");
-      admitted.push(prior); continue;
-    }
-    const request = write.payload.request;
-    if (entry.pins) {
-      if (!request.pins) throw new CollectionAdmissionRefusal("collection pin mismatch: pins");
-      const name = path.basename(request.pins?.file ?? "");
-      const match = /^pins\.v([1-9][0-9]*)\.json$/u.exec(name);
-      const version = name === "pins.json" ? 0 : match ? Number(match[1]) : null;
-      if (version !== pins.pinsVersion) throw new CollectionAdmissionRefusal(`new collection request uses stale pinsVersion; expected ${collectionPinsBinding(entry).file}`);
-    }
+export function admitUnderLock(root, round, reportsDir = path.join(root, "reports")) {
+  validRoundRequest(round);
+  const entry = registryEntry(root, round.issue, round.attempt), request = round.request;
+  if (fs.realpathSync(request.root) !== fs.realpathSync(root)) throw new CollectionAdmissionRefusal("round request root differs from the orchestrator root");
+  const ledger = readLedger(root, entry.issue, entry.attempt), prior = admissionFor(ledger, request.collectionId);
+  if (prior) {
+    if (prior.admission.requestDigest !== requestDigest(request)) throw new CollectionAdmissionRefusal(`collectionId ${request.collectionId} already admitted for another request`);
+    return { admission: prior.admission, refusal: null };
+  }
+  if (inFlight(ledger).length) throw new CollectionAdmissionRefusal(`round ${inFlight(ledger)[0].admission.collectionId} has no result yet`);
+  const pins = effectivePins(entry);
+  let refusal = null;
+  try {
+    // The code report of this attempt precedes its review round.
+    requirePredecessors({ ...Object.fromEntries(IDENTITY_FIELDS.map(key => [key, entry[key]])), issue: entry.issue, attempt: entry.attempt,
+      phase: "preflight", capsule: { writable_roots: entry.workerWritableRoots } }, root, reportsDir, "requesting a review round for");
+    if (canonical(request.pins ?? null) !== canonical(collectionPinsBinding(entry))) throw new Error("collection pin mismatch: pins");
     const mismatch = collectionPinMismatch(request, pins);
-    if (mismatch) throw new CollectionAdmissionRefusal(`collection pin mismatch: ${mismatch.field}`);
-    if (entry.pins) {
-      if (canonical(request.pins) !== canonical(collectionPinsBinding(entry))) throw new CollectionAdmissionRefusal("collection pin mismatch: pins");
-    }
-    if (request.collect !== false || request.head !== report.head || canonical(report.capsule.writable_roots) !== canonical(pins.workerWritableRoots))
-      throw new CollectionAdmissionRefusal("collection head/grants/collect mismatch");
-    // Host-owned order: a collection admitted at an earlier sequence is confirmed
-    // before a later one, even when a worker overwrote its mailbox without publishing.
-    const unconfirmed = admittedUnconfirmed(root, report);
-    if (unconfirmed.length) throw new CollectionAdmissionRefusal(`earlier collection ${unconfirmed[0]} is not confirmed; reconcile it before a new collection request`);
-    const record = { collectionId: write.id, reportDigest, pinsVersion: pins.pinsVersion, manifestDigest: digest(pins), sequence: report.sequence };
-    atomicJson(file, record); admitted.push(record);
-  }
-  return admitted;
+    if (mismatch) throw new Error(`collection pin mismatch: ${mismatch.field}`);
+  } catch (error) { refusal = error.message; }
+  const admission = admitRound(root, entry.issue, entry.attempt, request, { manifestDigest: digest(pins) });
+  return { admission, refusal };
 }
 
-// As before T9, an earlier sequence of this phase is confirmed before a later one;
-// admissions are host-owned, so a worker cannot hide an unconfirmed request.
-function admittedUnconfirmed(root, report, before = report.sequence) {
-  const admissions = path.join(attemptDirectory(root, report), "admissions");
-  return (fs.existsSync(admissions) ? fs.readdirSync(admissions).filter(name => name.endsWith(".json")) : [])
-    .map(name => readJson(path.join(admissions, name)))
-    .filter(prior => Number.isInteger(prior.sequence) && prior.sequence < before &&
-      !fs.existsSync(confirmationPath({ ...report, phase: "preflight", sequence: prior.sequence }, root)))
-    .map(prior => prior.collectionId);
+// A task change is an «Изменение задачи» comment on the Issue plus resume of the same session
+// with its link. Resume records the delivered text append-only beside the launch pins, so the
+// review round reads it with the Issue; pins, risk and grants never change within an attempt.
+const taskChangesFile = pinsDirectory => path.join(pinsDirectory, "task-changes.json");
+const LINEAR_URL = /^https:\/\/linear\.app\/\S+$/u;
+export function taskChanges(pinsDirectory) {
+  const file = taskChangesFile(pinsDirectory);
+  if (!fs.existsSync(file)) return [];
+  const changes = readJson(file);
+  if (!Array.isArray(changes) || changes.some((change, index) => change?.number !== index + 1 ||
+      !LINEAR_URL.test(change.url ?? "") || typeof change.text !== "string" || !change.text.trim()))
+    throw new Error("invalid task-changes.json");
+  return changes;
 }
-
-// U11: registry evidence decides state; the pending file only records preparation
-// and the conservative launch boundary. Replay never reads mutable caller inputs.
-export function amendmentState(entry, record) {
-  const completed = Object.values(entry.completed_amendments ?? {}).find(value => value.pinsVersion === record.pinsVersion) ??
-    (entry.last_amendment?.pinsVersion === record.pinsVersion ? entry.last_amendment : null);
-  if (completed) return { state: "registered", completion: completed, resumed: completed.resumeResult };
-  const resumed = entry.last_resume;
-  if (resumed && canonical(resumed) !== canonical(record.previousResume) && resumed.pid === entry.pid &&
-      resumed.thread_id === record.threadId && entry.thread_id === record.threadId && Number.isInteger(resumed.pid) && resumed.pid > 0 &&
-      Number.isFinite(Date.parse(resumed.registeredAt)) && Date.parse(resumed.registeredAt) >= Date.parse(record.preparedAt) &&
-      Date.parse(resumed.registeredAt) <= Date.now())
-    return { state: "delivered", resumed: { pid: resumed.pid, thread_id: resumed.thread_id, procStart: entry.procStart } };
-  return { state: "prepared", resumed: null };
-}
-
-export function amendmentChange(args, inputs, supplied) {
-  return { risk: args.risk ?? inputs.risk, critical: args.critical ?? inputs.critical,
-    workerWritableRoots: supplied.roots ?? inputs.workerWritableRoots, text: args.text,
-    ...(args["bot-unavailable"] !== undefined || inputs.botUnavailable !== undefined ? { botUnavailable:
-      args["bot-unavailable"] === undefined ? inputs.botUnavailable :
-        { issue: args.issue, attempt: Number(args.attempt), reason: args["bot-unavailable"] } } : {}),
-    fullSnapshot: args["full-snapshot"] ? { digest: digest(supplied.documents) } :
-      (inputs.fullSnapshot ? { digest: inputs.fullSnapshot.digest } : null) };
-}
-
-// Compatibility with amendment identities recorded before dataset pins were retired.
-// All replay candidates (completed, last and pending) use this comparison.
-export function amendmentMatches(args, record, supplied) {
-  const change = amendmentChange(args, record.effectiveInputs, supplied);
-  if (digest(change) === record.changeDigest) return true;
-  if (!Object.hasOwn(record.change, "reviewDataset")) return false;
-  const inputs = record.effectiveInputs, reviewDataset = inputs.reviewDataset ?? null;
-  return digest({ ...change, reviewDataset,
-    reviewDatasetVersion: !reviewDataset && (inputs.reviewDatasetVersion ?? 0) === 0 && Object.hasOwn(inputs, "reviewDatasetDigest")
-      ? 0 : Number(inputs.reviewDatasetVersion ?? 0) }) === record.changeDigest;
-}
-
-export function amendmentDocuments(directory, issue, packageKind) {
-  return Object.fromEntries([`issue-${issue}.md`, "approval.md", ...(packageKind === "issue-only" ?
-    ["issue-only.json"] : ["project-brief.md", "prd.md", "tech-spec.md"])].map(name => [name, fs.readFileSync(path.join(directory, name), "utf8")]));
-}
-
-export function validateAmendment(entry, record) {
-  const output = path.dirname(entry.pins.file), version = record.pinsVersion;
-  if (record.issue !== entry.issue || record.attempt !== entry.attempt || record.launchPinsDigest !== entry.pins.digest ||
-      record.threadId !== entry.thread_id || !Number.isInteger(version) || version < 1 ||
-      !Number.isFinite(Date.parse(record.preparedAt)) || Date.parse(record.preparedAt) > Date.now() ||
-      record.pinsFile !== path.join(output, `pins.v${version}.json`) ||
-      record.resumeFile !== path.join(output, `resume.v${version}.md`) ||
-      record.resumeRequest !== path.join(output, `resume.v${version}.json`) ||
-      !record.effectiveInputs || !record.change || digest(record.change) !== record.changeDigest)
-    throw new Error("amendment recovery evidence mismatch");
-  const label = amendmentState(entry, record).state === "registered" ? "completed" : "pending";
-  for (const [file, hash] of [[record.pinsFile, record.pinsDigest], [record.resumeFile, record.resumeDigest], [record.resumeRequest, record.requestDigest]]) {
-    if (sha256File(file) !== hash) throw new Error(`${label} amendment content changed`);
-  }
-  const pins = readJson(record.pinsFile);
-  if (pins.pinsVersion !== version) throw new Error("amendment version mismatch");
-  if (pins.fullSnapshot && (pins.fullSnapshot.directory !== path.join(output, `snapshot.v${version}`) ||
-      digest(amendmentDocuments(pins.fullSnapshot.directory, entry.issue, record.effectiveInputs.packageKind)) !== pins.fullSnapshot.digest))
-    throw new Error(`${label} amendment snapshot content changed`);
-  const state = amendmentState(entry, record);
-  if (state.state === "registered" && (canonical(state.completion) !== canonical(record) ||
-      version > (entry.pinsVersion ?? 0) || state.resumed?.pid !== record.registeredResume?.pid ||
-      state.resumed?.thread_id !== record.threadId || record.registeredResume?.thread_id !== record.threadId))
-    throw new Error("completed amendment recovery evidence mismatch");
-  return state;
-}
-
-export function restoreAmendmentGrants(root, entry, record) {
-  if (record.launchMayHaveStartedAt || amendmentState(entry, record).state !== "prepared" ||
-      canonical(entry.last_resume ?? null) !== canonical(record.previousResume) || (entry.pinsVersion ?? 0) !== record.currentVersion)
-    throw new Error("delivery not proven absent; preserve amendment evidence");
-  const registryFile = path.join(root, "workers.json"), registry = readJson(registryFile), prior = record.previousLaunchGrants;
-  Object.assign(registry[entry.issue], { workerWritableRoots: prior.workerWritableRoots,
-    writable_roots: prior.writable_roots, network_access: prior.network_access });
-  registry[entry.issue].capsule.writable_roots = prior.capsuleRoots;
-  if (canonical(registry[entry.issue]) !== canonical(entry)) atomicJson(registryFile, registry);
+export function recordTaskChange(pinsDirectory, url, text) {
+  if (!LINEAR_URL.test(url ?? "") || !text.includes(url))
+    throw new Error("taskChange must be the Linear URL of the «Изменение задачи» comment, quoted in the resume file");
+  const changes = taskChanges(pinsDirectory);
+  const change = { number: changes.length + 1, url, text, recordedAt: new Date().toISOString() };
+  atomicJson(taskChangesFile(pinsDirectory), [...changes, change]);
+  return change;
 }

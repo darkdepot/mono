@@ -49,9 +49,7 @@ atomicJson(pinsFile,{...request,base:request.head});
 const entry={issue:request.issue,attempt:1,stage:'mono-deliver',worktree:request.worktree,...identity,pins:{file:pinsFile,digest:sha256File(pinsFile)},pinsVersion:0};
 atomicJson(path.join(root,'workers.json'),{[entry.issue]:entry});
 request.pins=entry.pins;atomicJson(process.argv[2],request);
-const queue=[{id:request.collectionId,operation:'preflight-collect',target:request.head,payload:{request:{...request,collect:false}}}];
-await admitCollection(root,{...entry,phase:'preflight',sequence:1,kind:'confirmation-request',head:request.head,linear_mutations_pending:queue,
- capsule:{phase:'preflight',head:request.head,decisions:[],open_queue:queue,writable_roots:request.workerWritableRoots}});
+await admitCollection(root,{issue:entry.issue,attempt:1,request:{...request,collect:false}});
 `);
       pass(run(process.execPath, [admissionScript, file], cwd, env));
     } else {
@@ -68,23 +66,12 @@ await admitCollection(root,{...entry,phase:'preflight',sequence:1,kind:'confirma
       fs.unlinkSync(path.join(request.root, "workers.json"));
       const receiptFile=path.join(request.evidenceRoot,request.head+'.json');
       if(fs.existsSync(receiptFile)) {
-        const envelope=json(receiptFile);delete envelope.receipt.pins;delete envelope.receipt.idea;
-        envelope.signature=crypto.createHmac('sha256',fs.readFileSync(path.join(request.evidenceRoot,'receipt.key'))).update(canonical(envelope.receipt)).digest('hex');write(receiptFile,envelope);
+        const envelope=json(receiptFile);delete envelope.receipt.pins;delete envelope.receipt.idea;write(receiptFile,envelope);
       }
     }
     return result;
   };
 }
-
-test("delivery config defaults confirmation to 6300 seconds and keeps it below the evidence limit", async () => {
-  const { deliveryConfig } = await import("./runtime.mjs");
-  assert.equal(deliveryConfig().confirmationTimeoutSec, 6300);
-  assert.doesNotThrow(() => deliveryConfig({ orchestration: { delivery: { confirmationTimeoutSec: 7199, evidenceLimitSec: 7200 } } }));
-  assert.throws(
-    () => deliveryConfig({ orchestration: { delivery: { confirmationTimeoutSec: 7200, evidenceLimitSec: 7200 } } }),
-    /confirmationTimeoutSec.*7200.*evidenceLimitSec.*7200/
-  );
-});
 
 test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and durable ack", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-delivery-installed-"));
@@ -172,7 +159,7 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     pass(run("git", ["-c", "core.fsmonitor=false", "update-index", "--force-remove", "nested"], repo, env));
     // The fixture controller models the orchestrator. Its evidence root is
     // outside both modeled worker grants; the worker only invokes collect:false.
-    const { publishPhase: publishCollection, confirmQueue: confirmCollection, validateConfirmation: validateCollectionConfirmation } = await import(pathToFileURL(path.join(runtime, "delivery-state.mjs")));
+    const { publishPhase: publishCollection } = await import(pathToFileURL(path.join(runtime, "delivery-state.mjs")));
     const { digest: receiptDigest, canonical, resolveModelRoutes } = await import(pathToFileURL(path.join(runtime, "runtime.mjs")));
     write(gateRequest, { ...preflight, workerWritableRoots: [path.parse(root).root] });
     assert.match(preflightCall().stdout, /evidenceRoot must be outside/);
@@ -184,43 +171,18 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     assert.match(preflightCall().stdout, /fail: operation locked: .*live holder .*do not remove/);
     fs.unlinkSync(collectionLock);
 
-    const collectWrite = { id: `preflight-collect:${head}:1`, operation: "preflight-collect", target: head, payload: { request: collectionRequest } };
-    collectionRequest.collectionId = collectWrite.id; preflight.collectionId = collectWrite.id;
-    const codeReport = publishCollection({ ...baseRequest, issue: "MONO-998", stage: "mono-deliver", attempt: 1,
-      phase: "code", sequence: 1, kind: "phase", head, linear_mutations_pending: [],
-      capsule: { phase: "code", head, decisions: [], writable_roots: [repo, mailbox], open_queue: [] } }, path.join(state, "reports/MONO-998-phase-code.json"));
-    await confirmCollection(codeReport, state, () => { throw new Error("empty code queue"); });
-    const collectionReport = publishCollection({ ...baseRequest, issue: "MONO-998", stage: "mono-deliver", attempt: 1,
-      phase: "preflight", sequence: 1, kind: "confirmation-request", head, linear_mutations_pending: [collectWrite],
-      capsule: { phase: "preflight", head, decisions: [], writable_roots: [repo, mailbox], open_queue: [collectWrite] } }, path.join(state, "reports/MONO-998-phase-preflight.json"));
-    const collectionEvidence = new Map(); let collectionRuns = 0;
-    const collectionAdapter = async (action, write) => {
-      assert.equal(write.operation, "preflight-collect"); assert.equal(write.target, head);
-      assert.equal(action, "reconcile", "the collector only reconciles; the worker writes Linear itself");
-      if (!collectionEvidence.has(write.id)) {
-        writeFileRequest(write.payload.request);
-        const answer = pass(preflightCall()).stdout.trim();
-        const sealed = json(path.join(preflight.evidenceRoot, `${head}.json`));
-        const immutableReceipt = path.join(preflight.evidenceRoot, "history", `${sealed.receipt.runId}.json`);
-        collectionRuns++; collectionEvidence.set(write.id, { receipt: immutableReceipt, receiptDigest: receiptDigest(json(immutableReceipt)), gate: answer });
-      }
-      return { state: "present", evidence: collectionEvidence.get(write.id) };
-    };
-    const firstConfirmation = await confirmCollection(collectionReport, state, collectionAdapter);
-    const mutableConfirmation = structuredClone(firstConfirmation);
-    mutableConfirmation.results[0].evidence.receipt = path.join(preflight.evidenceRoot, `${head}.json`);
-    assert.throws(() => validateCollectionConfirmation(collectionReport, mutableConfirmation), /immutable receipt/);
-    const wrongDigest = structuredClone(firstConfirmation); wrongDigest.results[0].evidence.receiptDigest = "0".repeat(64);
-    assert.throws(() => validateCollectionConfirmation(collectionReport, wrongDigest), /immutable receipt/);
-    function writeFileRequest(request) { write(gateRequest, request); }
+    collectionRequest.collectionId = `preflight-collect:${head}:1`; preflight.collectionId = collectionRequest.collectionId;
+    publishCollection({ ...baseRequest, issue: "MONO-998", stage: "mono-deliver", attempt: 1,
+      phase: "code", sequence: 1, kind: "phase", head, capsule: { phase: "code", head, decisions: [], writable_roots: [repo, mailbox] } }, path.join(state, "reports/MONO-998-phase-code.json"));
+    // The collector admits the round and runs collect:true; no confirmation file exists.
+    write(gateRequest, collectionRequest); pass(preflightCall());
+    assert.equal(fs.existsSync(path.join(state, "confirmations")), false);
     write(gateRequest, preflight); pass(preflightCall());
     const receiptFile = path.join(preflight.evidenceRoot, `${head}.json`), envelope = json(receiptFile);
     assert.deepEqual([envelope.receipt.producer, envelope.receipt.review.outcome, envelope.receipt.review.round, envelope.receipt.verification.exitCode], ["gate-review-v3", "clean", 1, null]);
     assert.deepEqual(reviewCalls(bin), ["reviewer", "reviewer"], "the gate ran the review round itself: a risky first round adds the ordinary pass");
-    const roundTampered = structuredClone(envelope); roundTampered.receipt.review.round = 2;
-    write(receiptFile, roundTampered); write(gateRequest, preflight);
-    assert.match(preflightCall().stdout, /hand-made or modified/, "the review result is sealed before signing");
-    write(receiptFile, envelope); pass(preflightCall());
+    assert.equal(Object.hasOwn(envelope, "signature"), false, "receipts are trusted by the write boundary, not a signature");
+    write(gateRequest, preflight); pass(preflightCall());
     const defaultModelRoutes = resolveModelRoutes(repo, head, 'worker-default');
     write(gateRequest, { ...preflight, modelRoutes: defaultModelRoutes, collect: true }); pass(preflightCall());
     assert.deepEqual(json(receiptFile).receipt.modelRoutes, defaultModelRoutes);
@@ -246,19 +208,18 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     write(gateRequest, { ...preflight, modelRoutes: reviewerless, collect: true });
     assert.match(preflightCall().stdout, /model route config fingerprint mismatch/);
     const old = { ...envelope.receipt, producer: "gate-autoreview-v2" };
-    write(receiptFile, { receipt: old, signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(old)).digest("hex") });
+    write(receiptFile, { receipt: old });
     write(gateRequest, preflight); assert.match(preflightCall().stdout, /old receipt format/, "receipts of the previous producer are refused");
     write(receiptFile, envelope);
 
     assert.equal(envelope.receipt.base, head);
-    assert.equal(validateCollectionConfirmation(collectionReport, firstConfirmation), true, "later collection preserves earlier confirmation identity");
     setReview(bin, { findings: blocking });
     write(gateRequest, { ...preflight, collect: true });
     assert.match(preflightCall().stdout.trim(), /^gate preflight: fail: review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 tracked\.txt:1 Invalid input is accepted \(when: value is negative; why: The changed line accepts the value\.\)$/);
     setReview(bin, { findings: [] });
     write(receiptFile, envelope); write(gateRequest, preflight); pass(preflightCall());
     // Request pins describe the worker boundary; they never become collector grants.
-    const broadRequest = { ...preflight, collect: true, workerWritableRoots: [repo, state, path.join(state, "confirmations")] };
+    const broadRequest = { ...preflight, collect: true, workerWritableRoots: [repo, state, path.join(state, "consumed")] };
     write(gateRequest, broadRequest); pass(preflightCall());
     write(gateRequest, { ...broadRequest, collect: false }); pass(preflightCall());
     setReview(bin, { findings: blocking });
@@ -277,24 +238,14 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     const baseRef = "refs/heads/review-base";
     pass(run("git", ["update-ref", baseRef, head], repo, env));
     write(receiptFile, envelope); write(gateRequest, preflight);
-    write(receiptFile, { receipt: envelope.receipt, signature: "hand-made" });
-    assert.match(preflightCall().stdout, /hand-made or modified/); write(receiptFile, envelope);
     const retry = { ...preflight, collectionId: `preflight-collect:${head}:2` };
     write(gateRequest, retry);
     assert.match(preflightCall().stdout, /receipt collectionId differs/);
-    const retryWrite = { ...collectWrite, id: retry.collectionId, payload: { request: { ...retry, collect: true } } };
-    const retryReport = publishCollection({ ...collectionReport, sequence: 2, linear_mutations_pending: [retryWrite],
-      capsule: { ...collectionReport.capsule, open_queue: [retryWrite] } }, path.join(state, "reports/MONO-998-phase-preflight.json"));
-    await confirmCollection(retryReport, state, collectionAdapter);
-    await confirmCollection(retryReport, state, collectionAdapter);
-    assert.equal(collectionRuns, 2);
-    assert.equal(validateCollectionConfirmation(collectionReport, firstConfirmation), true);
-    const wrongRun = structuredClone(firstConfirmation); wrongRun.results[0].evidence = collectionEvidence.get(retry.collectionId);
-    assert.throws(() => validateCollectionConfirmation(collectionReport, wrongRun), /immutable receipt/);
+    write(gateRequest, { ...retry, collect: true }); pass(preflightCall());
     write(gateRequest, retry); pass(preflightCall());
     assert.equal(json(receiptFile).receipt.head, head);
     write(receiptFile, envelope);
-    for (const nested of ["receipt.key", "history", `${head}.json`]) {
+    for (const nested of ["history", `${head}.json`]) {
       for (const collect of [true, false]) {
         write(gateRequest, { ...preflight, collect, workerWritableRoots: [...preflight.workerWritableRoots, path.join(preflight.evidenceRoot, nested)] });
         assert.match(preflightCall().stdout, /evidenceRoot must be outside/);
@@ -319,8 +270,6 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     pass(preflightCall());
     assert.equal(fs.existsSync(attack), false, "the collection never runs the verification command");
     write(receiptFile, envelope); write(gateRequest, preflight); pass(preflightCall());
-    const sealed = structuredClone(envelope); sealed.receipt.review.outcome = "clean-with-successors"; write(receiptFile, sealed);
-    assert.equal(preflightCall().status, 1, "tampered review outcome refused"); write(receiptFile, envelope);
     for (const collect of [true, false]) {
       for (const extra of [{ probe: "/not-the-evidence-root" }, { exitCode: 0 }, { args: [42] }]) {
         write(gateRequest, { ...preflight, collect, verification: { ...preflight.verification, ...extra } });
@@ -336,7 +285,6 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     for (const parent of [repo, mailbox]) {
       const planted = path.join(parent, "planted-proof"); fs.mkdirSync(planted);
       fs.copyFileSync(receiptFile, path.join(planted, `${head}.json`));
-      fs.copyFileSync(path.join(preflight.evidenceRoot, "receipt.key"), path.join(planted, "receipt.key"));
       for (const collect of [false, true]) {
         write(gateRequest, { ...preflight, evidenceRoot: planted, collect });
         assert.match(preflightCall().stdout, /fail: evidenceRoot must be outside/);
@@ -391,7 +339,7 @@ console.log(JSON.stringify(result));
 `); fs.chmodSync(path.join(bin, "gh"), 0o700);
     const judgmentFile = path.join(root, "judgment.json"), config = path.join(root, "config.json");
     write(judgmentFile, { head, preShipReview: "выполнено", readinessCheck: "пройдена", documentation: "без изменений", closures: [], botRemarks: [] });
-    write(config, { orchestration: { delivery: { confirmationTimeoutSec: 20, collectionTimeoutSec: 10, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 30 } } });
+    write(config, { orchestration: { delivery: { quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 30 } } });
     const shipRequest = { preflight, repo: "fixture/repo", number: 87, attempt: 1, stateFile: path.join(root, "ship-state.json"), judgmentFile, config, watch: true };
     write(gateRequest, shipRequest);
     const shipCall = () => run(process.execPath, [path.join(runtime, "gate.mjs"), "ship", "--request", gateRequest], root, env);
@@ -429,9 +377,8 @@ console.log(JSON.stringify(result));
     write(githubFile, { github: { ...github, baseRefOid: alternate }, checks });
     assert.equal(shipCall().status, 1, "unrelated base history refuses");
     write(githubFile, { github, checks });
-    // The fixture collector owns its key; seal invalid outputs to test semantic validation too.
-    const saveFixtureReceipt = receipt => write(receiptFile, { receipt,
-      signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(receipt)).digest("hex") });
+    // The fixture collector owns evidenceRoot; write invalid outputs to test semantic validation too.
+    const saveFixtureReceipt = receipt => write(receiptFile, { receipt });
     for (const [change, reason] of [
       [r => { r.head = alternate; }, /missing or stale review receipt\/head\/base/],
       [r => { r.base = alternate; }, /missing or stale review receipt\/head\/base/],
@@ -443,8 +390,6 @@ console.log(JSON.stringify(result));
       const invalid = structuredClone(envelope.receipt); change(invalid); saveFixtureReceipt(invalid);
       assert.match(shipCall().stdout, reason);
     }
-    write(receiptFile, { receipt: envelope.receipt, signature: "worker-asserted" });
-    assert.match(shipCall().stdout, /hand-made or modified review receipt/);
     write(receiptFile, envelope);
     write(gateRequest, shipRequest);
     const greenShip = pass(shipCall());
@@ -508,7 +453,7 @@ console.log(JSON.stringify(result));
     const errorConfig = path.join(root, "rules-timeout-config.json");
     // Preserve the first HTTP failure until expiry, rather than race another
     // process startup in the final millisecond of this deliberately short window.
-    write(errorConfig, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, collectionTimeoutSec: 0.1, quietSec: 0.01, pollSec: 1, evidenceLimitSec: 1 } } });
+    write(errorConfig, { orchestration: { delivery: { quietSec: 0.01, pollSec: 1, evidenceLimitSec: 1 } } });
     const errorState = path.join(root, "rules-timeout.json");
     write(gateRequest, { ...shipRequest, config: errorConfig, stateFile: errorState });
     write(githubFile, { github, checks, rulesStatus: 500 });
@@ -608,7 +553,7 @@ console.log(JSON.stringify(result));
     }
     // A full paginated snapshot must finish before the pending-state assertion;
     // the watched cases below still prove expiry at this configured deadline.
-    write(config, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, collectionTimeoutSec: 0.1, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 5 } } });
+    write(config, { orchestration: { delivery: { quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 5 } } });
     for (const state of ["BLOCKED", "UNKNOWN"]) {
       const pendingChecks = state === "UNKNOWN" ? [] : checks.map(c => c.name === "validate" ? { ...c, status: "IN_PROGRESS", conclusion: null } : c);
       write(githubFile, { github: { ...github, mergeStateStatus: state, mergeable: state === "UNKNOWN" ? "UNKNOWN" : "MERGEABLE" }, checks: pendingChecks });
@@ -706,9 +651,9 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     await consumeAck({ root: state, issue: request.issue, attempt: 1, outcome: "applied", readback: [] });
     assert.equal(json(path.join(state, "workers.json"))[request.issue].gates, undefined);
     assert.equal(json(path.join(state, "consumed/MONO-999-gate-ack-a1.json")).outcome, "applied");
-    const { publishPhase, confirmQueue } = await import(pathToFileURL(path.join(runtime, "delivery-state.mjs")));
+    const { publishPhase } = await import(pathToFileURL(path.join(runtime, "delivery-state.mjs")));
     const report = publishPhase({ ...baseRequest, stage: "mono-deliver", attempt: 1, phase: "code", head,
-      sequence: 1, kind: "phase", linear_mutations_pending: [], capsule: { phase: "code", head, decisions: [], writable_roots: [repo, mailbox], open_queue: [] } }, path.join(state, "reports/MONO-999-phase-code.json"));
+      sequence: 1, kind: "phase", capsule: { phase: "code", head, decisions: [], writable_roots: [repo, mailbox] } }, path.join(state, "reports/MONO-999-phase-code.json"));
     const phaseWatch = pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env));
     assert.match(phaseWatch.stdout, /EVENT:phase.*MONO-999/);
     assert.doesNotMatch(phaseWatch.stdout, /EVENT:(dead|stall)/);
@@ -722,12 +667,10 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
       assert.doesNotMatch(rejectedPhase.stdout, /EVENT:phase MONO-999/);
     }
     write(codeReportPath, report);
-    await confirmQueue(report, state, () => { throw new Error("empty queue must not invoke adapter"); });
     const preflightReport = publishPhase({ ...report, phase: "preflight", capsule: { ...report.capsule, phase: "preflight" } }, path.join(state, "reports/MONO-999-phase-preflight.json"));
     const laterPhaseWatch = pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env));
     assert.match(laterPhaseWatch.stdout, /EVENT:phase.*phase preflight sequence 1/);
     assert.doesNotMatch(laterPhaseWatch.stdout, /EVENT:(dead|stall)/);
-    await confirmQueue(preflightReport, state, () => { throw new Error("empty queue"); });
     publishPhase({ ...report, phase: "ship", capsule: { ...report.capsule, phase: "ship" } }, path.join(state, "reports/MONO-999-phase-ship.json"));
     const shipPhaseWatch = pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env));
     assert.match(shipPhaseWatch.stdout, /EVENT:phase.*phase ship sequence 1/);
@@ -737,20 +680,20 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     write(path.join(repo, "recovery-dirty.txt"), "preserve recovery work");
     const extra = path.join(root, "extra"); fs.mkdirSync(extra);
     writeWatcherFixture(state);
-    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [root], workerWritableRoots: [repo, mailbox, root] }), /evidenceRoot must be outside/);
-    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [extra] }), /effective write grants differ/);
-    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [state], workerWritableRoots: [repo, mailbox, state] }), /only reports may be worker-writable/);
-    const resumed = await resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [extra], workerWritableRoots: [repo, mailbox, path.join(repo, ".git"), extra], network_access: false }); livePid = resumed.pid;
+    // Grants and network never change on resume: a risk or grant change is a new attempt on the same branch.
+    for (const extraFields of [{ extraWritable: [extra] }, { workerWritableRoots: [repo, mailbox, extra] }, { network_access: false }])
+      await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, ...extraFields }), /a risk or grant change is a new attempt/);
+    const before = json(path.join(state, "workers.json"))[request.issue];
+    const resumed = await resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile }); livePid = resumed.pid;
     const resumedEntry = json(path.join(state, "workers.json"))[request.issue];
-    assert.deepEqual(resumedEntry.workerWritableRoots, [repo, mailbox, path.join(repo, ".git"), extra].map(p => fs.realpathSync(p)).sort());
-    assert.deepEqual(resumedEntry.writable_roots, resumedEntry.workerWritableRoots);
-    assert.deepEqual(resumedEntry.capsule.writable_roots, resumedEntry.workerWritableRoots);
-    assert.equal(resumedEntry.network_access, false);
+    assert.deepEqual(resumedEntry.workerWritableRoots, before.workerWritableRoots);
+    assert.deepEqual(resumedEntry.capsule.writable_roots, before.capsule.writable_roots);
+    assert.equal(resumedEntry.network_access, true);
     await new Promise(resolve => setTimeout(resolve, 100));
     const resumedArgs = json(capture);
     assert.deepEqual(resumedArgs.slice(0, 3), ["exec", "resume", "fixture-thread"]);
     assert.ok(resumedArgs.includes(`model=${JSON.stringify(entry.model)}`));
-    assert.ok(resumedArgs.includes('sandbox_workspace_write.network_access=false'));
+    assert.ok(resumedArgs.includes('sandbox_workspace_write.network_access=true'));
     assert.deepEqual(linearGrants(resumedArgs), linearGrants(argv), 'resume keeps the same Linear write grants');
     assert.ok(resumedArgs.includes(`model_reasoning_effort=${JSON.stringify(entry.effort)}`));
     assert.ok(!resumedArgs.includes("--sandbox") && !resumedArgs.includes("--cd") && !resumedArgs.includes("--add-dir"));
@@ -834,11 +777,15 @@ console.log(JSON.stringify({type:'thread.started',thread_id:'grants-fixture'}));
     // The fixture child exits immediately after its observable launch event.
     await new Promise(resolve => setTimeout(resolve, 100));
     for (const badPin of [canonicalExpected.filter(p => p !== path.join(commonReal, "worktrees/linked")), canonicalExpected.filter(p => p !== commonReal), [...canonicalExpected, extra]]) {
-      await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, workerWritableRoots: badPin }), /effective write grants differ/);
+      // Resume compares the derived Git grants with the registered launch grants only.
+      const registered = json(path.join(state, "workers.json")), saved = registered[request.issue].workerWritableRoots;
+      registered[request.issue].workerWritableRoots = badPin; write(path.join(state, "workers.json"), registered);
+      await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile }), /effective write grants differ/);
+      registered[request.issue].workerWritableRoots = saved; write(path.join(state, "workers.json"), registered);
       assert.equal(starts().length, 1);
     }
     const incompatible = json(path.join(state, "workers.json")); incompatible[request.issue].surfaceRevision = pins.surfaceRevision - 1; write(path.join(state, "workers.json"), incompatible);
-    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [root] }), /surfaceRevision.*new attempt/);
+    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile }), /surfaceRevision.*new attempt/);
     assert.equal(starts().length, 1);
     write(path.join(skills, "VERSION"), "99.0.0\n");
     const beforeResume = json(path.join(state, "workers.json"));
@@ -1030,7 +977,7 @@ test('wave cost ignores newer retired registry reports', () => {
 });
 
 test('phase reports keep free-form capsule decisions and refuse the removed decision-entry fields',async()=>{
-  const {validatePhase,confirmQueue,validateConfirmation}=await import('./delivery-state.mjs');
+  const {validatePhase}=await import('./delivery-state.mjs');
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-phase-report-'));
   const report={issue:'MONO-999',stage:'mono-deliver',attempt:1,packVersion:'test',sourceCommit:'a'.repeat(40),surfaceRevision:4,phase:'code',sequence:1,kind:'phase',head:'b'.repeat(40),linear_mutations_pending:[],capsule:{phase:'code',head:'b'.repeat(40),decisions:[],open_queue:[],writable_roots:[path.join(root,'reports')]}};
   try {
@@ -1039,9 +986,6 @@ test('phase reports keep free-form capsule decisions and refuse the removed deci
     assert.equal(validatePhase(started),started);
     for(const fields of [{review_dispositions:[{type:'decision',id:'d1'}]},{review_dispositions:{}},{behaviour_matrices:[{type:'matrix',id:'m1'}]},{checkpoint:{confirmedDefects:'one'}},{progress_claim:{progress:'none',evidence:'e',eventIds:['1']}}])
       assert.throws(()=>validatePhase({...report,...fields}),/decision entries no longer exist/);
-    const ack=await confirmQueue(started,root,async()=>{throw new Error('empty queue must not call adapter');});
-    assert.equal(validateConfirmation(started,ack),true);
-    assert.throws(()=>validateConfirmation({...started,capsule:{...started.capsule,decisions:['changed']}},ack),/does not cover/);
   }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 
@@ -1224,14 +1168,14 @@ test('scratch short launch pins profile, handshake, pins digest, version and pro
       handshake: 'wait', profile: 'short', risk: 'standard', critical: null, afk: true, openDecisions: 0, pins };
     for (const change of [{ risk: 'deep' }, { risk: 'risky' }, { critical: 'release blocker' }, { critical: undefined }, { afk: false },
       { afk: undefined }, { openDecisions: 1 }, { openDecisions: undefined }, { handshake: 'unknown' }, { profile: 'unknown' },
-      { pins: { ...pins, digest: '0'.repeat(64) } }, { pinsVersion: 1 }]) {
+      { pins: { ...pins, digest: '0'.repeat(64) } }]) {
       await assert.rejects(spawnWorker({ ...request, ...change }), /short|handshake|profile|pins/);
       assert.deepEqual(json(path.join(state, 'workers.json')), {}, 'refusal never registers an attempt');
     }
     ({ pid } = await spawnWorker(request));
     const entry = json(path.join(state, 'workers.json'))[request.issue];
     assert.equal(entry.profile, 'short'); assert.equal(entry.handshake, 'wait');
-    assert.deepEqual(entry.pins, pins); assert.equal(entry.pinsVersion, 0);
+    assert.deepEqual(entry.pins, pins); assert.equal(entry.pinsVersion, undefined);
     assert.equal(entry.procStart, 'Mon Jan  1 00:00:00 2024');
   } finally { process.env.PATH = oldPath; if (pid) { try { process.kill(pid, 'SIGTERM'); } catch {} } fs.rmSync(root, { recursive: true, force: true }); }
 });
@@ -1463,13 +1407,12 @@ await import(${JSON.stringify(pathToFileURL(path.join(checkout, 'scripts/watch-w
       last_wait: { pid: entry.pid, procStart: entry.procStart, thread_id: entry.thread_id,
         consumedAt: new Date(Date.now() - 121_000).toISOString() } } });
     check('expired continuation window');
-    write(path.join(root, 'workers.json'), { [issue]: { ...entry, gates: undefined, confirmationTimeoutSec: 1200 } });
+    write(path.join(root, 'workers.json'), { [issue]: { ...entry, gates: undefined } });
     const head = 'b'.repeat(40);
-    const collect = [{ id: `preflight-collect:${head}:1`, operation: 'preflight-collect', target: head, payload: { request: { collectionId: `preflight-collect:${head}:1` } } }];
-    write(path.join(root, 'reports', `${issue}-phase-preflight.json`), { ...entry, head, phase: 'preflight', sequence: 1,
-      kind: 'confirmation-request', publishedAt: new Date(Date.now() - 1_300_000).toISOString(), linear_mutations_pending: collect,
-      capsule: { phase: 'preflight', head, decisions: [], open_queue: collect, writable_roots: [entry.worktree] } });
-    check('expired collection confirmation');
+    write(path.join(root, 'reports', `${issue}-phase-code.json`), { ...entry, head, phase: 'code', sequence: 1,
+      kind: 'phase', publishedAt: new Date(Date.now() - 1_300_000).toISOString(), capsule: { phase: 'code', head, decisions: [], writable_roots: [entry.worktree] } });
+    write(path.join(root, 'reports', `${issue}-round-a1.json`), { issue, attempt: 1, request: { collectionId: `preflight-collect:${head}:1`, head, root, collect: false } });
+    check('a round request without a live collector');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

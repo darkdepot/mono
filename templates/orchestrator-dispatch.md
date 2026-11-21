@@ -26,7 +26,7 @@ compares `git show <sha>` blobs to that block and the snapshot manifest at start
 - Attempt: {{attempt}}
 - handshake: {{handshake}} (default resume)
 - profile: {{profile}} (default full; short requires tiny/standard, critical null, afk true, openDecisions 0)
-- pins: {{pins_file}} / {{pins_digest}}; pinsVersion: 0
+- pins: {{pins_file}} / {{pins_digest}} (immutable for this attempt)
 - Gate request: {{gate_request}} (lock/pins/worktree/branch/base)
 - Pack root: {{pack_root}}
 - Runtime scripts: {{runtime_scripts}}
@@ -35,8 +35,8 @@ compares `git show <sha>` blobs to that block and the snapshot manifest at start
 - Model routes: {{model_routes}}
 - Preflight pins: {{preflight_pins}}
 - workerWritableRoots: {{writable_roots}} (complete grants including temporary and derived Git directories; only reports within orchestrator root; copy to capsule.writable_roots)
-- Collection: orchestrator collect:true outside worker sandboxes; worker collect:false only
-- Confirmation timeout: {{confirmation_timeout}} seconds
+- Collection: the collector started with this attempt runs collect:true outside worker sandboxes; worker collect:false only
+- Round request: {{round_request}}
 - Worktree/branch: {{worktree}} / {{branch}}
 - Worker session name: `{{issue}}: mono-deliver`
 - Chip title (user-visible, Russian): `{{issue}}: доставка`
@@ -55,15 +55,14 @@ compares `git show <sha>` blobs to that block and the snapshot manifest at start
 
 ## Запрос сбора
 
-После поправки запрос сбора привязан к `pins.v<n>.json` из «Effective attempt pins» возобновления; отдельного поля версии в отчёте нет.
-
 Use this pinned preflight request; replace HEAD in head/collectionId with the
 committed SHA and increment the collection number on retry. Gate-side reads of
 registry/dispatch are allowed. Worker reads there are limited to its pinned
 snapshot/design.json and snapshot/design/*.png; other dispatch state stays closed.
-Run preflight with collect:false. Exit 2 is pending, not pass: publish only the
-returned publishRequest in payload.request, then wait for collection confirmation.
-Never construct a replacement request from the error text.
+Run preflight with collect:false. Exit 2 is pending, not pass: write
+`{"issue","attempt","request":<returned publishRequest>}` to the round request
+file, run `{{wait_round}}` in the foreground, then rerun collect:false. Never
+construct a replacement request from the error text.
 
 ```json
 {{collection_request}}
@@ -94,17 +93,15 @@ Never construct a replacement request from the error text.
 
 Start acknowledgement uses `resume`: write the gate acknowledgement and stop.
 The orchestrator applies and reads back the moves, then resumes this same session
-with the amendment. A request for start-handshake `wait` is refused.
+with the read-back. A request for start-handshake `wait` is refused.
 
-The collection barrier follows worker-contract. Run the pack's plain
-`node '<pack-root>/scripts/delivery-state.mjs' wait --report '<own phase report>'
---confirmation '<confirmation path>' --config '<project config>'` invocation in
-the foreground. Use the full confirmation timeout under the launcher's raised
-Bash timeout ceiling. Never background it or replace it with sleep/polling; a
-refused command is reported through the existing stop protocol.
+The review round follows worker-contract. Run the pack's plain
+`node '<pack-root>/scripts/delivery-state.mjs' wait-round --request '<round request>'`
+invocation in the foreground. Never background it or replace it with
+sleep/polling; a refused command is reported through the existing stop protocol.
 
 The review round runs only in external collection on a committed head. Fix open
-findings, commit, publish the returned request and wait for its confirmation;
+findings, commit, write the returned request as the round request and wait for its result;
 only a passing `collect:false` gate permits readiness. Record the delivery
 difference in the ready certificate. Phase/terminal reports must identify this
 registered Issue and attempt; a final model answer alone is not green or parked.
@@ -157,7 +154,7 @@ worker contract without redefining it:
 - Lifecycle moves: {{moves}}; still unapplied, snapshot deliberately pre-move
 - Gates: {{gates}}
 - Gate-ack: {{gate_ack}}; fallback {{fallback}}/{{issue}}-gate-ack-a{{attempt}}.json
-- Wait/resume: {{wait_or_resume}}; wait uses installed delivery-state.mjs wait-ack, resume requires the applied-move amendment.
+- Wait/resume: {{wait_or_resume}}; wait uses installed delivery-state.mjs wait-ack, resume carries the applied-move read-back.
 
 ## AFK Contract
 
@@ -189,8 +186,8 @@ in its comment.
 
 ## Recovery
 
-On interruption resume the same thread with the current snapshot amendment and the latest own phase capsule/confirmation paths. Re-run identity and continue that phase; do not generate a stage-specific dispatch or resume template. Read back Linear before repeating any write; a collection request confirms before advancing.
+On interruption the orchestrator resumes the same thread; a task change arrives as the link to an «Изменение задачи» comment on the Issue: read it there and follow it. Re-run identity and continue from the latest own phase capsule; do not generate a stage-specific dispatch or resume template. Read back Linear before repeating any write; a written round request is waited for before advancing.
 
-Set write.id=request.collectionId=preflight-collect:HEAD:n; increment n per collection request on that head. Preserve the ID on lost-response reconciliation; a failed run is recorded, its retry gets a new ID.
+Set request.collectionId=preflight-collect:HEAD:n; increment n per round request on that head. Keep the ID while waiting for its result; a failed or refused round is recorded, a new request gets a new ID.
 
-Pass evidenceRoot and workerWritableRoots to spawn; any resume grant expansion requires this dispatch pin to be amended to the complete effective roots and supplied to resume.
+Pass evidenceRoot and workerWritableRoots to spawn; a risk or grant change is a new attempt on the same branch.

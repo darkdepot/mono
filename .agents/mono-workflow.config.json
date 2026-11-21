@@ -23,8 +23,6 @@
     "transport": "codex-cli",
     "maxParallelWorkers": 3,
     "delivery": {
-      "confirmationTimeoutSec": 4500,
-      "collectionTimeoutSec": 3600,
       "evidenceLimitSec": 5400
     },
     "preapply": {

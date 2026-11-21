@@ -502,9 +502,9 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     requireValue(['tiny', 'standard', 'deep', 'risky', 'riskyCritical'].includes(risk), 'unknown risk class');
     requireValue(number <= 3, 'three-round limit reached for this task attempt');
     const contractDigest = digest(contract);
-    // An amended contract continues the record: open findings stay open and the next round stays narrow.
+    // A changed contract (a delivered task change) continues the record: open findings stay open and the next round stays narrow.
     requireValue(!record.base || record.base === base, 'stage base changed');
-    // The amendment may approve disputed work, so scope and risk objections are judged again against it:
+    // The task change may approve disputed work, so scope and risk objections are judged again against it:
     // they return to the checker this round and stand only if the checker raises them again.
     const rejudge = new Set(record.contractDigest && record.contractDigest !== contractDigest
       ? record.findings.filter(finding => finding.outOfContract || finding.riskRaised).map(finding => finding.key) : []);

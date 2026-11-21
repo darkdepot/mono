@@ -155,7 +155,7 @@ async function prepareDispatch(args) {
   fs.writeFileSync(path.join(output, "pins.sha256"), `${pinsDigest}\n`);
   const request = { ...gate, root: args.root, issue, role, modelRoutes, modelReason: reason, transport: transport.transport, dispatchFile, evidenceRoot,
     writable_roots: extras, workerWritableRoots: roots, gates, lifecycle_moves: moves, config: args.config, product_name: product, handshake, profile,
-    pins: { file: pinsFile, digest: pinsDigest }, pinsVersion: 0, risk, critical, afk, openDecisions };
+    pins: { file: pinsFile, digest: pinsDigest }, risk, critical, afk, openDecisions };
   atomicJson(spawnFile, request);
   const identityCommand = `node ${q(path.join(directory, "../verify-pack-state.mjs"))} identity --pack-root ${q(packRoot)} --pack-version ${q(installed.packVersion)}${installed.sourceCommit ? ` --source-commit ${q(installed.sourceCommit)}` : ""} --surface-revision ${q(installed.surfaceRevision)}`;
   const ack = path.join(args.root, "reports", `${issue}-gate-ack-a${attempt}.json`);
@@ -167,7 +167,9 @@ async function prepareDispatch(args) {
   const values = { issue, title: body.split("\n")[0].replace(/^#+\s*/u, ""), attempt, handshake, profile, pins_file: pinsFile, pins_digest: pinsDigest,
     collection_request: JSON.stringify(collectionRequest, null, 2),
     gate_request: gateFile, runtime_scripts: path.resolve(directory, ".."), product, evidence_root: evidenceRoot, model_routes: JSON.stringify(modelRoutes),
-    preflight_pins: JSON.stringify(pins), writable_roots: JSON.stringify(roots), confirmation_timeout: deliveryConfig(config).confirmationTimeoutSec,
+    preflight_pins: JSON.stringify(pins), writable_roots: JSON.stringify(roots),
+    round_request: path.join(args.root, "reports", `${issue}-round-a${attempt}.json`),
+    wait_round: `node ${q(path.join(directory, "../delivery-state.mjs"))} wait-round --request ${q(path.join(args.root, "reports", `${issue}-round-a${attempt}.json`))}`,
     worktree, branch, pack_version: installed.packVersion, source_commit: installed.sourceCommit ?? "not provided (plugin)", pack_root: packRoot, surface_revision: installed.surfaceRevision,
     outcome: section(body, "Что сделать", true), verification_items: section(body, "Как проверить", true), constraints: section(body, "Ключевые контракты") || section(body, "Что не входит", true),
     budget: settings.budget ?? "~4 hours", transport: transport.transport, delivery_skill: layout.skill("deliver"), identity_command: identityCommand,
@@ -175,7 +177,7 @@ async function prepareDispatch(args) {
     project_brief: brief, prd: extracts.prd, spec: extracts.spec, issue_body: body, approval, marker: lane?.marker ?? "n/a (project-first)", label: lane?.label ?? "n/a (project-first)",
     fingerprint: issueOnly ? lane.fingerprint : "n/a (project-first)", issue_only_config: lane?.config ?? "n/a (project-first)", owner_approval: lane?.ownerApproval ?? "n/a (project-first)",
     context_seam: JSON.stringify(seam), decisions: approval, moves: JSON.stringify(moves), gates: JSON.stringify(gates), gate_ack: ack,
-    wait_or_resume: moves.length ? handshake === "wait" ? `After writing ack run exactly one matching blocking shell command. If you wrote the mailbox ack: ${waitCommand(ack)}. If mailbox writing was denied and you wrote the fallback ack: ${waitCommand(fallbackAck)}. Use the actual file you wrote; never create both. Do no other work while it runs. Deadline ack mtime + ackWaitSec; expiry parks write-unconfirmed and exits. Valid own consumption read-backs amend state: post-move delivery check, no identity rerun. Blocked ack precedes terminal report.` : "Stop/exit after ack; resume amendment must contain every applied move/read-back; rerun identity/check. Blocked ack precedes terminal report." : "Gate phase: not applicable — this dispatch carries no lifecycle move.",
+    wait_or_resume: moves.length ? handshake === "wait" ? `After writing ack run exactly one matching blocking shell command. If you wrote the mailbox ack: ${waitCommand(ack)}. If mailbox writing was denied and you wrote the fallback ack: ${waitCommand(fallbackAck)}. Use the actual file you wrote; never create both. Do no other work while it runs. Deadline ack mtime + ackWaitSec; expiry parks write-unconfirmed and exits. Valid own consumption read-backs update state: post-move delivery check, no identity rerun. Blocked ack precedes terminal report.` : "Stop/exit after ack; the resume text must contain every applied move/read-back; rerun identity/check. Blocked ack precedes terminal report." : "Gate phase: not applicable — this dispatch carries no lifecycle move.",
     snapshot_note: extracts.note ?? "Referenced definitions with transitive coverage and always-included common sections", spawn_request: spawnFile, base,
     chain_context: chainSnapshot ? JSON.stringify(chainSnapshot, null, 2) : 'No Blocked by predecessor within this package.',
     design_context: designSnapshot ? JSON.stringify({ ...designSnapshot, directory: path.join(snapshot, 'design') }) : 'No approved mockup for this task; apply textual taste rules from Issue context.' };

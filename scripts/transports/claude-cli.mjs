@@ -42,7 +42,7 @@ function assertStopped(entry) {
   throw new Error("Claude worker process group is still live; stop the previous worker and its commands before resume");
 }
 
-function environment(route, source = process.env, { githubToken, githubConfigDir, timeoutSec = 1800, tempDir } = {}) {
+function environment(route, source = process.env, { githubToken, githubConfigDir, timeoutSec = 6300, tempDir } = {}) {
   validateRoute(route);
   const env = Object.fromEntries(environmentKeys.filter(key => typeof source[key] === "string").map(key => [key, source[key]]));
   env.USER ||= os.userInfo().username;
@@ -273,7 +273,7 @@ function runningCommandState(entry) {
   return state?.calls.size ? state.instance : null;
 }
 
-function waitingPhase(entry, reportFile, confirmationFile) {
+function waitingPhase(entry, roundFile) {
   const calls = new Map();
   for (const [id, input] of currentState(entry)?.calls ?? []) {
     const command = input?.command;
@@ -281,13 +281,8 @@ function waitingPhase(entry, reportFile, confirmationFile) {
     // and wrapper commands cannot prove that this call blocks the worker.
     if (input?.run_in_background === true || typeof command !== "string" || /[;&|`\n\r$<>]/.test(command)) continue;
     const tokens = command.match(/'[^']*'|"[^"]*"|[^\s'"]+/g)?.map(token => token.replace(/^(['"])(.*)\1$/, "$2")) ?? [];
-    if (tokens[0] !== "node" || !entry.packRoot || tokens[1] !== path.join(entry.packRoot, "scripts/delivery-state.mjs") || tokens[2] !== "wait") continue;
-    const flags = new Map(); let valid = true;
-    for (let i = 3; i < tokens.length; i += 2) {
-      if (!["--report", "--confirmation", "--config"].includes(tokens[i]) || !tokens[i + 1] || flags.has(tokens[i])) { valid = false; break; }
-      flags.set(tokens[i], tokens[i + 1]);
-    }
-    if (valid && flags.get("--report") === reportFile && flags.get("--confirmation") === confirmationFile)
+    if (tokens[0] !== "node" || !entry.packRoot || tokens[1] !== path.join(entry.packRoot, "scripts/delivery-state.mjs") || tokens[2] !== "wait-round") continue;
+    if (tokens.length === 5 && tokens[3] === "--request" && tokens[4] === roundFile)
       calls.set(id, { callId: id, issue: entry.issue, attempt: entry.attempt,
         thread_id: entry.thread_id, pid: entry.pid, procStart: entry.procStart });
   }

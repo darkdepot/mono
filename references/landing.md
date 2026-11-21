@@ -67,7 +67,7 @@ or slower walkthrough does not establish it.
    cannot demonstrate the new restriction: its base does not contain the policy.
 5. Dispatch the approved task from that configured base. Write and commit its
    fragment as described in [Task fragment](#task-fragment), then run its normal
-   preflight with those pins, including collection confirmation when required.
+   preflight with those pins, including its review round when required.
    Check that the committed fragment is present and non-empty, since the gate
    does not enforce its presence. The successful gate result ends the walkthrough;
    PR creation, merging and installation are outside this measurement.
@@ -119,7 +119,7 @@ action names the release task. A request without pins under this policy receives
 
 Only the orchestrator dispatches the separately approved release Issue using
 `dispatch.mjs --release true`; `--release false` is the default. The manifest's
-boolean `release` is immutable across amendments. The gate reads the exception
+boolean `release` is immutable for the attempt. The gate reads the exception
 only from admitted, verified dispatch pins; a request field cannot grant it.
 A release task may edit the shared paths and consume task fragments.
 

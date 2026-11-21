@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER, REVIEW_ROUND_ROLES } from "./runtime.mjs";
-import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, registryEntry } from "./orchestrator/command-state.mjs";
+import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
 
@@ -132,16 +132,15 @@ const findingLine = finding => `${finding.weight} ${finding.file}:${finding.line
 const clip = (text, limit) => { const flat = String(text ?? '').replace(/\s+/g, ' ').trim(); return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat; };
 const openLine = finding => `${findingLine(finding)} (when: ${clip(finding.trigger, 200) || 'n/a'}; why: ${clip(finding.reason, 300) || 'n/a'})`;
 const leftover = record => (record?.findings ?? []).filter(finding => !['closed', 'rejected'].includes(finding.status));
-// Rounds are counted per task attempt (every pins version of one dispatch) from signed receipts;
-// an amendment keeps the count and the record, so a fix after the PR is one narrow round.
-// receipts: signature-verified history, any producer or issue. reuse: a completed round on this exact head.
+// Rounds are counted per task attempt from receipt history; a task change keeps the count and the record,
+// so a fix after the PR is one narrow round.
+// receipts: history in evidenceRoot, any producer or issue. reuse: a completed round on this exact head.
 const sameAttempt = (file, pinsFile) => typeof file === 'string' && path.dirname(file) === path.dirname(pinsFile);
 export function reviewHistory(receipts, { pins, head, base, contractDigest }) {
   const mine = receipts.filter(receipt => receipt?.producer === REVIEW_PRODUCER && sameAttempt(receipt.pins?.file, pins.file) && receipt.review)
     .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)));
   const completed = mine.filter(receipt => receipt.review.spent === true);
   const same = receipt => receipt.base === base && receipt.review.contractDigest === contractDigest;
-  // A failure streak belongs to one pins version: an amendment after restoring the CLIs may try again.
   const onHead = mine.filter(receipt => receipt.head === head && receipt.pins.file === pins.file && receipt.review.outcome !== 'refused');
   let notReviewed = 0;
   for (let index = onHead.length - 1; index >= 0 && onHead[index].review.outcome === 'not-reviewed'; index--) notReviewed++;
@@ -203,30 +202,20 @@ export function validatePreflight(receipt, head, base) {
     (successors.length ? `; successor candidates: ${successors.map(item => item.line).join('; ')}` : '');
 }
 
-function evidenceKey(directory, create) {
-  const file = path.join(directory, "receipt.key");
-  if (create && !fs.existsSync(file)) {
-    const fd = fs.openSync(file, "wx", 0o600);
-    try { fs.writeFileSync(fd, crypto.randomBytes(32)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-  }
-  const key = fs.readFileSync(file);
-  requireThat(key.length === 32, "invalid tool receipt key"); return key;
-}
-const sign = (key, value) => crypto.createHmac("sha256", key).update(canonical(value)).digest("hex");
 const ROUND_LIMIT_REACHED = `review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); split the Issue or change approach in a new attempt`;
 // Fast path: the spent round needs the worker's full verification on the final head instead of another round.
 const limitRefusal = limit => limit === ROUND_LIMIT ? `needs-decision: ${ROUND_LIMIT_REACHED}` : `review round spent (1 of 1 on this task attempt); ${FAST_FIX}`;
 const NOT_REVIEWED_TWICE = "not-reviewed twice in a row on this head; check that both review CLIs are logged in";
 // Other issues' and older receipts share this folder: only this attempt's pins files are read further;
-// unreadable or unsigned files are skipped, never counted.
-function signedHistory(evidenceRoot, pinsFile) {
+// unreadable or irregular files are skipped, never counted. No worker grant reaches evidenceRoot.
+function receiptHistory(evidenceRoot, pinsFile) {
   const history = path.join(evidenceRoot, "history");
-  if (!fs.existsSync(history) || !fs.existsSync(path.join(evidenceRoot, "receipt.key"))) return [];
-  const key = evidenceKey(evidenceRoot, false);
+  if (!fs.existsSync(history)) return [];
   return fs.readdirSync(history).filter(name => name.endsWith(".json")).flatMap(name => {
     try {
+      regularEvidence(path.join(history, name));
       const envelope = readJson(path.join(history, name));
-      return sameAttempt(envelope.receipt?.pins?.file, pinsFile) && envelope.signature === sign(key, envelope.receipt) ? [envelope.receipt] : [];
+      return sameAttempt(envelope.receipt?.pins?.file, pinsFile) ? [envelope.receipt] : [];
     } catch { return []; }
   });
 }
@@ -266,7 +255,7 @@ function reviewBaseTip(repo, baseRef, liveTip) {
   }
   return git(repo, "rev-parse", "--verify", `${liveTip ?? baseRef}^{commit}`);
 }
-// Shared review inputs for Preflight and amendment admission; HEAD remains usable on a dirty tree.
+// Shared review inputs for Preflight; HEAD remains usable on a dirty tree.
 export function reviewContext(request, pins, liveTip = null) {
   const repo = fs.realpathSync(request.worktree), head = git(repo, "rev-parse", "HEAD");
   const base = git(repo, "merge-base", head, reviewBaseTip(repo, request.baseRef, liveTip));
@@ -276,14 +265,12 @@ export function reviewContext(request, pins, liveTip = null) {
   const file = path.join(pins.fullSnapshot?.directory ?? path.join(path.dirname(request.pins.file), "snapshot"), `issue-${pinnedIssue}.md`);
   if (!pinnedIssue || !fs.existsSync(file)) return { head, base, contract, contractDigest, history: null };
   contract = fs.readFileSync(file, "utf8");
-  // Amendment texts narrow or correct the task: the reviewer must read them with the Issue.
-  // Only registered ones: a prepared amendment that was never delivered stays on disk and is not part of the task.
-  const attempt = Number(/-a([1-9][0-9]*)$/.exec(path.basename(path.dirname(request.pins.file)))[1]);
-  const registered = Object.values(registryEntry(path.dirname(path.dirname(path.dirname(request.pins.file))), pinnedIssue, attempt).completed_amendments ?? {});
-  for (const record of registered.filter(item => item.pinsVersion <= (pins.pinsVersion ?? 0)).sort((a, b) => a.pinsVersion - b.pinsVersion))
-    contract += `\n\n## Orchestrator amendment ${record.pinsVersion}\n${record.change?.text ?? fs.readFileSync(record.resumeFile, "utf8").split(/\n\n## (?:Effective attempt pins|issue-)/)[0]}`;
+  // Delivered task changes («Изменение задачи» comment plus resume) narrow or correct the task:
+  // the reviewer reads them with the Issue. Resume records them append-only beside the launch pins.
+  for (const change of taskChanges(path.dirname(request.pins.file)))
+    contract += `\n\n## Изменение задачи ${change.number} (${change.url})\n${change.text}`;
   contractDigest = digest(contract);
-  return { head, base, contract, contractDigest, history: reviewHistory(signedHistory(request.evidenceRoot, request.pins.file),
+  return { head, base, contract, contractDigest, history: reviewHistory(receiptHistory(request.evidenceRoot, request.pins.file),
     { pins: request.pins, head, base, contractDigest }) };
 }
 async function verifyPreflight(request, live = null, allowPending = false) {
@@ -304,7 +291,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     "verification must contain only command and string-array args");
   requireThat(request.critical === null || (typeof request.critical === "string" && request.critical.trim()), "dispatch critical must be null or an escalation reason");
   requireThat(/^[a-f0-9]{40}$/.test(request.head), "dispatch head required");
-  // Remarks on the draft PR (bot, CI, owner) the worker fixed: open findings of this round, signed in the receipt.
+  // Remarks on the draft PR (bot, CI, owner) the worker fixed: open findings of this round, recorded in the receipt.
   if (request.prRemarks !== undefined) prRemarkFindings(request.prRemarks);
   const workerCheck = request.workerVerification, limit = roundLimit(request.risk), strict = limit === ROUND_LIMIT;
   requireThat(workerCheck === undefined || (Object.keys(workerCheck ?? {}).sort().join(",") === "exitCode,head" && /^[a-f0-9]{40}$/.test(workerCheck.head) &&
@@ -341,20 +328,16 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort() };
   let receipt, verifiedReceiptFile = receiptFile;
   if (request.collect === false) {
-    const readSigned = file => {
-      regularEvidence(file); regularEvidence(path.join(evidenceRoot, "receipt.key"));
-      const envelope = readJson(file);
-      requireThat(envelope.signature === sign(evidenceKey(evidenceRoot, false), envelope.receipt), "hand-made or modified review receipt");
-      return envelope.receipt;
-    };
-    if (!pins) receipt = readSigned(receiptFile);
-    else if (fs.existsSync(receiptFile)) receipt = readSigned(receiptFile);
+    // evidenceRoot is outside every worker grant (checked above), so its regular files are the receipts.
+    const readReceipt = file => { regularEvidence(file); return readJson(file).receipt; };
+    if (!pins) receipt = readReceipt(receiptFile);
+    else if (fs.existsSync(receiptFile)) receipt = readReceipt(receiptFile);
     if (pins && receipt?.collectionId !== request.collectionId) {
       const history = path.join(evidenceRoot, "history");
       const matches = fs.existsSync(history) ? fs.readdirSync(history).filter(name => name.endsWith(".json"))
         .map(name => path.join(history, name)).filter(file => readJson(file).receipt?.collectionId === request.collectionId) : [];
       requireThat(matches.length <= 1, "multiple history receipts for collectionId");
-      if (matches.length) { verifiedReceiptFile = matches[0]; receipt = readSigned(verifiedReceiptFile); }
+      if (matches.length) { verifiedReceiptFile = matches[0]; receipt = readReceipt(verifiedReceiptFile); }
       else receipt = null;
     }
     if (!receipt) {
@@ -383,7 +366,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   function workerFixed(prior) {
     if (strict || prior.spent < 1 || workerCheck?.head !== head || workerCheck.exitCode !== 0) return null;
     // The attempt's last completed round, on any base: a newer base does not clear its blockers or successors.
-    const last = signedHistory(request.evidenceRoot, request.pins.file).filter(receipt => receipt.producer === REVIEW_PRODUCER && receipt.review?.spent === true)
+    const last = receiptHistory(request.evidenceRoot, request.pins.file).filter(receipt => receipt.producer === REVIEW_PRODUCER && receipt.review?.spent === true)
       .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt))).at(-1)?.review ?? null;
     if (last?.record?.findings?.some(finding => finding.outOfContract || finding.riskRaised))
       return { outcome: 'refused', spent: false, round: null, successors: [], record: null,
@@ -431,10 +414,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     receipt = { producer: REVIEW_PRODUCER, recordedAt, ...binding, runId: crypto.randomUUID(), head, base, review,
       // The worker runs the full verification; the collection records the pinned command unrun.
       verification: { command: request.verification.command, args: request.verification.args, exitCode: null }, consistency };
-    if (fs.existsSync(path.join(evidenceRoot, "receipt.key"))) regularEvidence(path.join(evidenceRoot, "receipt.key"));
-    const key = evidenceKey(evidenceRoot, true);
-    atomicJson(path.join(evidenceRoot, "history", `${receipt.runId}.json`), { receipt, signature: sign(key, receipt) });
-    atomicJson(receiptFile, { receipt, signature: sign(key, receipt) });
+    atomicJson(path.join(evidenceRoot, "history", `${receipt.runId}.json`), { receipt });
+    atomicJson(receiptFile, { receipt });
   }
   const reason = validatePreflight(receipt, head, base);
   unchanged();
@@ -507,7 +488,7 @@ export function readShipSnapshot(repo, number, deadline = Infinity, botSince = n
     return { head, headStartedAt, checks };
   }
   const { checks, headStartedAt } = checksFor(head);
-  // Recover green heads already pushed during Preflight; amendments keep launch pins.
+  // Recover green heads already pushed during Preflight; launch pins are immutable.
   const ciHistory = botSince === null ? [] : gh('api', '--paginate', '--slurp', `repos/${repo}/pulls/${number}/commits`).flat()
     .filter(commit => commit.sha !== head).map(commit => checksFor(commit.sha));
   const threads = pages('query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){nodes{id isResolved isOutdated} pageInfo{hasNextPage endCursor}}}}}', variables, d => d.repository.pullRequest.reviewThreads);
@@ -687,7 +668,7 @@ export async function shipGate(request) {
     previous = { scope, head: null, startedAt: Date.now(), lastEventAt: Date.now(), fingerprint: null };
     atomicJson(request.stateFile, previous);
   }
-  // This task-level Ship state survives new per-head gate state files and pins amendments.
+  // This task-level Ship state survives new per-head gate state files and task changes.
   const botFile = request.preflight.pins?.file
     ? path.join(path.dirname(path.dirname(path.dirname(request.preflight.pins.file))), 'reports', `${path.basename(path.dirname(request.preflight.pins.file))}-ship-bot.json`)
     : path.join(path.dirname(request.stateFile), `ship-bot-${request.repo.replace("/", "-")}-${request.number}.json`);
@@ -747,26 +728,26 @@ preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,ri
   Pin every request field from dispatch. Orchestrator only: collect:true, outside worker sandboxes.
   Worker only: collect:false, reads <evidenceRoot>/<head>.json without creating files.
   Registered attempts require their dispatch pins in every collection request.
-  Pending worker collection exits 2 with publishRequest; publish exactly that request. Pass exits 0; refusal exits 1.
+  Pending worker collection exits 2 with publishRequest; write exactly that request as the round request (delivery-state.mjs wait-round). Pass exits 0; refusal exits 1.
   Use ~/.mono-agent-workflow/evidence/<product>/ outside EVERY worker-writable root,
   including worktree, orchestrator root and additional workerWritableRoots. Pin that list in dispatch.
   workerVerification: the worker's own run of the pinned full verification on this head; a receipt passes only with exitCode 0 on its head.
   collect:true runs the read-only review round first (reviewer and checker from different model families, both CLIs logged in by subscription),
-  and records verification unrun (exitCode null); one signed gate-review-v3 receipt per collectionId.
-  At most three completed rounds per task attempt (amendments keep the count), counted from signed history; rounds after the first review only the fixes and open findings; the same head reuses its round; not-reviewed spends nothing.
-  Refusals are signed too: fix and request the next round, or park on a needs-decision:/blocked: line.
-  The sandbox write boundary is the trust anchor; the key may be readable but receipts are not worker-writable.
+  and records verification unrun (exitCode null); one gate-review-v3 receipt per collectionId.
+  Rounds per task attempt from the pinned risk (risky 3, else 1; task changes keep the count), counted from receipt history; rounds after the first review only the fixes and open findings; the same head reuses its round; not-reviewed spends nothing.
+  Refusals are receipts too: fix and request the next round, or park on a needs-decision:/blocked: line.
+  The sandbox write boundary is the trust anchor: evidenceRoot is outside every worker grant, so receipts are not worker-writable.
 ship request: {preflight:<complete preflight collect:false request>, repo:"owner/repo", number:123, attempt:1, stateFile:"/absolute/file", judgmentFile:"/absolute/file", config:"/project/.agents/mono-workflow.config.json", watch:true, policy:{requiredChecks:[],nonBlockingChecks:[{name,reason}],botChecks:["Greptile Review"],botUnavailable:null}}
   Refresh remote-tracking baseRef; bind receipts to head/merge-base, not the moving base tip.
   Ship uses the live PR base tip for merge-base; require that sealed proof before judgment and record its path.
   Required bots come from immutable attempt pins (orchestration.ship.botChecks, default Greptile Review).
-  Worker botChecks must match; botUnavailable requires accept.mjs amend --bot-unavailable for this task attempt.
+  Worker botChecks must match; botUnavailable stays null: the bot wait ends 30 minutes after the first green required CI.
   Other policy exceptions must come from the repository's accepted policy, never worker convenience.
   judgment: {head,preShipReview:"выполнено",readinessCheck:"пройдена",documentation:"выполнен на этой голове|без изменений|намеренно недоступен",documentationReason,closures:[{threadId,replyId}],botRemarks:[{id,commentDigest,outcome:"fixed|rejected|deferred|informational",evidence}]}
   Compute commentDigest with exported botRemarkDigest(comment) on each latest readShipSnapshot bot comment; re-inspect any edited comment.
-  config.orchestration.delivery: confirmationTimeoutSec=6300, quietSec=120,
+  config.orchestration.delivery: quietSec=120,
   evidenceLimitSec=7200, pollSec=10, attemptCap=3. Positive seconds/counts only.
-  Never delete stateFile to reset a deadline. An orchestrator ship-fix amendment names the next ship-gate attempt;
+  Never delete stateFile to reset a deadline. A ship fix after a task change («Изменение задачи» and resume) names the next ship-gate attempt;
   use a new stateFile for the new head, preserve the old file, and keep the same task attempt. No ship-gate attempt cap.`);
     else {
       requireThat(["start", "preflight", "ship"].includes(name), "unknown gate");

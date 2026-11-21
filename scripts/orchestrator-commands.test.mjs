@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createHash, createHmac } from "node:crypto";
+import { createHash } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { test } from "node:test";
@@ -12,9 +12,10 @@ import { renderDispatch } from "./orchestrator/dispatch.mjs";
 import { ideaDispatchFixture, ideaProjectId } from './fixtures/idea-dispatch.mjs';
 import { applyPreapply, preapplyManifest } from "./orchestrator/preapply.mjs";
 import { digest, readJson, atomicJson, withLock, canonical, REVIEW_PRODUCER } from "./runtime.mjs";
-import { publishPhase, validateConfirmation, confirmQueue } from "./delivery-state.mjs";
+import { publishPhase } from "./delivery-state.mjs";
 import { effectivePins, admitCollection, collectionPinsBinding, checkCollectionRequest, pinnedShipPolicy } from "./orchestrator/command-state.mjs";
-import { acceptAck, acceptAmend } from "./orchestrator/accept.mjs";
+import { acceptAck } from "./orchestrator/accept.mjs";
+import { readLedger, recordResult, roundRequestName } from "./review-rounds.mjs";
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixture = name => fs.readFileSync(path.join(checkout, "scripts/fixtures", name), "utf8");
@@ -75,8 +76,10 @@ const fixtureReady = child => new Promise((resolve, reject) => {
   child.once("message", ready); child.once("error", failed); child.once("close", closed);
 });
 
-test("removed review-dataset flags are unknown to dispatch and amend", () => {
-  for (const [script, prefix] of [["dispatch", []], ["accept", ["amend"]]]) {
+test("removed review-dataset flags are unknown to dispatch and accept; amend no longer exists", () => {
+  const amend = spawnSync(process.execPath, [path.join(checkout, "scripts/orchestrator/accept.mjs"), "amend", "--root", os.tmpdir()], { encoding: "utf8" });
+  assert.notEqual(amend.status, 0); assert.match(amend.stderr, /expected ack/);
+  for (const [script, prefix] of [["dispatch", []], ["accept", ["ack"]]]) {
     for (const flag of ["--review-dataset", "--review-dataset-version"]) {
       const result = spawnSync(process.execPath, [path.join(checkout, "scripts/orchestrator", script + ".mjs"), ...prefix, "--root", os.tmpdir(), flag, "1"], { encoding: "utf8" });
       assert.notEqual(result.status, 0);
@@ -106,51 +109,17 @@ test("fixture readiness rejects a child that exits before ready", async () => {
   finally { child.kill("SIGKILL"); await exited; }
 });
 
-test("amend collection pins-file contracts", async t => {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-amend-admission-"));
-  const root = path.join(scratch, "root"), issue = "MONO-999", head = "a".repeat(40);
-  const file = path.join(root, "dispatch", `${issue}-a1`, "pins.json");
-  const pins = { product: "fixture", root, worktree: scratch, evidenceRoot: scratch, workerWritableRoots: [scratch] };
-  const entry = { issue, attempt: 1, stage: "mono-deliver", packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4,
-    pins: { file, digest: null }, pinsVersion: 1 };
-  const reportFor = number => {
-    const request = { ...pins, pins: collectionPinsBinding(entry), head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:${number}` };
-    const queue = [{ id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } }];
-    return { ...entry, phase: "preflight", kind: "confirmation-request", sequence: number, head,
-      linear_mutations_pending: queue, capsule: { phase: "preflight", head, decisions: [], writable_roots: [scratch], open_queue: queue } };
-  };
-  try {
-    atomicJson(file, pins); entry.pins.digest = createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-    atomicJson(path.join(path.dirname(file), "pins.v1.json"), { pinsVersion: 1 });
-    atomicJson(path.join(root, "workers.json"), { [issue]: entry });
-    const report = reportFor(1); delete report.pinsVersion;
-    let prior;
-    await t.test("amend-collection-admitted-by-pins-file", async () => {
-      prior = (await admitCollection(root, report))[0]; assert.equal(prior.pinsVersion, 1);
-    });
-    await t.test("amend-stale-pins-file-refused", async () => {
-      const stale = reportFor(2); delete stale.pinsVersion;
-      entry.pinsVersion = 2; atomicJson(path.join(path.dirname(file), "pins.v2.json"), { pinsVersion: 2 });
-      atomicJson(path.join(root, "workers.json"), { [issue]: entry });
-      await assert.rejects(admitCollection(root, stale), error => error.message === `new collection request uses stale pinsVersion; expected ${path.join(path.dirname(file), "pins.v2.json")}`);
-      assert.equal(fs.existsSync(path.join(root, "consumed", `${issue}-a1`, "admissions", `${stale.capsule.open_queue[0].id}.json`)), false);
-      assert.deepEqual((await admitCollection(root, report))[0], prior, "prior admission precedes new-version checks");
-    });
-  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
-});
-
-test('idea amendment cannot replace or remove the launch binding', () => {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-idea-amend-'));
+test("launch pins are immutable: amended attempts and pins versions are refused", async () => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-immutable-pins-"));
   try {
     const file = path.join(scratch, 'pins.json'), idea = { path: '/saved/idea', projectId: ideaProjectId, digest: 'a'.repeat(64) };
     atomicJson(file, { packVersion: '0.32.0', idea });
-    const entry = { pins: { file, digest: createHash('sha256').update(fs.readFileSync(file)).digest('hex') }, pinsVersion: 1 };
-    atomicJson(path.join(scratch, 'pins.v1.json'), { pinsVersion: 1, risk: 'risky' });
+    const entry = { pins: { file, digest: createHash('sha256').update(fs.readFileSync(file)).digest('hex') } };
     assert.deepEqual(effectivePins(entry).idea, idea);
-    for (const changed of [null, { ...idea, projectId: '11111111-1111-1111-1111-111111111111' }]) {
-      atomicJson(path.join(scratch, 'pins.v1.json'), { pinsVersion: 1, idea: changed });
-      assert.throws(() => effectivePins(entry), /idea pin is immutable/u);
-    }
+    atomicJson(path.join(scratch, 'pins.v1.json'), { pinsVersion: 1, risk: 'risky' });
+    assert.throws(() => effectivePins({ ...entry, pinsVersion: 1 }), /pins versions no longer exist; start a new attempt on the same branch/u,
+      'an escalated risk is never silently read back as the launch risk');
+    assert.deepEqual(collectionPinsBinding(entry), entry.pins);
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
 
@@ -396,7 +365,7 @@ test("accept-rejected-incomplete-ack: rejection consumes without allowing applie
     });
 });
 
-test("installed command workflow on scratch: refusals, dispatch, ack, sessions, admission and amend", async t => {
+test("installed command workflow on scratch: refusals, dispatch, ack, sessions, round admission and task change", async t => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-command-fixture-"));
   const skills = path.join(scratch, "skills"), root = path.join(scratch, "orchestrator"), repo = path.join(scratch, "repo"), bin = path.join(scratch, "bin"), temp = path.join(scratch, "worker-temp");
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, };
@@ -419,7 +388,8 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     // Keep the original 11-byte fixture margin; the pack ceiling stays 99_882.
     assert.ok(budget.bytes <= 98_373 + 383 + 815 + 210, "worker corpus exceeds the baseline plus approved stage deltas");
     write(path.join(bin, "codex"), '#!/usr/bin/env node\nconsole.log(JSON.stringify({type:"thread.started",thread_id:"fixture-thread"}));setInterval(()=>{},1000);\n'); fs.chmodSync(path.join(bin, "codex"), 0o700);
-    write(path.join(bin, "ps"), '#!/usr/bin/env node\nconsole.log("fixture-start");\n'); fs.chmodSync(path.join(bin, "ps"), 0o700);
+    // The collector started with the attempt reads its own process group from the table.
+    write(path.join(bin, "ps"), "#!/usr/bin/env node\nconsole.log(process.argv.includes('-axo')?process.ppid+' 1 '+process.ppid+' S fixture-start':'fixture-start');\n"); fs.chmodSync(path.join(bin, "ps"), 0o700);
     atomicJson(path.join(root, "control.json"), { state: "active", halt: false }); atomicJson(path.join(root, "workers.json"), {}); writeWatcherFixture(root, env);
     git("init", "-b", "main");
     const origin = path.join(scratch, "origin.git"); pass(run("git", ["init", "--bare", origin])); git("remote", "add", "origin", origin);
@@ -670,7 +640,9 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     await processes.stop(livePid); livePid = undefined;
     const launched = JSON.parse(pass(run(process.execPath, [command, ...options]))); livePid = processes.track(launched.pid);
     const registry = readJson(path.join(root, "workers.json")), entry = registry["MONO-999"];
-    assert.equal(entry.attempt, 1); assert.equal(entry.pinsVersion, 0); assert.equal(entry.profile, "short"); assert.equal(entry.handshake, "wait");
+    assert.equal(entry.attempt, 1); assert.equal(entry.pinsVersion, undefined); assert.equal(entry.profile, "short"); assert.equal(entry.handshake, "wait");
+    assert.equal(launched.collector?.status, "running", `the collector starts with the attempt: ${JSON.stringify(launched.collector)}`);
+    assert.equal(Object.hasOwn(entry, "confirmationTimeoutSec") || Object.hasOwn(entry, "collectionTimeoutSec"), false, "no collection windows");
     assert.equal(entry.pins.digest, (await import("./orchestrator/command-state.mjs")).sha256File(entry.pins.file));
     const launchedPins = readJson(entry.pins.file);
     assert.equal(fs.existsSync(path.join(launched.snapshot, 'research')), false, 'pre-cutoff package dispatch succeeds without research/');
@@ -723,583 +695,51 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     await t.test("report-linear-writes-not-queued: the worker writes its comments and statuses; no report confirmation command exists", () => {
       for (const write of [{ id: "fixture:comment", operation: "comment", target: ack.issue, payload: { body: "Russian lead" } },
         { id: "fixture:state", operation: "issue-state", target: ack.issue, payload: { state: "In Progress" } }])
-        assert.throws(() => publishPhase({ ...base, linear_mutations_pending: [write], capsule: { ...base.capsule, open_queue: [write] } }, reportFile), /Linear writes are not queued/u);
+        assert.throws(() => publishPhase({ ...base, linear_mutations_pending: [write], capsule: { ...base.capsule, open_queue: [write] } }, reportFile), /queued writes no longer exist/u);
       assert.equal(fs.existsSync(reportFile), false);
       const removed = spawnSync(process.execPath, [path.join(runtime, "orchestrator/accept.mjs"), "report", "--root", root, "--report", reportFile], { env, encoding: "utf8" });
-      assert.notEqual(removed.status, 0); assert.match(removed.stderr, /expected ack or amend/u);
+      assert.notEqual(removed.status, 0); assert.match(removed.stderr, /expected ack/u);
     });
     const report = publishPhase(base, reportFile);
     assert.equal(fs.existsSync(path.join(root, "confirmations")), false, "an empty phase report advances without any confirmation");
     const pins = effectivePins(readJson(path.join(root, "workers.json"))[ack.issue]);
     const request = { ...pins, pins: entry.pins, head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:1` };
-    const collect = { id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } };
-    const collectReport = { ...report, phase: "preflight", pinsVersion: 0, linear_mutations_pending: [collect], capsule: { ...report.capsule, phase: "preflight", open_queue: [collect] } };
-    const admission = (await admitCollection(root, collectReport))[0]; assert.equal(admission.manifestDigest, digest(pins)); assert.equal(admission.reportDigest, digest(collectReport));
-    await withLock(path.join(root, "launch.lock"), async () => { await assert.rejects(admitCollection(root, collectReport), /locked/u); });
-    await assert.rejects(acceptAmend({ root, issue: ack.issue, attempt: "1", risk: "deep", text: "escalation without docs" }), /full-snapshot/u);
-    await t.test("amend-pins-advance-after-resume: refused live-worker resume retains the registry", async () => {
-      const registryFile = path.join(root, "workers.json"), before = fs.readFileSync(registryFile, "utf8");
-      const refusedAmend = run(process.execPath, [path.join(runtime, "orchestrator/accept.mjs"), "amend", "--root", root, "--issue", ack.issue, "--attempt", "1", "--text", "Refused live-worker amendment."]);
-      assert.notEqual(refusedAmend.status, 0);
-      assert.match(refusedAmend.stderr, /live/u, "the wrapper prints the resume refusal");
-      assert.equal(JSON.parse(refusedAmend.stdout).state, "prepared");
-      assert.equal(fs.readFileSync(registryFile, "utf8"), before, "undelivered pins cannot become effective");
-      assert.ok(fs.existsSync(path.join(path.dirname(entry.pins.file), "pins.v1.json")), "prepare the version file before attempting resume");
-      const pendingFile = path.join(path.dirname(entry.pins.file), "amendment.pending.json");
-      assert.equal(readJson(pendingFile).launchMayHaveStartedAt, undefined);
-      // Reset this isolated prepared fixture, never production state.
-      for (const name of ["amendment.pending.json", "pins.v1.json", "resume.v1.md", "resume.v1.json"]) fs.unlinkSync(path.join(path.dirname(entry.pins.file), name));
-    });
+    const round = { issue: ack.issue, attempt: 1, request };
+    await withLock(path.join(root, "launch.lock"), async () => { await assert.rejects(admitCollection(root, round), /locked/u); });
+    const { admission, refusal } = await admitCollection(root, round);
+    assert.equal(refusal, null); assert.equal(admission.manifestDigest, digest(pins)); assert.equal(admission.ordinal, 1);
+    assert.deepEqual((await admitCollection(root, round)).admission, admission, "the same request replays its admission");
+    await assert.rejects(admitCollection(root, { ...round, request: { ...request, risk: "risky" } }), /already admitted for another request/u);
+    await assert.rejects(admitCollection(root, { ...round, request: { ...request, collectionId: `preflight-collect:${head}:2` } }), /has no result yet/u);
+    recordResult(root, ack.issue, 1, admission, { status: "refused", reason: "fixture" });
+    const mismatched = await admitCollection(root, { ...round, request: { ...request, risk: "tiny", collectionId: `preflight-collect:${head}:2` } });
+    assert.match(mismatched.refusal, /collection pin mismatch: risk/u, "a request off the launch pins is admitted only to record its refusal");
+    recordResult(root, ack.issue, 1, mismatched.admission, { status: "refused", reason: mismatched.refusal });
+    assert.deepEqual(readLedger(root, ack.issue, 1).map(item => item.result.status), ["refused", "refused"]);
     await processes.stop(livePid); livePid = null;
     const oldPath = process.env.PATH; process.env.PATH = env.PATH;
     try {
-      const amended = await acceptAmend({ root, issue: ack.issue, attempt: "1", risk: "deep", text: "Raise risk to deep; approved full snapshot follows.", "full-snapshot": true, snapshot }); livePid = processes.track(amended.pid);
-      assert.equal(amended.pinsVersion, 1); assert.match(amended.pinsFile, /pins\.v1\.json$/u); assert.equal(readJson(path.join(root, "workers.json"))[ack.issue].pinsVersion, 1);
-      assert.deepEqual(effectivePins(readJson(path.join(root, 'workers.json'))[ack.issue]).idea, launchedPins.idea, 'amendment keeps the original idea binding');
-      assert.match(fs.readFileSync(amended.resumeFile, "utf8"), /## prd\.md/u);
-      const originalResume = fs.readFileSync(amended.resumeFile, "utf8");
-      await processes.stop(livePid); livePid = null;
-      fs.appendFileSync(path.join(snapshot, "prd.md"), "\nAdditional approved snapshot context.\n");
-      const changedSnapshot = await acceptAmend({ root, issue: ack.issue, attempt: "1", risk: "deep", text: "Raise risk to deep; approved full snapshot follows.", "full-snapshot": true, snapshot }); livePid = processes.track(changedSnapshot.pid);
-      assert.equal(changedSnapshot.pinsVersion, 2, "same snapshot path with changed bytes creates a new version");
-      assert.equal(fs.readFileSync(amended.resumeFile, "utf8"), originalResume, "the already registered version is immutable");
-      await processes.stop(livePid); livePid = null;
-      const laterAmendment = await acceptAmend({ root, issue: ack.issue, attempt: "1", text: "Resume after an independent clarification." }); livePid = processes.track(laterAmendment.pid);
-      assert.equal(laterAmendment.pinsVersion, 3, "an independent amendment retains the full snapshot");
-      assert.match(fs.readFileSync(laterAmendment.resumeFile, "utf8"), /Additional approved snapshot context/u);
-      const staleWrite = { ...collect, id: `preflight-collect:${head}:2`, payload: { request: { ...request, collectionId: `preflight-collect:${head}:2` } } };
-      await assert.rejects(admitCollection(root, { ...collectReport, linear_mutations_pending: [staleWrite], capsule: { ...collectReport.capsule, open_queue: [staleWrite] } }), /stale pinsVersion/u);
-      assert.deepEqual((await admitCollection(root, collectReport))[0], admission, "prior admission is recoverable under its original version");
-      await t.test("amend-resume-registration-recovery: finish a delivered amendment without a second launch", async () => {
-        await processes.stop(livePid); livePid = null;
-        const resumeScript = path.join(runtime, "orchestrator/resume.mjs"), actualResume = path.join(runtime, "orchestrator/resume.actual.mjs");
-        const source = fs.readFileSync(resumeScript, "utf8"); write(actualResume, source);
-        write(resumeScript, `import {execFileSync} from "node:child_process";\nconst output=execFileSync(process.execPath,[${JSON.stringify(actualResume)},...process.argv.slice(2)],{encoding:"utf8"});\nprocess.stdout.write(output);process.stderr.write("fixture interruption after successful resume\\n");process.exitCode=1;\n`);
-        const args = [path.join(runtime, "orchestrator/accept.mjs"), "amend", "--root", root, "--issue", ack.issue, "--attempt", "1", "--text", "Recover delivered pins after interrupted registration."];
-        try {
-          const interrupted = run(process.execPath, args);
-          const delivered = readJson(path.join(root, "workers.json"))[ack.issue]; livePid = processes.track(delivered.pid);
-          assert.notEqual(interrupted.status, 0); assert.match(interrupted.stderr, /interruption after successful resume/u);
-          assert.equal(delivered.pinsVersion, 3, "resume delivery precedes pins registration");
-          const deliveredResume = delivered.last_resume, resumeFile = path.join(path.dirname(entry.pins.file), "resume.v4.md"), deliveredText = fs.readFileSync(resumeFile, "utf8");
-          const pendingFile = path.join(path.dirname(entry.pins.file), "amendment.pending.json"), pending = readJson(pendingFile);
-          write(resumeScript, source);
-          const changed = run(process.execPath, [...args.slice(0, -1), "A different amendment cannot replace delivered pending pins."]);
-          assert.notEqual(changed.status, 0); assert.match(changed.stderr, /identical retry/u);
-          assert.equal(readJson(path.join(root, "workers.json"))[ack.issue].pinsVersion, 3);
-          fs.appendFileSync(resumeFile, "Tampered context.\n");
-          const tampered = run(process.execPath, args); assert.notEqual(tampered.status, 0); assert.match(tampered.stderr, /content changed/u);
-          write(resumeFile, deliveredText);
-          const recovered = JSON.parse(pass(run(process.execPath, args)));
-          assert.equal(recovered.pid, livePid, "recovery must not launch another worker"); assert.equal(recovered.pinsVersion, 4);
-          const completed = readJson(path.join(root, "workers.json"))[ack.issue];
-          assert.equal(completed.pinsVersion, 4); assert.deepEqual(completed.last_resume, deliveredResume);
-          assert.equal(fs.readFileSync(resumeFile, "utf8"), deliveredText, "delivered amendment bytes stay unchanged");
-          assert.equal(fs.existsSync(pendingFile), false);
-          atomicJson(pendingFile, pending); // Interruption after registry publication, before pending cleanup.
-          assert.equal(JSON.parse(pass(run(process.execPath, args))).pid, livePid);
-          assert.equal(fs.existsSync(pendingFile), false); assert.deepEqual(readJson(path.join(root, "workers.json"))[ack.issue].last_resume, deliveredResume);
-        } finally { write(resumeScript, source); fs.unlinkSync(actualResume); }
-      });
-      await t.test("amend-completed-retry-after-cleanup: live and exited deliveries return their original result", async () => {
-        const resumeScript = path.join(runtime, "orchestrator/resume.mjs"), source = fs.readFileSync(resumeScript, "utf8");
-        const before = readJson(path.join(root, "workers.json")), originalPid = before[ack.issue].pid;
-        const resumeFile = path.join(path.dirname(entry.pins.file), "resume.v4.md"), originalText = fs.readFileSync(resumeFile, "utf8");
-        const args = [path.join(runtime, "orchestrator/accept.mjs"), "amend", "--root", root, "--issue", ack.issue, "--attempt", "1", "--text", "Recover delivered pins after interrupted registration."];
-        write(resumeScript, 'console.error("completed amendment must not resume again");process.exitCode=73;\n');
-        try {
-          assert.equal(JSON.parse(pass(run(process.execPath, args))).pid, originalPid);
-          assert.deepEqual(readJson(path.join(root, "workers.json")), before);
-          assert.equal(fs.readFileSync(resumeFile, "utf8"), originalText);
-          fs.appendFileSync(resumeFile, "Changed completed context.\n");
-          const changed = run(process.execPath, args); assert.notEqual(changed.status, 0); assert.match(changed.stderr, /completed amendment content changed/u);
-          write(resumeFile, originalText); assert.deepEqual(readJson(path.join(root, "workers.json")), before);
-          await processes.stop(livePid); livePid = null;
-          assert.equal(JSON.parse(pass(run(process.execPath, args))).pid, originalPid, "an exited delivered worker is not launched again");
-          assert.deepEqual(readJson(path.join(root, "workers.json")), before);
-          assert.equal(fs.readFileSync(resumeFile, "utf8"), originalText);
-        } finally { write(resumeScript, source); }
-      });
-      const pendingFile = path.join(path.dirname(entry.pins.file), "amendment.pending.json");
-      const isolatedPreparation = async callback => {
-        if (livePid) { await processes.stop(livePid); livePid = null; }
-        const registryFile = path.join(root, "workers.json"), before = readJson(registryFile), output = path.dirname(entry.pins.file);
-        const names = new Set(fs.readdirSync(output));
-        const resumeScript = path.join(runtime, "orchestrator/resume.mjs"), resumeSource = fs.readFileSync(resumeScript, "utf8");
-        const acceptScript = path.join(runtime, "orchestrator/accept.mjs"), acceptSource = fs.readFileSync(acceptScript, "utf8");
-        const launchScript = path.join(runtime, "orchestrator/launch.mjs"), launchSource = fs.readFileSync(launchScript, "utf8");
-        try { await callback({ registryFile, before, output, resumeScript, resumeSource, acceptScript, acceptSource, launchScript, launchSource }); }
-        finally {
-          const pid = readJson(registryFile)[ack.issue].pid;
-          if (pid !== before[ack.issue].pid) await processes.stop(processes.track(pid));
-          livePid = null; atomicJson(registryFile, before);
-          write(resumeScript, resumeSource); write(acceptScript, acceptSource); write(launchScript, launchSource);
-          for (const name of fs.readdirSync(output)) if (!names.has(name)) fs.rmSync(path.join(output, name), { recursive: true, force: true });
-          if (fs.existsSync(path.join(root, "amend.lock"))) fs.unlinkSync(path.join(root, "amend.lock"));
-        }
-      };
-      const amendArgs = text => [path.join(runtime, "orchestrator/accept.mjs"), "amend", "--root", root, "--issue", ack.issue, "--attempt", "1", "--text", text];
-      const removeDeadLock = async result => {
-        assert.equal(result.signal, "SIGKILL");
-        assert.throws(() => process.kill(result.pid, 0), { code: "ESRCH" });
-        for (const name of ["amend.lock", "launch.lock"]) {
-          const lock = path.join(root, name); if (!fs.existsSync(lock)) continue;
-          const bytes = fs.readFileSync(lock), holder = JSON.parse(bytes);
-          if (name === "amend.lock") assert.equal(holder.pid, result.pid);
-          // Killing accept does not synchronously finish its lock-holding resume child.
-          const deadline = Date.now() + 5000;
-          while (fixtureProcessExists(holder.pid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
-          assert.equal(fixtureProcessExists(holder.pid), false, `${name} holder must exit before fixture cleanup`);
-          assert.deepEqual(fs.readFileSync(lock), bytes, "only the observed dead holder's lock may be removed");
-          fs.unlinkSync(lock);
-        }
-      };
-      await t.test("ship-bot-policy: amend records attempt-scoped unavailability and preserves it on replay", () => isolatedPreparation(async ({ registryFile, before }) => {
-        const result = JSON.parse(pass(run(process.execPath, [...amendArgs("Confirmed bot service outage for this attempt."), "--bot-unavailable", "Greptile service outage confirmed"])));
-        processes.track(result.pid);
-        const worker = readJson(registryFile)[ack.issue], decision = effectivePins(worker).botUnavailable;
-        assert.deepEqual(decision, { issue: ack.issue, attempt: 1, reason: "Greptile service outage confirmed" });
-        assert.equal(effectivePins(before[ack.issue]).botUnavailable, undefined, "previous pins are preserved");
-        assert.deepEqual(JSON.parse(pass(run(process.execPath, [...amendArgs("Confirmed bot service outage for this attempt."), "--bot-unavailable", "Greptile service outage confirmed"]))), result);
-        const blank = run(process.execPath, [...amendArgs("Invalid bot decision."), "--bot-unavailable", " "]);
-        assert.notEqual(blank.status, 0); assert.match(blank.stderr, /nonempty reason/);
-      }));
-      const withBotRounds = async (count, callback, { currentHead = true } = {}) => isolatedPreparation(async context => {
-        const worker = context.before[ack.issue], current = effectivePins(worker), evidence = current.evidenceRoot;
-        const saved = evidence + '.bot-rounds-saved', existed = fs.existsSync(evidence);
-        if (existed) fs.renameSync(evidence, saved);
-        fs.mkdirSync(path.join(evidence, 'history'), { recursive: true });
-        const key = Buffer.alloc(32, 42); fs.writeFileSync(path.join(evidence, 'receipt.key'), key);
-        const tip = pass(run('git', ['rev-parse', 'HEAD'], current.worktree));
-        const base = pass(run('git', ['merge-base', 'HEAD', current.baseRef], current.worktree));
-        let contract = fs.readFileSync(path.join(current.fullSnapshot.directory, `issue-${ack.issue}.md`), 'utf8');
-        for (const record of Object.values(worker.completed_amendments).sort((a, b) => a.pinsVersion - b.pinsVersion))
-          contract += `\n\n## Orchestrator amendment ${record.pinsVersion}\n${record.change.text}`;
-        const seal = receipt => atomicJson(path.join(evidence, 'history', receipt.runId + '.json'), {
-          receipt, signature: createHmac('sha256', key).update(canonical(receipt)).digest('hex') });
-        for (let n = 1; n <= count; n++) seal({ producer: REVIEW_PRODUCER, pins: collectionPinsBinding(worker),
-          head: n === count && currentHead ? tip : String(n).repeat(40), base,
-          recordedAt: `2026-11-15T00:00:0${n}Z`, runId: `bot-round-${n}`,
-          review: { spent: true, round: n, contractDigest: digest(contract), outcome: 'clean',
-            record: { outcome: 'clean', findings: [], rounds: [] } } });
-        try { await callback({ ...context, current, evidence, tip, seal }); }
-        finally { fs.rmSync(evidence, { recursive: true, force: true }); if (existed) fs.renameSync(saved, evidence); }
-      });
-      const assertBotRoundTwoReused = async ({ current, registryFile, tip, evidence }) => {
-        const codex = path.join(bin, 'codex'), original = fs.readFileSync(codex);
-        const getconf = path.join(bin, 'getconf'), savedGetconf = fs.existsSync(getconf) ? fs.readFileSync(getconf) : null;
-        const darwinTemp = path.join(scratch, 'bot-darwin-temp'); fs.mkdirSync(darwinTemp, { recursive: true });
-        write(getconf, `#!/usr/bin/env node\nconsole.log(${JSON.stringify(darwinTemp)});\n`); fs.chmodSync(getconf, 0o700);
-        // A controlled verification adapter; any review CLI launch is a test failure.
-        write(codex, `#!/usr/bin/env node
-if(process.argv[2]!=='sandbox')process.exit(74);
-const p=JSON.parse(process.argv.at(-1));console.log(p.probeMarker);
-`);
-        const request = { ...current, pins: collectionPinsBinding(readJson(registryFile)[ack.issue]), head: tip,
-          workerVerification: { head: tip, exitCode: 0 }, collectionId: `preflight-collect:${tip}:401`, collect: false };
-        const requestFile = path.join(scratch, 'bot-reuse-request.json');
-        try {
-          atomicJson(requestFile, request);
-          assert.equal(run(process.execPath, [path.join(runtime, 'gate.mjs'), 'preflight', '--request', requestFile]).status, 2);
-          const queue = [{ id: request.collectionId, operation: 'preflight-collect', target: tip, payload: { request } }];
-          await admitCollection(root, { ...collectReport, linear_mutations_pending: queue, capsule: { ...collectReport.capsule, open_queue: queue } });
-          atomicJson(requestFile, { ...request, collect: true });
-          pass(run(process.execPath, [path.join(runtime, 'gate.mjs'), 'preflight', '--request', requestFile]));
-          const receipt = readJson(path.join(evidence, `${tip}.json`)).receipt;
-          assert.equal(receipt.review.round, 2); assert.equal(receipt.review.spent, false);
-          assert.equal(receipt.review.reusedFrom, 'bot-round-2');
-          const completed = fs.readdirSync(path.join(evidence, 'history')).map(name => readJson(path.join(evidence, 'history', name)).receipt).filter(r => r.review.spent);
-          assert.equal(completed.length, 2, 'Preflight spends no new round after refusal');
-        } finally {
-          fs.writeFileSync(codex, original);
-          if (savedGetconf) fs.writeFileSync(getconf, savedGetconf); else fs.unlinkSync(getconf);
-        }
-      };
-      await t.test('bot-unavailable-prepared-retry: second round refuses undelivered amendment and restores grants', () => withBotRounds(1, async ({ registryFile, output, current, evidence, tip, seal }) => {
-        const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
-        const exited = new Promise(resolve => child.once('exit', resolve));
-        const registry = readJson(registryFile); registry[ack.issue].pid = child.pid; atomicJson(registryFile, registry);
-        const extra = path.join(scratch, 'bot-prepared-extra'), grantsFile = path.join(scratch, 'bot-prepared-grants.json');
-        fs.mkdirSync(extra); write(grantsFile, [...current.workerWritableRoots, extra]);
-        const args = [...amendArgs('Prepared bot decision before round two.'), '--bot-unavailable', 'Greptile limit', '--worker-writable-roots', grantsFile];
-        try {
-          const prepared = run(process.execPath, args);
-          assert.equal(prepared.status, 1); assert.match(prepared.stderr, /worker process is still live/u);
-          assert.match(prepared.stderr, /proven non-delivery; prior grants restored/u);
-          const record = readJson(pendingFile);
-          assert.equal(JSON.parse(prepared.stdout).state, 'prepared');
-          assert.equal(record.launchMayHaveStartedAt, undefined);
-          assert.deepEqual(readJson(registryFile), registry);
-          child.kill('SIGTERM'); await exited;
-          const first = readJson(path.join(evidence, 'history/bot-round-1.json')).receipt;
-          seal({ ...first, runId: 'bot-round-2', recordedAt: '2026-11-15T00:00:02Z',
-            review: { ...first.review, round: 2 } });
-          const files = new Map(fs.readdirSync(output).map(name => [name,
-            fs.statSync(path.join(output, name)).isFile() ? fs.readFileSync(path.join(output, name)) : null]));
-          // An interrupted pre-launch preparation may have provisional grants to restore.
-          const provisional = structuredClone(registry);
-          for (const key of ['workerWritableRoots', 'writable_roots']) provisional[ack.issue][key].push(extra);
-          provisional[ack.issue].capsule.writable_roots.push(extra);
-          atomicJson(registryFile, provisional);
-          for (let retry = 0; retry < 2; retry++) {
-            const result = run(process.execPath, args), refusal = JSON.parse(result.stdout);
-            assert.equal(result.status, 1, result.stderr + result.stdout);
-            assert.equal(refusal.outcome, 'refused'); assert.equal(refusal.state, 'prepared');
-            assert.equal(refusal.version, record.pinsVersion);
-            assert.match(refusal.reason, /неизменённом коде.*пройденный круг ревью.*следующий.*последним/u);
-            assert.doesNotMatch(refusal.reason, /\n/u);
-            assert.deepEqual(readJson(registryFile), registry, 'refusal restores prior grants without registering or resuming');
-            assert.deepEqual(fs.readdirSync(output), [...files.keys()]);
-            for (const [name, bytes] of files) if (bytes) assert.deepEqual(fs.readFileSync(path.join(output, name)), bytes);
-          }
-          await assertBotRoundTwoReused({ current, registryFile, tip, evidence });
-          const uncertain = { ...record, launchMayHaveStartedAt: new Date().toISOString() };
-          atomicJson(pendingFile, uncertain); atomicJson(registryFile, provisional);
-          const refused = run(process.execPath, args);
-          assert.equal(refused.status, 1); assert.match(JSON.parse(refused.stdout).reason, /launch may have started/u);
-          assert.deepEqual(readJson(pendingFile), uncertain);
-          assert.deepEqual(readJson(registryFile), provisional, 'uncertain launch refusal precedes round guard and grant restoration');
-        } finally { child.kill('SIGTERM'); await exited; await processes.stop(child.pid); }
-      }));
-      for (const count of [2, 3]) for (const dirty of [false, true])
-        await t.test(`bot-unavailable-round-guard: ${count} completed, reusable HEAD, dirty=${dirty}`, () => withBotRounds(count, async ({ registryFile, output, current, evidence, tip }) => {
-          const dirtyFile = path.join(current.worktree, 'uncommitted-bot-fix');
-          if (dirty) write(dirtyFile, 'Code change not committed.\n');
-          if (count === 2 && dirty) atomicJson(path.join(output, 'amendment.pending.json'), { pinsVersion: 99 });
-          const registryBytes = fs.readFileSync(registryFile), names = fs.readdirSync(output);
-          const args = [...amendArgs('Code fix plus bot outage must preserve the reusable round.'), '--bot-unavailable', 'Greptile limit'];
-          try {
-            for (let retry = 0; retry < 2; retry++) {
-              const result = run(process.execPath, args), refusal = JSON.parse(result.stdout);
-              assert.equal(result.status, 1, result.stderr + result.stdout);
-              assert.equal(refusal.outcome, 'refused'); assert.equal(refusal.version, null); assert.equal(refusal.state, null);
-              assert.match(refusal.reason, /неизменённом коде.*пройденный круг ревью/u);
-              assert.match(refusal.reason, count === 2 ? /следующий.*последним/u : /лимит исчерпан/u);
-              for (const option of [/дождаться бота/u, /без отметки/u, /до следующего круга/u, /новой попытке/u, /решение оркестратора/u]) assert.match(refusal.reason, option);
-              assert.doesNotMatch(refusal.reason, /\n|working tree is dirty/u);
-              assert.deepEqual(fs.readFileSync(registryFile), registryBytes);
-              assert.deepEqual(fs.readdirSync(output), names, 'refusal creates no pins, resume or pending files');
-            }
-          } finally { if (dirty) fs.unlinkSync(dirtyFile); }
-          if (count === 2 && !dirty) await assertBotRoundTwoReused({ current, registryFile, tip, evidence });
-        }));
-      for (const [count, currentHead] of [[1, true], [2, false]])
-        await t.test(`bot-unavailable-round-admitted: ${count} completed, reusable=${currentHead}`, () => withBotRounds(count, async () => {
-          const result = JSON.parse(pass(run(process.execPath, [...amendArgs('Bot decision with review capacity.'), '--bot-unavailable', 'Greptile limit'])));
-          assert.equal(result.state, 'registered'); processes.track(result.pid);
-        }, { currentHead }));
-      await t.test('bot-unavailable-round-contract-fix-first: code amendment then bot decision at two rounds', () => withBotRounds(2, async () => {
-        const fix = JSON.parse(pass(run(process.execPath, amendArgs('Apply code fix before another round.'))));
-        await processes.stop(processes.track(fix.pid));
-        const bot = JSON.parse(pass(run(process.execPath, [...amendArgs('Record outage before the next round.'), '--bot-unavailable', 'Greptile limit'])));
-        assert.equal(bot.pinsVersion, fix.pinsVersion + 1); processes.track(bot.pid);
-      }));
-      for (const storage of ['registered', 'delivered', 'inherited'])
-        await t.test(`bot-unavailable-round-replay: ${storage} decision at two rounds`, () => withBotRounds(1, async ({ registryFile, output, seal }) => {
-          const args = [...amendArgs('Record bot outage before round two.'), '--bot-unavailable', 'Greptile limit'];
-          const result = JSON.parse(pass(run(process.execPath, args))); await processes.stop(processes.track(result.pid));
-          const registry = readJson(registryFile), worker = registry[ack.issue], record = structuredClone(worker.last_amendment);
-          const current = effectivePins(worker), tip = pass(run('git', ['rev-parse', 'HEAD'], current.worktree));
-          let contract = fs.readFileSync(path.join(current.fullSnapshot.directory, `issue-${ack.issue}.md`), 'utf8');
-          for (const amendment of Object.values(worker.completed_amendments).sort((a, b) => a.pinsVersion - b.pinsVersion))
-            contract += `\n\n## Orchestrator amendment ${amendment.pinsVersion}\n${amendment.change.text}`;
-          seal({ producer: REVIEW_PRODUCER, pins: collectionPinsBinding(worker), head: tip,
-            base: pass(run('git', ['merge-base', 'HEAD', current.baseRef], current.worktree)),
-            runId: 'bot-round-2', recordedAt: '2026-11-15T00:00:02Z',
-            review: { spent: true, round: 2, contractDigest: digest(contract), outcome: 'clean', record: { outcome: 'clean', findings: [], rounds: [] } } });
-          if (storage === 'inherited') {
-            const next = JSON.parse(pass(run(process.execPath, amendArgs('Post-ship fix without explicit bot flag.'))));
-            assert.equal(next.state, 'registered'); processes.track(next.pid);
-            assert.equal(effectivePins(readJson(registryFile)[ack.issue]).botUnavailable.reason, 'Greptile limit');
-          } else {
-            if (storage !== 'registered') {
-              worker.pinsVersion = record.currentVersion;
-              delete worker.completed_amendments[record.pinsVersion]; delete worker.last_amendment;
-              delete record.registeredResume; delete record.resumeResult;
-              atomicJson(path.join(output, 'amendment.pending.json'), record); atomicJson(registryFile, registry);
-              const first = readJson(path.join(current.evidenceRoot, 'history/bot-round-1.json')).receipt;
-              seal({ ...first, runId: 'bot-round-2', recordedAt: '2026-11-15T00:00:02Z',
-                review: { ...first.review, round: 2 } });
-            }
-            const replay = JSON.parse(pass(run(process.execPath, args))); processes.track(replay.pid);
-            assert.equal(replay.pinsVersion, result.pinsVersion);
-            assert.deepEqual(replay, result, 'registered and delivered retries never resume again');
-          }
-        }));
-      await t.test("AC4 old archive pins: new amendments retain full base and admit collection", () => isolatedPreparation(async ({ registryFile, before }) => {
-        const launchFile = before[ack.issue].pins.file, launchBytes = fs.readFileSync(launchFile);
-        const priorFile = path.join(path.dirname(launchFile), "pins.v1.json"), priorBytes = fs.readFileSync(priorFile);
-        try {
-          const archive = path.join(scratch, "evidence/datasets/old.v7.md"); write(archive, "Old review context.\n");
-          const legacy = { ...readJson(launchFile), reviewDataset: archive, reviewDatasetVersion: 7,
-            reviewDatasetDigest: createHash("sha256").update(fs.readFileSync(archive)).digest("hex") }; atomicJson(launchFile, legacy);
-          const registry = readJson(registryFile), worker = registry[ack.issue];
-          worker.pins.digest = createHash("sha256").update(fs.readFileSync(launchFile)).digest("hex");
-          const newerArchive = path.join(scratch, "evidence/datasets/newer.v8.md"); write(newerArchive, "Changed old review context.\n");
-          atomicJson(priorFile, { ...readJson(priorFile), reviewDataset: newerArchive, reviewDatasetVersion: 8,
-            reviewDatasetDigest: createHash("sha256").update(fs.readFileSync(newerArchive)).digest("hex") });
-          worker.pinsVersion = 1; delete worker.last_amendment; delete worker.completed_amendments; atomicJson(registryFile, registry);
-          for (const text of ["Legacy unrelated amendment one.", "Legacy unrelated amendment two."]) {
-            const result = JSON.parse(pass(run(process.execPath, amendArgs(text))));
-            assert.equal(effectivePins(readJson(registryFile)[ack.issue]).reviewDatasetVersion, 7);
-            assert.equal(Object.hasOwn(readJson(result.pinsFile), "reviewDatasetVersion"), false);
-            const worker = readJson(registryFile)[ack.issue], current = effectivePins(worker);
-            const published = JSON.parse(/\n(\{[\s\S]*\})\nKeep a pending collection request/u.exec(fs.readFileSync(result.resumeFile, "utf8"))[1]);
-            assert.deepEqual(published, current, "resume block must match registered pins after a prior old amendment");
-            assert.deepEqual(worker.last_amendment.effectiveInputs, current, "replay inputs use the same canonical overlay");
-            assert.equal(current.reviewDataset, archive); assert.equal(current.reviewDatasetDigest, legacy.reviewDatasetDigest);
-            const request = { ...published, pins: collectionPinsBinding(worker), head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:${result.pinsVersion + 100}` };
-            const queue = [{ id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } }];
-            const report = { ...collectReport, linear_mutations_pending: queue, capsule: { ...collectReport.capsule, open_queue: queue } };
-            assert.equal((await admitCollection(root, report))[0].manifestDigest, digest(current));
-            assert.deepEqual(checkCollectionRequest(request), current);
-            await processes.stop(processes.track(result.pid));
-          }
-        } finally { fs.writeFileSync(launchFile, launchBytes); fs.writeFileSync(priorFile, priorBytes); }
-      }));
-      for (const storage of ["completed", "last_amendment", "delivered"]) await t.test(`AC5 old dataset amendment replay: ${storage}`, () => isolatedPreparation(async ({ registryFile, before, output, resumeScript, resumeSource }) => {
-        const text = `Replay old dataset identity in ${storage}.`, args = amendArgs(text);
-        const original = JSON.parse(pass(run(process.execPath, args))); processes.track(original.pid);
-        const registry = readJson(registryFile), worker = registry[ack.issue];
-        const record = structuredClone(worker.last_amendment);
-        Object.assign(record.effectiveInputs, { reviewDataset: null, reviewDatasetVersion: 0, reviewDatasetDigest: null });
-        Object.assign(record.change, { reviewDataset: null, reviewDatasetVersion: 0 }); record.changeDigest = digest(record.change);
-        delete worker.completed_amendments;
-        if (storage === "completed") { worker.completed_amendments = { [record.changeDigest]: record }; delete worker.last_amendment; }
-        else if (storage === "last_amendment") worker.last_amendment = record;
-        else {
-          delete worker.last_amendment; worker.pinsVersion = record.currentVersion;
-          delete record.registeredResume; delete record.resumeResult;
-          atomicJson(path.join(output, "amendment.pending.json"), record);
-        }
-        atomicJson(registryFile, registry);
-        const names = fs.readdirSync(output).filter(name => /^pins\.v/.test(name));
-        write(resumeScript, 'console.error("old replay must not launch");process.exitCode=73;\n');
-        const recovered = JSON.parse(pass(run(process.execPath, args)));
-        assert.deepEqual(recovered, original);
-        assert.deepEqual(fs.readdirSync(output).filter(name => /^pins\.v/.test(name)), names);
-        assert.equal(readJson(registryFile)[ack.issue].pinsVersion, original.pinsVersion);
-      }));
-      for (const replayState of ["delivered", "registered", "prepared"]) await t.test(`AC5 ambiguous old dataset replay: ${replayState}`, () => isolatedPreparation(async ({ registryFile, output, resumeScript }) => {
-        const text = "Retry historical amendments with the same remaining arguments.";
-        const first = JSON.parse(pass(run(process.execPath, amendArgs(text))));
-        await processes.stop(processes.track(first.pid));
-        const second = JSON.parse(pass(run(process.execPath, amendArgs("Originally distinguished by the retired dataset."))));
-        processes.track(second.pid);
-        const registry = readJson(registryFile), worker = registry[ack.issue];
-        const earlier = worker.completed_amendments[first.pinsVersion], later = worker.last_amendment;
-        for (const [record, datasetVersion] of [[earlier, 1], [later, 2]]) {
-          Object.assign(record.effectiveInputs, { reviewDataset: `/old/archive.v${datasetVersion}.md`, reviewDatasetVersion: datasetVersion, reviewDatasetDigest: String(datasetVersion).repeat(64) });
-          Object.assign(record.change, { text, reviewDataset: record.effectiveInputs.reviewDataset, reviewDatasetVersion: datasetVersion });
-          record.changeDigest = digest(record.change);
-        }
-        worker.completed_amendments = { [earlier.pinsVersion]: earlier };
-        delete worker.last_amendment;
-        if (replayState !== "registered") {
-          worker.pinsVersion = later.currentVersion;
-          delete later.registeredResume; delete later.resumeResult;
-          if (replayState === "prepared") worker.last_resume = later.previousResume;
-          atomicJson(path.join(output, "amendment.pending.json"), later);
-        } else worker.completed_amendments[later.pinsVersion] = later;
-        atomicJson(registryFile, registry);
-        const names = fs.readdirSync(output).sort();
-        const files = new Map(names.filter(name => fs.statSync(path.join(output, name)).isFile()).map(name => [name, fs.readFileSync(path.join(output, name))]));
-        write(resumeScript, 'console.error("ambiguous replay must not launch");process.exitCode=73;\n');
-        const retried = run(process.execPath, amendArgs(text));
-        if (replayState === "delivered") {
-          assert.deepEqual(JSON.parse(pass(retried)), second);
-          const recovered = readJson(registryFile)[ack.issue];
-          assert.equal(recovered.pinsVersion, second.pinsVersion);
-          assert.deepEqual(recovered.last_resume, worker.last_resume);
-          assert.equal(fs.existsSync(path.join(output, "amendment.pending.json")), false);
-        } else if (replayState === "registered") {
-          assert.deepEqual(JSON.parse(pass(retried)), second);
-          assert.deepEqual(readJson(registryFile), registry, "completed replay only returns the latest matching record");
-          worker.completed_amendments = Object.fromEntries([later, earlier].map(record => [record.changeDigest, record]));
-          atomicJson(registryFile, registry);
-          assert.deepEqual(JSON.parse(pass(run(process.execPath, amendArgs(text)))), second);
-          assert.deepEqual(readJson(registryFile), registry, "maximum pinsVersion wins regardless of stored order");
-        } else {
-          assert.notEqual(retried.status, 0); assert.match(retried.stderr, /ambiguous amendment request/u);
-          assert.deepEqual(JSON.parse(retried.stdout).candidates, [first.pinsVersion, second.pinsVersion]);
-          assert.deepEqual(readJson(registryFile), registry);
-        }
-        for (const [name, bytes] of files) if (name !== "amendment.pending.json") assert.deepEqual(fs.readFileSync(path.join(output, name)), bytes);
-        assert.deepEqual(fs.readdirSync(output).sort(), names.filter(name => replayState !== "delivered" || name !== "amendment.pending.json"));
-      }));
-      await t.test("amend-live-wait-worker-proven-nondelivery", () => isolatedPreparation(async ({ registryFile, before }) => {
-        const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
-        const exited = new Promise(resolve => child.once("exit", resolve));
-        const registry = readJson(registryFile); registry[ack.issue].pid = child.pid; atomicJson(registryFile, registry);
-        const extra = path.join(scratch, "live-wait-extra"), grantsFile = path.join(scratch, "live-wait-grants.json");
-        fs.mkdirSync(extra); write(grantsFile, [...effectivePins(before[ack.issue]).workerWritableRoots, extra]);
-        const args = [...amendArgs("Retry live wait refusal."), "--worker-writable-roots", grantsFile];
-        try {
-          const refused = run(process.execPath, args); assert.notEqual(refused.status, 0); assert.match(refused.stderr, /worker process is still live/u);
-          const pending = readJson(pendingFile); assert.equal(pending.launchMayHaveStartedAt, undefined);
-          assert.equal(JSON.parse(refused.stdout).state, "prepared");
-          assert.deepEqual(readJson(registryFile), registry, "prior grants restored without advancing pins");
-          child.kill("SIGTERM"); await exited;
-          const retried = JSON.parse(pass(run(process.execPath, args))); assert.equal(retried.version, pending.pinsVersion); assert.equal(retried.state, "registered");
-          assert.ok(readJson(registryFile)[ack.issue].workerWritableRoots.includes(fs.realpathSync(extra)));
-        } finally { child.kill("SIGTERM"); await exited; await processes.stop(child.pid); }
-      }));
-      await t.test("amend-pre-spawn-refusal-with-changed-wait-state-remains-retryable", () => isolatedPreparation(({ registryFile, resumeScript, resumeSource }) => {
-        write(resumeScript, `import path from "node:path";import {readJson,atomicJson} from "../runtime.mjs";
-const request=readJson(process.argv[process.argv.indexOf("--request")+1]),file=path.join(request.root,"workers.json"),registry=readJson(file);
-registry[request.issue].last_wait={changed:true};atomicJson(file,registry);
-console.error("resume: worker process is still live; resume refused");process.exitCode=1;
-`);
-        const args = amendArgs("Changed wait state retains boundary.");
-        const failed = run(process.execPath, args); assert.notEqual(failed.status, 0);
-        assert.equal(readJson(pendingFile).launchMayHaveStartedAt, undefined);
-        assert.deepEqual(readJson(registryFile)[ack.issue].last_wait, { changed: true });
-        write(resumeScript, resumeSource);
-        pass(run(process.execPath, args));
-      }));
-      await t.test("amend-spawn-error-restores-grants: ENOENT clears the marker and permits retry", () => isolatedPreparation(({ registryFile, before }) => {
-        const extra = path.join(scratch, "amend-grant"), grantsFile = path.join(scratch, "expanded-grants.json");
-        fs.mkdirSync(extra); write(grantsFile, [...before[ack.issue].workerWritableRoots, extra]);
-        fs.symlinkSync(process.execPath, path.join(bin, "node")); fs.symlinkSync("/usr/bin/git", path.join(bin, "git"));
-        const codex = path.join(bin, "codex"), saved = codex + ".saved"; fs.renameSync(codex, saved);
-        const args = [...amendArgs("Expand approved grants, but launch is unavailable."), "--worker-writable-roots", grantsFile];
-        try {
-          const failed = spawnSync(process.execPath, args, { cwd: checkout, env: { ...env, PATH: bin }, encoding: "utf8" });
-          assert.notEqual(failed.status, 0); assert.match(failed.stderr, /ENOENT/u);
-          assert.equal(JSON.parse(failed.stdout).state, "prepared");
-          const version = readJson(pendingFile).pinsVersion;
-          assert.equal(readJson(pendingFile).launchMayHaveStartedAt, undefined);
-          assert.deepEqual(readJson(registryFile)[ack.issue].workerWritableRoots, before[ack.issue].workerWritableRoots);
-          assert.equal(readJson(registryFile)[ack.issue].pinsVersion, before[ack.issue].pinsVersion);
-          fs.renameSync(saved, codex);
-          const retried = JSON.parse(pass(run(process.execPath, args))); assert.equal(retried.version, version);
-        } finally { if (fs.existsSync(saved)) fs.renameSync(saved, codex); }
-      }));
-      await t.test("amend-pending-replacement-restores-original-grants: real uncorrelated spawn refuses replacement", () => isolatedPreparation(async ({ registryFile, before, launchScript, launchSource }) => {
-        const extra = path.join(scratch, "interrupted-amend-grant"), grantsFile = path.join(scratch, "interrupted-grants.json");
-        fs.mkdirSync(extra); write(grantsFile, [...effectivePins(before[ack.issue]).workerWritableRoots, fs.realpathSync(extra)]);
-        const args = [...amendArgs("Interrupted undelivered amendment."), "--worker-writable-roots", grantsFile];
-        write(launchScript, launchSource.replace('child.unref();', 'child.unref(); const partial = readRegistry(); partial[entry.issue].pid = child.pid; atomicJson(registryPath, partial); process.kill(process.ppid, "SIGKILL"); await new Promise(resolve => setTimeout(resolve, 150)); process.exit(1);'));
-        await removeDeadLock(run(process.execPath, args));
-        const evidence = fs.readFileSync(pendingFile), registry = fs.readFileSync(registryFile);
-        assert.ok(readJson(pendingFile).launchMayHaveStartedAt);
-        const replacement = run(process.execPath, amendArgs("Replace the interrupted undelivered amendment."));
-        assert.notEqual(replacement.status, 0); assert.match(replacement.stderr, /replacement refused/u);
-        assert.deepEqual(fs.readFileSync(pendingFile), evidence); assert.deepEqual(fs.readFileSync(registryFile), registry);
-      }));
-      await t.test("amend-interrupted-before-launch-marker: identical retry resumes the same prepared version", () => isolatedPreparation(async ({ launchScript, launchSource }) => {
-        write(launchScript, launchSource.replace('amendment = { ...amendment, launchMayHaveStartedAt:', 'process.kill(process.ppid, "SIGKILL"); process.exit(1); amendment = { ...amendment, launchMayHaveStartedAt:'));
-        const args = amendArgs("Retry proven unstarted preparation."); await removeDeadLock(run(process.execPath, args));
-        const pending = readJson(pendingFile), bytes = fs.readFileSync(pending.resumeFile);
-        assert.equal(pending.launchMayHaveStartedAt, undefined);
-        write(launchScript, launchSource);
-        const resumed = JSON.parse(pass(run(process.execPath, args))); assert.equal(resumed.version, pending.pinsVersion); assert.equal(resumed.state, "registered");
-        assert.deepEqual(fs.readFileSync(pending.resumeFile), bytes);
-      }));
-      await t.test("amend-interrupted-at-real-spawn-boundary: preserve evidence and refuse both retry and replacement", () => isolatedPreparation(async ({ launchScript, launchSource, registryFile }) => {
-        write(launchScript, launchSource.replace('child = spawn(command, args, options);', 'process.kill(process.ppid, "SIGKILL"); process.exit(1); child = spawn(command, args, options);'));
-        const args = amendArgs("Launch boundary recorded, command not called."); await removeDeadLock(run(process.execPath, args));
-        assert.ok(readJson(pendingFile).launchMayHaveStartedAt);
-        const bytes = fs.readFileSync(pendingFile), registry = fs.readFileSync(registryFile); write(launchScript, launchSource);
-        for (const command of [args, amendArgs("Replacement after uncertain launch.")]) {
-          const refused = run(process.execPath, command); assert.notEqual(refused.status, 0); assert.match(refused.stderr, /launch may have started/u);
-          assert.deepEqual(fs.readFileSync(pendingFile), bytes); assert.deepEqual(fs.readFileSync(registryFile), registry);
-        }
-      }));
-      await t.test("amend-proven-nondelivery-restores-grants-before-replacement: marker absent", () => isolatedPreparation(async ({ registryFile, before, launchScript, launchSource, resumeScript }) => {
-        write(launchScript, launchSource.replace('amendment = { ...amendment, launchMayHaveStartedAt:', 'process.kill(process.ppid, "SIGKILL"); process.exit(1); amendment = { ...amendment, launchMayHaveStartedAt:'));
-        const args = amendArgs("Preparation before launch marker."); await removeDeadLock(run(process.execPath, args));
-        const old = readJson(pendingFile); assert.equal(old.launchMayHaveStartedAt, undefined);
-        const provisional = readJson(registryFile), extra = path.join(scratch, "proven-unstarted-grant"); fs.mkdirSync(extra);
-        for (const key of ["workerWritableRoots", "writable_roots"]) provisional[ack.issue][key].push(extra);
-        provisional[ack.issue].capsule.writable_roots.push(extra); atomicJson(registryFile, provisional);
-        write(launchScript, launchSource); write(resumeScript, 'console.error("fixture launch unavailable");process.exitCode=1;\n');
-        const replacement = run(process.execPath, amendArgs("Different prepared request.")); assert.notEqual(replacement.status, 0);
-        assert.deepEqual(readJson(registryFile), before, "restore original grants before replacing preparation");
-        assert.ok(readJson(pendingFile).pinsVersion > old.pinsVersion); assert.equal(readJson(pendingFile).launchMayHaveStartedAt, undefined);
-        assert.equal(fs.readFileSync(old.resumeFile, "utf8").includes("Preparation before launch marker."), true);
-      }));
-      await t.test("amend-incomplete-snapshot-preparation-reserves-version: retry preserves orphaned bytes", () => isolatedPreparation(async ({ before, output, acceptScript, acceptSource }) => {
-        write(acceptScript, acceptSource.replace('fs.mkdirSync(target);', 'fs.mkdirSync(target); process.kill(process.pid, "SIGKILL");'));
-        const args = [...amendArgs("Recover interrupted snapshot staging."), "--full-snapshot", "--snapshot", snapshot];
-        await removeDeadLock(run(process.execPath, args));
-        const version = before[ack.issue].pinsVersion + 1, orphan = path.join(output, `snapshot.v${version}`);
-        assert.ok(fs.existsSync(orphan)); assert.equal(fs.existsSync(path.join(output, `pins.v${version}.json`)), false);
-        assert.equal(fs.existsSync(pendingFile), false);
-        const sentinel = path.join(orphan, "retained-preparation.txt"); fs.writeFileSync(sentinel, "Keep incomplete preparation evidence.");
-        write(acceptScript, acceptSource);
-        const recovered = JSON.parse(pass(run(process.execPath, args))); assert.equal(recovered.version, version + 1);
-        assert.equal(fs.readFileSync(sentinel, "utf8"), "Keep incomplete preparation evidence.");
-        assert.equal(fs.existsSync(path.join(output, `pins.v${version}.json`)), false);
-      }));
-      await t.test("amend-earlier-completed-retry: later amendments preserve prior delivery results", async () => {
-        if (livePid) await processes.stop(livePid); livePid = null;
-        const command = path.join(runtime, "orchestrator/accept.mjs"), args = [command, "amend", "--root", root, "--issue", ack.issue, "--attempt", "1", "--text"];
-        const first = JSON.parse(pass(run(process.execPath, [...args, "First historical amendment."]))); livePid = processes.track(first.pid);
-        const firstFiles = [first.pinsFile, first.resumeFile, first.resumeRequest].map(file => [file, fs.readFileSync(file, "utf8")]);
-        await processes.stop(livePid); livePid = null;
-        const second = JSON.parse(pass(run(process.execPath, [...args, "Later independent amendment."]))); livePid = processes.track(second.pid);
-        assert.equal(second.pinsVersion, first.pinsVersion + 1);
-        const registryFile = path.join(root, "workers.json"), before = readJson(registryFile);
-        const resumeScript = path.join(runtime, "orchestrator/resume.mjs"), source = fs.readFileSync(resumeScript, "utf8");
-        write(resumeScript, 'console.error("historical amendment must not resume again");process.exitCode=73;\n');
-        try {
-          assert.deepEqual(JSON.parse(pass(run(process.execPath, [...args, "First historical amendment."]))), first);
-          assert.deepEqual(readJson(registryFile), before, "historical replay cannot roll back the current version or worker");
-          assert.equal(fs.existsSync(path.join(path.dirname(first.pinsFile), `pins.v${second.pinsVersion + 1}.json`)), false);
-          fs.appendFileSync(first.resumeFile, "Changed historical context.\n");
-          const changed = run(process.execPath, [...args, "First historical amendment."]);
-          assert.notEqual(changed.status, 0); assert.match(changed.stderr, /completed amendment content changed/u);
-          write(first.resumeFile, firstFiles.find(([file]) => file === first.resumeFile)[1]);
-          await processes.stop(livePid); livePid = null;
-          assert.deepEqual(JSON.parse(pass(run(process.execPath, [...args, "First historical amendment."]))), first);
-          assert.deepEqual(readJson(registryFile), before);
-          for (const [file, bytes] of firstFiles) assert.equal(fs.readFileSync(file, "utf8"), bytes);
-        } finally { write(resumeScript, source); }
-      });
-      await t.test("amend-historical-omitted-pins-and-snapshot-ambiguity: latest registered match wins, explicit arguments select history", async () => {
-        const text = "Identical text with different saved effective inputs.", args = amendArgs(text);
-        const first = JSON.parse(pass(run(process.execPath, args))); livePid = processes.track(first.pid);
-        await processes.stop(livePid); livePid = null;
-        const evolved = path.join(scratch, "evolved-snapshot"); fs.mkdirSync(evolved);
-        for (const name of [`issue-${ack.issue}.md`, "approval.md", "project-brief.md", "prd.md", "tech-spec.md"]) fs.copyFileSync(path.join(snapshot, name), path.join(evolved, name));
-        fs.appendFileSync(path.join(evolved, "prd.md"), "\nA later approved snapshot.\n");
-        const secondArgs = [...args, "--full-snapshot", "--snapshot", evolved];
-        const second = JSON.parse(pass(run(process.execPath, secondArgs))); livePid = processes.track(second.pid);
-        assert.equal(second.version, first.version + 1);
-        const registryFile = path.join(root, "workers.json"), registry = fs.readFileSync(registryFile), output = path.dirname(first.pinsFile), names = fs.readdirSync(output);
-        assert.deepEqual(JSON.parse(pass(run(process.execPath, args))), second);
-        assert.deepEqual(fs.readFileSync(registryFile), registry); assert.deepEqual(fs.readdirSync(output), names);
-        assert.deepEqual(JSON.parse(pass(run(process.execPath, [...args, "--full-snapshot", "--snapshot", snapshot]))), first, "resolve omissions using each candidate, using the supplied original snapshot");
-        assert.deepEqual(JSON.parse(pass(run(process.execPath, secondArgs))), second);
+      await t.test("task-change-resume: an «Изменение задачи» link resumes the same session and reaches the reviewer; grants and risk never change", async () => {
+        const resume = path.join(runtime, "orchestrator/resume.mjs"), resumeFile = path.join(scratch, "task-change.md"), requestFile = path.join(scratch, "resume-request.json");
+        const url = "https://linear.app/darkdepot/issue/MONO-999/fixture#comment-1";
+        write(resumeFile, `Изменение задачи: ${url}\nRead the comment and follow it.\n`);
+        write(requestFile, { root, issue: ack.issue, resumeFile, workerWritableRoots: [...entry.workerWritableRoots, scratch] });
+        const widened = run(process.execPath, [resume, "--request", requestFile]);
+        assert.notEqual(widened.status, 0); assert.match(widened.stderr, /a risk or grant change is a new attempt on the same branch/u);
+        write(requestFile, { root, issue: ack.issue, resumeFile, taskChange: "https://linear.app/darkdepot/issue/MONO-999/fixture#comment-2" });
+        const unquoted = run(process.execPath, [resume, "--request", requestFile]);
+        assert.notEqual(unquoted.status, 0); assert.match(unquoted.stderr, /quoted in the resume file/u);
+        write(requestFile, { root, issue: ack.issue, resumeFile, taskChange: url });
+        const resumed = JSON.parse(pass(run(process.execPath, [resume, "--request", requestFile]))); livePid = processes.track(resumed.pid);
+        assert.equal(resumed.thread_id, entry.thread_id, "the same session resumes");
+        assert.equal(resumed.collector?.status, "running");
+        const changes = readJson(path.join(path.dirname(entry.pins.file), "task-changes.json"));
+        assert.deepEqual(changes.map(change => [change.number, change.url]), [[1, url]]);
+        assert.deepEqual(readJson(path.join(root, "workers.json"))[ack.issue].workerWritableRoots, entry.workerWritableRoots);
+        assert.equal(readJson(entry.pins.file).risk, pins.risk, "launch pins stay unchanged");
+        assert.equal(fs.readdirSync(path.dirname(entry.pins.file)).some(name => /^pins\.v\d+\.json$/u.test(name)), false);
         await processes.stop(livePid); livePid = null;
       });
-      await t.test("amend-snapshot-replay-uses-recorded-bytes: omitted snapshot ignores changed external inputs", async () => {
-        const args = [...amendArgs("Replay saved full documents."), "--full-snapshot", "--snapshot", snapshot];
-        const first = JSON.parse(pass(run(process.execPath, args))); livePid = processes.track(first.pid);
-        const registryFile = path.join(root, "workers.json"), registry = fs.readFileSync(registryFile), pins = readJson(first.pinsFile);
-        const bytes = fs.readFileSync(first.resumeFile), external = fs.readFileSync(path.join(snapshot, "prd.md"));
-        fs.appendFileSync(path.join(snapshot, "prd.md"), "\nChanged caller input after delivery.\n");
-        const omitted = amendArgs("Replay saved full documents.");
-        assert.deepEqual(JSON.parse(pass(run(process.execPath, omitted))), first);
-        assert.deepEqual(fs.readFileSync(first.resumeFile), bytes); assert.deepEqual(fs.readFileSync(registryFile), registry);
-        fs.writeFileSync(path.join(snapshot, "prd.md"), external);
-        for (const file of [first.pinsFile, first.resumeFile, first.resumeRequest, path.join(pins.fullSnapshot.directory, "prd.md")]) {
-          const original = fs.readFileSync(file); fs.appendFileSync(file, "\nChanged recorded version.\n");
-          const failed = run(process.execPath, omitted); assert.notEqual(failed.status, 0); assert.match(failed.stderr, /content changed/u);
-          assert.equal(JSON.parse(failed.stdout).version, first.version); assert.equal(JSON.parse(failed.stdout).state, "registered");
-          fs.writeFileSync(file, original); assert.deepEqual(fs.readFileSync(registryFile), registry);
-        }
-        await processes.stop(livePid); livePid = null;
-      });
-      await t.test("amend-new-request-refusal-before-version-allocation: null version and explicit reason", async () => {
-        const registryFile = path.join(root, "workers.json"), bytes = fs.readFileSync(registryFile);
-        const failed = run(process.execPath, [...amendArgs("A new prohibited downgrade."), "--risk", "tiny"]);
-        assert.notEqual(failed.status, 0); const refusal = JSON.parse(failed.stdout);
-        assert.equal(refusal.version, null); assert.equal(refusal.outcome, "refused"); assert.match(refusal.reason, /only escalate/u);
-        assert.deepEqual(fs.readFileSync(registryFile), bytes);
-      });
-      await assert.rejects(acceptAmend({ root, issue: ack.issue, attempt: "1", risk: "tiny", text: "downgrade" }), /only escalate/u);
     } finally { process.env.PATH = oldPath; }
   } finally {
     processes.track(livePid);
@@ -1332,26 +772,16 @@ if (process.argv.includes("-axo")) console.log("${process.pid} 1 ${process.pid} 
   } finally { process.env.PATH = oldPath; fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("collector leaves empty phases unconfirmed and refuses queued Linear writes and terminal reports", async () => {
-  const { collectOnce } = await import("./orchestrator/collector.mjs");
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-empty-"));
-  const root = path.join(scratch, "root"), repo = path.join(scratch, "repo");
-  const head = "a".repeat(40), issue = "MONO-999";
-  const identity = { packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4 };
-  const entry = { issue, stage: "mono-deliver", attempt: 1, worktree: repo, ...identity, spawned_at: new Date(Date.now() - 10000).toISOString() };
-  const report = { ...entry, phase: "code", kind: "phase", sequence: 1, head, publishedAt: new Date().toISOString(), linear_mutations_pending: [],
-    capsule: { phase: "code", head, decisions: [], writable_roots: [repo], open_queue: [] } };
-  try {
-    atomicJson(path.join(root, "workers.json"), { [issue]: entry });
-    const file = path.join(root, "reports", `${issue}-phase-code.json`); atomicJson(file, report);
-    await collectOnce({ root, issue, attempt: 1 });
-    assert.equal(fs.existsSync(path.join(root, "confirmations")), false, "an empty report needs no confirmation");
-    report.sequence = 2; report.linear_mutations_pending = report.capsule.open_queue = [{ id: "comment-1", operation: "comment", target: issue, payload: "hello" }];
-    atomicJson(file, report); await assert.rejects(collectOnce({ root, issue, attempt: 1 }), /Linear writes are not queued/u);
-    assert.equal(fs.existsSync(path.join(root, "confirmations")), false);
-    atomicJson(file, { ...entry, status: "green" });
-    await assert.rejects(collectOnce({ root, issue, attempt: 1 }), /phase identity/u);
-  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+test("collector ignores phase reports and refuses a round request before the code report", async () => {
+  await collectorAttentionFixture(async f => {
+    await f.poll();
+    assert.deepEqual(readLedger(f.options.root, f.options.issue, 1), [], "phase reports never wait for the collector");
+    fs.unlinkSync(path.join(f.options.root, "reports", `${f.options.issue}-phase-code.json`));
+    await f.signedHistory(f.request(1)); atomicJson(f.roundFile, f.round(1)); await f.poll();
+    const [only] = readLedger(f.options.root, f.options.issue, 1);
+    assert.equal(only.result.status, "refused"); assert.match(only.result.reason, /phase code report is missing/u);
+    assert.equal(fs.existsSync(path.join(f.options.root, "confirmations")), false);
+  });
 });
 
 async function collectorAttentionFixture(runFixture, plugin = false) {
@@ -1363,139 +793,97 @@ async function collectorAttentionFixture(runFixture, plugin = false) {
   const pins = { ...(plugin ? { packRoot: path.join(scratch, "task-plugin") } : {}), product: "fixture", root, worktree: repo, skillsRoot, evidenceRoot, baseRef: "origin/main", risk: "standard", critical: null,
     verification: { command: "node", args: ["verify.mjs"] }, workerWritableRoots: [repo] };
   const pinsFile = path.join(root, "dispatch", `${issue}-a1`, "pins.json");
-  const attention = path.join(root, "reports", `${issue}-collect-attention-a1.json`), log = path.join(root, "reports", `${issue}-collector-a1.log`);
-  const reportFile = path.join(root, "reports", `${issue}-phase-preflight.json`), registry = path.join(root, "workers.json");
-  const phase = (name, sequence, queue = []) => ({ ...identity, issue, stage: "mono-deliver", attempt: 1, phase: name, kind: "confirmation-request", sequence, head,
-    publishedAt: new Date().toISOString(), linear_mutations_pending: queue, capsule: { phase: name, head, decisions: [], open_queue: queue, writable_roots: [repo] } });
+  const log = path.join(root, "reports", `${issue}-collector-a1.log`);
+  const roundFile = path.join(root, "reports", roundRequestName(issue, 1)), registry = path.join(root, "workers.json");
+  const phase = (name, sequence) => ({ ...identity, issue, stage: "mono-deliver", attempt: 1, phase: name, kind: "phase", sequence, head,
+    publishedAt: new Date().toISOString(), capsule: { phase: name, head, decisions: [], writable_roots: [repo] } });
   const request = number => ({ ...pins, pins: { file: pinsFile, digest: createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") }, head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:${number}` });
-  const report = (number, overrides = {}) => {
-    const value = { ...request(number), ...overrides };
-    return phase("preflight", number, [{ id: value.collectionId, operation: "preflight-collect", target: head, payload: { request: value } }]);
-  };
+  const round = (number, overrides = {}) => ({ issue, attempt: 1, request: { ...request(number), ...overrides } });
   const poll = () => collectOnce(options);
   const lines = () => fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter(line => line.includes("attention: ")) : [];
   const oldPath = process.env.PATH;
   try {
     for (const dir of [repo, skillsRoot, evidenceRoot]) fs.mkdirSync(dir, { recursive: true });
     atomicJson(pinsFile, pins);
-    const entry = { ...identity, issue, stage: "mono-deliver", attempt: 1, worktree: repo,
+    const entry = { ...identity, issue, stage: "mono-deliver", attempt: 1, worktree: repo, workerWritableRoots: [repo],
       pins: { file: pinsFile, digest: createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") }, spawned_at: new Date(Date.now() - 10000).toISOString() };
     atomicJson(registry, { [issue]: entry });
-    atomicJson(path.join(root, "reports", `${issue}-phase-code.json`), phase("code", 1)); await poll();
+    atomicJson(path.join(root, "reports", `${issue}-phase-code.json`), phase("code", 1));
     const bin = path.join(scratch, "bin");
     write(path.join(bin, "ps"), "#!" + process.execPath + "\nconsole.log(process.argv.includes('-axo')?process.ppid+' 1 '+process.ppid+' S fixture-start':'fixture-start');\n"); fs.chmodSync(path.join(bin, "ps"), 0o700);
     process.env.PATH = `${bin}:${oldPath}`;
     if (plugin) write(path.join(pins.packRoot, 'VERSION'), '0.22.0\n');
     write(plugin ? path.join(pins.packRoot, 'scripts/gate.mjs') : path.join(skillsRoot, "scripts/gate.mjs"), "console.log('gate preflight: pass: fixture admission');\n");
+    // A receipt in history, as the gate writes it: evidenceRoot is outside every worker grant, so it carries no signature.
     const signedHistory = async value => {
-      const { createHmac, randomUUID } = await import("node:crypto"), { canonical } = await import("./runtime.mjs");
-      const key = Buffer.alloc(32, 9); fs.writeFileSync(path.join(evidenceRoot, "receipt.key"), key);
+      const { randomUUID } = await import("node:crypto");
       const receipt = { issue, ...value, root: fs.realpathSync(root), worktree: fs.realpathSync(repo), evidenceRoot: fs.realpathSync(evidenceRoot), workerWritableRoots: [fs.realpathSync(repo)],
         producer: REVIEW_PRODUCER, runId: randomUUID(), modelRoutes: null };
       const file = path.join(evidenceRoot, "history", `${receipt.runId}.json`);
-      const envelope = { receipt, signature: createHmac("sha256", key).update(canonical(receipt)).digest("hex") };
-      atomicJson(file, envelope);
-      return { receipt: file, receiptDigest: digest(envelope), gate: "gate preflight: fail: fixture reconciled refusal" };
+      atomicJson(file, { receipt });
+      return { receipt: file, receiptDigest: digest({ receipt }) };
     };
-    await runFixture({ poll, lines, attention, reportFile, registry, entry, phase, report, request, signedHistory, options, scratch });
+    await runFixture({ poll, lines, roundFile, round, registry, entry, phase, request, signedHistory, options, scratch });
   } finally { process.env.PATH = oldPath; fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 
 test("plugin collector executes the task folder gate with a separate helper root", async () => {
   await collectorAttentionFixture(async f => {
-    const report = f.report(1); atomicJson(f.reportFile, report);
-    await f.signedHistory(f.request(1)); await f.poll();
-    assert.equal(fs.existsSync(f.attention), false, fs.existsSync(f.attention) ? readJson(f.attention).reason : '');
-    const confirmed = readJson(path.join(f.options.root, 'confirmations', 'MONO-999-phase-preflight-a1-s1.confirmed.json'));
-    assert.equal(confirmed.status, 'confirmed');
-    assert.equal(confirmed.results[0].evidence.gate, 'gate preflight: pass: fixture admission');
+    atomicJson(f.roundFile, f.round(1));
+    const history = await f.signedHistory(f.request(1)); await f.poll();
+    const [only] = readLedger(f.options.root, f.options.issue, 1);
+    assert.equal(only.result.status, 'done', JSON.stringify(only.result));
+    assert.equal(only.result.gate, 'gate preflight: pass: fixture admission');
+    assert.equal(only.result.receipt, history.receipt);
     assert.notEqual(f.request(1).packRoot, f.request(1).skillsRoot);
   }, true);
 });
 
-test("collector admission refusal writes exactly one attention line and durable pair", async () => {
+test("collector records a refused round once for a request off the launch pins, also after a restart", async () => {
   await collectorAttentionFixture(async f => {
-    const report = f.report(1, { risk: "deep" }); atomicJson(f.reportFile, report);
+    atomicJson(f.roundFile, f.round(1, { risk: "deep" })); await f.poll();
+    const ledger = readLedger(f.options.root, f.options.issue, 1);
+    assert.deepEqual(ledger.map(item => [item.admission.ordinal, item.result.status, item.result.reason]), [[1, "refused", "collection pin mismatch: risk"]]);
+    const logFile = path.join(f.options.root, "reports", `${f.options.issue}-collector-a1.log`), beforeLog = fs.readFileSync(logFile, "utf8");
     await f.poll();
-    const value = readJson(f.attention);
-    assert.deepEqual(Object.keys(value).sort(), ["at", "collectionId", "pinsVersion", "reason", "reportDigest"]);
-    assert.equal(value.reportDigest, digest(report)); assert.equal(value.pinsVersion, 0);
-    assert.equal(value.collectionId, report.capsule.open_queue[0].id); assert.equal(value.reason, "collection pin mismatch: risk");
-    assert.ok(Number.isFinite(Date.parse(value.at))); assert.equal(f.lines().length, 1);
-    assert.deepEqual(fs.readdirSync(path.dirname(f.attention)).filter(name => name.includes("collect-attention")), [path.basename(f.attention)]);
-  });
-});
-
-test("collector skips the same refused pair on another poll and in a restarted process", async () => {
-  await collectorAttentionFixture(async f => {
-    atomicJson(f.reportFile, f.report(1, { risk: "deep" })); await f.poll();
-    const before = fs.readFileSync(f.attention, "utf8"), logFile = f.attention.replace("collect-attention", "collector").replace(".json", ".log");
-    const beforeLog = fs.readFileSync(logFile, "utf8"); await f.poll();
     const module = new URL("./orchestrator/collector.mjs", import.meta.url).href;
     pass(spawnSync(process.execPath, ["--input-type=module", "-e", `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify(f.options)});`], { encoding: "utf8" }));
-    assert.equal(fs.readFileSync(f.attention, "utf8"), before); assert.equal(f.lines().length, 1);
-    assert.equal(fs.readFileSync(logFile, "utf8"), beforeLog);
+    assert.deepEqual(readLedger(f.options.root, f.options.issue, 1), ledger);
+    assert.equal(fs.readFileSync(logFile, "utf8"), beforeLog, "a known request is skipped silently");
   });
 });
 
-test("collector retries identical report bytes after registry pinsVersion advances", async () => {
+test("collector-replaced-request: an admitted collectionId never takes another request; the next one is admitted after the result", async () => {
   await collectorAttentionFixture(async f => {
-    const report = f.report(1, { risk: "deep" }); atomicJson(f.reportFile, report); await f.poll();
-    atomicJson(path.join(path.dirname(f.entry.pins.file), "pins.v1.json"), { pinsVersion: 1 });
-    atomicJson(f.registry, { [f.options.issue]: { ...f.entry, pinsVersion: 1 } }); await f.poll();
-    assert.equal(f.lines().length, 2); assert.equal(readJson(f.attention).reportDigest, digest(report));
-    assert.equal(readJson(f.attention).pinsVersion, 1); assert.equal(readJson(f.attention).reason, `new collection request uses stale pinsVersion; expected ${path.join(path.dirname(f.entry.pins.file), "pins.v1.json")}`);
+    atomicJson(f.roundFile, f.round(1, { risk: "deep" })); await f.poll();
+    const before = readLedger(f.options.root, f.options.issue, 1);
+    atomicJson(f.roundFile, f.round(1)); await f.poll(); await f.poll();
+    assert.deepEqual(readLedger(f.options.root, f.options.issue, 1), before, "the refused result stays bound to the first request");
+    assert.deepEqual(f.lines().map(line => line.replace(/^\S+ /u, "")), [`attention: collectionId preflight-collect:${"d".repeat(40)}:1 already admitted for another request`]);
+    atomicJson(f.roundFile, f.round(2)); await f.signedHistory(f.request(2)); await f.poll();
+    const after = readLedger(f.options.root, f.options.issue, 1);
+    assert.deepEqual(after.map(item => [item.admission.ordinal, item.admission.collectionId.endsWith(":2") || item.admission.ordinal === 1, item.result.status]), [[1, true, "refused"], [2, true, "done"]]);
   });
 });
 
-test("collector retries a new refused report and replaces the attention record", async () => {
+test("collector finishes an admitted round before reading a newer request", async () => {
   await collectorAttentionFixture(async f => {
-    atomicJson(f.reportFile, f.report(1, { risk: "deep" })); await f.poll();
-    const next = { ...f.report(2, { risk: "deep" }), sequence: 1 }; atomicJson(f.reportFile, next); await f.poll();
-    assert.equal(f.lines().length, 2); assert.equal(readJson(f.attention).reportDigest, digest(next));
-    assert.equal(readJson(f.attention).collectionId, next.capsule.open_queue[0].id); assert.equal(readJson(f.attention).reason, "collection pin mismatch: risk");
+    const { admitRound } = await import("./review-rounds.mjs");
+    admitRound(f.options.root, f.options.issue, 1, f.request(1));
+    await f.signedHistory(f.request(1));
+    atomicJson(f.roundFile, f.round(2)); await f.poll();
+    const ledger = readLedger(f.options.root, f.options.issue, 1);
+    assert.deepEqual(ledger.map(item => [item.admission.ordinal, item.result?.status]), [[1, "done"]], "the overwritten mailbox cannot skip the admitted round");
+    await f.signedHistory(f.request(2)); await f.poll();
+    assert.deepEqual(readLedger(f.options.root, f.options.issue, 1).map(item => item.result.status), ["done", "done"]);
   });
 });
 
-test("collector admitted current report clears only the exact attempt attention file", async () => {
+test("collector launch lock error records nothing", async () => {
   await collectorAttentionFixture(async f => {
-    const report = f.report(1); atomicJson(f.reportFile, report);
-    atomicJson(f.attention, { reportDigest: digest(report), collectionId: report.capsule.open_queue[0].id, pinsVersion: 1, reason: "prior refusal", at: new Date().toISOString() });
-    const helper = f.attention.replace(".json", "-s1.txt"), other = f.attention.replace("-a1.json", "-a2.json");
-    write(helper, "helper evidence"); atomicJson(other, { reason: "other attempt" });
-    await f.signedHistory(f.request(1)); await f.poll();
-    assert.equal(fs.existsSync(f.attention), false); assert.equal(fs.readFileSync(helper, "utf8"), "helper evidence");
-    assert.equal(readJson(other).reason, "other attempt");
-  });
-});
-
-test("collector corrected higher-sequence D2 admission clears the refused D1 attention", async () => {
-  await collectorAttentionFixture(async f => {
-    const rejected = f.report(1, { risk: "deep" }); atomicJson(f.reportFile, rejected); await f.poll();
-    // A later sequence still requires orchestrator reconciliation of D1.
-    const evidence = await f.signedHistory(rejected.capsule.open_queue[0].payload.request);
-    await confirmQueue(rejected, f.options.root, () => ({ state: "present", evidence }));
-    assert.equal(fs.existsSync(f.attention), true);
-    atomicJson(f.reportFile, f.report(2)); await f.signedHistory(f.request(2)); await f.poll();
-    assert.equal(fs.existsSync(f.attention), false);
-    assert.equal(readJson(path.join(f.options.root, "confirmations", `${f.options.issue}-phase-preflight-a1-s2.confirmed.json`)).status, "confirmed");
-  });
-});
-
-test("collector confirmation of another phase leaves attention untouched", async () => {
-  await collectorAttentionFixture(async f => {
-    atomicJson(f.reportFile, f.report(1, { risk: "deep" })); await f.poll();
-    const before = fs.readFileSync(f.attention, "utf8");
-    atomicJson(path.join(f.options.root, "reports", `${f.options.issue}-phase-code.json`), f.phase("code", 2)); await f.poll();
-    assert.equal(fs.readFileSync(f.attention, "utf8"), before); assert.equal(f.lines().length, 1);
-  });
-});
-
-test("collector launch lock error creates no attention file", async () => {
-  await collectorAttentionFixture(async f => {
-    atomicJson(f.reportFile, f.report(1));
+    atomicJson(f.roundFile, f.round(1));
     await withLock(path.join(f.options.root, "launch.lock"), async () => { await assert.rejects(f.poll(), /operation locked/u); });
-    assert.equal(fs.existsSync(f.attention), false); assert.equal(f.lines().length, 0);
+    assert.deepEqual(readLedger(f.options.root, f.options.issue, 1), []); assert.equal(f.lines().length, 0);
   });
 });
 
@@ -1513,6 +901,8 @@ test("collector installed scratch: gate crash leaves both locks, admitted recove
   const processes = fixtureProcesses();
   let started, validatorPid;
   const validationFile = path.join(scratch, "validation.json");
+  const roundFile = path.join(root, "reports", roundRequestName(issue, 1));
+  const result = ordinal => readLedger(root, issue, 1).find(item => item.admission.ordinal === ordinal)?.result ?? null;
   try {
     for (const dir of [repo, evidence, bin, path.dirname(lock)]) fs.mkdirSync(dir, { recursive: true });
     write(rows, [lock, headLock]);
@@ -1529,10 +919,9 @@ for(const file of JSON.parse(fs.readFileSync(process.env.MONO_FIXTURE_ROWS))) if
 for(const row of found.values()) console.log(row.pid+' 1 '+row.processGroup+' S fixture-start');
 `); fs.chmodSync(path.join(bin, "ps"), 0o700);
     process.env.PATH = `${bin}:${oldPath}`; process.env.MONO_FIXTURE_ROWS = rows;
-    fs.writeFileSync(path.join(evidence, "receipt.key"), Buffer.alloc(32, 7));
     atomicJson(modeFile, { crash: false }); atomicJson(countFile, { collections: 0 });
     write(path.join(skills, "scripts/gate.mjs"), `import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';
-import {withLock,atomicJson,readJson,canonical} from ${JSON.stringify(runtimeUrl)};
+import {withLock,atomicJson,readJson} from ${JSON.stringify(runtimeUrl)};
 const request=readJson(process.argv[process.argv.indexOf('--request')+1]);
 if(!request.collect){if(readJson(${JSON.stringify(modeFile)}).holdValidation){atomicJson(${JSON.stringify(validationFile)},{pid:process.pid});while(readJson(${JSON.stringify(modeFile)}).holdValidation)await new Promise(r=>setTimeout(r,50));}const receipt=readJson(path.join(request.evidenceRoot,request.head+'.json')).receipt;console.log(receipt.verification.exitCode===0?'gate preflight: pass: fixture recovered':'gate preflight: fail: fixture verification failed');process.exit();}
 await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),async()=>{
@@ -1541,7 +930,7 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
  root:fs.realpathSync(request.root),worktree:fs.realpathSync(request.worktree),evidenceRoot:fs.realpathSync(request.evidenceRoot),risk:request.risk,critical:request.critical,workerWritableRoots:request.workerWritableRoots.map(p=>fs.realpathSync(p)).sort(),
  ...(request.pins?{pins:request.pins}:{}),verification:{...request.verification,exitCode:mode.failed?1:0}};
  if(mode.corrupt) receipt[mode.corrupt]=mode.value;
- const envelope={receipt,signature:crypto.createHmac('sha256',fs.readFileSync(path.join(request.evidenceRoot,'receipt.key'))).update(canonical(receipt)).digest('hex')};
+ const envelope={receipt};
  atomicJson(path.join(request.evidenceRoot,'history',receipt.runId+'.json'),envelope);
  if(mode.crash){const holder=readJson(${JSON.stringify(lock)});process.kill(holder.pid,'SIGKILL');process.exit(77);}
  atomicJson(path.join(request.evidenceRoot,request.head+'.json'),envelope);
@@ -1552,27 +941,25 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
       risk: "standard", critical: null, verification: { command: "node", args: ["verify.mjs"] }, workerWritableRoots: [repo] };
     const pinsFile = path.join(root, "dispatch", `${issue}-a1`, "pins.json"); atomicJson(pinsFile, pins);
     const identity = { packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4 };
-    const entry = { ...identity, issue, stage: "mono-deliver", attempt, worktree: repo, pinsVersion: 0,
+    const entry = { ...identity, issue, stage: "mono-deliver", attempt, worktree: repo, workerWritableRoots: [repo],
       pins: { file: pinsFile, digest: createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") }, spawned_at: new Date(Date.now() - 10000).toISOString() };
     atomicJson(path.join(root, "workers.json"), { [issue]: entry });
-    const phase = (name, sequence, queue = []) => ({ ...identity, issue, stage: "mono-deliver", attempt, phase: name, kind: "confirmation-request", sequence, head,
-      publishedAt: new Date().toISOString(), linear_mutations_pending: queue, capsule: { phase: name, head, writable_roots: [repo], decisions: [], open_queue: queue } });
-    const code = phase("code", 1); atomicJson(path.join(root, "reports", `${issue}-phase-code.json`), code);
+    const code = { ...identity, issue, stage: "mono-deliver", attempt, phase: "code", kind: "phase", sequence: 1, head,
+      publishedAt: new Date().toISOString(), capsule: { phase: "code", head, writable_roots: [repo], decisions: [] } };
+    atomicJson(path.join(root, "reports", `${issue}-phase-code.json`), code);
     started = await collectorStart(options); processes.track(started.pid); assert.ok(started.procStart);
     await assert.rejects(collectorStart(options), /locked/u);
     assert.equal(collectorStatus(options).status, "running-or-unverified");
     await new Promise(resolve => setTimeout(resolve, 300));
-    assert.equal(fs.existsSync(path.join(root, "confirmations")), false, "the running collector leaves an empty code report unconfirmed");
+    assert.deepEqual(readLedger(root, issue, 1), [], "the running collector waits for a round request");
     const request = { ...pins, pins: collectionPinsBinding(entry), head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:1` };
-    const queued = { id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } };
-    const report = phase("preflight", 1, [queued]), reportFile = path.join(root, "reports", `${issue}-phase-preflight.json`);
-    atomicJson(modeFile, { crash: true }); atomicJson(reportFile, report);
+    atomicJson(modeFile, { crash: true }); atomicJson(roundFile, { issue, attempt, request });
     await waitUntil(() => fs.existsSync(path.join(evidence, "history")) && fs.readdirSync(path.join(evidence, "history")).length === 1 && collectorStatus(options).status === "stale");
     await processes.stop(started.pid);
     assert.equal(fs.existsSync(lock), true); assert.equal(fs.existsSync(headLock), true); assert.equal(fs.existsSync(path.join(evidence, `${head}.json`)), false);
-    const admissionFile = path.join(root, "consumed", `${issue}-a1/admissions`, `${queued.id}.json`);
-    assert.equal(readJson(admissionFile).pinsVersion, 0);
-    entry.pinsVersion = 1; atomicJson(path.join(path.dirname(pinsFile), "pins.v1.json"), { pinsVersion: 1, risk: "deep" }); atomicJson(path.join(root, "workers.json"), { [issue]: entry });
+    assert.equal(readLedger(root, issue, 1)[0].result, null, "the crashed round stays admitted without a result");
+    // The worker overwrites its mailbox: the admitted round is still finished first.
+    atomicJson(roundFile, { issue, attempt, request: { ...request, collectionId: `preflight-collect:${head}:9` } });
     atomicJson(modeFile, { holdValidation: true }); started = await collectorStart(options); processes.track(started.pid);
     await waitUntil(() => fs.existsSync(validationFile)); validatorPid = processes.track(readJson(validationFile).pid);
     const recoveryPid = started.pid; process.kill(recoveryPid, "SIGKILL"); started = null;
@@ -1583,11 +970,12 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
     await assert.rejects(collectorStart(options), /locked/u);
     atomicJson(modeFile, { crash: false });
     await waitUntil(() => collectorStatus(options).status === "stale"); await processes.stop(validatorPid); validatorPid = null;
+    atomicJson(roundFile, { issue, attempt, request });
     started = await collectorStart(options); processes.track(started.pid);
-    const confirmed = path.join(root, "confirmations", `${issue}-phase-preflight-a1-s1.confirmed.json`);
-    await waitUntil(() => fs.existsSync(confirmed)); validateConfirmation(report, readJson(confirmed));
+    await waitUntil(() => result(1) !== null);
+    assert.equal(result(1).status, "done"); assert.equal(result(1).gate, "gate preflight: pass: fixture recovered");
     assert.equal(readJson(countFile).collections, 1, "history recovery never repeats review");
-    assert.equal(fs.existsSync(headLock), false); assert.deepEqual(readJson(path.join(evidence, `${head}.json`)), readJson(readJson(confirmed).results[0].evidence.receipt));
+    assert.equal(fs.existsSync(headLock), false); assert.deepEqual(readJson(path.join(evidence, `${head}.json`)), readJson(result(1).receipt));
     collectorStop(options); await waitUntil(() => !fs.existsSync(lock)); await processes.stop(started.pid); started = null;
     assert.equal(collectorStatus(options).status, "stopped");
     await t.test("dead holder cannot reclaim a live orphan descendant", async () => {
@@ -1606,45 +994,28 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
         assert.equal(fs.existsSync(lock), false); assert.equal(fs.existsSync(headLock), false);
       } finally { child.kill("SIGKILL"); await exited; }
     });
-    const stale = { ...request, collectionId: `preflight-collect:${head}:2` };
-    atomicJson(reportFile, phase("preflight", 2, [{ ...queued, id: stale.collectionId, payload: { request: stale } }]));
-    await collectOnce(options);
-    assert.equal(readJson(path.join(root, "reports", `${issue}-collect-attention-a1.json`)).reason, `new collection request uses stale pinsVersion; expected ${path.join(path.dirname(pinsFile), "pins.v1.json")}`);
-    assert.equal(readJson(countFile).collections, 1);
-    await t.test("receipt actual binding rejects signed mismatches", async () => {
-      for (const [field, value] of [["risk", "standard"], ["critical", "wrong"], ["workerWritableRoots", []], ["verification", { command: "wrong", args: [] }], ["pins", { file: "wrong", digest: "0".repeat(64) }]]) {
-        const number = readJson(countFile).collections + 1, id = `preflight-collect:${head}:${number}`;
-        const current = { ...request, risk: "deep", collectionId: id, pins: collectionPinsBinding(readJson(path.join(root, "workers.json"))[issue]) }, next = { ...phase("preflight", 2, [{ ...queued, id, payload: { request: current } }]), pinsVersion: 1 };
-        // Each refusal is a separate scratch report; discard only its unconfirmed
-        // admission/result, then use a fresh ID for the next recorded gate run.
-        atomicJson(reportFile, next); atomicJson(modeFile, { corrupt: field, value });
-        await assert.rejects(collectOnce(options), new RegExp(`binding mismatch: ${field}`));
-        assert.equal(fs.existsSync(path.join(root, "reports", `${issue}-collect-attention-a1.json`)), false);
-        assert.equal(fs.existsSync(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s2.confirmed.json`)), false);
+    const next = () => { const ordinal = readLedger(root, issue, 1).length + 1, id = `preflight-collect:${head}:${ordinal + 10}`;
+      atomicJson(roundFile, { issue, attempt, request: { ...request, collectionId: id } }); return ordinal; };
+    await t.test("receipt actual binding rejects mismatches with a failed result", async () => {
+      for (const [field, value] of [["risk", "deep"], ["critical", "wrong"], ["workerWritableRoots", []], ["verification", { command: "wrong", args: [] }], ["pins", { file: "wrong", digest: "0".repeat(64) }]]) {
+        const ordinal = next(); atomicJson(modeFile, { corrupt: field, value });
+        await collectOnce(options);
+        assert.equal(result(ordinal).status, "failed"); assert.match(result(ordinal).reason, new RegExp(`binding mismatch: ${field}`));
       }
     });
-    await t.test("failed signed collections are completed and never reviewed twice", async () => {
-      const number = readJson(countFile).collections + 1, id = `preflight-collect:${head}:${number}`;
-      const current = { ...request, risk: "deep", collectionId: id, pins: collectionPinsBinding(readJson(path.join(root, "workers.json"))[issue]) };
-      const failed = { ...phase("preflight", 2, [{ ...queued, id, payload: { request: current } }]), pinsVersion: 1 };
-      atomicJson(reportFile, failed); atomicJson(modeFile, { failed: true });
+    await t.test("failed collections are completed and never reviewed twice", async () => {
+      const ordinal = next(), count = readJson(countFile).collections; atomicJson(modeFile, { failed: true });
       await collectOnce(options);
-      const confirmation = readJson(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s2.confirmed.json`));
-      validateConfirmation(failed, confirmation); assert.match(confirmation.results[0].evidence.gate, /^gate preflight: fail:/);
-      assert.equal(readJson(countFile).collections, number);
-      await collectOnce(options); assert.equal(readJson(countFile).collections, number);
+      assert.equal(result(ordinal).status, "done"); assert.match(result(ordinal).gate, /^gate preflight: fail:/);
+      assert.equal(readJson(countFile).collections, count + 1);
+      await collectOnce(options); assert.equal(readJson(countFile).collections, count + 1);
     });
-    await t.test("a started run without a receipt retries only within its original allowance", async () => {
-      const number = readJson(countFile).collections + 1, id = `preflight-collect:${head}:${number}`;
-      const current = { ...request, risk: "deep", collectionId: id, pins: collectionPinsBinding(readJson(path.join(root, "workers.json"))[issue]) };
-      const incomplete = { ...phase("preflight", 3, [{ ...queued, id, payload: { request: current } }]), pinsVersion: 1 };
-      atomicJson(reportFile, incomplete); atomicJson(modeFile, { noReceipt: true });
+    await t.test("a started run without a receipt retries only within its allowance, then fails", async () => {
+      const ordinal = next(), count = readJson(countFile).collections; atomicJson(modeFile, { noReceipt: true });
       await collectOnce(options);
-      const attention = path.join(root, "reports", `${issue}-collect-attention-a1.json`);
-      assert.match(readJson(attention).reason, /timed-out.*retries exhausted/);
+      assert.equal(result(ordinal).status, "failed"); assert.match(result(ordinal).reason, /retries exhausted/);
       await collectOnce(options);
-      assert.equal(readJson(countFile).collections, number + 1);
-      assert.equal(fs.existsSync(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s3.confirmed.json`)), false);
+      assert.equal(readJson(countFile).collections, count + 2);
     });
   } finally {
     try {
@@ -1671,23 +1042,17 @@ test("AC4 collector accepts old reviewDataset receipts and new receipts without 
       const registry = readJson(f.registry); registry[f.entry.issue].pins.digest = createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex"); atomicJson(f.registry, registry);
       const request = { ...f.request(1), ...(shape === "new" ? {} : { reviewDatasetVersion: base.reviewDatasetVersion }),
         ...(shape === "before-0.49.0" ? { reviewDataset: archive } : {}) };
-      const report = f.report(1); report.capsule.open_queue[0].payload.request = request;
-      atomicJson(f.reportFile, report);
-      await admitCollection(f.options.root, report);
-      const admissionFile = path.join(f.options.root, "consumed/MONO-999-a1/admissions", request.collectionId + ".json");
-      assert.equal(readJson(admissionFile).manifestDigest, digest({ ...base, pinsVersion: 0 }));
+      atomicJson(f.roundFile, { issue: f.options.issue, attempt: 1, request });
       const signed = await f.signedHistory(request), envelope = readJson(signed.receipt);
       if (shape !== "new") envelope.receipt.reviewDataset = shape === "0.49.x" ? null : { source: archive,
         archive, version: 1, digest: hash, copy: ".orchestrator/review-dataset-old.md" };
-      const { createHmac } = await import("node:crypto"), { canonical } = await import("./runtime.mjs");
-      envelope.signature = createHmac("sha256", fs.readFileSync(path.join(base.evidenceRoot, "receipt.key"))).update(canonical(envelope.receipt)).digest("hex");
       atomicJson(signed.receipt, envelope); fs.unlinkSync(archive);
       await f.poll();
-      const confirmation = readJson(path.join(f.options.root, "confirmations/MONO-999-phase-preflight-a1-s1.confirmed.json"));
-      assert.equal(confirmation.status, "confirmed");
+      const [only] = readLedger(f.options.root, f.options.issue, 1);
+      assert.equal(only.result.status, "done", JSON.stringify(only.result));
+      assert.equal(only.admission.manifestDigest, digest(base));
       const receipt = readJson(path.join(base.evidenceRoot, f.request(1).head + ".json")).receipt;
       assert.equal(Object.hasOwn(receipt, "reviewDataset"), shape !== "new");
-      assert.deepEqual(readJson(admissionFile).manifestDigest, digest({ ...base, pinsVersion: 0 }));
     });
   });
 });
@@ -1896,8 +1261,9 @@ if(isMain(import.meta.url)){ const args=process.argv.slice(2), request=path.join
       assert.equal(git(path.join(repo, ".worktrees/MONO-996"), "show", `HEAD:${ignored}`), ignoredBytes.trimEnd());
       await processes.stop(pid); pid = null;
     });
-    await t.test("preapply-amend-requires-new-dispatch", async () => {
-      await assert.rejects(acceptAmend({ root, issue: "MONO-997", attempt: "1", preapply: true }), /new dispatch|новый запуск/u);
+    await t.test("preapply-requires-new-dispatch: resume carries text only", async () => {
+      const { resumeWorker } = await import("./orchestrator/launch.mjs");
+      await assert.rejects(resumeWorker({ root, issue: "MONO-997", resumeFile: path.join(root, "absent.md"), preapply: true }), /a risk or grant change is a new attempt/u);
     });
   } finally {
     processes.track(pid); processes.registry(path.join(root, "workers.json"));
@@ -1991,8 +1357,8 @@ test('collection admission: registered attempts require pins for reads and colle
   await collectorAttentionFixture(async f => {
     const request = f.request(1); delete request.pins;
     for (const collect of [false, true]) assert.throws(() => checkCollectionRequest({ ...request, collect }), /mismatch: pins;/);
-    const report = f.report(1); delete report.capsule.open_queue[0].payload.request.pins;
-    await assert.rejects(admitCollection(f.options.root, report), /mismatch: pins/);
+    const { refusal } = await admitCollection(f.options.root, { issue: f.options.issue, attempt: 1, request });
+    assert.match(refusal, /mismatch: pins/);
   });
 });
 
@@ -2008,17 +1374,15 @@ test('collection admission: unregistered and unbound direct collection cannot sk
   });
 });
 
-test('collection admission: direct collect:true needs admission; collect:false stays pending and old-head/repeated execution cannot reuse it',async()=>{
+test('collection admission: direct collect:true needs the collector admission bound to this request; repeated execution cannot reuse it',async()=>{
   await collectorAttentionFixture(async f=>{
-    const file=path.join(f.options.root,'dispatch','MONO-999-a1','pins.json');
-    atomicJson(file,readJson(f.entry.pins.file));
-    const registry=readJson(f.registry);registry['MONO-999'].pins={file,digest:createHash('sha256').update(fs.readFileSync(file)).digest('hex')};
-    atomicJson(f.registry,registry);
-    const binding=collectionPinsBinding(registry['MONO-999']),request={...f.request(1),pins:binding};
+    const request=f.request(1);
     assert.doesNotThrow(()=>checkCollectionRequest(request));
     assert.throws(()=>checkCollectionRequest({...request,collect:true}),/admission/);
-    const report=f.report(1,{pins:binding});await admitCollection(f.options.root,report);
+    await admitCollection(f.options.root,{issue:f.options.issue,attempt:1,request});
     assert.doesNotThrow(()=>checkCollectionRequest({...request,collect:true}));
+    assert.throws(()=>checkCollectionRequest({...request,workerVerification:{head:request.head,exitCode:1},collect:true}),/mismatch: admission/,
+      'a replaced request under the admitted collectionId is refused, also for collect:false reads');
     assert.throws(()=>checkCollectionRequest({...request,head:'e'.repeat(40),collect:true}),/collectionId/);
     await f.signedHistory(request);
     assert.throws(()=>checkCollectionRequest({...request,collect:true}),/already executed/);
@@ -2026,43 +1390,28 @@ test('collection admission: direct collect:true needs admission; collect:false s
   });
 });
 
-async function collectionRetryFixture(mode, run, { disableWatchdog = false } = {}) {
+async function collectionRetryFixture(mode, run) {
   await collectorAttentionFixture(async f => {
-    const request = f.request(1), report = f.report(1);
+    const request = f.request(1), round = { issue: f.options.issue, attempt: 1, request };
     const template = await f.signedHistory(request), envelope = readJson(template.receipt);
     fs.unlinkSync(template.receipt);
     const stateFile = path.join(f.scratch, 'retry-state.json');
     const script = path.join(request.skillsRoot, 'scripts/gate.mjs');
     const startFile = path.join(f.options.root, 'consumed/MONO-999-a1/collections', request.collectionId + '.json');
-    const admissionFile = path.join(f.options.root, 'consumed/MONO-999-a1/admissions', request.collectionId + '.json');
-    const confirmation = path.join(f.options.root, 'confirmations/MONO-999-phase-preflight-a1-s1.confirmed.json');
     const runtime = new URL('./runtime.mjs', import.meta.url).href;
     atomicJson(stateFile, { collections: 0, reconciles: 0 });
-    f.entry.confirmationTimeoutSec = 60; f.entry.collectionTimeoutSec = 2; f.entry.collectionRetries = 1;
+    f.entry.collectionRetries = 1;
     atomicJson(f.registry, { [f.options.issue]: f.entry });
     write(script, `import fs from 'node:fs';import path from 'node:path';import {spawn} from 'node:child_process';
 import {atomicJson,readJson,withLock} from ${JSON.stringify(runtime)};
 const q=readJson(process.argv.at(-1)),stateFile=${JSON.stringify(stateFile)},mode=${JSON.stringify(mode)};
 const state=readJson(stateFile);state[q.collect?'collections':'reconciles']++;atomicJson(stateFile,state);
-if(${disableWatchdog}){
- const kill=process.kill.bind(process);
- process.kill=(pid,signal)=>{
-  if(pid===-process.pid&&signal==='SIGKILL'){
-   atomicJson(stateFile,{...readJson(stateFile),watchdogSuppressedAt:Date.now()});return true;
-  }
-  return kill(pid,signal);
- };
-}
-if(!q.collect){if(mode==='slow-reconcile')await new Promise(r=>setTimeout(r,5000));console.log('gate preflight: '+(mode==='signed-failure'?'fail: provider unavailable':'pass: reconciled'));}
+if(!q.collect)console.log('gate preflight: '+(mode==='signed-failure'?'fail: provider unavailable':'pass: reconciled'));
 else await withLock(path.join(q.evidenceRoot,q.head+'.collect.lock'),async()=>{
  if(mode==='crash-always'||(mode==='crash-once'&&state.collections===1))process.exit(78);
- if(mode==='timeout'||mode==='orphan'){
+ if(mode==='orphan'){
   const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
   child.unref();atomicJson(stateFile,{...state,descendant:child.pid,group:process.pid});
-  if(mode==='timeout'){
-   process.on('SIGTERM',()=>{child.once('exit',()=>process.exit());});
-   await new Promise(()=>{});
-  }
  }
  const envelope=${JSON.stringify(envelope)};
  atomicJson(${JSON.stringify(template.receipt)},envelope);console.log('gate preflight: '+(mode==='signed-failure'?'fail: provider unavailable':'pass: collected'));
@@ -2086,60 +1435,21 @@ if(process.argv.at(-1)==='pid=,ppid=,pgid=,stat=,lstart='){
  console.log(process.pid+' '+process.ppid+' '+group+' S fixture-start');
 }
 `);
-    const started = launches => atomicJson(startFile, { ...readJson(admissionFile), launches, startedAt: new Date().toISOString() });
-    const publish = () => atomicJson(f.reportFile, report);
-    await run({ ...f, request, report, publish, stateFile, startFile, admissionFile, confirmation, started, template });
+    const admit = async () => (await admitCollection(f.options.root, round)).admission;
+    const started = async launches => { const admission = await admit();
+      atomicJson(startFile, { collectionId: admission.collectionId, requestDigest: admission.requestDigest, launches, startedAt: new Date().toISOString() }); };
+    const publish = () => atomicJson(f.roundFile, round);
+    const result = () => readLedger(f.options.root, f.options.issue, 1)[0]?.result ?? null;
+    await run({ ...f, request, round, publish, stateFile, startFile, started, admit, result, template });
   });
 }
 
-test('retry-normal-completion: both collection and collect:false clear the watchdog with self-observing telemetry', async () => {
+test('retry-normal-completion: one collection and one collect:false reconciliation record a done result', async () => {
   await collectionRetryFixture('complete', async f => {
-    f.entry.collectionTimeoutSec = 8; atomicJson(f.registry, { [f.options.issue]: f.entry });
     f.publish(); await f.poll();
     assert.deepEqual(readJson(f.stateFile), { collections: 1, reconciles: 1 });
-    assert.equal(readJson(f.confirmation).status, 'confirmed');
-    assert.equal(fs.existsSync(f.attention), false);
-    assert.doesNotMatch(fs.readFileSync(path.join(f.options.root, 'reports/MONO-999-collector-a1.log'), 'utf8'), /timed out|retry refused/);
-  });
-});
-
-test('queue-collection-only: a Linear write beside the collection request is refused before any collection', async () => {
-  await collectionRetryFixture('complete', async f => {
-    const comment = { id: 'worker-comment', operation: 'comment', target: f.options.issue, payload: 'written by the worker itself' };
-    f.report.capsule.open_queue.unshift(comment); f.report.linear_mutations_pending = f.report.capsule.open_queue;
-    f.publish(); // Mailboxes are writable without invoking publish, which refuses this report.
-    await assert.rejects(f.poll(), /Linear writes are not queued/);
-    assert.equal(readJson(f.stateFile).collections, 0);
-    assert.equal(fs.existsSync(f.confirmation), false);
-  });
-});
-test('collection-order: a new collection is not admitted while an earlier admitted one is unconfirmed', async () => {
-  await collectorAttentionFixture(async f => {
-    const first = publishPhase(f.report(1), f.reportFile);
-    assert.equal((await admitCollection(f.options.root, first)).length, 1);
-    const second = { ...f.report(2), publishedAt: new Date().toISOString() };
-    atomicJson(f.reportFile, second); // A worker can overwrite its mailbox without publishing.
-    await assert.rejects(admitCollection(f.options.root, second), /earlier collection preflight-collect:.*:1 is not confirmed/);
-    await confirmQueue(first, f.options.root, async () => ({ state: 'present', evidence: await f.signedHistory(f.request(1)) }));
-    assert.equal((await admitCollection(f.options.root, second)).length, 1, 'confirmation of the earlier collection releases the next one');
-  });
-});
-
-test('collection-id-reuse: older confirmed reports remain reserved after a newer collection', async () => {
-  await collectorAttentionFixture(async f => {
-    const first = publishPhase(f.report(1), f.reportFile);
-    const firstEvidence = await f.signedHistory(f.request(1));
-    await confirmQueue(first, f.options.root, () => ({ state: 'present', evidence: firstEvidence }));
-    const second = publishPhase(f.report(2), f.reportFile);
-    const secondEvidence = await f.signedHistory(f.request(2));
-    await confirmQueue(second, f.options.root, () => ({ state: 'present', evidence: secondEvidence }));
-    const bytes = fs.readFileSync(f.reportFile, 'utf8');
-    const reused = f.report(3); reused.capsule.open_queue = first.capsule.open_queue; reused.linear_mutations_pending = reused.capsule.open_queue;
-    assert.throws(() => publishPhase(reused, f.reportFile), /нужен новый идентификатор сбора/);
-    assert.equal(fs.readFileSync(f.reportFile, 'utf8'), bytes);
-    atomicJson(f.reportFile, reused); // Mailboxes are writable without invoking publish.
-    await assert.rejects(f.poll(), /нужен новый идентификатор сбора/);
-    assert.equal(fs.existsSync(path.join(f.options.root, 'confirmations/MONO-999-phase-preflight-a1-s3.confirmed.json')), false);
+    assert.equal(f.result().status, 'done'); assert.equal(f.result().receipt, f.template.receipt);
+    assert.doesNotMatch(fs.readFileSync(path.join(f.options.root, 'reports/MONO-999-collector-a1.log'), 'utf8'), /retry refused|attention:/);
   });
 });
 
@@ -2147,344 +1457,84 @@ test('retry-crash-before-receipt: retry uses the same admission and collectionId
   await collectionRetryFixture('crash-once', async f => {
     f.publish(); await f.poll();
     assert.equal(readJson(f.stateFile).collections, 2); assert.equal(readJson(f.startFile).launches, 2);
-    assert.equal(readJson(f.confirmation).results[0].evidence.receipt, f.template.receipt);
-    const admission = readJson(f.admissionFile); await f.poll();
-    assert.deepEqual(readJson(f.admissionFile), admission);
+    assert.equal(f.result().receipt, f.template.receipt);
+    const ledger = readLedger(f.options.root, f.options.issue, 1); await f.poll();
+    assert.deepEqual(readLedger(f.options.root, f.options.issue, 1), ledger);
     assert.equal(readJson(f.stateFile).collections, 2);
   });
 });
-test('retry-provider-signed-failure: a signed failure is reconciled without another collection', async () => {
+test('retry-provider-failure: a failure receipt is reconciled without another collection', async () => {
   await collectionRetryFixture('signed-failure', async f => {
     f.publish(); await f.poll();
     assert.equal(readJson(f.stateFile).collections, 1);
-    assert.match(readJson(f.confirmation).results[0].evidence.gate, /fail: provider unavailable/);
+    assert.equal(f.result().status, 'done'); assert.match(f.result().gate, /fail: provider unavailable/);
     const bytes = fs.readFileSync(f.template.receipt); await f.poll();
     assert.deepEqual(fs.readFileSync(f.template.receipt), bytes);
   });
 });
-test('retry-budget-after-restart: persisted launches and publication deadline cannot refill', async () => {
+test('retry-budget-after-restart: persisted launches cannot refill; a late receipt is never collected again', async () => {
   await collectionRetryFixture('crash-always', async f => {
-    f.publish(); await admitCollection(f.options.root, f.report); f.started(2);
+    f.publish(); await f.started(2);
     const module = new URL('./orchestrator/collector.mjs', import.meta.url).href;
     pass(spawnSync(process.execPath, ['--input-type=module', '-e', `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify(f.options)});`], { encoding: 'utf8' }));
     assert.equal(readJson(f.stateFile).collections, 0);
-    assert.match(readJson(f.attention).reason, /timed-out.*exhausted/);
+    assert.equal(f.result().status, 'failed'); assert.match(f.result().reason, /retries exhausted/);
     assert.equal(readJson(f.startFile).launches, 2);
     await f.signedHistory(f.request); await f.poll();
     assert.equal(readJson(f.stateFile).collections, 0, 'late first receipt is never executed again');
-    assert.equal(fs.existsSync(f.confirmation), true);
   });
 });
-test('retry-late-reconcile: after the deadline the stopped collector confirms only an existing signed receipt', async () => {
-  await collectionRetryFixture('complete', async f => {
-    const { collectOnce } = await import('./orchestrator/collector.mjs');
-    f.report.publishedAt = new Date(Date.now() - 120_000).toISOString();
-    f.entry.spawned_at = new Date(Date.now() - 180_000).toISOString(); atomicJson(f.registry, { [f.options.issue]: f.entry });
-    f.publish(); await admitCollection(f.options.root, f.report);
-    await collectOnce({ ...f.options, late: true });
-    assert.equal(fs.existsSync(f.confirmation), false, 'no receipt: late reconciliation does nothing');
-    assert.deepEqual(readJson(f.stateFile), { collections: 0, reconciles: 0 });
-    await f.signedHistory(f.request); await f.poll();
-    assert.equal(fs.existsSync(f.confirmation), false, 'the ordinary collector keeps the original deadline');
-    await collectOnce({ ...f.options, late: true });
-    validateConfirmation(f.report, readJson(f.confirmation));
-    assert.deepEqual(readJson(f.stateFile), { collections: 0, reconciles: 1 }, 'the signed receipt is reconciled without a new review');
-  });
-});
-test('retry-late-start: no launch without the pinned run budget and reserve', async () => {
+test('retry-live-descendant: a live prior group keeps the round in flight and blocks every retry', async () => {
   await collectionRetryFixture('crash-once', async f => {
-    f.report.publishedAt = new Date(Date.now() - 29_000).toISOString();
-    f.entry.spawned_at = new Date(Date.now() - 60_000).toISOString(); atomicJson(f.registry, { [f.options.issue]: f.entry });
-    f.publish(); await f.poll();
-    assert.equal(readJson(f.stateFile).collections, 0);
-    assert.match(readJson(f.attention).reason, /timed-out.*budget/);
-  });
-});
-test('retry-live-descendant: a live prior group blocks every retry', async () => {
-  await collectionRetryFixture('crash-once', async f => {
-    f.publish(); await admitCollection(f.options.root, f.report); f.started(1);
+    f.publish(); await f.started(1);
     const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
     const closed = new Promise(resolve => child.once('close', resolve));
     try {
       atomicJson(f.startFile, { ...readJson(f.startFile), gate: { pid: child.pid, procStart: 'fixture-start', processGroup: child.pid } });
       await f.poll(); assert.equal(readJson(f.stateFile).collections, 0);
-      assert.match(readJson(f.attention).reason, /timed-out.*descendants live/);
+      assert.equal(f.result(), null, 'a live gate may still write its receipt');
+      assert.match(f.lines().at(-1), /descendants live/);
     } finally { child.kill('SIGTERM'); await closed; }
   });
 });
 for (const probeError of ['EPERM', 'unavailable']) test(`retry-unverified-group: ${probeError} telemetry refuses a relaunch`, async () => {
   await collectionRetryFixture('crash-once', async f => {
-    f.publish(); await admitCollection(f.options.root, f.report); f.started(1);
+    f.publish(); await f.started(1);
     const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore', detached: true });
     const closed = new Promise(resolve => child.once('close', resolve));
     try {
       atomicJson(f.startFile, { ...readJson(f.startFile), gate: { pid: child.pid, procStart: 'fixture-start', processGroup: child.pid } });
       atomicJson(f.stateFile, { ...readJson(f.stateFile), probeError });
-      await assert.rejects(f.poll(), /fixture telemetry/);
+      await f.poll();
       assert.equal(readJson(f.stateFile).collections, 0);
       assert.equal(readJson(f.startFile).launches, 1);
-      assert.equal(fs.existsSync(f.confirmation), false);
+      assert.equal(f.result(), null, 'unknown telemetry keeps the round in flight, never failed');
+      assert.match(f.lines().at(-1), /previous gate telemetry unavailable; retry refused/);
     } finally { child.kill('SIGKILL'); await closed; }
   });
 });
-
-test('retry-slow-reconcile: reconciliation cannot extend the original deadline', async () => {
-  await collectionRetryFixture('slow-reconcile', async f => {
-    f.entry.collectionTimeoutSec = 1; atomicJson(f.registry, { [f.options.issue]: f.entry });
-    await f.signedHistory(f.request); f.publish(); const before = Date.now(); await f.poll();
-    assert.match(readJson(f.attention).reason, /timed-out.*reconciliation/);
-    assert.equal(readJson(f.stateFile).collections, 0); assert.equal(fs.existsSync(f.confirmation), false);
-    assert.ok(Date.now() - before < 10_000);
-  });
-});
-test('retry-timeout-group: timeout signals and verifies the whole group before retry', async () => {
-  await collectionRetryFixture('timeout', async f => {
-    f.entry.collectionRetries = 0; atomicJson(f.registry, { [f.options.issue]: f.entry });
+test('retry-orphan-group: a descendant left by a finished gate is stopped before reconciliation', async () => {
+  await collectionRetryFixture('orphan', async f => {
     f.publish(); await f.poll();
-    assert.match(readJson(f.attention).reason, /timed-out.*exhausted/);
     const { descendant } = readJson(f.stateFile);
     assert.ok(descendant); assert.throws(() => process.kill(descendant, 0), { code: 'ESRCH' });
-    assert.equal(fs.existsSync(f.confirmation), false);
-  });
-});
-test('retry-old-config-1200: legacy attempts use defaults without extending their confirmation window', async () => {
-  await collectionRetryFixture('crash-once', async f => {
-    delete f.entry.collectionTimeoutSec; delete f.entry.collectionRetries;
-    f.entry.confirmationTimeoutSec = 1200; atomicJson(f.registry, { [f.options.issue]: f.entry });
-    f.publish(); await f.poll();
-    assert.equal(readJson(f.stateFile).collections, 0);
-    assert.match(readJson(f.attention).reason, /timed-out.*budget/);
-  });
-});
-test('retry-budget-after-restart: elapsed time still blocks a remaining retry', async () => {
-  await collectionRetryFixture('crash-once', async f => {
-    f.report.publishedAt = new Date(Date.now() - 29_000).toISOString();
-    f.entry.spawned_at = new Date(Date.now() - 60_000).toISOString(); atomicJson(f.registry, { [f.options.issue]: f.entry });
-    f.publish(); await admitCollection(f.options.root, f.report); f.started(1);
-    const module = new URL('./orchestrator/collector.mjs', import.meta.url).href;
-    pass(spawnSync(process.execPath, ['--input-type=module', '-e', `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify(f.options)});`], { encoding: 'utf8' }));
-    assert.equal(readJson(f.stateFile).collections, 0); assert.equal(readJson(f.startFile).launches, 1);
-    assert.match(readJson(f.attention).reason, /timed-out.*budget/);
+    assert.equal(f.result().status, 'done');
   });
 });
 
-async function collectorDeathScenario(mode, t, { disableWatchdog = false, signalCleanup = gate => process.kill(-gate.processGroup, 'SIGKILL') } = {}) {
-  await collectionRetryFixture(mode, async f => {
-    f.entry.collectionRetries = 0; atomicJson(f.registry, { [f.options.issue]: f.entry }); f.publish();
-    const module = new URL('./orchestrator/collector.mjs', import.meta.url).href;
-    const parent = spawn(process.execPath, ['--input-type=module', '-e', `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify(f.options)});`], { stdio: 'ignore', detached: true });
-    const closed = new Promise(resolve => parent.once('close', resolve));
-    let gate, primaryError, cleanupError;
-    const observations = [];
-    const probe = pid => {
-      try { process.kill(pid, 0); return 'live'; }
-      catch (error) { return error.code === 'ESRCH' ? 'dead' : `unknown:${error.code}`; }
-    };
-    const observe = stage => {
-      let state = {}, telemetryError;
-      try { state = readJson(f.stateFile); } catch (error) { telemetryError = error.message; }
-      const sample = { stage, at: Date.now(), group: gate?.processGroup, telemetryError,
-        groupState: gate ? probe(-gate.processGroup) : 'unknown:unregistered',
-        leader: gate ? { pid: gate.pid, state: probe(gate.pid) } : null,
-        descendant: state.descendant ? { pid: state.descendant, state: probe(state.descendant) } : null };
-      const previous = observations.at(-1);
-      if (!['waiting-for-watchdog', 'waiting-for-cleanup'].includes(stage) || !previous ||
-          JSON.stringify([sample.groupState, sample.leader, sample.descendant]) !==
-          JSON.stringify([previous.groupState, previous.leader, previous.descendant])) observations.push(sample);
-      return sample;
-    };
-    const terminated = sample => sample.groupState === 'dead' && sample.leader?.state === 'dead' && sample.descendant?.state === 'dead';
-    try {
-      const ready = Date.now() + 8000;
-      while (!readJson(f.stateFile).descendant && Date.now() < ready) await new Promise(resolve => setTimeout(resolve, 25));
-      assert.ok(readJson(f.stateFile).descendant, 'the real descendant starts before collector death');
-      gate = readJson(f.startFile).gate;
-      observe('before-collector-death');
-      parent.kill('SIGKILL'); await closed;
-      const deadline = Date.now() + 4500;
-      let sample;
-      do {
-        sample = observe('waiting-for-watchdog');
-        if (terminated(sample)) break;
-        await new Promise(resolve => setTimeout(resolve, 25));
-      } while (Date.now() < deadline);
-      sample = observe('after-deadline-before-cleanup');
-      assert.equal(sample.groupState, 'dead', 'the gate must enforce its own original deadline after collector death; unknown is not dead');
-      assert.equal(sample.leader.state, 'dead', 'the gate leader must have terminated');
-      assert.equal(sample.descendant.state, 'dead', 'the gate descendant must have terminated');
-      await f.poll(); assert.equal(readJson(f.stateFile).collections, 1);
-      assert.equal(readJson(f.startFile).launches, 1);
-      if (mode === 'timeout') assert.match(readJson(f.attention).reason, /timed-out.*exhausted/);
-      else assert.equal(readJson(f.confirmation).status, 'confirmed', 'signed receipt reconciles after surviving descendants stop');
-    } catch (error) { primaryError = error; }
-    finally {
-      try {
-        parent.kill('SIGKILL'); await closed;
-        if (gate) {
-          if (!terminated(observe('before-cleanup'))) signalCleanup(gate);
-          const until = Date.now() + 2000;
-          let sample;
-          do {
-            sample = observe('waiting-for-cleanup');
-            if (terminated(sample)) break;
-            await new Promise(resolve => setTimeout(resolve, 25));
-          } while (Date.now() < until);
-          assert.ok(terminated(sample), 'cleanup must prove gate group, leader and descendant termination');
-        }
-      } catch (error) { cleanupError = error; }
-      let watchdogSuppressedAt;
-      try { watchdogSuppressedAt = readJson(f.stateFile).watchdogSuppressedAt ?? null; } catch {}
-      t.diagnostic(JSON.stringify({ mode, watchdogSuppressedAt, observations, primaryError: primaryError?.message ?? null,
-        cleanup: cleanupError ? { code: cleanupError.code, message: cleanupError.message } : 'completed',
-        afterCleanup: gate ? observe('after-cleanup') : null }));
-    }
-    if (primaryError) throw primaryError;
-    if (cleanupError) throw cleanupError;
-  }, { disableWatchdog });
-}
-
-for (const mode of ['timeout', 'orphan']) {
-  test(`retry-collector-death-deadline: ${mode} group remains bounded after its collector dies`, async t => {
-    await collectorDeathScenario(mode, t);
-  });
-
-  test(`retry-collector-death-negative-control: ${mode} detects a live descendant before cleanup when watchdog termination is disabled`, async t => {
-    let result;
-    await assert.rejects(collectorDeathScenario(mode, { diagnostic(line) { result = JSON.parse(line); t.diagnostic(line); } }, { disableWatchdog: true }), error => {
-      assert.equal(error.code, 'ERR_ASSERTION');
-      assert.match(error.message, /the gate must enforce its own original deadline/);
-      const sample = result.observations.find(row => row.stage === 'after-deadline-before-cleanup');
-      assert.equal(sample.groupState, 'live');
-      assert.equal(sample.descendant.state, 'live');
-      assert.ok(result.watchdogSuppressedAt && sample.at >= result.watchdogSuppressedAt);
-      assert.equal(result.cleanup, 'completed');
-      assert.equal(result.afterCleanup.groupState, 'dead');
-      return true;
-    });
-  });
-}
-
-test('retry-collector-cleanup-error: a cleanup refusal does not mask the primary live-group assertion', async t => {
-  let result;
-  try {
-    await assert.rejects(collectorDeathScenario('timeout', { diagnostic(line) { result = JSON.parse(line); t.diagnostic(line); } }, {
-      disableWatchdog: true,
-      signalCleanup() { throw Object.assign(new Error('fixture cleanup refused'), { code: 'EPERM' }); }
-    }), error => {
-      assert.equal(error.code, 'ERR_ASSERTION');
-      assert.match(error.message, /the gate must enforce its own original deadline/);
-      assert.equal(result.cleanup.code, 'EPERM');
-      assert.equal(result.cleanup.message, 'fixture cleanup refused');
-      assert.equal(result.afterCleanup.descendant.state, 'live');
-      return true;
-    });
-  } finally {
-    // Recover the deliberately denied test cleanup only for this registered gate group.
-    if (result?.afterCleanup?.group) {
-      process.kill(-result.afterCleanup.group, 'SIGKILL');
-      await stopFixtureProcess(result.afterCleanup.descendant.pid);
-    }
-  }
-});
-
-// Darwin timers stop counting while the host sleeps (MONO-214 a1 woke 76 minutes
-// past its deadline). A wall-clock jump after launch models that wake; the real
-// run deadline stays ten minutes away, so only wall-clock deadlines can trip.
-async function clockJumpScenario(run) {
-  await collectionRetryFixture('timeout', async f => {
-    f.entry.confirmationTimeoutSec = 3600; f.entry.collectionTimeoutSec = 600; f.entry.collectionRetries = 0;
-    atomicJson(f.registry, { [f.options.issue]: f.entry }); f.publish();
-    const offsetFile = path.join(f.scratch, 'clock-offset'), preload = path.join(f.scratch, 'clock-offset.mjs');
-    fs.writeFileSync(offsetFile, '0');
-    write(preload, `import fs from 'node:fs';const now=Date.now.bind(Date);
-Date.now=()=>{try{return now()+Number(fs.readFileSync(${JSON.stringify(offsetFile)},'utf8'))}catch{return now()}};\n`);
-    const live = pid => { try { process.kill(pid, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; } };
-    const launched = async () => {
-      const until = Date.now() + 8000;
-      while (!readJson(f.stateFile).descendant && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 25));
-      assert.ok(readJson(f.stateFile).descendant, 'the gate and its descendant start before the clock jump');
-      return readJson(f.startFile).gate;
-    };
-    const dead = async (gate, ms) => {
-      const until = Date.now() + ms;
-      while ((live(-gate.processGroup) || live(readJson(f.stateFile).descendant)) && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 25));
-      return !live(-gate.processGroup) && !live(readJson(f.stateFile).descendant);
-    };
-    // A gate can register before the startup wait fails; cleanup reads the registration itself.
-    const registered = () => { try { return readJson(f.startFile).gate ?? null; } catch { return null; } };
-    try { await run({ ...f, offsetFile, preload, launched, registered, dead }); }
-    finally {
-      const gate = registered();
-      if (gate && live(-gate.processGroup)) process.kill(-gate.processGroup, 'SIGKILL');
-    }
-  });
-}
-
-test('retry-clock-jump-collector: the collector stops a gate once wall-clock time passes the run deadline', async () => {
-  await clockJumpScenario(async f => {
-    const now = Date.now, polled = f.poll();
-    let gate, settled = false;
-    polled.finally(() => { settled = true; }).catch(() => {});
-    try {
-      gate = await f.launched();
-      Date.now = () => now.call(Date) + 700_000;
-      const until = now.call(Date) + 10_000;
-      while (!settled && now.call(Date) < until) await new Promise(resolve => setTimeout(resolve, 25));
-      assert.ok(settled, 'the collector must stop the gate within seconds of passing its wall-clock deadline');
-      await polled;
-    } finally {
-      Date.now = now;
-      if (!settled) {
-        const registered = f.registered();
-        if (registered) try { process.kill(-registered.processGroup, 'SIGKILL'); } catch {}
-        await Promise.race([polled.catch(() => {}), new Promise(resolve => setTimeout(resolve, 10_000))]);
-      }
-    }
-    assert.match(fs.readFileSync(path.join(f.options.root, 'reports/MONO-999-collector-a1.log'), 'utf8'), /gate run timed out without completion/);
-    assert.match(readJson(f.attention).reason, /timed-out.*exhausted/);
-    assert.ok(await f.dead(gate, 0), 'the whole gate group is dead');
-    assert.equal(fs.existsSync(f.confirmation), false);
-  });
-});
-
-test('retry-clock-jump-watchdog: the gate watchdog enforces its wall-clock deadline after its collector dies', async () => {
-  await clockJumpScenario(async f => {
-    const module = new URL('./orchestrator/collector.mjs', import.meta.url).href;
-    const env = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(f.preload).href}`.trim() };
-    const parent = spawn(process.execPath, ['--input-type=module', '-e', `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify(f.options)});`],
-      { stdio: 'ignore', detached: true, env });
-    const closed = new Promise(resolve => parent.once('close', resolve));
-    try {
-      const gate = await f.launched();
-      parent.kill('SIGKILL'); await closed;
-      assert.equal(await f.dead(gate, 1000), false, 'the gate outlives its collector until the deadline');
-      fs.writeFileSync(f.offsetFile, '700000');
-      assert.ok(await f.dead(gate, 3000), 'the gate watchdog must kill its whole group once wall-clock time passes its deadline');
-    } finally { parent.kill('SIGKILL'); await closed; }
-  });
-});
-
-test('ship-bot-policy: current pins override recovered admission; foreign attempt decision is refused', () => {
+test('ship-bot-policy: launch pins decide the bots; an amended attempt is refused', () => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-ship-policy-'));
   const root = path.join(scratch, 'root'), issue = 'MONO-162', head = 'a'.repeat(40);
   const file = path.join(root, 'dispatch', `${issue}-a1`, 'pins.json');
   const pins = { root, worktree: scratch, workerWritableRoots: [scratch], shipBotChecks: ['Custom Review'] };
-  const entry = { issue, worktree: scratch, attempt: 1, stage: 'mono-deliver', packVersion: 'test', surfaceRevision: 4, pins: { file }, pinsVersion: 0 };
+  const entry = { issue, worktree: scratch, attempt: 1, stage: 'mono-deliver', packVersion: 'test', surfaceRevision: 4, pins: { file } };
   try {
     atomicJson(file, pins); entry.pins.digest = createHash('sha256').update(fs.readFileSync(file)).digest('hex');
     atomicJson(path.join(root, 'workers.json'), { [issue]: entry });
     const request = { ...pins, pins: collectionPinsBinding(entry), head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:1` };
     assert.deepEqual(pinnedShipPolicy(request), { botChecks: ['Custom Review'], botUnavailable: null });
-    const admission = path.join(root, 'consumed', `${issue}-a1`, 'admissions', `${request.collectionId}.json`);
-    atomicJson(admission, { collectionId: request.collectionId, pinsVersion: 0, manifestDigest: digest({ ...pins, pinsVersion: 0 }) });
-    entry.pinsVersion = 1; atomicJson(path.join(root, 'workers.json'), { [issue]: entry });
-    const amendment = path.join(path.dirname(file), 'pins.v1.json');
-    atomicJson(amendment, { pinsVersion: 1, botUnavailable: { issue, attempt: 1, reason: 'confirmed outage' } });
-    assert.equal(pinnedShipPolicy(request).botUnavailable, 'confirmed outage', 'ship uses the current decision despite an older admitted preflight');
-    for (const foreign of [{ issue: 'MONO-999', attempt: 1 }, { issue, attempt: 2 }]) {
-      atomicJson(amendment, { pinsVersion: 1, botUnavailable: { ...foreign, reason: 'confirmed outage' } });
-      assert.throws(() => pinnedShipPolicy(request), /another attempt/);
-    }
+    atomicJson(path.join(root, 'workers.json'), { [issue]: { ...entry, pinsVersion: 1 } });
+    assert.throws(() => pinnedShipPolicy(request), /pins versions no longer exist/);
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
 

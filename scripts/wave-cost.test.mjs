@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -90,16 +89,14 @@ test('a log that reports each run separately is still summed', () => {
 function measureWithReceipts(envelopes) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-378-cost-'));
   try {
-    const evidence = path.join(root, 'evidence'), key = crypto.randomBytes(32);
+    const evidence = path.join(root, 'evidence');
     fs.mkdirSync(path.join(root, 'logs')); fs.mkdirSync(path.join(evidence, 'history'), { recursive: true });
     fs.writeFileSync(path.join(root, 'logs/MONO-999-mono-deliver-a1.jsonl'),
       JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 1 } }) + '\n');
-    fs.writeFileSync(path.join(evidence, 'receipt.key'), key);
     const pins = (issue, name = 'pins.json') => ({ file: path.join(root, 'dispatch', `${issue}-a1`, name), digest: 'd'.repeat(64) });
     for (const [index, make] of envelopes.entries()) {
-      const { forged, ...receipt } = make(pins);
-      const signature = crypto.createHmac('sha256', forged ? crypto.randomBytes(32) : key).update(canonical(receipt)).digest('hex');
-      fs.writeFileSync(path.join(evidence, 'history', `${receipt.runId ?? index}.json`), JSON.stringify({ receipt, signature }));
+      const receipt = make(pins);
+      fs.writeFileSync(path.join(evidence, 'history', `${receipt.runId ?? index}.json`), JSON.stringify({ receipt }));
     }
     const output = execFileSync(process.execPath, ['scripts/wave-cost.mjs', 'MONO-999', '--root', root, '--evidence-root', evidence], { encoding: 'utf8' });
     return { result: JSON.parse(output.slice(0, output.lastIndexOf('\nЦена волны'))), line: output.slice(output.lastIndexOf('\nЦена волны') + 1).trim() };
@@ -114,7 +111,7 @@ const cost = (role, engine, usage) => ({ role, engine, model: `${engine}-model`,
 const round = (number, head, costs) => ({ number, head: head.repeat(40), base: 'b'.repeat(40), costs });
 const receipt = (runId, pins, head, review) => ({ producer: 'gate-review-v3', recordedAt: `2026-11-11T00:00:0${runId.slice(1)}Z`, runId, pins, head: head.repeat(40), base: 'b'.repeat(40), review });
 
-test('review cost comes from signed gate receipts and counts every round once', () => {
+test('review cost comes from gate receipts and counts every round once', () => {
   const first = round(1, '1', [cost('reviewer', 'codex', codexUsage), cost('checker', 'claude', claudeUsage)]);
   const second = round(2, '2', [cost('reviewer', 'codex', codexUsage), { ...cost('checker', 'claude', null), failure: true }]);
   const record = rounds => ({ schemaVersion: 1, contractDigest: 'c'.repeat(64), rounds, round: rounds.at(-1) });
@@ -125,7 +122,6 @@ test('review cost comes from signed gate receipts and counts every round once', 
     pins => receipt('r3', pins('MONO-999'), '2', { outcome: 'clean', spent: false, reusedFrom: 'r2', round: 2, record: record([first, second]) }),
     pins => receipt('r4', pins('MONO-999'), '3', { outcome: 'not-reviewed', spent: false, round: null, record: null, costs: failed, failures: [{ reason: 'offline', costs: failed }] }),
     pins => receipt('r5', pins('MONO-999', 'pins.v1.json'), '2', { outcome: 'clean', spent: true, round: 1, record: record([round(1, '2', [cost('reviewer', 'claude', claudeUsage)])]) }),
-    pins => ({ ...receipt('r6', pins('MONO-999'), '4', { outcome: 'clean', spent: true, round: 3, record: record([round(3, '4', [cost('reviewer', 'codex', { ...codexUsage, input_tokens: 9_000_000 })])]) }), forged: true }),
     pins => receipt('r7', pins('MONO-9999'), '5', { outcome: 'clean', spent: true, round: 1, record: record([round(1, '5', [cost('reviewer', 'codex', codexUsage)])]) }),
     pins => ({ ...receipt('r8', pins('MONO-999'), '6', { outcome: 'clean', spent: true, round: 1, record: record([round(1, '6', [cost('reviewer', 'codex', codexUsage)])]) }), producer: 'gate-review-v2' }),
   ]);
@@ -147,7 +143,7 @@ test('a role call counts its boundary probe, and an unreadable probe leaves the 
   assert.equal(result.autoreview.usage.input_tokens, 2100);
   assert.equal(result.autoreview.usage.output_tokens, 105);
 });
-test('a record carried across an amendment counts its earlier rounds once', () => {
+test('a record carried across a task change counts its earlier rounds once', () => {
   const first = round(1, '1', [cost('reviewer', 'codex', codexUsage)]), second = round(2, '2', [cost('reviewer', 'codex', codexUsage)]);
   const record = (digest, rounds) => ({ schemaVersion: 1, contractDigest: digest.repeat(64), rounds, round: rounds.at(-1) });
   const { result } = measureWithReceipts([

@@ -152,7 +152,7 @@ async function fixture(run, { auth, config, missingTool = false, shortWindow = f
     }
     runtime = await import(pathToFileURL(path.join(pack, "scripts/orchestrator/launch.mjs")));
     const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-    const cfg = config ?? { orchestration: { transport: "claude-cli", delivery: { confirmationTimeoutSec: 1200, collectionTimeoutSec: 1000 } } };
+    const cfg = config ?? { orchestration: { transport: "claude-cli", delivery: {} } };
     write(path.join(repo, ".agents/mono-workflow.config.json"), cfg);
     git("init", "-b", "fixture");
     git("add", ".");
@@ -539,10 +539,10 @@ test("Claude resume refuses a live writer and changed pinned grants", async () =
     const entry = registry()["MONO-999"];
     process.kill(entry.pid, "SIGTERM");
     while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
-    await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile, workerWritableRoots: [request.worktree] }), /grants/);
+    await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile, workerWritableRoots: [request.worktree] }), /a risk or grant change is a new attempt/);
     const extra = path.join(scratch, "expanded-grant");
     await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile,
-      extraWritable: [extra], workerWritableRoots: [...entry.workerWritableRoots, extra] }), /immutable attempt pins/);
+      extraWritable: [extra], workerWritableRoots: [...entry.workerWritableRoots, extra] }), /a risk or grant change is a new attempt/);
     assert.deepEqual(registry()["MONO-999"].workerWritableRoots, entry.workerWritableRoots);
   });
 });

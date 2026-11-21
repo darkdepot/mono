@@ -409,9 +409,8 @@ export function deliveryConfig(source) {
     throw new Error("orchestration.delivery must be an object");
   }
   const config = configured ?? {};
+  // confirmationTimeoutSec and collectionTimeoutSec no longer exist; older configs may still carry them.
   const result = {
-    confirmationTimeoutSec: positive(config.confirmationTimeoutSec, 6300, "confirmationTimeoutSec"),
-    collectionTimeoutSec: positive(config.collectionTimeoutSec, 4500, "collectionTimeoutSec"),
     collectionRetries: config.collectionRetries ?? 1,
     quietSec: positive(config.quietSec, 120, "quietSec"),
     evidenceLimitSec: positive(config.evidenceLimitSec, 7200, "evidenceLimitSec"),
@@ -422,11 +421,6 @@ export function deliveryConfig(source) {
   };
   if (!Number.isSafeInteger(result.collectionRetries) || result.collectionRetries < 0)
     throw new Error("invalid collectionRetries");
-  if (result.collectionTimeoutSec >= result.confirmationTimeoutSec)
-    throw new Error("collectionTimeoutSec must be less than confirmationTimeoutSec");
-  if (result.confirmationTimeoutSec >= result.evidenceLimitSec) {
-    throw new Error(`confirmationTimeoutSec (${result.confirmationTimeoutSec}) must be less than evidenceLimitSec (${result.evidenceLimitSec})`);
-  }
   if (result.ackWaitSec > result.stallSec * 4 - result.pollSec) {
     throw new Error("ackWaitSec must be <= stallSec * 4 - pollSec");
   }

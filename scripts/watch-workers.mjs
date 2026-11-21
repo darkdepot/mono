@@ -44,7 +44,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { validatePhase, validateConfirmation, confirmationPath, correlatedDeliveryReport, requiresConfirmation } from "./delivery-state.mjs";
+import { validatePhase, correlatedDeliveryReport } from "./delivery-state.mjs";
+import { readLedger, admissionFor, collectorAlive, roundRequestName } from "./review-rounds.mjs";
 import { atomicJson, deliveryConfig, processStart, IDENTITY_FIELDS, identity, packLayout, runtimePackRoot } from "./runtime.mjs";
 
 import { workerTransport } from "./worker-transport.mjs";
@@ -1167,16 +1168,18 @@ function checkPhase(log, entry, nowMs) {
     }
   }
   phases.sort((a, b) => b.publishedAtMs - a.publishedAtMs || b.report.sequence - a.report.sequence);
-  const latest = phases[0]; if (!latest) return false;
-  if (!requiresConfirmation(latest.report)) return { waiting: false, pending: false };
-  const confirmation = confirmationPath(latest.report, args.root);
-  try { validateConfirmation(latest.report, JSON.parse(fs.readFileSync(confirmation, "utf8"))); return false; } catch { /* still awaiting the collection confirmation */ }
-  const timeout = entry.confirmationTimeoutSec ?? deliveryConfig().confirmationTimeoutSec;
-  const withinDeadline = Number.isFinite(timeout) && timeout > 0 && nowMs - latest.publishedAtMs >= 0 && nowMs - latest.publishedAtMs <= timeout * 1000;
+  // A review round in flight: the worker's round request has no result yet. It waits only
+  // while the collector of this attempt lives; a stopped collector is a stall to report.
+  const roundFile = [path.join(roots[0], "reports", roundRequestName(log.issue, entry.attempt)),
+    path.join(roots[1], roundRequestName(log.issue, entry.attempt))].find(file => fs.existsSync(file));
+  if (!roundFile) return phases.length ? { waiting: false, pending: false } : false;
+  try {
+    const round = JSON.parse(fs.readFileSync(roundFile, "utf8"));
+    if (admissionFor(readLedger(args.root, log.issue, entry.attempt), round.request?.collectionId)?.result) return { waiting: false, pending: false };
+  } catch { return { waiting: false, pending: false }; }
   const transport = workerTransport(entry.transport);
-  const waiting = !withinDeadline || !transport?.waitingPhase ? withinDeadline :
-    writerPidState(entry) === "alive" && processStart(entry.pid) === entry.procStart &&
-    transport.waitingPhase(entry, latest.file, confirmation) !== null;
+  const waiting = collectorAlive(args.root, log.issue, entry.attempt) && (!transport?.waitingPhase ||
+    (writerPidState(entry) === "alive" && processStart(entry.pid) === entry.procStart && transport.waitingPhase(entry, roundFile) !== null));
   return { waiting, pending: true };
 }
 

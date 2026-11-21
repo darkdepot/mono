@@ -8,115 +8,58 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import crypto from "node:crypto";
-import { confirmQueue, validateConfirmation, publishPhase, waitForConfirmation, confirmationPath, classifyQueue, validatePhase, requiresConfirmation } from "./delivery-state.mjs";
+import { publishPhase, validatePhase } from "./delivery-state.mjs";
+import { admitRound, recordResult } from "./review-rounds.mjs";
 import { canonical, digest, REVIEW_PRODUCER } from "./runtime.mjs";
 import { consumeAck } from "./orchestrator/consume-gate-ack.mjs";
 
-function collectionFixture(root) {
-  const evidenceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-evidence-'));
-  fs.writeFileSync(path.join(evidenceRoot, 'receipt.key'), Buffer.alloc(32, 5));
-  fs.mkdirSync(path.join(evidenceRoot, 'history'));
-  const write = (head, n = 1) => {
-    const collectionId = `preflight-collect:${head}:${n}`;
-    return { id: collectionId, operation: 'preflight-collect', target: head,
-      payload: { request: { collectionId, evidenceRoot, root, worktree: path.join(root, 'worktree'), workerWritableRoots: [] } } };
-  };
-  const evidence = item => {
-    const receipt = { runId: crypto.randomUUID(), producer: REVIEW_PRODUCER, collectionId: item.id, head: item.target, evidenceRoot: fs.realpathSync(evidenceRoot) };
-    const envelope = { receipt, signature: crypto.createHmac('sha256', Buffer.alloc(32, 5)).update(canonical(receipt)).digest('hex') };
-    const file = path.join(evidenceRoot, 'history', `${receipt.runId}.json`);
-    fs.writeFileSync(file, JSON.stringify(envelope));
-    return { receipt: file, receiptDigest: digest(envelope), gate: 'gate preflight: pass: fixture' };
-  };
-  const adapter = (action, item) => ({ state: 'present', evidence: evidence(item) });
-  return { write, adapter, close: () => fs.rmSync(evidenceRoot, { recursive: true, force: true }) };
-}
-
-test('linear-writes-not-queued: comments and statuses are refused; only a collection request waits', async () => {
+test('no-write-queue: queued writes and confirmation-request reports are refused; reports never wait', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-not-queued-'));
   const file = path.join(root, 'reports/MONO-161-phase-code.json');
   const head = 'a'.repeat(40);
   const candidate = { issue: 'MONO-161', stage: 'mono-deliver', attempt: 1, packVersion: 'test', surfaceRevision: 6,
-    phase: 'code', sequence: 1, kind: 'phase', head, linear_mutations_pending: [],
-    capsule: { phase: 'code', head, decisions: [], writable_roots: [path.join(root, 'reports')], open_queue: [] } };
+    phase: 'code', sequence: 1, kind: 'phase', head,
+    capsule: { phase: 'code', head, decisions: [], writable_roots: [path.join(root, 'reports')] } };
   try {
+    const collectionId = `preflight-collect:${head}:1`;
     for (const write of [{ id: 'comment', operation: 'comment', target: 'MONO-161', payload: { body: 'x' } },
-      { id: 'status', operation: 'status', target: 'MONO-161', payload: 'In Review' }]) {
+      { id: collectionId, operation: 'preflight-collect', target: head, payload: { request: { collectionId } } }]) {
       const queued = structuredClone(candidate); queued.capsule.open_queue = queued.linear_mutations_pending = [write];
-      assert.throws(() => validatePhase(queued), /Linear writes are not queued; the worker writes comments and statuses through Linear MCP/);
-      assert.throws(() => publishPhase(queued, file), /not queued/);
+      assert.throws(() => validatePhase(queued), /queued writes no longer exist/);
+      assert.throws(() => publishPhase(queued, file), /queued writes no longer exist/);
       assert.equal(fs.existsSync(file), false);
     }
-    const code = publishPhase(candidate, file);
-    assert.equal(requiresConfirmation(code), false, 'an empty report never waits for the orchestrator');
-    await waitForConfirmation(code, path.join(root, 'confirmations/absent.json'), 0.01);
+    assert.throws(() => validatePhase({ ...candidate, kind: 'confirmation-request' }), /invalid phase identity/);
+    assert.doesNotThrow(() => validatePhase({ ...candidate, linear_mutations_pending: [], capsule: { ...candidate.capsule, open_queue: [] } }),
+      'empty legacy queue fields stay readable');
+    publishPhase(candidate, file);
     assert.equal(publishPhase({ ...candidate, sequence: 2 }, file).sequence, 2, 'the next report needs no confirmation');
-    const collections = collectionFixture(root);
-    try {
-      const write = collections.write(head);
-      const request = { ...candidate, phase: 'preflight', kind: 'confirmation-request', linear_mutations_pending: [write],
-        capsule: { ...candidate.capsule, phase: 'preflight', open_queue: [write] } };
-      assert.equal(requiresConfirmation(request), true);
-      assert.throws(() => classifyQueue({ ...request, kind: 'phase' }, root), /single preflight confirmation-request/);
-    } finally { collections.close(); }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('collection-id-reuse: publication refuses changed reports immediately and preserves the prior bytes', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-collection-id-'));
-  const file = phase => path.join(root, 'reports', `MONO-161-phase-${phase}.json`);
-  const candidate = { issue: 'MONO-161', stage: 'mono-deliver', attempt: 1, packVersion: 'test', surfaceRevision: 4,
-    phase: 'code', sequence: 1, kind: 'phase', head: 'a'.repeat(40), linear_mutations_pending: [],
-    capsule: { phase: 'code', head: 'a'.repeat(40), decisions: [], writable_roots: [path.join(root, 'reports')], open_queue: [] } };
-  try {
-    const code = publishPhase(candidate, file('code')); await confirmQueue(code, root, () => {});
-    const id = `preflight-collect:${candidate.head}:1`;
-    const queue = [{ id, operation: 'preflight-collect', target: candidate.head, payload: { request: { collectionId: id } } }];
-    const preflight = { ...candidate, phase: 'preflight', kind: 'confirmation-request', linear_mutations_pending: queue,
-      capsule: { ...candidate.capsule, phase: 'preflight', open_queue: queue } };
-    const published = publishPhase(preflight, file('preflight'));
-    const bytes = fs.readFileSync(file('preflight'), 'utf8');
-    assert.deepEqual(publishPhase(preflight, file('preflight')), published, 'lost response preserves publication');
-    for (const change of [{ sequence: 2 }, { text: 'changed' }]) {
-      assert.throws(() => publishPhase({ ...preflight, ...change }, file('preflight')), /нужен новый идентификатор сбора/);
-      assert.equal(fs.readFileSync(file('preflight'), 'utf8'), bytes);
-    }
-    const two = structuredClone(preflight);
-    const second = structuredClone(queue[0]); second.id = second.payload.request.collectionId = `preflight-collect:${candidate.head}:2`;
-    two.capsule.open_queue.push(second); two.linear_mutations_pending = two.capsule.open_queue;
-    assert.throws(() => classifyQueue(two, root), /single preflight/);
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
-});
-
-test("phase chain: earlier phases are required and a collection request is confirmed before the next publication", async () => {
+test("phase chain: earlier phases are required; no report waits for a confirmation", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-phase-order-"));
   const reports = path.join(root, "reports"), worktree = path.join(root, "worktree");
   const file = phase => path.join(reports, `MONO-75-phase-${phase}.json`);
-  const head = "b".repeat(40), collections = collectionFixture(root);
-  const candidate = (phase, sequence = 1, kind = "phase", queue = []) => ({ issue: "MONO-75", stage: "mono-deliver", attempt: 1, packVersion: "test",
-    sourceCommit: "a".repeat(40), surfaceRevision: 6, phase, sequence, kind, head, linear_mutations_pending: queue,
-    capsule: { phase, head, decisions: [], writable_roots: [reports, worktree], open_queue: queue } });
+  const head = "b".repeat(40);
+  const candidate = (phase, sequence = 1) => ({ issue: "MONO-75", stage: "mono-deliver", attempt: 1, packVersion: "test",
+    sourceCommit: "a".repeat(40), surfaceRevision: 6, phase, sequence, kind: "phase", head,
+    capsule: { phase, head, decisions: [], writable_roots: [reports, worktree] } });
   try {
     assert.throws(() => publishPhase(candidate("preflight"), file("preflight")), /phase code report is missing/);
     publishPhase(candidate("code"), file("code"));
     publishPhase(candidate("code", 2), file("code"));
-    const request = publishPhase(candidate("preflight", 1, "confirmation-request", [collections.write(head)]), file("preflight"));
-    assert.throws(() => publishPhase(candidate("preflight", 2), file("preflight")), /previous phase report is unconfirmed/);
-    const ship = { ...candidate("ship"), publishedAt: new Date().toISOString() };
-    await assert.rejects(confirmQueue(ship, root, collections.adapter), /phase preflight sequence 1 is not confirmed/);
-    assert.throws(() => publishPhase(candidate("ship"), file("ship")), /phase preflight sequence 1 is not confirmed/);
-    const ack = await confirmQueue(request, root, collections.adapter);
-    assert.equal(validateConfirmation(request, ack), true);
-    await waitForConfirmation(request, confirmationPath(request, root), 1);
+    publishPhase(candidate("preflight", 1), file("preflight"));
     publishPhase(candidate("preflight", 2), file("preflight"));
-    const published = publishPhase(candidate("ship"), file("ship"));
-    assert.equal(requiresConfirmation(published), false);
+    assert.throws(() => publishPhase(candidate("preflight", 1), file("preflight")), /sequence must advance/);
+    publishPhase(candidate("ship"), file("ship"));
+    assert.equal(fs.existsSync(path.join(root, "confirmations")), false);
     const fallback = path.join(worktree, ".orchestrator", "MONO-75-phase-code.json");
     fs.mkdirSync(path.dirname(fallback), { recursive: true });
     fs.copyFileSync(file("code"), fallback);
     fs.writeFileSync(fallback, JSON.stringify({ ...JSON.parse(fs.readFileSync(fallback, "utf8")), sequence: 3 }));
     assert.throws(() => publishPhase(candidate("ship", 2), file("ship")), /phase code report is foreign or conflicts between mailboxes/);
-  } finally { collections.close(); fs.rmSync(root, { recursive: true, force: true }); }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("blocked ack requires current pack identity, parked reason and log freshness", async () => {
@@ -152,35 +95,6 @@ test("blocked ack requires current pack identity, parked reason and log freshnes
     assert.ok(fs.existsSync(ackFile.replace(/\.json$/, ".blocked.json")));
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, "workers.json")))[issue].gates, undefined);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
-});
-
-test("collection confirmation: wait deadline, planted paths and changed writes", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-barrier-"));
-  const head = "b".repeat(40), collections = collectionFixture(root), reports = path.join(root, "reports");
-  const queue = [collections.write(head)];
-  const base = { issue: "MONO-75", stage: "mono-deliver", attempt: 1, packVersion: "test", sourceCommit: "a".repeat(40), surfaceRevision: 6,
-    phase: "code", sequence: 1, kind: "phase", head, linear_mutations_pending: [],
-    capsule: { phase: "code", head, decisions: [], writable_roots: [reports, path.join(root, "worktree")], open_queue: [] } };
-  try {
-    publishPhase(base, path.join(reports, "MONO-75-phase-code.json"));
-    const report = publishPhase({ ...base, phase: "preflight", kind: "confirmation-request", linear_mutations_pending: queue,
-      capsule: { ...base.capsule, phase: "preflight", open_queue: queue } }, path.join(reports, "MONO-75-phase-preflight.json"));
-    await assert.rejects(waitForConfirmation({ ...report, publishedAt: new Date(Date.now() - 2000).toISOString() }, path.join(root, "absent.json"), 1), /write-unconfirmed/);
-    await assert.rejects(confirmQueue(report, root, () => ({ state: "missing" })), /not confirmed by its collection receipt/);
-    const confirmation = await confirmQueue(report, root, collections.adapter);
-    const planted = path.join(reports, "forged-confirmation.json");
-    fs.writeFileSync(planted, JSON.stringify(confirmation));
-    await assert.rejects(waitForConfirmation(report, planted, 1), /confirmation path must be outside/);
-    await waitForConfirmation(report, confirmationPath(report, root), 1);
-    assert.equal(validateConfirmation(report, confirmation), true);
-    const again = await confirmQueue(report, root, () => { throw new Error("confirmed collection reached the adapter again"); });
-    assert.deepEqual(again.results, confirmation.results);
-    assert.throws(() => validateConfirmation({ ...report, attempt: 2 }, confirmation), /confirmation/);
-    assert.throws(() => validateConfirmation(report, { ...confirmation, results: [] }), /confirmation/);
-    const changed = structuredClone(report); changed.capsule.open_queue[0].payload.request.worktree = root;
-    changed.linear_mutations_pending = changed.capsule.open_queue;
-    assert.throws(() => classifyQueue(changed, root), /changed within attempt/);
-  } finally { collections.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('wait-ack binds consumption to own ack, attempt and every dispatched move', async () => {
@@ -275,6 +189,7 @@ test('pre-rename stage fixture: queued certificate comments are refused and the 
   assert.equal(ready.stage, 'mono-deliver');
   const reports = path.join(root, 'reports');
   ready.capsule.writable_roots = [reports]; ready.capsule.open_queue = ready.linear_mutations_pending;
+  ready.kind = 'phase';
   const code = JSON.parse(fs.readFileSync(path.join(checkout, 'scripts/fixtures/short-code-report.json'), 'utf8'));
   code.capsule.writable_roots = [reports];
   try {
@@ -284,12 +199,12 @@ test('pre-rename stage fixture: queued certificate comments are refused and the 
     captureCriteria({ root, issue: code.issue, attempt: code.attempt, issueFile });
     const codeFile = path.join(reports, 'MONO-993-phase-code.json');
     const publishedCode = publishPhase(code, codeFile);
-    assert.equal(publishedCode.capsule.open_queue.length, 0, 'the code exit publishes no queue; the worker posts its comment');
+    assert.equal(publishedCode.capsule.open_queue?.length ?? 0, 0, 'the code exit publishes no queue; the worker posts its comment');
     const printed = spawnSync(process.execPath, [path.join(checkout, 'scripts/delivery-state.mjs'), 'comment', '--report', codeFile], { encoding: 'utf8' });
     assert.equal(printed.status, 0, printed.stderr);
     assert.match(printed.stdout, /\nНе проверено\n/);
     assert.doesNotMatch(printed.stdout, /delivery-state comment: pass/);
-    assert.throws(() => publishPhase(ready, path.join(reports, 'MONO-993-phase-preflight.json')), /Linear writes are not queued/);
+    assert.throws(() => publishPhase(ready, path.join(reports, 'MONO-993-phase-preflight.json')), /queued writes no longer exist/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -347,11 +262,9 @@ test('ship-green-certificate: publication and landing share issue/head/PR valida
     const code = fs.readFileSync(file('code')); fs.unlinkSync(file('code'));
     assert.throws(() => landedShip(root, entry), /phase code report is missing/, 'landing still requires the phase chain');
     fs.writeFileSync(file('code'), code);
-    const admission = path.join(root, 'consumed', `${issue}-a1`, 'admissions', `preflight-collect:${head}:1.json`);
-    fs.mkdirSync(path.dirname(admission), { recursive: true });
-    fs.writeFileSync(admission, JSON.stringify({ collectionId: `preflight-collect:${head}:1`, sequence: 1 }));
-    assert.throws(() => landedShip(root, entry), /collection preflight-collect:.*:1 is not confirmed; landing waits/, 'an overwritten admitted review round still blocks landing');
-    fs.unlinkSync(admission);
-    assert.deepEqual(landedShip(root, entry), { repo: 'owner/repo', pr: 162, head, branch: 'main' });
+    const admission = admitRound(root, issue, 1, { collectionId: `preflight-collect:${head}:1`, head, root });
+    assert.throws(() => landedShip(root, entry), /review round preflight-collect:.*:1 has no result yet; landing waits/, 'an admitted round in flight blocks landing, even if the worker overwrote its request');
+    recordResult(root, issue, 1, admission, { status: 'refused', reason: 'fixture' });
+    assert.deepEqual(landedShip(root, entry), { repo: 'owner/repo', pr: 162, head, branch: 'main' }, 'a refused round is terminal and never blocks landing forever');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

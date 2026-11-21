@@ -2,11 +2,11 @@
 
 A collection runs one read-only review round on the committed head (reviewer and
 checker from different model families). The gate line is the
-result; findings are in the signed receipt under `review.record.findings`.
+result; findings are in the receipt under `review.record.findings`.
 Behavior changes get a live main-scenario run before round 1.
 
 Pinned risk sets rounds per task attempt: `risky` up to three, others one;
-amendments keep the count and record. Round 1 reads the whole change, later ones
+task changes keep the count and record. Round 1 reads the whole change, later ones
 fixes and open findings. Same head reuses its round; new base, fresh record.
 
 - `review clean` or `clean-with-successors` with your verification: pass.

@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -317,15 +316,13 @@ function receiptUsage(raw) {
   return null;
 }
 
-// Review cost comes from the gate's signed receipts: <evidenceRoot>/history/<runId>.json holds
-// {receipt, signature}, an HMAC-SHA256 over the canonical receipt with <evidenceRoot>/receipt.key.
-// A receipt repeats every earlier round of its task attempt (amendments keep the record) and a reused
+// Review cost comes from the gate's receipts: <evidenceRoot>/history/<runId>.json holds {receipt}
+// (older ones also a signature); evidenceRoot is outside every worker grant.
+// A receipt repeats every earlier round of its task attempt (task changes keep the record) and a reused
 // round repeats an earlier receipt, so each round is counted once. Returns null when the Issue has no such receipt.
 function collectReviewReceipts(evidenceRoot, issue) {
   const history = path.join(evidenceRoot, "history");
-  const keyFile = path.join(evidenceRoot, "receipt.key");
-  if (!isDirectory(history) || !fs.existsSync(keyFile)) return null;
-  const key = fs.readFileSync(keyFile);
+  if (!isDirectory(history)) return null;
   const attemptDirectory = new RegExp(`^${issue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-a[1-9][0-9]*$`);
   const rounds = new Map();
   const notReviewed = new Map();
@@ -336,7 +333,6 @@ function collectReviewReceipts(evidenceRoot, issue) {
     try {
       const envelope = JSON.parse(fs.readFileSync(path.join(history, name), "utf8"));
       receipt = envelope.receipt;
-      if (envelope.signature !== crypto.createHmac("sha256", key).update(canonical(receipt)).digest("hex")) continue;
     } catch {
       continue;
     }

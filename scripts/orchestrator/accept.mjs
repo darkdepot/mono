@@ -1,18 +1,9 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
-import { atomicJson, readJson, digest, canonical, withLock, isMain, validateEvidenceGrants } from "../runtime.mjs";
-import { registryEntry, effectivePins, collectionPinsBinding, commandFlags, allowedFlags, sha256File, amendmentState, amendmentChange, amendmentMatches, amendmentDocuments, validateAmendment, restoreAmendmentGrants } from "./command-state.mjs";
-import { reviewContext, ROUND_LIMIT } from "../gate.mjs";
+import { atomicJson, readJson, digest, canonical, withLock, isMain } from "../runtime.mjs";
+import { registryEntry, commandFlags, allowedFlags } from "./command-state.mjs";
 import { consumeAck } from "./consume-gate-ack.mjs";
-
-const directory = path.dirname(fileURLToPath(import.meta.url));
-const run = (script, args, options = {}) => {
-  try { return execFileSync(process.execPath, [path.join(directory, script), ...args], { encoding: "utf8", ...options }); }
-  catch (error) { throw new Error([error.stdout, error.stderr, error.message].filter(Boolean).join("\n"), { cause: error }); }
-};
 
 function validatedAck(root, issue, attempt, outcome) {
   const entry = registryEntry(root, issue, attempt);
@@ -68,169 +59,13 @@ export async function acceptAck(args, print = value => console.log(JSON.stringif
   const result = await consumeAck({ root, issue, attempt, ...action }); print(result); return result;
 }
 
-function checkBotUnavailableRound(args, entry) {
-  if (args["bot-unavailable"] !== undefined) {
-    const current = effectivePins(entry);
-    const { history } = reviewContext({ ...current, pins: collectionPinsBinding(entry) }, current);
-    if (history?.reuse && history.spent >= ROUND_LIMIT - 1)
-      throw new Error(`Отметка недоступности бота на неизменённом коде отменила бы уже пройденный круг ревью (${history.spent >= ROUND_LIMIT ? "лимит исчерпан" : "следующий круг будет последним"}); варианты: дождаться бота; если нужна правка кода, сначала поправка с правкой без отметки, отметка сразу следом, до следующего круга; записать недоступность в новой попытке; решение оркестратора по задаче.`);
-  }
-}
-
-export async function acceptAmend(args) {
-  let version = null, state = null;
-  try {
-    allowedFlags(args, ["root", "issue", "attempt", "risk", "critical", "worker-writable-roots", "text", "full-snapshot", "snapshot", "preapply", "bot-unavailable"]);
-    if (args.preapply) throw new Error("--preapply requires a new dispatch (новый запуск) after artifact-owner repair; never amend/resume");
-    if (args["bot-unavailable"] !== undefined && (typeof args["bot-unavailable"] !== "string" || !args["bot-unavailable"].trim())) throw new Error("--bot-unavailable requires a nonempty reason");
-    if (!args.text?.trim()) throw new Error("--text with the snapshot amendment and recovery instructions required");
-    const root = args.root, issue = args.issue, attempt = Number(args.attempt);
-    return await withLock(path.join(root, "amend.lock"), async () => {
-      const prepared = await withLock(path.join(root, "launch.lock"), () => {
-        let entry = registryEntry(root, issue, attempt);
-        if (sha256File(entry.pins.file) !== entry.pins.digest) throw new Error("launch pins digest mismatch");
-        const output = path.dirname(entry.pins.file), pendingFile = path.join(output, "amendment.pending.json");
-        const pending = fs.existsSync(pendingFile) ? readJson(pendingFile) : null;
-        if (args.snapshot && !args["full-snapshot"]) throw new Error("--snapshot requires --full-snapshot");
-        if (args["full-snapshot"] && !path.isAbsolute(args.snapshot ?? "")) throw new Error("--full-snapshot requires --snapshot DIR containing complete documents");
-        const supplied = { roots: args["worker-writable-roots"] ? readJson(args["worker-writable-roots"]) : null,
-          documents: args["full-snapshot"] ? amendmentDocuments(args.snapshot, issue, readJson(entry.pins.file).packageKind) : null };
-        const records = new Map(Object.values(entry.completed_amendments ?? {}).map(record => [record.pinsVersion, record]));
-        if (entry.last_amendment) records.set(entry.last_amendment.pinsVersion, entry.last_amendment);
-        if (pending && !records.has(pending.pinsVersion)) records.set(pending.pinsVersion, pending);
-        const matches = [...records.values()].filter(record => record.effectiveInputs &&
-          amendmentMatches(args, record, supplied));
-        const deliveredPending = matches.includes(pending) && amendmentState(entry, pending).state === "delivered" ? pending : null;
-        const latestRegistered = matches.length > 1 && matches.every(record => amendmentState(entry, record).state === "registered")
-          ? matches.reduce((latest, record) => record.pinsVersion > latest.pinsVersion ? record : latest) : null;
-        if (matches.length > 1 && !deliveredPending && !latestRegistered) {
-          const error = new Error("ambiguous amendment request; supply distinguishing existing arguments");
-          error.candidates = matches.map(record => record.pinsVersion).sort((a, b) => a - b); throw error;
-        }
-        if (matches.length) {
-          const record = deliveredPending ?? latestRegistered ?? matches[0]; version = record.pinsVersion;
-          state = amendmentState(entry, record).state;
-          const verified = validateAmendment(entry, record);
-          if (state === "registered") {
-            if (pending?.pinsVersion === version) fs.unlinkSync(pendingFile);
-            return { record, ...verified, pendingFile };
-          }
-          if ((entry.pinsVersion ?? 0) !== record.currentVersion) throw new Error("pending amendment pinsVersion conflict");
-          if (state === "prepared") {
-            if (record.launchMayHaveStartedAt) throw new Error("launch may have started without correlated delivery; preserve evidence; automatic restart refused");
-            restoreAmendmentGrants(root, entry, record);
-            checkBotUnavailableRound(args, entry);
-          }
-          return { record, ...verified, pendingFile };
-        }
-        checkBotUnavailableRound(args, entry);
-        if (pending) {
-          version = pending.pinsVersion; state = amendmentState(entry, pending).state;
-          // A different request cannot hide damaged files or an uncertain launch.
-          if (state === "registered") {
-            validateAmendment(entry, records.get(version)); fs.unlinkSync(pendingFile);
-          } else {
-            validateAmendment(entry, pending);
-            if (state === "delivered") throw new Error("delivered pending amendment requires an identical retry before a new amendment");
-            if (pending.launchMayHaveStartedAt) throw new Error("launch may have started without correlated delivery; preserve evidence; replacement refused");
-            restoreAmendmentGrants(root, entry, pending);
-            fs.unlinkSync(pendingFile);
-            entry = registryEntry(root, issue, attempt);
-          }
-        }
-        version = null; state = null;
-        const current = effectivePins(entry), change = amendmentChange(args, current, supplied);
-        const { risk, critical, workerWritableRoots, botUnavailable } = change;
-        const rank = ["tiny", "standard", "deep", "risky"];
-        if (!rank.includes(risk) || rank.indexOf(risk) < rank.indexOf(current.risk) || (current.critical && critical !== current.critical) ||
-            (critical !== null && (risk !== "risky" || !critical.trim()))) throw new Error("risk/critical amendments may only escalate; existing critical reason is retained");
-        if (current.profile === "short" && ["deep", "risky"].includes(risk) && current.packageKind !== "issue-only" && !change.fullSnapshot)
-          throw new Error("short risk escalation requires --full-snapshot");
-        if (!Array.isArray(workerWritableRoots) || workerWritableRoots.some(value => !path.isAbsolute(value)) || new Set(workerWritableRoots).size !== workerWritableRoots.length ||
-            current.workerWritableRoots.some(value => !workerWritableRoots.includes(value))) throw new Error("amendment must contain complete effective grants including all existing roots");
-        validateEvidenceGrants(current.evidenceRoot, [root, ...workerWritableRoots]);
-        validateEvidenceGrants(current.packRoot ?? current.skillsRoot, workerWritableRoots, "packRoot"); validateEvidenceGrants(current.skillsRoot, workerWritableRoots, "installed skillsRoot");
-        const controlRoot = fs.realpathSync(root), mailbox = path.join(controlRoot, "reports");
-        for (const grant of workerWritableRoots.map(value => fs.realpathSync(value))) {
-          const overlaps = grant === controlRoot || controlRoot.startsWith(grant + path.sep) || grant.startsWith(controlRoot + path.sep);
-          if (overlaps && grant !== mailbox && !grant.startsWith(mailbox + path.sep)) throw new Error("only reports may be worker-writable within orchestrator root");
-        }
-        const documents = supplied.documents ?? (current.fullSnapshot ? amendmentDocuments(current.fullSnapshot.directory, issue, current.packageKind) : null);
-        if (documents && !supplied.documents && digest(documents) !== current.fullSnapshot.digest) throw new Error("registered full snapshot content changed");
-        // Never overwrite even an abandoned version's recorded payload.
-        version = Math.max(current.pinsVersion, ...fs.readdirSync(output).flatMap(name => /^(?:pins\.v(\d+)\.json|resume\.v(\d+)\.(?:json|md)|snapshot\.v(\d+))$/u.exec(name)?.slice(1).filter(Boolean).map(Number) ?? [])) + 1;
-        state = "prepared";
-        const pinsFile = path.join(output, `pins.v${version}.json`), resumeFile = path.join(output, `resume.v${version}.md`), resumeRequest = path.join(output, `resume.v${version}.json`);
-        let text = args.text, fullSnapshot = null;
-        if (documents) {
-          const target = path.join(output, `snapshot.v${version}`); fs.mkdirSync(target);
-          for (const [name, body] of Object.entries(documents)) { fs.writeFileSync(path.join(target, name), body); text += `\n\n## ${name}\n${body}`; }
-          fullSnapshot = { directory: target, digest: digest(documents) };
-        }
-        atomicJson(pinsFile, { pinsVersion: version, risk, critical, botUnavailable,
-          workerWritableRoots, fullSnapshot });
-        const updated = effectivePins({ ...entry, pinsVersion: version });
-        text += `\n\n## Effective attempt pins\npinsVersion: ${version}\npins file: ${pinsFile}\nSHA-256: ${sha256File(pinsFile)}\n${JSON.stringify(updated, null, 2)}\nKeep a pending collection request and wait for its confirmation before advancing; write your own Linear comments and statuses through Linear MCP and read them back. Risk determines required local review even when the immutable launch profile was short.`;
-        fs.writeFileSync(resumeFile, text + "\n");
-        const previousLaunchGrants = { workerWritableRoots: entry.workerWritableRoots, writable_roots: entry.writable_roots,
-          capsuleRoots: entry.capsule.writable_roots, network_access: entry.network_access };
-        const previousRoots = new Set(previousLaunchGrants.workerWritableRoots.map(value => fs.realpathSync(value)));
-        atomicJson(resumeRequest, { root, issue, resumeFile, extraWritable: workerWritableRoots.filter(value => !previousRoots.has(fs.realpathSync(value))), workerWritableRoots });
-        const record = { issue, attempt, launchPinsDigest: entry.pins.digest, threadId: entry.thread_id, preparedAt: new Date().toISOString(),
-          previousResume: entry.last_resume ?? null, previousLaunchGrants, pinsVersion: version, pinsFile, resumeFile, resumeRequest,
-          currentVersion: current.pinsVersion, effectiveInputs: updated, change, changeDigest: digest(change),
-          pinsDigest: sha256File(pinsFile), resumeDigest: sha256File(resumeFile), requestDigest: sha256File(resumeRequest) };
-        atomicJson(pendingFile, record);
-        return { record, state, resumed: null, pendingFile };
-      });
-      let { record, resumed } = prepared;
-      if (prepared.state !== "registered") {
-        if (prepared.state === "prepared") {
-          try { run("resume.mjs", ["--request", record.resumeRequest]); }
-          catch (error) {
-            await withLock(path.join(root, "launch.lock"), () => {
-              const entry = registryEntry(root, issue, attempt); record = readJson(prepared.pendingFile);
-              state = validateAmendment(entry, record).state;
-              if (state === "prepared" && !record.launchMayHaveStartedAt) restoreAmendmentGrants(root, entry, record);
-            });
-            throw new Error(`${error.message}\n${state === "delivered" ? "correlated delivery awaits registration; retry identical request" :
-              record.launchMayHaveStartedAt ? "launch may have started without correlated delivery; preserve evidence; automatic restart refused" :
-                "proven non-delivery; prior grants restored; retry identical request after refusal is resolved"}`);
-          }
-          record = readJson(prepared.pendingFile);
-        }
-        await withLock(path.join(root, "launch.lock"), () => {
-          const entry = registryEntry(root, issue, attempt), verified = validateAmendment(entry, record);
-          state = verified.state; resumed = verified.resumed;
-          if (state !== "delivered") throw new Error("launch may have started without correlated delivery; preserve evidence; automatic restart refused");
-          if ((entry.pinsVersion ?? 0) !== record.currentVersion) throw new Error("effective pins changed during resume");
-          const registryFile = path.join(root, "workers.json"), registry = readJson(registryFile);
-          const completion = { ...record, registeredResume: entry.last_resume, resumeResult: resumed };
-          registry[issue].pinsVersion = record.pinsVersion;
-          registry[issue].completed_amendments = { ...entry.completed_amendments, [record.pinsVersion]: completion };
-          registry[issue].last_amendment = completion;
-          atomicJson(registryFile, registry); state = "registered";
-          fs.unlinkSync(prepared.pendingFile);
-        });
-      }
-      return { version: record.pinsVersion, state: "registered", reason: "recorded amendment result", pinsVersion: record.pinsVersion,
-        pinsFile: record.pinsFile, resumeFile: record.resumeFile, resumeRequest: record.resumeRequest, ...resumed };
-    });
-  } catch (error) {
-    error.amendment = { version, state, outcome: "refused", reason: error.message, ...(error.candidates ? { candidates: error.candidates } : {}) };
-    throw error;
-  }
-}
-
 if (isMain(import.meta.url)) {
   try {
-    const [command, ...argv] = process.argv.slice(2), args = commandFlags(argv, ["full-snapshot", "preapply"]);
-    if (command === "--help" || args.help) console.log("Usage: accept.mjs ack --root DIR --issue KEY --attempt N [--outcome applied|blocked|rejected] [--readback FILE]\naccept.mjs amend --root DIR --issue KEY --attempt N --text TEXT [--risk CLASS] [--critical TEXT] [--bot-unavailable REASON] [--worker-writable-roots JSON] [--full-snapshot --snapshot DIR]\nA new or prepared-but-undelivered --bot-unavailable amendment is refused when the current HEAD/base/contract has a reusable round and at least ROUND_LIMIT - 1 rounds are completed.\nAdmission files: consumed/KEY-aN/admissions/collectionId.json; launch.lock serializes admissions and amendments. --preapply requires a new dispatch after artifact-owner repair. No script writes to Linear; the delivery worker writes its own comments and statuses through Linear MCP, so there is no report confirmation command.");
+    const [command, ...argv] = process.argv.slice(2), args = commandFlags(argv);
+    if (command === "--help" || args.help) console.log("Usage: accept.mjs ack --root DIR --issue KEY --attempt N [--outcome applied|blocked|rejected] [--readback FILE]\nConsumes the start handshake ack; launch.lock serializes it with collector admissions. No script writes to Linear: the delivery worker writes its own comments and statuses through Linear MCP. A task change is an «Изменение задачи» comment on the Issue plus resume.mjs with taskChange set to its link; a risk or grant change is a new attempt on the same branch. Launch pins never change within an attempt.");
     else if (command === "ack") await acceptAck(args);
-    else if (command === "amend") console.log(JSON.stringify(await acceptAmend(args)));
-    else throw new Error("expected ack or amend");
+    else throw new Error("expected ack");
   } catch (error) {
-    if (process.argv[2] === "amend") console.log(JSON.stringify(error.amendment ?? { version: null, state: null, outcome: "refused", reason: error.message }));
     console.error(`accept: ${error.message}`); process.exitCode = 1;
   }
 }

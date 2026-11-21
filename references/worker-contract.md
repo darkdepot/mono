@@ -35,7 +35,7 @@ node '<pack-root>/scripts/verify-pack-state.mjs' identity \
 At start match `git show <sha>` blobs to dispatch commit/files/sha256 and Issue
 manifest; never edit. Findings: `blocked`, exact replacement bytes; artifact owner
 repairs Tech Spec/record or renews issue-only Issue, then NEW dispatch.
-No repaired manifest via amendment/resume.
+No repaired manifest via resume.
 
 ## Two-Phase Dispatch Handshake
 
@@ -68,8 +68,8 @@ snapshot, no ack/amendment. Consumption is not approval.
 Workspace-write/network: worktree, derived/common Git dirs, <root>/reports
 (--add-dir spawn; writable_roots resume); copy grants to capsule.writable_roots.
 codex 0.153.4 guards linked-worktree metadata. Orchestrator
-root/confirmations/registry/control/consumed/logs: read-only.
-No PR/push/unrelated network before the first collection request; then preflight
+root/registry/control/consumed/logs: read-only.
+No PR/push/unrelated network before the first round request; then preflight
 pushes and opens the draft via scripts/ship-pr.mjs open|push (secrets first).
 Standalone implement network by exception; preflight/ship network/.git. Exact hidden grants. Log disabled sandbox in
 orchestrator ledger. Denied mailbox: same uncommitted JSON fallback.
@@ -151,25 +151,18 @@ Linear MCP read; failure/denial parks blocked before code. Before a write find t
 existing comment/status, write only missing; after, read back (`list_comments`/
 `get_issue`), advance only on match. Code exit comment: `delivery-state.mjs comment
 --report <published code report>` verbatim; revision names the stale comment. Park
-comment before stop. No other Linear tools/Issues; queue: collection request only.
+comment before stop. No other Linear tools/Issues; no write queue.
 
 ## Delivery Reports and Capsule
 
 Dispatch: green/parked terminal; ready/implemented-needs-preflight interim.
 Stops park; no respawn; standalone keeps statuses/certificates.
 reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json or denied-write .orchestrator,
-never both. Final fields + phase/increasing positive sequence/kind
-(phase|confirmation-request)/head/phase_result. Capsule phase/head match;
-open_queue=linear_mutations_pending: empty, or one collection write of a preflight
-confirmation-request; new report→new collectionId.
-
-Publish/wait: delivery-state.mjs; only a confirmation-request waits for
-confirmations/<ISSUE-KEY>-phase-preflight-a<N>-s<sequence>.confirmed.json.
-Wait rejects capsule.writable_roots paths; binds report digest/issue/attempt/phase/
-sequence/receipt; partial/stale/foreign confirmation blocks. Resume dispatch/capsule/
-branch; keep done/foreign changes; no reset/repeat applied moves/writes. Timeout
-orchestration.delivery.confirmationTimeoutSec (default 6300 seconds) parks
-write-unconfirmed (запись не подтверждена).
+never both. Final fields + phase/increasing positive sequence/kind:phase/head/
+phase_result; capsule phase/head match; reports never wait. Publish:
+delivery-state.mjs. Resume dispatch/capsule/branch; keep done/foreign changes; no
+reset/repeat applied moves/writes; a task change is a link to an «Изменение
+задачи» comment: read and follow it.
 Green needs all obligations: drift before PR, ready before review, In Review after PR.
 
 Pin product/evidenceRoot/packRoot/skillsRoot/risk/critical/verification/grants.
@@ -177,18 +170,16 @@ Pin product/evidenceRoot/packRoot/skillsRoot/risk/critical/verification/grants.
 worktree/orchestrator. Orchestrator collect:true only; worker collect:false.
 Keys grant no writes; hostile operator out of scope (one user/host).
 
-Amend: "Effective attempt pins" pins.v<n>.json; no report version field.
-Commit; collect:false exit 2=pending. Queue only returned publishRequest in
-payload.request, kind=confirmation-request:
-id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
-target=<head>, payload={request}. Adapter: immutable receipt path/digest/gate even
-on failure; confirmation proves completion only. Verify collect:false.
+Commit; collect:false exit 2=pending. Write {issue,attempt,request:<publishRequest>}
+to reports/<ISSUE-KEY>-round-a<N>.json, request.collectionId=preflight-collect:
+<head>:<n>; run `delivery-state.mjs wait-round --request <file>` in the foreground
+(result bound to that request; refused/failed: new n). Verify collect:false.
 Collection = review round; verification is yours. Follow the gate line per
 references/review-admission.md. Same head: increment n/sequence.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,
 readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify sealed
 head/merge-base receipt before judgment; no string substitutes.
-Orchestrator rechecks preflight before ship. Ship-fix amendment: next ship-gate
+Orchestrator rechecks preflight before ship. Ship fix: next ship-gate
 attempt, new head/stateFile; preserve old state/task attempt. No gate-attempt cap.
 
 ## Implementation exit evidence
