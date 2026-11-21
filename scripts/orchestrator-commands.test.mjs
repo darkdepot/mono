@@ -123,6 +123,40 @@ test("launch pins are immutable: amended attempts and pins versions are refused"
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
 
+test("snapshot document sections ignore a nested Issue copy", () => {
+  for (const depth of [2, 3]) {
+    const body = fixture("nested-issue-sections.md").replace(/^## /gmu, "#".repeat(depth) + " ");
+    for (const [title, content] of [
+      ["Готовность агента", "AFK (агент справится без тебя): синтетическая проверка."],
+      ["Что сделать", "Использовать разделы самой задачи."],
+      ["Как проверить", "Проверить разделы и снимок."],
+    ]) assert.equal(section(body, title, true), `# ${title}\n${content}`);
+    assert.deepEqual(extractSnapshot(body, "- R1. Требование.\n", "- U1. Решение.\n").ids, ["R1", "U1"]);
+    assert.ok(section(body, "Снимок контекста", true).includes(`${"#".repeat(depth)} Покрытие PRD/Spec\nR99, U99`));
+  }
+});
+
+test("snapshot document sections retain duplicate and missing refusals", () => {
+  const body = fixture("nested-issue-sections.md");
+  assert.throws(() => section(body + "\n# Готовность агента\nAFK\n", "Готовность агента", true), /missing or duplicate section: Готовность агента/u);
+  const nestedOnly = body.replace("# Готовность агента\nAFK (агент справится без тебя): синтетическая проверка.\n", "");
+  assert.throws(() => section(nestedOnly, "Готовность агента", true), /missing or duplicate section: Готовность агента/u);
+  assert.equal(section(nestedOnly, "Готовность агента"), "");
+  assert.throws(() => extractSnapshot(body.replace("# Покрытие PRD/Spec\nR1, U1\n", ""), "", ""), /missing or duplicate section: Покрытие PRD\/Spec/u);
+});
+
+test("snapshot document sections under a sole title preserve common section bytes", () => {
+  const prd = "# PRD: Пример\n## Кратко\nОбщее описание.\n## Требования\n- R1. Требование.\n## Допущения\n### Кратко\nВложенное описание.\n";
+  const spec = "# Tech Spec: Пример\n## Кратко\nОбщее решение.\n## Решения\n- U1. Реализация.\n## Детали\n### Кратко\nВложенное решение.\n";
+  const result = extractSnapshot(issueFor("R1, U1"), prd, spec);
+  assert.equal(result.prd, "## Кратко\nОбщее описание.\n\n- R1. Требование.\n\n## Допущения\n### Кратко\nВложенное описание.\n");
+  assert.equal(result.spec, "## Кратко\nОбщее решение.\n\n- U1. Реализация.\n");
+  assert.equal(section(prd, "Кратко", true), "## Кратко\nОбщее описание.");
+  assert.equal(section(spec.replace("## Кратко\nОбщее решение.\n", ""), "Кратко"), "");
+  assert.throws(() => section(prd + "\n## Кратко\nДубликат.\n", "Кратко"), /missing or duplicate section/u);
+  assert.equal(section("# Один\n## Кратко\nОдин.\n# Два\n## Кратко\nДва.\n", "Кратко"), "");
+});
+
 test("snapshot U12 named contracts", async t => {
   for (const name of fs.readdirSync(path.join(checkout, "scripts/fixtures")).filter(name => /^snapshot-u12-.*\.json$/u.test(name) && !name.endsWith("package-bytes.json"))) {
     await t.test(name, () => {

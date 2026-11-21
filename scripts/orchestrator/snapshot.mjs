@@ -83,7 +83,12 @@ function* walk(node) {
 const sourceText = (document, start, end) => document.lines.slice(start, end).join("\n").trim();
 
 function findSection(document, title, required = false) {
-  const matches = [...walk(document.root)].filter(node => node.type === "heading" && node.title === title);
+  const roots = document.root.children.filter(node => node.type === "heading");
+  const titles = roots.filter(node => node.level === 1);
+  const sections = titles.length === 1
+    ? [...roots, ...titles[0].children.filter(node => node.type === "heading")]
+    : roots;
+  const matches = sections.filter(node => node.title === title);
   if (matches.length !== 1) {
     if (required || matches.length > 1) throw new Error(`missing or duplicate section: ${title}`);
     return null;
