@@ -949,6 +949,8 @@ The orchestrator starts the installed `collector.mjs start --root DIR --issue KE
 --attempt N` once per delivery attempt, uses `status` and the report log to inspect
 it, and stops it at attempt end. It confirms collection requests; other reports
 need no confirmation because the worker reads its own Linear writes back.
+`collector.mjs reconcile` (collector stopped) confirms a late request from its
+existing signed receipt after the deadline, never launching another review.
 Admission refusals write one attention file and log line per report digest and
 current registry pins version; polling resumes admission when either changes,
 and admission of the current preflight collection clears the attempt's file.

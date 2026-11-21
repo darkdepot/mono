@@ -2175,6 +2175,22 @@ test('retry-budget-after-restart: persisted launches and publication deadline ca
     assert.equal(fs.existsSync(f.confirmation), true);
   });
 });
+test('retry-late-reconcile: after the deadline the stopped collector confirms only an existing signed receipt', async () => {
+  await collectionRetryFixture('complete', async f => {
+    const { collectOnce } = await import('./orchestrator/collector.mjs');
+    f.report.publishedAt = new Date(Date.now() - 120_000).toISOString();
+    f.entry.spawned_at = new Date(Date.now() - 180_000).toISOString(); atomicJson(f.registry, { [f.options.issue]: f.entry });
+    f.publish(); await admitCollection(f.options.root, f.report);
+    await collectOnce({ ...f.options, late: true });
+    assert.equal(fs.existsSync(f.confirmation), false, 'no receipt: late reconciliation does nothing');
+    assert.deepEqual(readJson(f.stateFile), { collections: 0, reconciles: 0 });
+    await f.signedHistory(f.request); await f.poll();
+    assert.equal(fs.existsSync(f.confirmation), false, 'the ordinary collector keeps the original deadline');
+    await collectOnce({ ...f.options, late: true });
+    validateConfirmation(f.report, readJson(f.confirmation));
+    assert.deepEqual(readJson(f.stateFile), { collections: 0, reconciles: 1 }, 'the signed receipt is reconciled without a new review');
+  });
+});
 test('retry-late-start: no launch without the pinned run budget and reserve', async () => {
   await collectionRetryFixture('crash-once', async f => {
     f.report.publishedAt = new Date(Date.now() - 29_000).toISOString();

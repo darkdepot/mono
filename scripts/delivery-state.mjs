@@ -198,6 +198,8 @@ export function publishPhase(report, output, previousConfirmation, root = previo
     }
   }
   if (implementationExit(report)) requireApprovedCriteria(report, root);
+  if (report.phase === "code" && report.phase_result !== undefined && report.phase_result !== "in-progress")
+    requireApprovedCriteria(report, root);
   const previous = fs.existsSync(output) ? validatePhase(readJson(output)) : null;
   if (report.phase === "ship" && report.kind === "phase" && report.status === "green") validateShipCertificate(report);
   const content = value => { const { publishedAt, ...rest } = value; return rest; };

@@ -106,7 +106,8 @@ test('work-without-capture still refuses completed and ordinary stopped reports'
     const r = report(root);
     fs.unlinkSync(path.join(root, 'reports/MONO-993-criteria-a1.json'));
     for (const phase_result of ['implemented-needs-preflight', 'blocked', 'needs-human', 'scope-drift-needs-handoff'])
-      assert.throws(() => publishPhase({ ...r, phase_result }, path.join(root, 'out.json')), /missing immutable/);
+      for (const kind of ['phase', 'confirmation-request'])
+        assert.throws(() => publishPhase({ ...r, kind, phase_result }, path.join(root, 'out.json')), /missing immutable/);
     const stop = preCaptureReport(root, { kind: 'capture-refused', issue_file: approvedIssue,
       command: 'capture-criteria', exit: 1, reason: 'Pretend refusal of valid input' });
     assert.throws(() => publishPhase(stop, path.join(root, 'stop.json')), /implementation report/);

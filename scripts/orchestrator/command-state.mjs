@@ -322,10 +322,6 @@ export function admitUnderLock(root, report) {
       if (prior.collectionId !== write.id || prior.reportDigest !== reportDigest) throw new CollectionAdmissionRefusal("conflicting collection admission");
       admitted.push(prior); continue;
     }
-    // Host-owned order: a collection admitted at an earlier sequence is confirmed
-    // before a later one, even when a worker overwrote its mailbox without publishing.
-    const unconfirmed = admittedUnconfirmed(root, report);
-    if (unconfirmed.length) throw new CollectionAdmissionRefusal(`earlier collection ${unconfirmed[0]} is not confirmed; reconcile it before a new collection request`);
     const request = write.payload.request;
     if (entry.pins) {
       if (!request.pins) throw new CollectionAdmissionRefusal("collection pin mismatch: pins");
@@ -341,6 +337,10 @@ export function admitUnderLock(root, report) {
     }
     if (request.collect !== false || request.head !== report.head || canonical(report.capsule.writable_roots) !== canonical(pins.workerWritableRoots))
       throw new CollectionAdmissionRefusal("collection head/grants/collect mismatch");
+    // Host-owned order: a collection admitted at an earlier sequence is confirmed
+    // before a later one, even when a worker overwrote its mailbox without publishing.
+    const unconfirmed = admittedUnconfirmed(root, report);
+    if (unconfirmed.length) throw new CollectionAdmissionRefusal(`earlier collection ${unconfirmed[0]} is not confirmed; reconcile it before a new collection request`);
     const record = { collectionId: write.id, reportDigest, pinsVersion: pins.pinsVersion, manifestDigest: digest(pins), sequence: report.sequence };
     atomicJson(file, record); admitted.push(record);
   }

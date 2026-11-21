@@ -53,6 +53,13 @@ export function collectionBudget(entry, report) {
   };
   return { deadline, timeoutMs, retries, beforeLaunch, beforeConfirm, runLimit: collect => collect ? timeoutMs : Math.min(timeoutMs, remaining() - 10_000) };
 }
+// Explicit orchestrator recovery after the publication deadline: it only reconciles
+// an existing signed receipt for the admitted request, never launches a review.
+function lateBudget(entry) {
+  const timeoutMs = (entry.collectionTimeoutSec ?? deliveryConfig().collectionTimeoutSec) * 1000;
+  return { deadline: Infinity, timeoutMs, retries: 0, runLimit: () => timeoutMs, beforeConfirm: () => {},
+    beforeLaunch: collect => { if (collect) throw new CollectionTimeout('timed-out: late reconciliation never launches a review'); } };
+}
 async function stopGate(gate) {
   const signal = name => {
     try { process.kill(-gate.processGroup, name); }
@@ -151,7 +158,7 @@ async function collection(options, report, write, entry, admission) {
   const request = write.payload.request;
   const evidenceRoot = validateEvidenceGrants(request.evidenceRoot, [request.root, request.worktree, ...request.workerWritableRoots, ...report.capsule.writable_roots]);
   const headLock = path.join(evidenceRoot, `${write.target}.collect.lock`);
-  const budget = collectionBudget(entry, report);
+  const budget = options.late ? lateBudget(entry) : collectionBudget(entry, report);
   const started = path.join(attemptDirectory(options.root, report), "collections", `${write.id}.json`);
   let found = historyReceipt(request);
   while (!found) {
@@ -205,7 +212,8 @@ export async function collectOnce(options) {
     const attentionFile = attentionPath(options);
     const attention = fs.existsSync(attentionFile) ? readJson(attentionFile) : null;
     const reportDigest = digest(report), pinsVersion = entry.pinsVersion ?? 0;
-    if (attention?.reportDigest === reportDigest && attention.pinsVersion === pinsVersion) {
+    if (options.late && !historyReceipt(collectWrite.payload.request)) continue;
+    if (!options.late && attention?.reportDigest === reportDigest && attention.pinsVersion === pinsVersion) {
       const lateReceipt = attention.reason.startsWith('timed-out:') && collectionBudget(entry, report).deadline - Date.now() >= 30_000 &&
         historyReceipt(collectWrite.payload.request);
       if (!lateReceipt) continue;
@@ -224,12 +232,13 @@ export async function collectOnce(options) {
     try {
       const evidence = await collection(options, report, collectWrite, entry,
         admissions.find(item => item.collectionId === collectWrite.id));
-      collectionBudget(entry, report).beforeConfirm();
+      const budget = options.late ? lateBudget(entry) : collectionBudget(entry, report);
+      budget.beforeConfirm();
       await confirmQueue(report, options.root, (action, write) => {
         if (action !== 'reconcile' || write.id !== collectWrite.id) throw new Error('collector confirms only its collection request');
-        collectionBudget(entry, report).beforeConfirm();
+        budget.beforeConfirm();
         return { state: 'present', evidence };
-      }, path.dirname(files[0]), collectionBudget(entry, report).deadline);
+      }, path.dirname(files[0]), budget.deadline);
     } catch (error) {
       if (!(error instanceof CollectionTimeout) && !(error instanceof CollectionAdmissionRefusal) && !error.message.startsWith('timed-out:')) throw error;
       atomicJson(attentionFile, { reportDigest, collectionId: collectWrite.id, reason: error.message, pinsVersion, at: new Date().toISOString() });
@@ -294,7 +303,7 @@ if (isMain(import.meta.url)) {
   try {
     const [command, ...rest] = process.argv.slice(2), args = commandFlags(rest, ["foreground"]);
     allowedFlags(args, ["root", "issue", "attempt", "foreground"]);
-    if (command === "--help" || args.help) console.log("Usage: collector.mjs start|stop|status --root DIR --issue KEY --attempt N\nOrchestrator only, outside worker sandboxes. Empty and collection-only phase queues auto-confirm; connector writes stay manual. Recovery uses signed history and dead isolated process trees; unknown/live locks refuse.");
+    if (command === "--help" || args.help) console.log("Usage: collector.mjs start|stop|status|reconcile --root DIR --issue KEY --attempt N\nOrchestrator only, outside worker sandboxes. Confirms collection requests; other reports need no confirmation because the worker reads its own Linear writes back. Recovery uses signed history and dead isolated process trees; unknown/live locks refuse. reconcile (collector stopped) confirms an admitted request from its existing signed receipt after the publication deadline, without a new review.");
     else {
       const options = { root: args.root, issue: args.issue, attempt: Number(args.attempt) };
       if (command === "start" && args.foreground) {
@@ -315,6 +324,11 @@ if (isMain(import.meta.url)) {
       } else if (command === "start") console.log(JSON.stringify(await collectorStart(options)));
       else if (command === "stop") console.log(JSON.stringify(collectorStop(options)));
       else if (command === "status") console.log(JSON.stringify(collectorStatus(options)));
+      else if (command === "reconcile") {
+        if (collectorStatus(options).status === "running-or-unverified") throw new Error("stop the collector before late reconciliation");
+        await collectOnce({ ...options, late: true });
+        console.log(JSON.stringify({ status: "reconciled" }));
+      }
       else throw new Error(`unknown command ${command}`);
     }
   } catch (error) { console.error(`collector: ${error.message}`); process.exitCode = 1; }

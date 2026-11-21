@@ -262,7 +262,10 @@ completes rename/gate cleanup without a new plan; contradictory records refuse.
 
 Run installed `scripts/orchestrator/collector.mjs start|stop|status --root DIR
 --issue KEY --attempt N` outside all worker sandboxes. Start once per attempt;
-stop at retirement. It confirms collection requests; other reports need none. Inspect `reports/KEY-collector-aN.log` for refusals/results.
+stop at retirement. It confirms collection requests; other reports need none.
+After the publication deadline, with the collector stopped, `collector.mjs
+reconcile` confirms an admitted request from its existing signed receipt without
+a new review; with no receipt it does nothing. Inspect `reports/KEY-collector-aN.log` for refusals/results.
 `reports/KEY-collect-attention-aN.json` signals an admission refusal to the orchestrator once per report digest/current registry pinsVersion/current decision digest tuple, persists across restarts, and clears when the current collection-only preflight report is admitted, including a replacement for the refused report.
 The attempt lock `reports/KEY-collector-aN.lock` stores pid/procStart and the
 active gate incarnation. Start reclaims only a dead holder and dead gate tree;
