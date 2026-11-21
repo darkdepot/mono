@@ -132,6 +132,10 @@ for (const risk of ['standard', 'risky']) test(`bot P2 with a code fix reaches g
     atomicJson(path.join(bin, 'gh-state.json'), state);
     atomicJson(judgmentFile, { head: fixed, preShipReview: 'выполнено', readinessCheck: 'пройдена', documentation: 'без изменений',
       closures: [{ threadId: 'PRRT_p2', replyId: reply.id }], botRemarks: [disposition] });
+    // The collector closed every admitted round: landing finds no round in flight.
+    for (const { admission } of inFlight(readLedger(root, issue, 1))) recordResult(root, issue, 1, admission, { status: 'done' });
+    assert.deepEqual(inFlight(readLedger(root, issue, 1)), []);
+    assert.equal(readLedger(root, issue, 1).length, 2, 'two admitted rounds: the first and the ship fix');
     const shipped = ship(2, fixRequest, true);
     assert.equal(shipped.status, 0, shipped.stdout + shipped.stderr);
     assert.match(shipped.stdout, /gate ship: pass: current-head evidence complete and quiet period passed; Бот: ответил/);
