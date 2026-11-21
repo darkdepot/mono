@@ -398,6 +398,7 @@ test("named collection fixtures through the gate CLI", async t => {
         pins.verification.args = ["-e", `const fs=require('node:fs'),p=require('node:path'),d=${control};
 const read=n=>{try{return fs.readFileSync(p.join(d,n),'utf8').trim()}catch{return null}};
 fs.appendFileSync(p.join(d,'verify-runs'),JSON.stringify({cwd:process.cwd(),tmp:process.env.TMPDIR,gitDir:process.env.GIT_DIR??null,head:require('node:child_process').execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()})+'\\n');
+if(read('verify-psfail'))fs.writeFileSync(p.join(d,'ps-fail'),'1');
 const w=read('verify-probe');if(w){const f=p.join(w,'input.mjs'),kept=fs.readFileSync(f);fs.writeFileSync(f,kept+'// uncommitted fix\\n');const seen=fs.readFileSync('input.mjs','utf8');fs.writeFileSync(f,kept);if(!seen.includes('uncommitted fix')){console.log('FAIL add broken');process.exit(1);}}
 const t=read('verify-tamper');if(t){const x=JSON.parse(t);fs.writeFileSync(p.join(${history},'planted.json'),JSON.stringify({receipt:{producer:'gate-review-v3',pins:{file:x.pins},collectionId:x.collectionId,verification:{host:true,exitCode:0}}}));fs.appendFileSync(x.edit,' ');}
 if(read('verify-child')){const c=require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>require("node:fs").writeFileSync('+JSON.stringify(read('verify-child'))+',"{}"),1500)'],{stdio:'ignore'});c.unref();}
@@ -657,6 +658,18 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         write(markerFile, JSON.stringify({ collectionId: `preflight-collect:${fixed}:3`, group: null }));
         const unfinished = call(at(fixed, 3)); assert.equal(unfinished.status, 1); assert.match(unfinished.stdout, /host verification of this collection did not finish/);
         fs.unlinkSync(markerFile);
+        // MONO-462: when the group stop cannot be confirmed (process table unreadable after the run), the checkout stays
+        // with the marker for recovery, which removes it once the group is confirmed stopped.
+        write(path.join(bin, 'ps'), `#!/bin/sh\nif [ -f ${JSON.stringify(path.join(scratch, 'ps-fail'))} ] && [ "$1" = "-axo" ]; then echo 'ps: denied' >&2; exit 1; fi\nexec /bin/ps "$@"\n`);
+        fs.chmodSync(path.join(bin, 'ps'), 0o755); write(path.join(scratch, 'verify-psfail'), '1');
+        const unconfirmed = at(fixed, 4); await admit(unconfirmed);
+        const stuck = call({ ...unconfirmed, collect: true }); fs.rmSync(path.join(scratch, 'ps-fail'), { force: true }); fs.unlinkSync(path.join(scratch, 'verify-psfail'));
+        assert.equal(stuck.status, 1, stuck.stdout + stuck.stderr); assert.match(stuck.stdout, /collection consistency failed: verification descendants unverified/);
+        const keptCheckout = path.join(evidence, 'verification', `preflight-collect-${fixed}-4.checkout`), keptMarker = keptCheckout.replace(/\.checkout$/, '.running');
+        assert.deepEqual([fs.existsSync(keptCheckout), fs.existsSync(keptMarker)], [true, true], 'kept while the group stop is unconfirmed');
+        const { recoverHostRun } = await import('./review-rounds.mjs')
+        assert.equal(typeof await recoverHostRun(evidence, `preflight-collect:${fixed}:4`, pinsFile), 'string');
+        assert.deepEqual([fs.existsSync(keptCheckout), fs.existsSync(keptMarker)], [false, false], 'recovery removes the checkout after the confirmed stop');
         // The pin decides: a receipt without the host run (older sandbox form) never passes a pinned attempt.
         const stored = path.join(evidence, `${fixed}.json`), passing = JSON.parse(fs.readFileSync(history + '/' + fs.readdirSync(history).find(name => JSON.parse(fs.readFileSync(path.join(history, name))).receipt.collectionId === `preflight-collect:${fixed}:1`)));
         passing.receipt.verification = { ...pins.verification, exitCode: 0, sandbox: { mode: 'workspace-write', probed: true } };

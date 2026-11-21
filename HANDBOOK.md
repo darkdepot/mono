@@ -948,7 +948,7 @@ command. The run
 has a process group of its own that is stopped as a whole when the command
 exits and a private temporary directory, writes its output to
 `<evidenceRoot>/verification/<collectionId>.log`, and the checkout is removed
-afterwards. While it runs, a
+once the group is confirmed stopped (otherwise recovery removes it). While it runs, a
 `<collectionId>.running` marker beside the log holds the evidence snapshot
 taken before the run and the group, registered before the command is released:
 no receipt of that collection is read while the marker exists, and if the gate

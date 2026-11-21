@@ -212,6 +212,8 @@ export async function runHostVerification({ command, args }, repo, head, evidenc
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-verify-"));
   const fd = fs.openSync(log, "w", 0o644);
   const startedAt = Date.now();
+  // The checkout goes only once nothing of the run can still use it; otherwise recovery removes it after the group stop.
+  let stopped = false;
   // The wrapper leads the group and runs the command only after "go": the group is durable in the marker first,
   // and a gate that dies before that closes stdin, so nothing unregistered runs.
   // Fixed code: the command arrives as data in argv, never inside the code.
@@ -231,7 +233,7 @@ if(r.error)console.error(r.error.message);process.exit(r.status??(r.signal?128:1
       requireThat(git(checkout, "rev-parse", "HEAD") === head && git(checkout, "status", "--porcelain", "--untracked-files=all") === "", "the checkout is not the clean head");
     } catch (cause) {
       const error = `clean checkout of the head failed: ${cause.message}`;
-      fs.writeSync(fd, error + "\n");
+      fs.writeSync(fd, error + "\n"); stopped = true;
       return { command, args, host: true, head, exitCode: 1, error, durationMs: Date.now() - startedAt, log, tail: error };
     }
     let group = null, registered = null;
@@ -251,13 +253,14 @@ if(r.error)console.error(r.error.message);process.exit(r.status??(r.signal?128:1
     fs.closeSync(fd);
     // Descendants left by the command could still write evidence: the whole group ends before the evidence check.
     const descendants = group ? await stopHostGroup(group) : null;
+    stopped = !descendants;
     const text = fs.readFileSync(log, "utf8");
     return { command, args, host: true, head, exitCode: registered === true ? exitCode ?? 1 : 1, ...(error ? { error } : {}),
       ...(registered !== true ? { error: `verification group registration failed: ${registered}` } : {}), ...(descendants ? { descendants } : {}),
       durationMs: Date.now() - startedAt, log, tail: (failureLines(text) || text).slice(-4000) };
   } finally {
     try { fs.closeSync(fd); } catch {}
-    removeHostCheckout(evidenceRoot, collectionId);
+    if (stopped) removeHostCheckout(evidenceRoot, collectionId);
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }

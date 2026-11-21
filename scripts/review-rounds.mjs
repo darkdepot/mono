@@ -79,8 +79,10 @@ export async function stopHostGroup(group, procStart = null) {
 // remove the head checkout, settle the evidence against the stored snapshot, quarantine anything left for this
 // collection, drop the marker.
 export async function recoverHostRun(evidenceRoot, collectionId, pinsFile) {
+  if (!fs.existsSync(hostRunMarker(evidenceRoot, collectionId))) return null;
+  // The gate snapshots the resolved evidence root: a request path through a symlink must compare the same files.
+  evidenceRoot = fs.realpathSync(evidenceRoot);
   const marker = hostRunMarker(evidenceRoot, collectionId);
-  if (!fs.existsSync(marker)) return null;
   const state = readJson(marker);
   // A marker without a group was written before the run was released: nothing ran.
   if (state.group !== null) {
