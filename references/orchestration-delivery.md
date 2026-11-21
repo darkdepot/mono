@@ -279,7 +279,8 @@ Phase correlation uses validatePhase, registry issue/attempt/pack identity, the
 sole standard/fallback location, report digest and existing predecessor barriers;
 terminal delivery reports never substitute for phase reports. Collection admission
 shares launch.lock with amend, reads registry pinsVersion, and seals reportDigest
-and manifestDigest. Old admitted requests recover against their admitted version;
+and manifestDigest; a request at a later sequence waits until every earlier
+admitted sequence is confirmed. Old admitted requests recover against their admitted version;
 new stale-version requests refuse. Before collection, find signed history by
 collectionId and compare actual receipt bindings (including risk/critical, dataset,
 grants and verification) against the admitted request. Under the per-head lock,
@@ -429,7 +430,8 @@ phase=code|preflight|ship and the same delivery context/log. A retry after
 terminal parked archives a reconciled capsule only after the new attempt has read
 the Issue's Linear state back; never erase old receipts.
 
-Consume final green only after current preflight/ship gates. For parked, read
+Consume final green only after current preflight/ship gates; landing still
+requires the code and preflight reports and any collection confirmation. For parked, read
 the worker's park comment back; if the worker died without one, write the
 reason/text and next action to Linear in this SAME turn, read it back,
 and then decide/escalate; missing write access remains an explicit pending action,

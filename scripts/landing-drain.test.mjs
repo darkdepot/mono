@@ -98,7 +98,9 @@ function fixture(t, commandScript = script) {
     certificate: `mono-ship green certificate\nShip: green\nIssue(s): ${issue}\nPR: https://github.com/owner/repo/pull/901\nHead SHA: ${head}\n`,
     linear_mutations_pending: [], capsule: { phase: "ship", head, decisions: [], open_queue: [], writable_roots: [repo] } };
   const confirmFile = path.join(root, `confirmations/${issue}-phase-ship-a1-s1.confirmed.json`);
-  const publish = () => { atomicJson(reportFile, report); atomicJson(confirmFile, { report, issue, attempt: 1, phase: "ship", sequence: 1, status: "confirmed", reportDigest: digest(report), results: [] }); };
+  const predecessors = (value, file) => { for (const phase of ["code", "preflight"]) atomicJson(file.replace("-phase-ship.json", `-phase-${phase}.json`),
+    { ...value, phase, status: undefined, certificate: undefined, capsule: { ...value.capsule, phase } }); };
+  const publish = () => { predecessors(report, reportFile); atomicJson(reportFile, report); atomicJson(confirmFile, { report, issue, attempt: 1, phase: "ship", sequence: 1, status: "confirmed", reportDigest: digest(report), results: [] }); };
   const workers = { [issue]: entry }, registry = () => atomicJson(path.join(root, "workers.json"), workers);
   registry(); publish(); atomicJson(path.join(root, "control.json"), { state: "active", halt: false });
   const record = { repo: "owner/repo", issue, attempt: 1, pr: 901, head, mergeSha, mergedAt: "2026-10-01T00:00:00Z", guard: { code: 0, outcome: "pass" } };
@@ -114,7 +116,7 @@ else { console.error('unexpected GitHub endpoint: '+e); process.exit(71); }
 `); fs.chmodSync(path.join(bin, "gh"), 0o755);
   const args = (command, more = []) => [commandScript, command, "--root", root, "--config", config, "--json", ...more];
   const run = (command, more = []) => spawnSync(process.execPath, args(command, more), { cwd: repo, env, encoding: "utf8" });
-  return { scratch, root, repo, env, git, tip, mergeSha, head, issue, entry, workers, registry, report, reportFile, confirmFile, publish, record, pending, mock, github, run, args, config };
+  return { scratch, root, repo, env, git, tip, mergeSha, head, issue, entry, workers, registry, report, reportFile, confirmFile, publish, predecessors, record, pending, mock, github, run, args, config };
 }
 
 function prFieldFixture(t, value) {
@@ -445,6 +447,7 @@ test("landing U7 concurrent records retain both landings; landed tasks do not bl
   const f = fixture(t), second = { ...f.entry, issue: "MONO-902" }, report = { ...f.report, issue: "MONO-902",
     certificate: f.report.certificate.replaceAll("MONO-901", "MONO-902").replace("/pull/901", "/pull/902") };
   f.workers[second.issue] = second; f.registry();
+  f.predecessors(report, path.join(f.root, "reports/MONO-902-phase-ship.json"));
   atomicJson(path.join(f.root, "reports/MONO-902-phase-ship.json"), report);
   atomicJson(path.join(f.root, "confirmations/MONO-902-phase-ship-a1-s1.confirmed.json"), { report, issue: second.issue, attempt: 1, phase: "ship", sequence: 1, status: "confirmed", reportDigest: digest(report), results: [] });
   f.mock.prs = { 901: f.mock.pr, 902: { ...f.mock.pr, number: 902 } }; f.github();

@@ -2113,6 +2113,18 @@ test('queue-collection-only: a Linear write beside the collection request is ref
     assert.equal(fs.existsSync(f.confirmation), false);
   });
 });
+test('collection-order: a new collection is not admitted while an earlier admitted one is unconfirmed', async () => {
+  await collectorAttentionFixture(async f => {
+    const first = publishPhase(f.report(1), f.reportFile);
+    assert.equal((await admitCollection(f.options.root, first)).length, 1);
+    const second = { ...f.report(2), publishedAt: new Date().toISOString() };
+    atomicJson(f.reportFile, second); // A worker can overwrite its mailbox without publishing.
+    await assert.rejects(admitCollection(f.options.root, second), /earlier collection preflight-collect:.*:1 is not confirmed/);
+    await confirmQueue(first, f.options.root, async () => ({ state: 'present', evidence: await f.signedHistory(f.request(1)) }));
+    assert.equal((await admitCollection(f.options.root, second)).length, 1, 'confirmation of the earlier collection releases the next one');
+  });
+});
+
 test('collection-id-reuse: older confirmed reports remain reserved after a newer collection', async () => {
   await collectorAttentionFixture(async f => {
     const first = publishPhase(f.report(1), f.reportFile);

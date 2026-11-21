@@ -344,6 +344,9 @@ test('ship-green-certificate: publication and landing share issue/head/PR valida
     entry.pins = { file: pinsFile, digest: createHash('sha256').update(fs.readFileSync(pinsFile)).digest('hex') };
     fs.writeFileSync(path.join(root, 'workers.json'), JSON.stringify({ [issue]: entry }));
     assert.equal(fs.existsSync(path.join(root, 'confirmations')), false, 'a green ship report lands without any confirmation');
+    const code = fs.readFileSync(file('code')); fs.unlinkSync(file('code'));
+    assert.throws(() => landedShip(root, entry), /phase code report is missing/, 'landing still requires the phase chain');
+    fs.writeFileSync(file('code'), code);
     assert.deepEqual(landedShip(root, entry), { repo: 'owner/repo', pr: 162, head, branch: 'main' });
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
