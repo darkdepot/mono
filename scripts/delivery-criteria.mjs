@@ -24,9 +24,29 @@ const acceptanceHeading = line => /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/u.exec(
 // than guessing a shorter acceptance list.
 export function acceptanceCriteria(body) {
   const invalid = detail => fail(`${detail}; blocked; expected "# Критерии приемки" / "Готово, когда:" or "# Acceptance criteria" / "Done when:"`);
+  const lines = body.split(/\r?\n/u), headings = [], parents = [];
+  let scanFence = null;
+  for (const [index, line] of lines.entries()) {
+    const delimiter = /^ {0,3}(`{3,}|~{3,})/u.exec(line);
+    if (delimiter) {
+      if (!scanFence) scanFence = delimiter[1];
+      else if (delimiter[1][0] === scanFence[0] && delimiter[1].length >= scanFence.length) scanFence = null;
+      continue;
+    }
+    if (scanFence) continue;
+    const heading = acceptanceHeading(line);
+    if (!heading) continue;
+    const level = heading[1].length;
+    while (parents.length && parents.at(-1) >= level) parents.pop();
+    headings.push({ index, level, parent: parents.at(-1) });
+    parents.push(level);
+  }
+  const soleTitle = headings.filter(heading => heading.level === 1).length === 1;
+  const sectionLines = new Set(headings.filter(heading => heading.parent === undefined || soleTitle && heading.parent === 1)
+    .map(heading => heading.index));
   let section = false, depth = 0, marker = false, fence = null, sections = 0, listIndent = null, expectedMarker;
   const criteria = [];
-  for (const line of body.split(/\r?\n/u)) {
+  for (const [index, line] of lines.entries()) {
     const delimiter = /^ {0,3}(`{3,}|~{3,})/u.exec(line);
     if (delimiter) {
       if (!fence) fence = delimiter[1];
@@ -38,7 +58,7 @@ export function acceptanceCriteria(body) {
     const heading = acceptanceHeading(line);
     if (heading) {
       if (section && heading[1].length <= depth) section = false;
-      if (acceptanceLabels.has(heading[2])) {
+      if (sectionLines.has(index) && acceptanceLabels.has(heading[2])) {
         if (++sections > 1) invalid('duplicate acceptance section');
         section = true; depth = heading[1].length; expectedMarker = acceptanceLabels.get(heading[2]);
       } else if (section) invalid('nested acceptance heading is ambiguous');

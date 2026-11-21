@@ -6,6 +6,37 @@ import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { captureCriteria, publishPhase, validatePhase } from './delivery-state.mjs';
 import { implementationComment } from './implementation-comment.mjs';
+import { acceptanceCriteria } from './delivery-criteria.mjs';
+
+test('acceptance document sections ignore a nested Issue copy', () => {
+  const source = fs.readFileSync('scripts/fixtures/nested-issue-sections.md', 'utf8');
+  for (const depth of [2, 3]) {
+    const body = source.replace(/^## /gmu, '#'.repeat(depth) + ' ');
+    assert.deepEqual(acceptanceCriteria(body), ['AC1: Взяты разделы самой задачи.', 'AC2: Взяты критерии самой задачи.']);
+  }
+});
+
+test('acceptance document sections retain duplicate and nested-only refusals', () => {
+  const source = fs.readFileSync('scripts/fixtures/nested-issue-sections.md', 'utf8');
+  const own = '# Критерии приемки\nГотово, когда:\n- AC1: Взяты разделы самой задачи.\n- AC2: Взяты критерии самой задачи.\n';
+  assert.throws(() => acceptanceCriteria(source + '\n' + own), /duplicate acceptance section/);
+  assert.throws(() => acceptanceCriteria(source.replace(own, '')), /nonempty unambiguous acceptance list required/);
+});
+
+test('acceptance document sections use parent headings and retain opaque fences', () => {
+  const list = 'Готово, когда:\n- AC1: Проверено.\n';
+  assert.deepEqual(acceptanceCriteria('# Задача\n## Критерии приемки\n' + list + '## Контекст\n### Критерии приемки\n' + list), ['AC1: Проверено.']);
+  assert.throws(() => acceptanceCriteria('# Один\n## Критерии приемки\n' + list + '# Два\n'), /nonempty unambiguous acceptance list required/);
+  for (const fence of ['```', '~~~']) {
+    const opaque = `${fence}\n# Ложное название\n# Критерии приемки\n${fence}\n> # Критерии приемки\n`;
+    assert.deepEqual(acceptanceCriteria('# Задача\n## Контекст\n' + opaque + '## Критерии приемки\n' + list), ['AC1: Проверено.']);
+    assert.throws(() => acceptanceCriteria('# Критерии приемки\n' + list + fence + '\nпример\n' + fence), /fenced acceptance content is ambiguous/);
+  }
+  for (const heading of ['## Детали', '## Критерии приемки'])
+    assert.throws(() => acceptanceCriteria('# Цель PR\nПроверка.\n# Критерии приемки\n' + list + heading + '\n'), /nested acceptance heading is ambiguous/);
+  assert.throws(() => acceptanceCriteria('# Критерии приемки\n- AC1: Без маркера.\n'), /canonical list marker required/);
+  assert.throws(() => acceptanceCriteria('# Критерии приемки\n' + list + 'Второй список:\n- AC2: Второй.\n'), /acceptance bullet list required/);
+});
 
 test('criteria-relative-root resolves from the working copy before persisting', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-relative-root-'));
