@@ -85,6 +85,10 @@ test('launch-watcher-required', async t => {
       }
     });
     pulse(f.root); pass(f.dispatch());
+    // MONO-457: BASE hostVerification (Mono's own config) is pinned for the attempt and adds the dispatch block.
+    const launched = path.join(f.root, 'dispatch', `${f.issue}-a1`);
+    assert.equal(read(path.join(launched, 'pins.json')).hostVerification, true);
+    assert.match(fs.readFileSync(path.join(launched, 'dispatch.md'), 'utf8'), /## Проверка на хосте\n\nPinned `hostVerification: true`/);
     const entry = f.entry(); await stopped(entry.pid);
     const resumeFile = path.join(f.scratch, 'resume.md'); put(resumeFile, 'Continue the same issue.');
     const resumeRequest = path.join(f.scratch, 'resume.json'); atomicJson(resumeRequest, { root: f.root, issue: f.issue, resumeFile });

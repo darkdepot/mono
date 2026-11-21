@@ -39,7 +39,7 @@ comments/certificates; apply worker snapshot/Linear Writes rules.
    committed head with [role:code-review](references/model-policy.md#roles) and
    [role:code-review-checker](references/model-policy.md#roles). No in-worker
    review or substitute.
-4. Commit, run the pinned verification, send `workerVerification`;
+4. Commit, run the pinned verification, send `workerVerification` (none if `hostVerification`);
    first request: `scripts/ship-pr.mjs open` (draft, once). Later: `push`,
    then `remarks`; all fixed this attempt go in the request's `prRemarks`. Run the pinned
    gate.mjs preflight collect:false, publish its returned request, wait, rerun.

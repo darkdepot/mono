@@ -3,11 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { execFileSync, spawnSync } from "node:child_process";
-import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER, REVIEW_ROUND_ROLES } from "./runtime.mjs";
+import os from "node:os";
+import { execFileSync, spawnSync, spawn } from "node:child_process";
+import { atomicJson, canonical, digest, readJson, flags, identity, isMain, processStart, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER, REVIEW_ROUND_ROLES } from "./runtime.mjs";
 import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
+import { hostRunMarker, evidenceSnapshot, evidenceTouched, stopHostGroup } from './review-rounds.mjs';
 
 export { reviewEnvironment } from "./model-environment.mjs";
 
@@ -171,7 +173,7 @@ export function roundOutcome(record, round, strict = false) {
   return { outcome: 'clean-with-successors', successors: open.map(finding => ({ key: finding.key, origin: finding.origin,
     line: `${mustFile(finding) ? 'must-file ' : ''}${findingLine(finding)}` })) };
 }
-function reviewRefusal(review) {
+function reviewRefusal(review, host = false) {
   if (review.outcome === 'refused') return review.reason;
   if (review.outcome === 'not-reviewed') return review.repeated
     ? `blocked: not-reviewed twice in a row on this head: ${review.reason}`
@@ -182,17 +184,74 @@ function reviewRefusal(review) {
   for (const line of all) { if (open.join('; ').length + line.length > 40000) break; open.push(line); }
   const list = `${all.length} open: ${open.join('; ')}${open.length < all.length ? `; ${all.length - open.length} more in the next round` : ''}`;
   if (review.round < limit) return `review not-converged (${round}); fix and request the next round; ${list}`;
-  return limit === ROUND_LIMIT ? `needs-decision: review not-converged after ${round}; ${list}` : `review not-converged (${round}); ${FAST_FIX}; ${list}`;
+  return limit === ROUND_LIMIT ? `needs-decision: review not-converged after ${round}; ${list}` : `review not-converged (${round}); ${host ? HOST_FAST_FIX : FAST_FIX}; ${list}`;
 }
 const FAST_FIX = 'fix, run the full verification on the final head and request it with workerVerification {head, exitCode: 0}';
+const HOST_FAST_FIX = 'fix and request the final head; the collection runs the full verification on the host';
+// The worker cannot rerun a check that needs the host (process table): it fixes from this line and the log.
+const hostFailure = verification => `verification failed on this head on the host (exit ${verification.exitCode}); fix and request again, ` +
+  `the same head too for a flaky run; log ${verification.log}${verification.tail ? `; tail: ${clip(verification.tail.slice(-2000), 2000)}` : ''}`;
+// The failing lines (test runner and verify summaries) say more than the last lines of a parallel run.
+const failureLines = text => text.split("\n").filter(line => /^\s*(FAIL\b|not ok\b|✖)|AssertionError|Error:/.test(line)).join("\n");
+// Pinned hostVerification: the product's full verification needs the host (for example the process table),
+// so the collection runs it on the committed head outside the worker sandbox, before the review round.
+// It runs worker-authored code with host rights: the owner opts in per product. The run gets its own process
+// group and a private temporary directory. The marker (review-rounds.mjs) holds the evidence snapshot and,
+// before the command is released, the group: a receipt of that collection is not trusted while it exists,
+// the group is stopped as a whole and the evidence settled when the command exits (here) or after a gate
+// that died mid-run (collector recovery).
+export async function runHostVerification({ command, args }, repo, evidenceRoot, collectionId, pinsFile) {
+  const marker = hostRunMarker(evidenceRoot, collectionId), log = marker.replace(/\.running$/, ".log");
+  fs.mkdirSync(path.dirname(marker), { recursive: true });
+  atomicJson(marker, { collectionId, group: null, startedAt: new Date().toISOString(), snapshot: evidenceSnapshot(evidenceRoot, pinsFile) });
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-verify-"));
+  const fd = fs.openSync(log, "w", 0o644);
+  const startedAt = Date.now();
+  // The wrapper leads the group and runs the command only after "go": the group is durable in the marker first,
+  // and a gate that dies before that closes stdin, so nothing unregistered runs.
+  // Fixed code: the command arrives as data in argv, never inside the code.
+  const wrapper = `(async()=>{let token="";for await(const chunk of process.stdin)token+=chunk;if(token!=="go\\n")process.exit(1);
+const [command,...args]=JSON.parse(process.argv[1]);
+const r=require("node:child_process").spawnSync(command,args,{stdio:["ignore","inherit","inherit"]});
+if(r.error)console.error(r.error.message);process.exit(r.status??(r.signal?128:1));})()`;
+  try {
+    let group = null, registered = null;
+    const { exitCode, error } = await new Promise(resolve => {
+      const child = spawn(process.execPath, ["--input-type=commonjs", "-e", wrapper, JSON.stringify([command, ...args])], { cwd: repo, detached: true, stdio: ["pipe", fd, fd],
+        env: { ...process.env, TMPDIR: tempRoot, TMP: tempRoot, TEMP: tempRoot } });
+      child.stdin.on("error", () => {});
+      child.once("error", cause => resolve({ exitCode: null, error: cause.message }));
+      child.once("exit", (code, signal) => resolve({ exitCode: code ?? (signal ? 128 : null), error: signal ? `signal ${signal}` : null }));
+      try {
+        group = child.pid; const procStart = processStart(group);
+        if (!procStart) throw new Error("verification group incarnation unavailable");
+        atomicJson(marker, { ...readJson(marker), group, procStart });
+        registered = true; child.stdin.end("go\n");
+      } catch (cause) { child.stdin.destroy(); registered = cause.message; }
+    });
+    fs.closeSync(fd);
+    // Descendants left by the command could still write evidence: the whole group ends before the evidence check.
+    const descendants = group ? await stopHostGroup(group) : null;
+    const text = fs.readFileSync(log, "utf8");
+    return { command, args, host: true, exitCode: registered === true ? exitCode ?? 1 : 1, ...(error ? { error } : {}),
+      ...(registered !== true ? { error: `verification group registration failed: ${registered}` } : {}), ...(descendants ? { descendants } : {}),
+      durationMs: Date.now() - startedAt, log, tail: (failureLines(text) || text).slice(-4000) };
+  } finally {
+    try { fs.closeSync(fd); } catch {}
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
 export function validatePreflight(receipt, head, base) {
   requireThat(receipt?.producer === REVIEW_PRODUCER && receipt.review, "missing review receipt or old receipt format; request a new collection");
   requireThat(receipt.head === head && receipt.base === base, "missing or stale review receipt/head/base");
-  requireThat(ACCEPTED.includes(receipt.review.outcome), reviewRefusal(receipt.review));
+  requireThat(ACCEPTED.includes(receipt.review.outcome), reviewRefusal(receipt.review, receipt.verification?.host === true));
   requireThat(receipt.consistency?.passed === true && receipt.consistency.error === null, `collection consistency failed or missing: ${receipt.consistency?.error ?? "no record"}`);
-  // The collection no longer verifies (exitCode null): only the worker's full verification of this head, exit 0, passes it.
+  // Host verification (pinned hostVerification): the collection ran the full verification of this head outside the sandbox.
+  // Otherwise the collection does not verify (exitCode null): only the worker's full verification of this head, exit 0, passes it.
   // Older receipts keep their own sandbox verification.
-  if (receipt.verification?.exitCode === null) requireThat(receipt.workerVerification?.head === head && receipt.workerVerification.exitCode === 0,
+  const host = receipt.verification?.host === true;
+  if (host) requireThat(receipt.verification.exitCode === 0, hostFailure(receipt.verification));
+  else if (receipt.verification?.exitCode === null) requireThat(receipt.workerVerification?.head === head && receipt.workerVerification.exitCode === 0,
     "worker verification missing on this head: run the full verification and request with workerVerification {head, exitCode: 0}");
   else {
     requireThat(receipt.verification?.exitCode === 0, "needs-decision: verification failed on the reviewed head");
@@ -200,13 +259,14 @@ export function validatePreflight(receipt, head, base) {
   }
   const successors = receipt.review.successors ?? [], worker = receipt.review.workerVerification;
   requireThat(!worker || (worker.head === head && worker.exitCode === 0), "worker verification is not on this head");
-  return `review ${receipt.review.outcome} (round ${receipt.review.round} of ${receipt.review.limit ?? ROUND_LIMIT})${worker ? ', fixes after it confirmed by the worker\'s full verification,' : ''} and verification verified on head` +
+  const fixes = receipt.review.hostVerified ? ', fixes after it confirmed by the full verification on the host,' : worker ? ', fixes after it confirmed by the worker\'s full verification,' : '';
+  return `review ${receipt.review.outcome} (round ${receipt.review.round} of ${receipt.review.limit ?? ROUND_LIMIT})${fixes} and ${host ? 'host ' : ''}verification verified on head` +
     (successors.length ? `; successor candidates: ${successors.map(item => item.line).join('; ')}` : '');
 }
 
 const ROUND_LIMIT_REACHED = `review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); split the Issue or change approach in a new attempt`;
 // Fast path: the spent round needs the worker's full verification on the final head instead of another round.
-const limitRefusal = limit => limit === ROUND_LIMIT ? `needs-decision: ${ROUND_LIMIT_REACHED}` : `review round spent (1 of 1 on this task attempt); ${FAST_FIX}`;
+const limitRefusal = (limit, host = false) => limit === ROUND_LIMIT ? `needs-decision: ${ROUND_LIMIT_REACHED}` : `review round spent (1 of 1 on this task attempt); ${host ? HOST_FAST_FIX : FAST_FIX}`;
 const NOT_REVIEWED_TWICE = "not-reviewed twice in a row on this head; check that both review CLIs are logged in, then resume with a task change";
 // Other issues' and older receipts share this folder: only this attempt's pins files are read further;
 // unreadable or irregular files are skipped, never counted. No worker grant reaches evidenceRoot.
@@ -298,12 +358,14 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   const workerCheck = request.workerVerification, limit = roundLimit(request.risk), strict = limit === ROUND_LIMIT;
   requireThat(workerCheck === undefined || (Object.keys(workerCheck ?? {}).sort().join(",") === "exitCode,head" && /^[a-f0-9]{40}$/.test(workerCheck.head) &&
     Number.isInteger(workerCheck.exitCode)), "workerVerification must be {head, exitCode} of the worker's full verification run");
+  const workerVerified = workerCheck?.head === request.head && workerCheck.exitCode === 0;
   // Strict path: up to ROUND_LIMIT rounds per attempt, task changes included. Fast path: one round per contract,
   // so a delivered task change («Изменение задачи») gets one round of its own even on an unchanged head;
   // the stage record holds ROUND_LIMIT rounds, so a fast-path task change after them needs a new attempt.
   const roundsUsed = prior => strict ? prior.spent : prior.onContract;
   const roundOpen = prior => roundsUsed(prior) < limit && prior.spent < ROUND_LIMIT;
-  const closedRefusal = prior => strict || prior.onContract ? limitRefusal(limit) : limitRefusal(ROUND_LIMIT);
+  const hostVerify = pins?.hostVerification === true;
+  const closedRefusal = prior => strict || prior.onContract ? limitRefusal(limit, hostVerify) : limitRefusal(ROUND_LIMIT);
   const evidenceRoot = preflightEvidenceRoot(request);
   validateEvidenceGrants(request.packRoot ?? request.skillsRoot, request.workerWritableRoots, 'packRoot');
   validateEvidenceGrants(request.skillsRoot, request.workerWritableRoots, 'installed skillsRoot');
@@ -337,7 +399,11 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   let receipt, verifiedReceiptFile = receiptFile;
   if (request.collect === false) {
     // evidenceRoot is outside every worker grant (checked above), so its regular files are the receipts.
-    const readReceipt = file => { regularEvidence(file); return readJson(file).receipt; };
+    const readReceipt = file => {
+      regularEvidence(file); const read = readJson(file).receipt;
+      requireThat(!fs.existsSync(hostRunMarker(evidenceRoot, read?.collectionId ?? "")), "host verification of this collection did not finish; request a new collection");
+      return read;
+    };
     if (!pins) receipt = readReceipt(receiptFile);
     else if (fs.existsSync(receiptFile)) receipt = readReceipt(receiptFile);
     if (pins && receipt?.collectionId !== request.collectionId) {
@@ -354,7 +420,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       const prior = history;
       if (prior && !prior.reuse) {
         requireThat(prior.notReviewed < 2, `blocked: ${NOT_REVIEWED_TWICE}`);
-        requireThat(roundOpen(prior) || workerFixed(prior), closedRefusal(prior));
+        // With host verification the collection itself verifies the fixed head.
+        requireThat(roundOpen(prior) || workerFixed(prior, hostVerify || workerVerified), closedRefusal(prior));
       }
       return { publishRequest: { ...request, collect: false } };
     }
@@ -374,8 +441,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   validateEvidenceGrants(request.skillsRoot, [repo], "installed skillsRoot");
   // Fast path after its round on this contract: accepted on the worker's full verification (exit 0) of this head; what the
   // round left for a decision (out of contract, raised risk) never passes on the worker's word.
-  function workerFixed(prior) {
-    if (strict || prior.onContract < 1 || workerCheck?.head !== head || workerCheck.exitCode !== 0) return null;
+  function workerFixed(prior, verified = workerVerified) {
+    if (strict || prior.onContract < 1 || !verified) return null;
     // The attempt's last completed round, on any base: a newer base does not clear its blockers or successors.
     const last = receiptHistory(request.evidenceRoot, request.pins.file).filter(receipt => receipt.producer === REVIEW_PRODUCER && receipt.review?.spent === true)
       .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt))).at(-1)?.review ?? null;
@@ -386,7 +453,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     const successors = last?.successors?.length ? last.successors : last?.record
       ? roundOutcome({ outcome: 'clean', findings: leftover(last.record).filter(finding => finding.origin === 'pre-existing') }, last.round).successors : [];
     return { outcome: successors.length ? 'clean-with-successors' : 'clean', spent: false, round: prior.onContract, successors,
-      record: last?.record ?? null, workerVerification: workerCheck };
+      record: last?.record ?? null, ...(hostVerify ? { hostVerified: true } : { workerVerification: workerCheck }) };
   }
   const unchanged = () => {
     if (idea) verifyIdeaArtifact(idea, pinnedIssue ?? request.issue);
@@ -402,14 +469,29 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     const checkConsistency = () => {
       try { unchanged(); } catch (error) { consistency.passed = false; consistency.error ??= error.message; }
     };
-    // Review first: a round is spent only by a completed round on a new head.
+    // A round is spent only by a completed round on a new head.
     let review;
     const refuse = reason => ({ outcome: 'refused', spent: false, round: null, reason, successors: [], record: null });
+    // Host verification runs first, on every collection (a same-head retry reruns it): a red head spends no
+    // round and no reviewer call, and the refusal never counts toward not-reviewed.
     // New PR remarks on the same head are not covered by the stored round: they need a round of their own.
     if (prior.reuse && canonical(prior.reuse.prRemarks ?? null) !== canonical(request.prRemarks?.length ? request.prRemarks : null)) prior.reuse = null;
-    if (prior.reuse) review = { ...prior.reuse.review, ...roundOutcome(prior.reuse.review.record, prior.reuse.review.round, strict), spent: false, reusedFrom: prior.reuse.runId };
+    let verification = { command: request.verification.command, args: request.verification.args, exitCode: null };
+    // Skipped only where the answer is the blocked refusal anyway (not-reviewed twice, no stored round to reuse).
+    if (hostVerify && (prior.reuse || prior.notReviewed < 2)) {
+      verification = await runHostVerification(request.verification, repo, evidenceRoot, request.collectionId, request.pins.file);
+      const touched = evidenceTouched(readJson(hostRunMarker(evidenceRoot, request.collectionId)).snapshot, evidenceRoot, request.pins.file) ?? verification.descendants ?? null;
+      if (touched) { consistency.passed = false; consistency.error = touched; }
+      // Touched evidence is already put back or quarantined; a group that may still live keeps the marker.
+      if (!verification.descendants) fs.rmSync(hostRunMarker(evidenceRoot, request.collectionId), { force: true });
+      checkConsistency();
+    }
+    if (!consistency.passed) review = refuse(`collection consistency failed: ${consistency.error}`);
+    else if (hostVerify && verification.host !== true) review = refuse(`blocked: ${NOT_REVIEWED_TWICE}`);
+    else if (verification.host && verification.exitCode !== 0) review = refuse(hostFailure(verification));
+    else if (prior.reuse) review = { ...prior.reuse.review, ...roundOutcome(prior.reuse.review.record, prior.reuse.review.round, strict), spent: false, reusedFrom: prior.reuse.runId };
     else if (prior.notReviewed >= 2) review = refuse(`blocked: ${NOT_REVIEWED_TWICE}`);
-    else if (!roundOpen(prior)) review = workerFixed(prior) ?? refuse(closedRefusal(prior));
+    else if (!roundOpen(prior)) review = workerFixed(prior, hostVerify ? verification.exitCode === 0 : workerVerified) ?? refuse(closedRefusal(prior));
     else {
       const record = await runReviewRound({ worktree: repo, head, base, contract, risk: request.critical ? 'riskyCritical' : request.risk,
         config: baseModelConfig(repo, request.modelRoutes?.base ?? base), packRoot: path.resolve(scriptDir, '..'), ...(prior.record ? { stageRecord: prior.record } : {}),
@@ -423,12 +505,14 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     review.contractDigest = contractDigest; review.limit = limit;
     checkConsistency();
     receipt = { producer: REVIEW_PRODUCER, recordedAt, ...binding, runId: crypto.randomUUID(), head, base, review,
-      // The worker runs the full verification; the collection records the pinned command unrun.
-      verification: { command: request.verification.command, args: request.verification.args, exitCode: null }, consistency };
+      // Without host verification the worker runs the full verification; the collection records the pinned command unrun.
+      verification, consistency };
     atomicJson(path.join(evidenceRoot, "history", `${receipt.runId}.json`), { receipt });
     atomicJson(receiptFile, { receipt });
   }
   const reason = validatePreflight(receipt, head, base);
+  // The pin, not the receipt, decides the verification: a pinned attempt passes only on the collection's host run.
+  requireThat(!hostVerify || receipt.verification?.host === true, "host verification missing on this head: request a new collection");
   unchanged();
   return { reason, receipt: { path: verifiedReceiptFile, runId: receipt.runId, digest: digest(receipt) } };
 }
@@ -745,6 +829,8 @@ preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,ri
   workerVerification: the worker's own run of the pinned full verification on this head; a receipt passes only with exitCode 0 on its head.
   collect:true runs the read-only review round first (reviewer and checker from different model families, both CLIs logged in by subscription),
   and records verification unrun (exitCode null); one gate-review-v3 receipt per collectionId.
+  Pinned hostVerification (BASE orchestration.delivery.hostVerification): collect:true first runs the pinned verification on the head
+  outside the worker sandbox (log in <evidenceRoot>/verification/); exit 0 passes in place of workerVerification, a red head spends no round.
   Rounds per task attempt from the pinned risk (risky 3 with task changes counted, else 1 per contract: a task change gets one round), counted from receipt history; rounds after the first review only the fixes and open findings; the same head reuses its round; not-reviewed spends nothing.
   Refusals are receipts too: fix and request the next round, or park on a needs-decision:/blocked: line.
   The sandbox write boundary is the trust anchor: evidenceRoot is outside every worker grant, so receipts are not worker-writable.

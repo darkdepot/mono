@@ -168,13 +168,13 @@ Green needs all obligations: drift before ready, ready before review, In Review 
 Pin product/evidenceRoot/packRoot/skillsRoot/risk/critical/verification/grants.
 ~/.mono-agent-workflow/evidence/<product>/ outside ALL grants, including
 worktree/orchestrator. Orchestrator collect:true only; worker collect:false.
-Keys grant no writes; hostile operator out of scope (one user/host).
+Hostile operator out of scope (one user/host).
 
 Commit; collect:false exit 2=pending. Write {issue,attempt,request:<publishRequest>}
 to reports/<ISSUE-KEY>-round-a<N>.json, request.collectionId=preflight-collect:
 <head>:<n>; run `delivery-state.mjs wait-round --request <file>` in the foreground
 (result bound to that request; refused/failed: new n). Verify collect:false.
-Collection = review round; verification is yours. Follow the gate line per
+Collection = review round; verification is yours, not with hostVerification. Gate line per
 references/review-admission.md. Same head: increment n/sequence.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,
 readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify sealed
