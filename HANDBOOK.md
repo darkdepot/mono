@@ -23,8 +23,10 @@ three rounds per task attempt); everything else, `deep` included, takes the fast
 path with one round, after which the worker fixes and the final head passes on
 its full verification without another round. A behavior change gets a live run
 of its main scenario before the first round (pack skills and stages: the
-orchestrator in the test Linear workspace). A task change keeps the count, and
-every round after the first reads only the fixes and open findings. The worker fixes open findings and asks for the next round without
+orchestrator in the test Linear workspace). A task change («Изменение задачи»)
+keeps the strict path's count and gives the fast path one more round, even on an
+unchanged head; that round reads the whole change against the changed task, and
+every other round after the first reads only the fixes and open findings. The worker fixes open findings and asks for the next round without
 waiting for anyone. A fixed finding closes when the checker verifies the fix
 and the reviewer stops reporting it. Older defects (on the strict path only
 harmless ones), minor leftovers from the
@@ -907,9 +909,11 @@ head and merge-base: review `clean` or `clean-with-successors` and the worker's
 verification exit 0 on that head (`workerVerification`); receipts of older
 attempts keep their sandbox verification. Rounds are counted from receipts per task
 attempt: three at most, the same head reuses its round,
-`not-reviewed` spends nothing, a task change keeps the count and the
-record, and a changed base starts a fresh record with the same count. Only round
-1 reads the whole change; later rounds read the fixes and open findings. After
+`not-reviewed` spends nothing, a task change continues the record (on the
+strict path it keeps the count; the fast path gets one round on the changed task,
+inside the record's three), and a changed base starts a fresh record with the same
+count. Round 1 and the first round after a task change read the whole change;
+later rounds read the fixes and open findings. After
 the limit the orchestrator splits the Issue or changes approach in a new attempt.
 Refusals are receipts too and reach the worker as a `gate preflight: fail:`
 line. The orchestrator approves nothing between rounds and after merge decides

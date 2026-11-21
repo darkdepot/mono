@@ -505,7 +505,7 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     requireValue(['tiny', 'standard', 'deep', 'risky', 'riskyCritical'].includes(risk), 'unknown risk class');
     requireValue(number <= 3, 'three-round limit reached for this task attempt');
     const contractDigest = digest(contract);
-    // A changed contract (a delivered task change) continues the record: open findings stay open and the next round stays narrow.
+    // A changed contract (a delivered task change) continues the record: open findings stay open.
     requireValue(!record.base || record.base === base, 'stage base changed');
     // The task change may approve disputed work, so scope and risk objections are judged again against it:
     // they return to the checker this round and stand only if the checker raises them again.
@@ -530,8 +530,9 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const changedFiles = (from, to) => git(worktree, ['diff', '--name-only', '--no-renames', '-z', from, to, '--']).split('\0').filter(Boolean);
     const previous = record.rounds.at(-1)?.head;
     const full = pinnedDiff(worktree, base, head, changedFiles(base, head));
-    // Only the first round reads the whole change; later rounds read the fixes since the last round and the open findings.
-    const narrow = number > 1;
+    // Only the first round reads the whole change; later rounds read the fixes since the last round and the open findings,
+    // except the first round after a task change: the changed contract is checked against the whole change.
+    const narrow = number > 1 && (!record.contractDigest || record.contractDigest === contractDigest);
     const scopeFiles = narrow ? changedFiles(previous, head) : changedFiles(base, head);
     const scoped = narrow ? pinnedDiff(worktree, previous, head, scopeFiles) : full;
     binaryFiles.push(...new Set([...full.binary, ...scoped.binary]));

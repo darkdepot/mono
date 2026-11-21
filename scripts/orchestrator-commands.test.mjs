@@ -1534,6 +1534,27 @@ test('retry-stuck-gate: a gate stuck past the safety ceiling is stopped and the 
     const gate = readJson(f.startFile).gate; assert.throws(() => process.kill(-gate.processGroup, 0), { code: 'ESRCH' });
   });
 });
+// macOS answers a group signal with EPERM once every member is an unreaped zombie: the collector probes
+// again instead of refusing, and fails the round once the group is gone (a live group stays refused above).
+// The short ceiling lets the collector signal before the gate's own one-second ceiling check.
+test('retry-stuck-gate-eperm: an EPERM group signal after the group ended fails the round', async () => {
+  await collectionRetryFixture('hang', async f => {
+    f.entry.collectionRetries = 0; atomicJson(f.registry, { [f.options.issue]: f.entry });
+    const { collectOnce } = await import('./orchestrator/collector.mjs'), kill = process.kill;
+    let injected = 0;
+    process.kill = (pid, signal) => {
+      if (pid >= 0 || signal === 0 || signal === undefined) return kill.call(process, pid, signal);
+      kill.call(process, pid, 'SIGKILL'); injected++;
+      throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+    };
+    try { f.publish(); await collectOnce({ ...f.options, gateStuckMs: 300 }); }
+    finally { process.kill = kill; }
+    assert.ok(injected > 0, 'the collector signalled the stuck group and got EPERM');
+    assert.match(fs.readFileSync(path.join(f.options.root, 'reports/MONO-999-collector-a1.log'), 'utf8'), /gate stuck past the safety ceiling/);
+    assert.equal(f.result()?.status, 'failed'); assert.match(f.result().reason, /retries exhausted/);
+    const gate = readJson(f.startFile).gate; assert.throws(() => process.kill(-gate.processGroup, 0), { code: 'ESRCH' });
+  });
+});
 test('retry-stuck-gate-collector-death: the gate holds the wall-clock ceiling itself after its collector dies', async () => {
   await collectionRetryFixture('hang', async f => {
     f.entry.collectionRetries = 0; atomicJson(f.registry, { [f.options.issue]: f.entry }); f.publish();

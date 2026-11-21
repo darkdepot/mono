@@ -132,8 +132,8 @@ const findingLine = finding => `${finding.weight} ${finding.file}:${finding.line
 const clip = (text, limit) => { const flat = String(text ?? '').replace(/\s+/g, ' ').trim(); return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat; };
 const openLine = finding => `${findingLine(finding)} (when: ${clip(finding.trigger, 200) || 'n/a'}; why: ${clip(finding.reason, 300) || 'n/a'})`;
 const leftover = record => (record?.findings ?? []).filter(finding => !['closed', 'rejected'].includes(finding.status));
-// Rounds are counted per task attempt from receipt history; a task change keeps the count and the record,
-// so a fix after the PR is one narrow round.
+// Rounds are counted per task attempt from receipt history; a task change continues the record. The strict path
+// keeps the count; the fast path has one round per contract (onContract: rounds on the current one).
 // receipts: history in evidenceRoot, any producer or issue. reuse: a completed round on this exact head.
 const sameAttempt = (file, pinsFile) => typeof file === 'string' && path.dirname(file) === path.dirname(pinsFile);
 export function reviewHistory(receipts, { pins, head, base, contractDigest }) {
@@ -146,7 +146,7 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest }) {
     receipt.review.contractDigest === contractDigest);
   let notReviewed = 0;
   for (let index = onHead.length - 1; index >= 0 && onHead[index].review.outcome === 'not-reviewed'; index--) notReviewed++;
-  return { spent: completed.length, notReviewed, reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,
+  return { spent: completed.length, onContract: completed.filter(receipt => receipt.review.contractDigest === contractDigest).length, notReviewed, reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,
     record: completed.findLast(receipt => receipt.base === base)?.review.record ?? null };
 }
 // What may leave the rounds as a successor candidate instead of blocking the PR:
@@ -298,6 +298,12 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   const workerCheck = request.workerVerification, limit = roundLimit(request.risk), strict = limit === ROUND_LIMIT;
   requireThat(workerCheck === undefined || (Object.keys(workerCheck ?? {}).sort().join(",") === "exitCode,head" && /^[a-f0-9]{40}$/.test(workerCheck.head) &&
     Number.isInteger(workerCheck.exitCode)), "workerVerification must be {head, exitCode} of the worker's full verification run");
+  // Strict path: up to ROUND_LIMIT rounds per attempt, task changes included. Fast path: one round per contract,
+  // so a delivered task change («Изменение задачи») gets one round of its own even on an unchanged head;
+  // the stage record holds ROUND_LIMIT rounds, so a fast-path task change after them needs a new attempt.
+  const roundsUsed = prior => strict ? prior.spent : prior.onContract;
+  const roundOpen = prior => roundsUsed(prior) < limit && prior.spent < ROUND_LIMIT;
+  const closedRefusal = prior => strict || prior.onContract ? limitRefusal(limit) : limitRefusal(ROUND_LIMIT);
   const evidenceRoot = preflightEvidenceRoot(request);
   validateEvidenceGrants(request.packRoot ?? request.skillsRoot, request.workerWritableRoots, 'packRoot');
   validateEvidenceGrants(request.skillsRoot, request.workerWritableRoots, 'installed skillsRoot');
@@ -348,7 +354,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       const prior = history;
       if (prior && !prior.reuse) {
         requireThat(prior.notReviewed < 2, `blocked: ${NOT_REVIEWED_TWICE}`);
-        requireThat(prior.spent < limit || workerFixed(prior), limitRefusal(limit));
+        requireThat(roundOpen(prior) || workerFixed(prior), closedRefusal(prior));
       }
       return { publishRequest: { ...request, collect: false } };
     }
@@ -366,10 +372,10 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   }
   verifyModelPins(request, base);
   validateEvidenceGrants(request.skillsRoot, [repo], "installed skillsRoot");
-  // Fast path after its round: accepted on the worker's full verification (exit 0) of this head; what the
+  // Fast path after its round on this contract: accepted on the worker's full verification (exit 0) of this head; what the
   // round left for a decision (out of contract, raised risk) never passes on the worker's word.
   function workerFixed(prior) {
-    if (strict || prior.spent < 1 || workerCheck?.head !== head || workerCheck.exitCode !== 0) return null;
+    if (strict || prior.onContract < 1 || workerCheck?.head !== head || workerCheck.exitCode !== 0) return null;
     // The attempt's last completed round, on any base: a newer base does not clear its blockers or successors.
     const last = receiptHistory(request.evidenceRoot, request.pins.file).filter(receipt => receipt.producer === REVIEW_PRODUCER && receipt.review?.spent === true)
       .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt))).at(-1)?.review ?? null;
@@ -379,7 +385,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     // Older defects the worker need not fix stay listed (must-file ones too) for filing after merge.
     const successors = last?.successors?.length ? last.successors : last?.record
       ? roundOutcome({ outcome: 'clean', findings: leftover(last.record).filter(finding => finding.origin === 'pre-existing') }, last.round).successors : [];
-    return { outcome: successors.length ? 'clean-with-successors' : 'clean', spent: false, round: prior.spent, successors,
+    return { outcome: successors.length ? 'clean-with-successors' : 'clean', spent: false, round: prior.onContract, successors,
       record: last?.record ?? null, workerVerification: workerCheck };
   }
   const unchanged = () => {
@@ -403,7 +409,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     if (prior.reuse && canonical(prior.reuse.prRemarks ?? null) !== canonical(request.prRemarks?.length ? request.prRemarks : null)) prior.reuse = null;
     if (prior.reuse) review = { ...prior.reuse.review, ...roundOutcome(prior.reuse.review.record, prior.reuse.review.round, strict), spent: false, reusedFrom: prior.reuse.runId };
     else if (prior.notReviewed >= 2) review = refuse(`blocked: ${NOT_REVIEWED_TWICE}`);
-    else if (prior.spent >= limit) review = workerFixed(prior) ?? refuse(limitRefusal(limit));
+    else if (!roundOpen(prior)) review = workerFixed(prior) ?? refuse(closedRefusal(prior));
     else {
       const record = await runReviewRound({ worktree: repo, head, base, contract, risk: request.critical ? 'riskyCritical' : request.risk,
         config: baseModelConfig(repo, request.modelRoutes?.base ?? base), packRoot: path.resolve(scriptDir, '..'), ...(prior.record ? { stageRecord: prior.record } : {}),
@@ -412,7 +418,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       review = record.outcome === 'not-reviewed'
         ? { outcome: 'not-reviewed', spent: false, round: null, repeated: prior.notReviewed > 0, reason: record.failures.at(-1)?.reason ?? `no readable text for ${record.unreviewedFiles.join(', ') || 'the review'}`,
           successors: [], record: null, failures: record.failures.slice(-6), costs }
-        : { ...roundOutcome(record, prior.spent + 1, strict), spent: true, round: prior.spent + 1, record: stageRecord };
+        : { ...roundOutcome(record, roundsUsed(prior) + 1, strict), spent: true, round: roundsUsed(prior) + 1, record: stageRecord };
     }
     review.contractDigest = contractDigest; review.limit = limit;
     checkConsistency();
@@ -739,7 +745,7 @@ preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,ri
   workerVerification: the worker's own run of the pinned full verification on this head; a receipt passes only with exitCode 0 on its head.
   collect:true runs the read-only review round first (reviewer and checker from different model families, both CLIs logged in by subscription),
   and records verification unrun (exitCode null); one gate-review-v3 receipt per collectionId.
-  Rounds per task attempt from the pinned risk (risky 3, else 1; task changes keep the count), counted from receipt history; rounds after the first review only the fixes and open findings; the same head reuses its round; not-reviewed spends nothing.
+  Rounds per task attempt from the pinned risk (risky 3 with task changes counted, else 1 per contract: a task change gets one round), counted from receipt history; rounds after the first review only the fixes and open findings; the same head reuses its round; not-reviewed spends nothing.
   Refusals are receipts too: fix and request the next round, or park on a needs-decision:/blocked: line.
   The sandbox write boundary is the trust anchor: evidenceRoot is outside every worker grant, so receipts are not worker-writable.
 ship request: {preflight:<complete preflight collect:false request>, repo:"owner/repo", number:123, attempt:1, stateFile:"/absolute/file", judgmentFile:"/absolute/file", config:"/project/.agents/mono-workflow.config.json", watch:true, policy:{requiredChecks:[],nonBlockingChecks:[{name,reason}],botChecks:["Greptile Review"],botUnavailable:null}}
