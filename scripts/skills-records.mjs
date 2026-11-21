@@ -755,9 +755,9 @@ export function verifyRecords(request){
   checkEndings(scenarios.flatMap(d=>d.exchanges??[]));
   const stageStarts={idea:['Research'],research:['Discovery'],discovery:['Design','Tech Evaluation','Handoff'],design:['Tech Evaluation','Handoff'],'tech-evaluation':['Handoff'],handoff:['Delivery']};
   const stageNames={idea:'Idea',research:'Research',discovery:'Discovery',design:'Design','tech-evaluation':'Tech Evaluation',handoff:'Handoff'};
-  const skillPrefix=request.nextSkill?.slice(0,request.nextSkill.lastIndexOf(':')+1);
+  const skillPrefix=request.skillPrefix?`${request.skillPrefix}:`:request.nextSkill?.slice(0,request.nextSkill.lastIndexOf(':')+1);
   const agentStage=Object.keys(stageNames).find(stage=>request.nextAgent?.endsWith('-'+stage));
-  const agentPrefix=agentStage?request.nextAgent.slice(0,-agentStage.length):null;
+  const agentPrefix=request.skillPrefix?`${request.skillPrefix}-${request.skillPrefix}-`:agentStage?request.nextAgent.slice(0,-agentStage.length):null;
   for(const source of scenarios)if(source.expectedReplies||request.expectedReplies) {
    const policies=source.expectedReplies??request.expectedReplies;
    const starts=[];
@@ -1108,7 +1108,7 @@ export async function verifyScenarioRecords({run,runRequest,scenario,project,out
  const start=Date.now();
  const traces=(run.auditedTraces??[]).filter(trace=>trace!==run.trace).map(trace=>({host:runRequest.host,trace}));
  const next=runRequest.context.followingStage??scenario.next;
- const rules={expectedRecords:scenario.expectedRecords,nextSkill:next?`${runRequest.context.skillPrefix}:${next}`:null,nextAgent:next?`${runRequest.context.skillPrefix}-${runRequest.context.skillPrefix}-${next}`:null};
+ const rules={expectedRecords:scenario.expectedRecords,skillPrefix:runRequest.context.skillPrefix,nextSkill:next?`${runRequest.context.skillPrefix}:${next}`:null,nextAgent:next?`${runRequest.context.skillPrefix}-${runRequest.context.skillPrefix}-${next}`:null};
  const violation=runViolations([{host:runRequest.host,trace:run.trace,endLine:run.endLine},...traces],rules);if(violation)return {...violation,durationMs:Date.now()-start};
  const dump=await collect({...runRequest,project,projectName:runRequest.context.projectName,outputDir,recordRules:rules,mcpServers:{monotest:runRequest.mcpServers.monotest}});
  for(const attempt of dump.attempts??[dump])if(attempt.trace){
@@ -1118,7 +1118,7 @@ export async function verifyScenarioRecords({run,runRequest,scenario,project,out
  if(dump.status!=='passed')return {...dump,status:dump.status==='failed'?'failed':'unverified',durationMs:Date.now()-start};
  const bindings=bindingsFile&&fs.existsSync(bindingsFile)?read(bindingsFile):{};
  const verification={host:runRequest.host,testedVersion:run.testedVersion??runRequest.testedVersion,trace:run.trace,endLine:run.endLine,stageStartLine:run.stageStartLine,sent:run.sent,seedExpected:Boolean(runRequest.seed),seedEndLine:run.seedEndLine,seedProjectId:run.seedRoute?.project?.id,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,dumpAdditionalTraces:(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace})),
-  idleContinuation:runRequest.scenario?.idleContinuation,expectedReplies:runRequest.scenario?.expectedReplies,expectedWindows:runRequest.scenario?.expectedWindows,windows:runRequest.scenario?.windows,rubricDefinition:runRequest.scenario?.rubricDefinition,approvalBindings:bindings.approvalBindings,presentationBindings:bindings.presentationBindings,rubric:bindings.rubric,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:next,nextSkill:rules.nextSkill,nextAgent:rules.nextAgent,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')};
+  idleContinuation:runRequest.scenario?.idleContinuation,expectedReplies:runRequest.scenario?.expectedReplies,expectedWindows:runRequest.scenario?.expectedWindows,windows:runRequest.scenario?.windows,rubricDefinition:runRequest.scenario?.rubricDefinition,approvalBindings:bindings.approvalBindings,presentationBindings:bindings.presentationBindings,rubric:bindings.rubric,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:next,skillPrefix:rules.skillPrefix,nextSkill:rules.nextSkill,nextAgent:rules.nextAgent,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')};
  const result=verifyRecords(verification),reviewEvidence=outputDir+'-evidence.json';
  const payload={request:verification,files:evidenceFiles(verification),rubricDigest:result.rubricDigest??null,rubricInput:result.rubricInput??null};
  fs.writeFileSync(reviewEvidence,JSON.stringify({...payload,digest:rubricDigest(payload)},null,2)+'\n',{flag:'wx'});

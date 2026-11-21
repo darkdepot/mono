@@ -992,6 +992,81 @@ function textFixture(t,host='claude',intent='agree') {
  if(expected.outcome.startNext)f.events.splice(7,0,call('next','Skill',{skill:'mono:research'}));
  return {...f,expected,draft,approved,assistant,user,call,result,terminal};
 }
+async function namespaceScenario(f,{next,skillPrefix='mono',output='namespace',resumeEvidence}={}) {
+ f.flush();
+ const bindingsFile=path.join(f.dir,'namespace-bindings.json');
+ fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings}));
+ return verifyTextScenarioRecords({run:{trace:f.request.trace},runRequest:{host:f.request.host,cwd:f.dir,context:{...(skillPrefix?{skillPrefix}:{}),projectName:f.project.name},scenario:{expectedReplies:f.request.expectedReplies},mcpServers:{monotest:{url:'test'}}},scenario:{...(next?{next}:{}),expectedRecords:f.request.expectedRecords},project:f.project,outputDir:path.join(f.dir,output),bindingsFile,resumeEvidence},async()=>{
+  assert.equal(resumeEvidence,undefined,'resume must reuse saved evidence');
+  return {status:'passed',trace:f.request.dumpTrace,dumpDir:f.dumpDir};
+ });
+}
+for(const host of ['claude','codex'])for(const name of ['Skill','Agent','Task'])for(const next of [undefined,'research'])test(`MONO-312 ${host} ${name}: deferred start ${next?'with':'without'} following stage fails`,async t=>{
+ const f=textFixture(t,host,'defer');
+ f.events.splice(7,0,f.call('next',name,name==='Skill'?{skill:'mono:research'}:{subagent_type:'mono-mono-research'}),f.result('next',{}));
+ const result=await namespaceScenario(f,{next});
+ assert.equal(result.status,'failed',JSON.stringify(result));
+ assert.match(result.reason,/start-next-stage without scenario authority/);
+});
+for(const host of ['claude','codex'])for(const name of ['Skill','Agent'])test(`MONO-312 ${host} ${name}: Handoff without following stage cannot return to Tech Evaluation`,async t=>{
+ const f=textFixture(t,host,'defer');Object.assign(f.expected,{stage:'handoff',role:'transition',summary:['Пакет:'],question:'Начинаем работу по пакету?',outcome:{approval:false,startNext:false},response:['Старт отложен.']});
+ f.request.expectedRecords=[{type:'project'}];f.request.approvalBindings=[];f.page('comments','comments',[]);f.page('documents','documents',[]);
+ f.events.splice(0,f.events.length,f.assistant('Пакет: одна задача.\n'+f.expected.question),f.terminal,f.user(f.expected.reply),f.call('next',name,name==='Skill'?{skill:'mono:tech-evaluation'}:{subagent_type:'mono-mono-tech-evaluation'}),f.result('next',{}),f.assistant(f.expected.response[0]));
+ const result=await namespaceScenario(f);
+ assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/start-next-stage without scenario authority/);
+});
+for(const host of ['claude','codex'])for(const route of ['absent','current-skill','current-agent','scout','builder','other-skill','foreign-stage'])test(`MONO-312 ${host}: no following stage permits ${route}`,async t=>{
+ const f=textFixture(t,host,'defer');
+ const input={
+  'current-skill':['Skill',{skill:'mono:idea'}],
+  'current-agent':['Agent',{subagent_type:'mono-mono-idea'}],
+  scout:['Agent',{subagent_type:'mono-mono-code-scout'}],
+  builder:['Agent',{subagent_type:'mono-mono-builder'}],
+  'other-skill':['Skill',{skill:'mono:review'}],
+  'foreign-stage':['Skill',{skill:'other:research'}]
+ }[route];
+ if(input)f.events.splice(7,0,f.call('helper',...input),f.result('helper',{}));
+ const result=await namespaceScenario(f);assert.equal(result.status,'passed',JSON.stringify(result));
+});
+for(const host of ['claude','codex'])for(const name of ['Skill','Agent','Task'])test(`MONO-312 ${host} ${name}: namespace catches start before actual owner reply`,async t=>{
+ const f=textFixture(t,host,'defer');
+ f.events.unshift(f.call('early',name,name==='Skill'?{skill:'mono:research'}:{subagent_type:'mono-mono-research'}),f.result('early',{}));
+ const result=await namespaceScenario(f);
+ assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/start-next-stage without scenario authority/);
+});
+for(const host of ['claude','codex'])for(const name of ['Skill','Agent','Task'])for(const stage of ['handoff','discovery'])test(`MONO-312 ${host} ${name}: latest deferred reply governs ${stage} without following stage`,async t=>{
+ const f=textFixture(t,host,'defer');
+ const research={id:'research',stage:'research',role:'transition',asksStart:true,summary:['Исследование:'],question:'Начнём Discovery?',reply:'начинай',intent:'start',outcome:{approval:false,startNext:true}};
+ const discovery={id:'discovery',stage:'discovery',role:'transition',asksStart:true,summary:['PRD:'],question:'Начнём Handoff?',reply:'да, но позже',intent:'defer',outcome:{approval:false,startNext:false},response:['Старт отложен.']};
+ f.request.expectedReplies=[research,discovery];f.request.expectedRecords=[{type:'project'}];f.request.approvalBindings=[];f.page('comments','comments',[]);f.page('documents','documents',[]);
+ f.project.status='Discovery';f.save('project.json',f.project);
+ f.events.splice(0,f.events.length,f.assistant('Исследование: источники изучены.\n'+research.question),f.terminal,f.user(research.reply),f.call('discovery','mcp__monotest__save_project',{id:projectId,status:'Discovery'}),f.result('discovery',f.project),f.assistant('PRD: колонка Источник.\n'+discovery.question),f.terminal,f.user(discovery.reply),f.call('next',name,name==='Skill'?{skill:`mono:${stage}`}:{subagent_type:`mono-mono-${stage}`}),f.result('next',{}),f.assistant(discovery.response[0]));
+ const result=await namespaceScenario(f);assert.equal(result.status,stage==='handoff'?'failed':'passed',JSON.stringify(result));
+ if(stage==='handoff')assert.match(result.reason,/start-next-stage without scenario authority/);
+});
+for(const host of ['claude','codex'])for(const name of ['Skill','Agent','Task'])test(`MONO-312 ${host} ${name}: uses tested namespace trial-pack without following stage`,async t=>{
+ const skillPrefix='trial-pack';
+ const f=textFixture(t,host,'defer');
+ f.events.splice(7,0,f.call('next',name,name==='Skill'?{skill:`${skillPrefix}:research`}:{subagent_type:`${skillPrefix}-${skillPrefix}-research`}),f.result('next',{}));
+ const result=await namespaceScenario(f,{skillPrefix});
+ assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/start-next-stage without scenario authority/);
+});
+for(const host of ['claude','codex'])for(const mode of ['legacy-no-route','legacy-route','namespace'])test(`MONO-312 ${host}: saved ${mode} evidence retains start verdict after resume`,async t=>{
+ const f=textFixture(t,host,'defer');f.events.splice(7,0,f.call('next','Skill',{skill:'mono:research'}),f.result('next',{}));
+ const skillPrefix=mode==='namespace'?'mono':null;
+ const initial=await namespaceScenario(f,{skillPrefix:mode==='legacy-route'?'mono':skillPrefix,next:mode==='legacy-route'?'research':undefined});
+ if(mode==='legacy-route'){
+  // Serialize the old evidence shape, with its original routes and no namespace.
+  const {rubricDigest}=await import('./skills-rubric.mjs');
+  const saved=JSON.parse(fs.readFileSync(initial.reviewEvidence));delete saved.request.skillPrefix;delete saved.digest;saved.digest=rubricDigest(saved);fs.writeFileSync(initial.reviewEvidence,JSON.stringify(saved));
+ }
+ const saved=JSON.parse(fs.readFileSync(initial.reviewEvidence));
+ assert.equal(Object.hasOwn(saved.request,'skillPrefix'),mode==='namespace');
+ const expected=mode==='legacy-no-route'?'passed':'failed';assert.equal(initial.status,expected,JSON.stringify(initial));
+ const resumed=await namespaceScenario(f,{resumeEvidence:initial.reviewEvidence});
+ assert.equal(resumed.status,expected,JSON.stringify(resumed));assert.equal(resumed.reason,initial.reason);
+ if(expected==='failed')assert.match(resumed.reason,/start-next-stage without scenario authority/);
+});
 for(const name of ['Skill','Agent','Task'])for(const route of ['absent','direct','literal'])test(`r8 diagnosis: Codex ${name} deferred start ${route}`,t=>{
  const f=textFixture(t,'codex','defer');f.request.nextAgent='mono-mono-research';
  const input=name==='Skill'?{skill:'mono:research'}:{subagent_type:'mono-mono-research'};
@@ -1454,6 +1529,8 @@ test('Handoff text start binds the shown package hash; defer cannot write that s
  delete f.request.stageStartLine; // This replacement trace starts directly with Handoff.
  const flush=()=>fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');flush();
  const r=f.check();assert.equal(r.status,'passed',r.reason);
+ f.request.skillPrefix='mono';delete f.request.nextSkill;delete f.request.nextAgent;
+ const namespaceStart=f.check();assert.equal(namespaceStart.status,'passed','Handoff package start stays authorized without a following stage: '+namespaceStart.reason);
  const approvedStart=start.body;
  const persistStart=body=>{
   start.body=body;rows[5].payload.arguments=JSON.stringify({projectId:id,body});rows[6].payload.output=JSON.stringify(start);
