@@ -179,8 +179,8 @@ references/review-admission.md. Same head: increment n/sequence.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,
 readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify sealed
 head/merge-base receipt before judgment; no string substitutes.
-Orchestrator rechecks preflight before ship. Ship fix: next ship-gate
-attempt, new head/stateFile; preserve old state/task attempt. No gate-attempt cap.
+Ship fix (skills/ship step 8): same session, next ship-gate attempt, new
+head/stateFile; preserve old state/task attempt.
 
 ## Implementation exit evidence
 

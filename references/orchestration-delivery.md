@@ -329,6 +329,9 @@ names, default ["Greptile Review"], [] means no bot. Workers cannot override the
 New attempts use the pinned Ship gate's persistent thirty-minute bot clock from
 first fully green mandatory CI; no reset on fixes/restart, no bot-timeout park.
 Timely P1 is fixed in the PR, P2 fixed or answered in botRemarks; no re-wait on later heads.
+The worker makes such a fix (and a failed-CI fix) as a ship fix in its own session:
+round per path, reply/resolve, next gate attempt. No amend, resume or task change
+from the orchestrator; Ship parks only for a decision or an unavailable environment.
 The certificate records Бот: ответил|молчал|нет; installed Deploy waives only bot
 checks/late bot remarks with that line. CI and owner remarks remain blockers.
 Bot checks must not be required by branch protection (Mono requires only validate).

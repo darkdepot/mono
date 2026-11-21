@@ -40,7 +40,7 @@ Linear: worker-contract Linear Writes; every write read back before advancing.
    review-admission. Pass: ready certificate comment once, before formal review.
 3. Ship. New head repeats checks/review round/evidence.
    gate.mjs ship --request <file> → pass/decision/deadline; ready, In Review, certificate.
-   Orchestrator rechecks collect:false before ship.
+   Orchestrator rechecks collect:false at green.
 
 ready/implemented-needs-preflight: intermediate; keep context/dispatch.
 Publish: delivery-state.mjs publish --report <candidate> --output <own phase path>.
