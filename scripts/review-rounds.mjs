@@ -77,6 +77,9 @@ export function collectorAlive(root, issue, attempt) {
 }
 
 // Worker side: wait until the collector records the result of exactly this request.
+// The collector starts with the attempt just after the worker; a missing collector
+// stops the wait only once the request is older than the start grace.
+export const COLLECTOR_START_GRACE_MS = 60_000;
 export async function waitForRound(roundFile, pollMs = 2000) {
   const round = validRoundRequest(readJson(roundFile)), request = round.request, hash = requestDigest(request);
   if (path.basename(roundFile) !== roundRequestName(round.issue, round.attempt)) throw new Error("round request file name must be KEY-round-aN.json");
@@ -87,7 +90,7 @@ export async function waitForRound(roundFile, pollMs = 2000) {
       if (canonical(readJson(roundFile)) !== canonical(round)) throw new Error("round request changed while waiting");
       return found.result;
     }
-    if (!collectorAlive(request.root, round.issue, round.attempt)) throw new Error("blocked: collector not running for this attempt; the orchestrator restarts it with collector.mjs start");
+    if (!collectorAlive(request.root, round.issue, round.attempt) && Date.now() - fs.statSync(roundFile).mtimeMs > COLLECTOR_START_GRACE_MS) throw new Error("blocked: collector not running for this attempt; the orchestrator restarts it with collector.mjs start");
     await new Promise(resolve => setTimeout(resolve, pollMs));
   }
 }

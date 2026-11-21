@@ -56,6 +56,12 @@ test("wait-round: returns the result bound to this request, refuses a foreign on
     fs.writeFileSync(roundFile, JSON.stringify({ issue: "MONO-451", attempt: 1, request: request(root, 2) }));
     process.kill(-holder.pid, "SIGKILL");
     await new Promise(resolve => setTimeout(resolve, 200));
+    // Just after launch the collector may not hold its lock yet: a fresh request keeps waiting.
+    const fresh = waitForRound(roundFile, 20); let settled = false; fresh.then(() => { settled = true; }, () => { settled = true; });
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.equal(settled, false, "a fresh request waits through the collector start grace");
+    const old = new Date(Date.now() - 61_000); fs.utimesSync(roundFile, old, old);
+    await assert.rejects(fresh, /collector not running/);
     await assert.rejects(waitForRound(roundFile, 20), /collector not running/);
     const cli = spawnSync(process.execPath, [path.join(scripts, "delivery-state.mjs"), "wait-round", "--request", roundFile], { encoding: "utf8" });
     assert.notEqual(cli.status, 0);
