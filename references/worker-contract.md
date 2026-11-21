@@ -14,9 +14,8 @@ ack. Sequenced stops park; standalone keeps statuses.
 
 ## Orchestration Mode Precedence
 
-Snapshot replaces Linear/resolver; skill rules/dispatch facts. Queue post-gates;
-confirm before dependencies except code-report. Disclose lag; no unapplied/inferred/
-skipped proof. Missing inputs block. Standalone needs-decision; interactive
+Snapshot replaces Linear reads/resolver; skill rules/dispatch facts. Writes:
+Linear Writes. No unapplied/inferred/skipped proof. Missing inputs block. Standalone needs-decision; interactive
 keeps access/approval/handshake.
 
 ## Pack identity gate invocation
@@ -56,17 +55,13 @@ denied: <worktree>/.orchestrator, same name, never both.
 
 Unique/nonempty gate names. gates-passed: exact set/all pass; blocked: nonempty
 subset/one blocked. Blocked ack precedes report (missing blocked; adverse needs-human),
-no move. Passed: no code/move/queue/report. Codex wait-ack expires at ack mtime +
+no move. Passed: no code/move/write/report. Codex wait-ack expires at ack mtime +
 ackWaitSec → write-unconfirmed. Applied read-backs amend state; delivery check,
 no identity rerun. Resume: Codex exits; desktop/fallback retains session; all move
 read-backs and identity/check rerun. Never repeat moves. No-move retry: current
 snapshot, no ack/amendment. Consumption is not approval.
 
-`claude-cli`: passed startup ack stops; orchestrator applies/read-backs, resumes
-same session. Phase/collection waits: plain pack command, foreground, full existing
-timeout under raised Bash ceiling; no backgrounding/sleep/polling substitute.
-Report refusal before stop. Preflight owns external committed-head review/ready
-disclosure; deadlines/queues unchanged.
+`claude-cli` has no Linear MCP: dispatch refuses its delivery.
 
 ## Sandbox ladder
 
@@ -147,6 +142,17 @@ Markers: latest marker-bearing Linear comment/resource only.
 Apply `references/human-friendly-output.md` Machine Blocks In Linear Comments;
 report/chat omit human lead.
 
+## Linear Writes
+
+Sole writer of own Issue reports/comments/statuses via Linear MCP `save_comment`/
+`save_issue` (codex-cli pre-approves only these); orchestrator only start moves
+(handshake `lifecycle_moves`) and «Изменение задачи». First after handshake: one
+Linear MCP read; failure/denial parks blocked before code. Before a write find the
+existing comment/status, write only missing; after, read back (`list_comments`/
+`get_issue`), advance only on match. Code exit comment: `delivery-state.mjs comment
+--report <published code report>` verbatim; revision names the stale comment. Park
+comment before stop. No other Linear tools/Issues; queue: collection request only.
+
 ## Delivery Reports and Capsule
 
 Dispatch: green/parked terminal; ready/implemented-needs-preflight interim.
@@ -154,28 +160,17 @@ Stops park; no respawn; standalone keeps statuses/certificates.
 reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json or denied-write .orchestrator,
 never both. Final fields + phase/increasing positive sequence/kind
 (phase|confirmation-request)/head/phase_result. Capsule phase/head match;
-open_queue=ordered linear_mutations_pending. Writes: stable id/operation/target/
-payload; changed payload→new ID, new report→new collectionId. Keep obligations
-across heads, omit confirmed writes; certificate: append #/certificate once.
+open_queue=linear_mutations_pending: empty, or one collection write of a preflight
+confirmation-request; new report→new collectionId.
 
-Publish/wait: delivery-state.mjs; confirmation:
-confirmations/<ISSUE-KEY>-phase-<phase>-a<N>-s<sequence>.confirmed.json.
-Wait rejects dispatch-derived capsule.writable_roots paths; binds report digest/issue/attempt/phase/
-sequence/verified results. Reconcile writes/collection receipts; apply missing only, fsync
-consumed/<ISSUE-KEY>-a<N>/ results; confirm whole queue. Unknown/conflict/read-error
-or partial/stale/foreign confirmation blocks. Reconcile lost replies/comments.
-Resume dispatch/capsule/branch; keep done/foreign changes; no reset/
-repeat applied moves/writes. Timeout
+Publish/wait: delivery-state.mjs; only a confirmation-request waits for
+confirmations/<ISSUE-KEY>-phase-preflight-a<N>-s<sequence>.confirmed.json.
+Wait rejects capsule.writable_roots paths; binds report digest/issue/attempt/phase/
+sequence/receipt; partial/stale/foreign confirmation blocks. Resume dispatch/capsule/
+branch; keep done/foreign changes; no reset/repeat applied moves/writes. Timeout
 orchestration.delivery.confirmationTimeoutSec (default 6300 seconds) parks
 write-unconfirmed (запись не подтверждена).
-
-Only generated implemented-needs-preflight comments defer waiting; all other
-writes/empty queues wait. publish generates full code-exit comments; stops wait,
-no start-comment queue. Preflight carries pending code comments;
-revisions use new IDs and mark old comments stale, pending or applied. Immutable sequence snapshots beside phase reports bind capsule.deferred_reports
-sequence/reportDigest; predecessor checks verify fingerprints/carried/replacing comments.
-Preflight confirms all before formal review, no extra Ship check. Green needs
-all obligations. Confirm drift before PR, ready before review, In Review/PR chip after PR.
+Green needs all obligations: drift before PR, ready before review, In Review after PR.
 
 Pin product/evidenceRoot/packRoot/skillsRoot/risk/critical/verification/grants.
 ~/.mono-agent-workflow/evidence/<product>/ outside ALL grants, including
@@ -273,7 +268,7 @@ denied: <worktree>/.orchestrator/<ISSUE-KEY>-mono-deliver.json. English JSON.
 
 Parked reasons: blocked, needs-decision, needs-human, drift-candidate, timed-out,
 scope-drift-needs-handoff, write-unconfirmed, evidence-limit (предел доказательств).
-Decisions: exact question/recommendation. Orchestrator records/reads back parks in Linear now.
+Decisions: exact question/recommendation. Orchestrator writes a park only for a dead worker.
 
 Issue «Как проверить»: verbatim/in order in verification_items;
 pass | deferred | not-run, no unrun pass; deferred owner and judgment/state. Repeat pins; standalone dispatched status, sequenced intermediate.

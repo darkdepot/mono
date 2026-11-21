@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { workerTransport } from "./worker-transport.mjs";
-import { correlatedDeliveryReport, publishPhase, confirmQueue, waitForConfirmation, confirmationPath } from "./delivery-state.mjs";
+import { correlatedDeliveryReport, confirmationPath } from "./delivery-state.mjs";
 
 // Event shapes come from the documented discovery. Real confirmation waits and
 // collection remain the orchestrator's closeout probe. Synthetic logs below are
@@ -25,10 +25,13 @@ const withFixture = async run => {
       packVersion: "test", sourceCommit: "a".repeat(40), surfaceRevision: 4,
       packRoot: "/fixture/pack",
       worktree: path.join(root, "repo"), thread_id: "fixture-session", pid: process.pid, procStart: "fixture-start" };
-    const reportFile = path.join(root, "reports", `${issue}-phase-code.json`);
-    const report = { ...entry, phase: "code", head: "b".repeat(40), sequence: 1, kind: "phase",
-      status: "implemented-needs-preflight", linear_mutations_pending: [],
-      capsule: { phase: "code", head: "b".repeat(40), decisions: [], open_queue: [], writable_roots: [path.dirname(reportFile), entry.worktree] } };
+    // Only a collection request waits for confirmation; Linear writes are the worker's own.
+    const reportFile = path.join(root, "reports", `${issue}-phase-preflight.json`), head = "b".repeat(40);
+    const collect = { id: `preflight-collect:${head}:1`, operation: "preflight-collect", target: head,
+      payload: { request: { collectionId: `preflight-collect:${head}:1` } } };
+    const report = { ...entry, phase: "preflight", head, sequence: 1, kind: "confirmation-request",
+      status: "ready", linear_mutations_pending: [collect],
+      capsule: { phase: "preflight", head, decisions: [], open_queue: [collect], writable_roots: [path.dirname(reportFile), entry.worktree] } };
     const confirmation = confirmationPath(report, root);
     const instance = { type: "mono.worker-instance", issue, attempt: 1, thread_id: entry.thread_id, pid: entry.pid, procStart: entry.procStart };
     const init = { type: "system", subtype: "init", session_id: entry.thread_id, model: "fixture-model" };
@@ -60,7 +63,7 @@ test('watch-phase-regress selects the current confirmation wait by publishedAt, 
     const stale = new Date(Date.now() - 181_000); fs.utimesSync(f.entry.log, stale, stale);
     const result = f.watch();
     assert.ok(!result.includes('EVENT:stall') && !result.includes('EVENT:dead'), result);
-    assert.ok(result.includes('phase code sequence 3') && result.includes('phase ship sequence 2'), result);
+    assert.ok(result.includes('phase preflight sequence 3') && result.includes('phase ship sequence 2'), result);
   }
 }));
 
@@ -90,7 +93,8 @@ test("Claude foreground phase wait binds session, attempt, process instance and 
 }));
 
 test("Claude watcher recognizes bounded foreground waits, expiry, progress and completion without report", () => withFixture(f => {
-  const report = publishPhase(f.report, f.reportFile);
+  const report = { ...f.report, publishedAt: new Date().toISOString() };
+  put(f.reportFile, report);
   put(path.join(f.root, "workers.json"), { [f.entry.issue]: { ...f.entry, confirmationTimeoutSec: 1200, collectionTimeoutSec: 1000 } });
   const silence = () => { const past = new Date(Date.now() - 150_000); fs.utimesSync(f.entry.log, past, past); };
   silence();
@@ -177,26 +181,6 @@ test("Claude terminal report correlation rejects foreign attempt and pack", () =
   put(path.join(f.root, "workers.json"), { [f.entry.issue]: f.entry });
   assert.match(f.watch(), /EVENT:report/);
   assert.doesNotMatch(f.watch(), /EVENT:completed-without-report/);
-}));
-
-test("phase wait releases only whole confirmation, rejects stale/partial, expires and does not duplicate writes", () => withFixture(async f => {
-  const queue = [{ id: "start", operation: "comment", target: f.entry.issue, payload: "fixture" }];
-  const report = publishPhase({ ...f.report, linear_mutations_pending: queue, capsule: { ...f.report.capsule, open_queue: queue } }, f.reportFile);
-  let applied = false, writes = 0;
-  const adapter = async action => action === "apply" ? (applied = true, writes++, undefined)
-    : applied ? { state: "present", evidence: "fixture-readback" } : { state: "missing" };
-  const waiting = waitForConfirmation(report, f.confirmation, 2, 0.01);
-  await confirmQueue(report, f.root, adapter);
-  await waiting;
-  await confirmQueue(report, f.root, adapter);
-  assert.equal(writes, 1);
-  const ack = JSON.parse(fs.readFileSync(f.confirmation));
-  for (const change of [{ sequence: 2 }, { results: [] }, { attempt: 2 }]) {
-    put(f.confirmation, { ...ack, ...change });
-    await assert.rejects(waitForConfirmation(report, f.confirmation, 1), /confirmation/);
-  }
-  fs.unlinkSync(f.confirmation);
-  await assert.rejects(waitForConfirmation({ ...report, publishedAt: new Date(Date.now() - 2000).toISOString() }, f.confirmation, 1), /write-unconfirmed/);
 }));
 
 test("Claude result usage sums resumed turns, normalizes caches and keeps missing/interrupted data incomplete", () => withFixture(f => {

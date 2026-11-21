@@ -1,6 +1,6 @@
 # Delivery rationale
 
-Package approval and implementation-start approval carry different consequences. Snapshot-based orchestration keeps one Linear writer while workers execute in isolated worktrees. State therefore lags queued writes until report consumption, and lifecycle-dependent gates need the explicit dispatch handshake.
+Package approval and implementation-start approval carry different consequences. Snapshot-based orchestration keeps one writer per record: the worker writes and reads back its own Issue reports, comments and statuses through Linear MCP (the MONO-449 probe proved this for codex-cli), while the orchestrator applies start moves. A queue with per-write confirmation cost hours of waiting without catching defects. Lifecycle-dependent gates still need the explicit dispatch handshake.
 
 Attempt-numbered acknowledgements bind gates to their writer; time ordering alone cannot separate overlapping attempts. The orchestrator's durable consumption journal handles crash recovery and duplicate delivery, while workers need only acknowledgement, pause and amended-state obligations.
 

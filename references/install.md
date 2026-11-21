@@ -155,7 +155,7 @@ those owner sessions have restarted.
 ## Compatibility
 
 Identity is `packVersion` from `VERSION`, positive integer `surfaceRevision` from
-`scripts/runtime.mjs`, and optional 40-hex `sourceCommit`. Revision 5 changes code-report confirmation; old attempts cannot resume on it.
+`scripts/runtime.mjs`, and optional 40-hex `sourceCommit`. Revision 6 moves Linear writes to the worker; old attempts cannot resume on it.
 Start/resume accepts equal `surfaceRevision`; other version/commit values are
 descriptive. Report/task correlation remains strict for every present identity
 field. Resolve scripts and policy from the task's saved pack folder. If that

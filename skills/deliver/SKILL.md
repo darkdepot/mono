@@ -27,29 +27,25 @@ Scripts: dispatched pack root.
 
 ## Sequence and Recovery
 
-Resume/restart/compaction: identity, own capsule/confirmation, grants, gh PR facts.
+Resume/restart/compaction: identity, own capsule/confirmation, grants, gh PR and Linear facts.
 Recover active dispatch/branch/capsule per worker-contract; missing/conflicting
-inputs park. New head stales proof, not queues.
+inputs park. New head stales proof.
 Start: gate.mjs start --request <file>; implement handshake; wait mode runs wait-ack after ack.
+Linear: worker-contract Linear Writes; every write read back before advancing.
 
-1. Implement; publish the two-layer code report (all criteria, exclusions and gaps)
-   with its full queue. Only its generated implemented-needs-preflight comment
-   defers confirmation to Preflight; all other queues wait. No broken/unfinished work advances.
-2. Preflight/commit; publish preflight-collect confirmation-request. Confirm,
+1. Implement; publish the two-layer code report (all criteria, exclusions and gaps),
+   post its comment. No broken/unfinished work advances.
+2. Preflight/commit; publish preflight-collect confirmation-request, wait for it,
    gate.mjs preflight collect:false, worker failure rules. Gate line per
-   review-admission. Pass: publish ready certificate once; confirm before
-   formal review.
-3. Ship with write barriers. New head repeats checks/review round/evidence.
-   gate.mjs ship --request <file> → pass/decision/deadline; confirm queue/certificate.
+   review-admission. Pass: ready certificate comment once, before formal review.
+3. Ship. New head repeats checks/review round/evidence.
+   gate.mjs ship --request <file> → pass/decision/deadline; certificate, In Review.
    Orchestrator rechecks collect:false before ship.
 
 ready/implemented-needs-preflight: intermediate; keep context/dispatch.
 Publish: delivery-state.mjs publish --report <candidate> --output <own phase path>.
-Dependencies: confirmation-request, log continuation.
-Wait: delivery-state.mjs wait --report <phase> --confirmation <path>
+Collection wait: delivery-state.mjs wait --report <phase> --confirmation <path>
 --config <project config>. Re-read capsule; progress only on exit 0. Worker rules apply.
 
-`claude-cli`: startup/foreground waits; preflight rules.
-
 Final: worker Report green/parked, every verification item.
-Report before stops except passed startup pause; orchestrator reflects parks.
+Report before stops except passed startup pause; park comment is yours.

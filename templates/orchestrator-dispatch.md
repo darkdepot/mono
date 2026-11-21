@@ -96,7 +96,7 @@ Start acknowledgement uses `resume`: write the gate acknowledgement and stop.
 The orchestrator applies and reads back the moves, then resumes this same session
 with the amendment. A request for start-handshake `wait` is refused.
 
-Phase and collection barriers follow worker-contract; only its closed code-report case defers to Preflight. Run the pack's plain
+The collection barrier follows worker-contract. Run the pack's plain
 `node '<pack-root>/scripts/delivery-state.mjs' wait --report '<own phase report>'
 --confirmation '<confirmation path>' --config '<project config>'` invocation in
 the foreground. Use the full confirmation timeout under the launcher's raised
@@ -161,14 +161,16 @@ worker contract without redefining it:
 
 ## AFK Contract
 
-Apply `references/worker-contract.md`: snapshot-only Linear access, single
-writer, one Issue, no sub-workers/session management, no user questions
+Apply `references/worker-contract.md`: snapshot as Linear context, one Issue,
+no sub-workers/session management, no user questions
 (no `AskUserQuestion` or `request_user_input*`; blockers go to the mailbox),
-report-before-stop, unchanged gates/statuses and stage-owned branch. Generate
+report-before-stop, unchanged gates and stage-owned branch. Generate
 profile-required redundancy from that source verbatim; do not invent a second
-AFK contract. Every pending Linear comment/status/certificate uses the required
-report shape; certificate text occurs once with `append #/certificate` in its
-queued comment.
+AFK contract. You are the sole writer of this Issue's reports, comments and
+statuses: write them through Linear MCP (`save_comment`, `save_issue`) and read
+each back before advancing (worker-contract Linear Writes). The orchestrator
+writes only the start move and «Изменение задачи». Certificate text occurs once
+in its comment.
 
 ## Mailbox
 
@@ -180,13 +182,14 @@ queued comment.
 
 ## Authorization
 
-- Allowed: this one Issue delivery; push/PR only inside ship after its gates
-- Not allowed: direct Linear writes, merge/deploy/Issue closeout, other Issues
-  or orchestrator state. Stage rules win on rules; dispatch wins on facts.
+- Allowed: this one Issue delivery; its Linear comments/statuses via Linear MCP;
+  push/PR only inside ship after its gates
+- Not allowed: other Linear tools or Issues, merge/deploy/Issue closeout, start
+  moves or orchestrator state. Stage rules win on rules; dispatch wins on facts.
 
 ## Recovery
 
-On interruption resume the same thread with the current snapshot amendment and the latest own phase capsule/confirmation paths. Re-run identity and continue that phase; do not generate a stage-specific dispatch or resume template. Apply the worker-contract closed code-report exception; all other queues confirm before advancing.
+On interruption resume the same thread with the current snapshot amendment and the latest own phase capsule/confirmation paths. Re-run identity and continue that phase; do not generate a stage-specific dispatch or resume template. Read back Linear before repeating any write; a collection request confirms before advancing.
 
 Set write.id=request.collectionId=preflight-collect:HEAD:n; increment n per collection request on that head. Preserve the ID on lost-response reconciliation; a failed run is recorded, its retry gets a new ID.
 

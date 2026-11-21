@@ -16,18 +16,18 @@ left context after compaction is read again when its condition holds.
 | --- | --- | --- |
 | `references/orchestration-stages.md` | before launching or answering a pre-delivery stage agent, and before any `by=orchestrator` record | Director Discovery; Stage agent permissions and visible dialogue; Approval countercheck with Second Voice and Pre-write package review |
 | `references/orchestration-dispatch.md` | before any worker dispatch, spawn or resume, and while a registry entry still carries startup `gates` or an unconsumed gate ack | Orchestration Mode Precedence with the dispatch command; Snapshot Markup Contract (U12); Two-Phase Dispatch Handshake; Worker Transports; Pre-application by mandate |
-| `references/orchestration-delivery.md` | before the watcher starts, while `workers.json` holds an entry or a worker report, capsule or queued write is unreconciled, and before QA, merge or deploy of a shipped Issue | Independent QA before merge; Deploy and closeout; Monitoring Protocol; Review rounds; Delivery Write Barriers; Heartbeat |
+| `references/orchestration-delivery.md` | before the watcher starts, while `workers.json` holds an entry or a worker report or capsule is unreconciled, and before QA, merge or deploy of a shipped Issue | Independent QA before merge; Deploy and closeout; Monitoring Protocol; Review rounds; Delivery Write Barriers; Heartbeat |
 
 ## Roles
 
 - Owner: always approves Idea, projectless Issues through `mono:issue`, first-product exemplars and new taste-memory rules;
   may reopen any approval by speaking in the orchestrator chat.
 - Orchestrator: one product session; dispatch, monitoring, technical decisions,
-  ledger and deploy. Single Linear writer only for implement/preflight/ship workers,
-  which queue their mutations in reports. Stage agents write their own records.
+  ledger and deploy. Writes only start moves and «Изменение задачи» for delivery
+  workers, which write and read back their own Issue records. Stage agents write their own records.
 - Stage agent: one stage, its own dialogue and tools, confirmed record and selected
   transition returned to the orchestrator. Never starts the next stage or stage agents.
-- Worker: one Issue, `mono:deliver` phases under the AFK contract, no direct Linear writes.
+- Worker: one Issue, `mono:deliver` phases under the AFK contract; writes and reads back its own Issue reports, comments and statuses through Linear MCP, no other Linear writes.
 
 ## Stage Ownership
 
@@ -287,7 +287,7 @@ A fresh orchestrator session rebuilds state without loss:
    search; a known in-session incomplete answer still belongs to the stage.
    Dependency order is unchanged; no unverified reconstruction enters delivery.
    Also look for «веди до Handoff» marks on Projects before Delivery (Decision Authority).
-3. Read ledger, phase capsules and mailbox reports; reconcile every queued write against Linear and apply only missing writes through Delivery Write Barriers. Never replay a queue from local receipts alone.
+3. Read ledger, phase capsules and mailbox reports; read each attempt's Issue back from Linear (Delivery Write Barriers). Never treat local receipts as Linear state.
 4. Corroborate key ledger claims — dispatches, phase transitions, deploys —
    against worker log and report timestamps. A ledger line with no
    supporting evidence is marked unverified and its state is re-derived

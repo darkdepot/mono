@@ -153,4 +153,4 @@ Path: `~/.mono-agent-workflow/orchestrator/<product>/ledger.md`
 
 Only the orchestrator writes the ledger. Routine polling is never recorded.
 
-Delivery entries keep stage=mono-deliver across phases. Startup gates are removed only after durable handshake consumption. Phase reports bind attempt, sequence, head and the full queue; confirmations bind their digest. Use scripts/orchestrator tools from the installed runtime. attempts.json retains per-Issue counts after active entries retire; never reset it to bypass a configured cap. halt refuses both spawn and resume without touching an existing process.
+Delivery entries keep stage=mono-deliver across phases. Startup gates are removed only after durable handshake consumption. Phase reports bind attempt, sequence, head and at most one collection request; its confirmation binds the report digest. Use scripts/orchestrator tools from the installed runtime. attempts.json retains per-Issue counts after active entries retire; never reset it to bypass a configured cap. halt refuses both spawn and resume without touching an existing process.

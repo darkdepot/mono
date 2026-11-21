@@ -6640,9 +6640,7 @@ const MACHINE_TOKENS = new Set([
   "{{worktree}}",
   "{{writable_roots}}",
   "scripts/orchestrator/dispatch.mjs", "scripts/orchestrator/accept.mjs",
-  "scripts/orchestrator/linear-adapter.mjs", "planDigest", "sessionId",
-  "reportDigest", "writeDigest", "observedAt", "manifestDigest",
-  "MONO_ACCEPT_ROOT", "MONO_ACCEPT_SESSION", "MONO_ACCEPT_REPORT",
+  "planDigest", "reportDigest", "writeDigest", "observedAt", "manifestDigest",
 
   // MONO-93: command names, request/registry/config dictionary keys and values.
   "wait-ack", "handshake", "profile", "short", "full", "pinsVersion",

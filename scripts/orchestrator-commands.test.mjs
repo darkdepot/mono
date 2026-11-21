@@ -13,9 +13,8 @@ import { ideaDispatchFixture, ideaProjectId } from './fixtures/idea-dispatch.mjs
 import { applyPreapply, preapplyManifest } from "./orchestrator/preapply.mjs";
 import { digest, readJson, atomicJson, withLock, canonical, REVIEW_PRODUCER } from "./runtime.mjs";
 import { publishPhase, validateConfirmation, confirmQueue } from "./delivery-state.mjs";
-import { expandedWrite, effectivePins, admitCollection, collectionPinsBinding, checkCollectionRequest, pinnedShipPolicy } from "./orchestrator/command-state.mjs";
-import { acceptAck, acceptReport, acceptAmend } from "./orchestrator/accept.mjs";
-import { reconcile, recordObservation } from "./orchestrator/linear-adapter.mjs";
+import { effectivePins, admitCollection, collectionPinsBinding, checkCollectionRequest, pinnedShipPolicy } from "./orchestrator/command-state.mjs";
+import { acceptAck, acceptAmend } from "./orchestrator/accept.mjs";
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixture = name => fs.readFileSync(path.join(checkout, "scripts/fixtures", name), "utf8");
@@ -414,7 +413,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     for (const directory of [repo, bin, temp, path.join(root, "reports")]) fs.mkdirSync(directory, { recursive: true });
     copyPluginFixture(skills);
     const runtime = path.join(skills, "scripts");
-    for (const script of ["dispatch", "accept", "linear-adapter", "collector"]) pass(run(process.execPath, [path.join(runtime, `orchestrator/${script}.mjs`), "--help"]));
+    for (const script of ["dispatch", "accept", "collector"]) pass(run(process.execPath, [path.join(runtime, `orchestrator/${script}.mjs`), "--help"]));
     const budget = JSON.parse(pass(run(process.execPath, [path.join(runtime, "read-budget.mjs"), "--json"])));
     // Approved deltas: Research +383 (MONO-177), Discovery +815 (MONO-184), Handoff +210 (MONO-213).
     // Keep the original 11-byte fixture margin; the pack ceiling stays 99_882.
@@ -719,76 +718,18 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     await acceptAck(ackArgs, value => printed.push(value)); assert.equal(printed.length, 1); assert.equal(printed[0].planDigest, undefined);
     assert.ok(fs.existsSync(ackFile.replace(".json", ".applied.json"))); assert.equal(readJson(path.join(root, "workers.json"))[ack.issue].gates, undefined);
     const reportFile = path.join(root, "reports/MONO-999-phase-code.json"), head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktree, encoding: "utf8" }).trim();
-    const queue = [{ id: "fixture:comment", operation: "comment", target: ack.issue, payload: { body: "Russian lead\nappend #/certificate" } }, { id: "fixture:state", operation: "issue-state", target: ack.issue, payload: { state: "In Progress" } }];
-    const report = publishPhase({ issue: ack.issue, stage: "mono-deliver", attempt: 1, packVersion: entry.packVersion, ...(entry.sourceCommit ? { sourceCommit: entry.sourceCommit } : {}), surfaceRevision: entry.surfaceRevision,
-      phase: "code", sequence: 1, kind: "phase", head, certificate: "fixture certificate", linear_mutations_pending: queue, capsule: { phase: "code", head, decisions: [], writable_roots: entry.workerWritableRoots, open_queue: queue } }, reportFile);
-    await t.test("report-durable-queue-conflict: every existing write identity is checked before instructions", async () => {
-      const file = path.join(root, "consumed/MONO-999-a1", `${queue[1].id}.json`);
-      const prior = { issue: ack.issue, attempt: 1, id: queue[1].id, writeDigest: digest(expandedWrite(queue[1], report)), state: "present", evidence: "prior connector read-back" };
-      try {
-        for (const conflict of [{ writeDigest: digest({ ...queue[1], payload: { state: "Different" } }) }, { issue: "MONO-998" }, { attempt: 2 }]) {
-          atomicJson(file, { ...prior, ...conflict });
-          const printed = [];
-          await assert.rejects(acceptReport({ root, report: reportFile }, value => printed.push(value)), /changed within attempt/u);
-          assert.deepEqual(printed, [], "no instructions, reread plan or session can authorize a conflicting queued write");
-          assert.equal(fs.existsSync(path.join(root, "consumed/MONO-999-a1/sessions", `current-${digest(report)}.json`)), false);
-        }
-      } finally { fs.rmSync(file, { force: true }); }
+    const base = { issue: ack.issue, stage: "mono-deliver", attempt: 1, packVersion: entry.packVersion, ...(entry.sourceCommit ? { sourceCommit: entry.sourceCommit } : {}), surfaceRevision: entry.surfaceRevision,
+      phase: "code", sequence: 1, kind: "phase", head, linear_mutations_pending: [], capsule: { phase: "code", head, decisions: [], writable_roots: entry.workerWritableRoots, open_queue: [] } };
+    await t.test("report-linear-writes-not-queued: the worker writes its comments and statuses; no report confirmation command exists", () => {
+      for (const write of [{ id: "fixture:comment", operation: "comment", target: ack.issue, payload: { body: "Russian lead" } },
+        { id: "fixture:state", operation: "issue-state", target: ack.issue, payload: { state: "In Progress" } }])
+        assert.throws(() => publishPhase({ ...base, linear_mutations_pending: [write], capsule: { ...base.capsule, open_queue: [write] } }, reportFile), /Linear writes are not queued/u);
+      assert.equal(fs.existsSync(reportFile), false);
+      const removed = spawnSync(process.execPath, [path.join(runtime, "orchestrator/accept.mjs"), "report", "--root", root, "--report", reportFile], { env, encoding: "utf8" });
+      assert.notEqual(removed.status, 0); assert.match(removed.stderr, /expected ack or amend/u);
     });
-    const output = [], opened = await acceptReport({ root, report: reportFile }, value => output.push(value));
-    const session = opened.session; assert.equal(opened.status, "observations-pending"); assert.match(output[0].writes[0].payload.body, /fixture certificate/u);
-    await t.test("report-write-digests-expanded-certificate: printed digest observes the unchanged expanded write", () => {
-      assert.equal(output[0].writeDigests[queue[0].id], digest(expandedWrite(queue[0], report)));
-      assert.notEqual(output[0].writeDigests[queue[0].id], digest(queue[0]), "certificate expansion affects the printed digest");
-      assert.deepEqual(output[0].writes, queue.map(item => expandedWrite(item, report)));
-    });
-    const observations = queue.map(item => { const write = expandedWrite(item, report); return { sessionId: session.sessionId, writeId: write.id, reportDigest: digest(report), writeDigest: output[0].writeDigests[write.id], observedAt: new Date().toISOString(), state: "present", evidence: "fresh connector read-back" }; });
-    const args = { root, report: reportFile, session: session.sessionId, observe: observations.map(item => `${item.writeId}=${JSON.stringify(item)}`) };
-    for (const item of observations) await recordObservation(root, reportFile, session.sessionId, item.writeId, item);
-    const confirmationFile = path.join(root, "confirmations/MONO-999-phase-code-a1-s1.confirmed.json");
-    assert.equal(fs.existsSync(confirmationFile), false, 'unfinished observations do not become inherited confirmation');
-    const secondOutput = [], second = await acceptReport({ root, report: reportFile }, value => secondOutput.push(value)); assert.ok(secondOutput[0].reread);
-    assert.equal(output.length, 1, 'cli-single-object: opening prints one response');
-    assert.equal(secondOutput.length, 1, 'cli-single-object: reopening includes reread in that response');
-    await assert.rejects(acceptReport({ ...args, session: second.session.sessionId }, () => {}), /session.*digest/u);
-    assert.equal(reconcile({ action: "reconcile", issue: ack.issue, attempt: 1, idempotencyKey: `${ack.issue}:${queue[0].id}`, write: expandedWrite(queue[0], report) }, { root, reportFile, sessionId: session.sessionId }).state, "unknown");
-    const fresh = observations.map(item => ({ ...item, sessionId: second.session.sessionId, observedAt: new Date().toISOString() }));
-    const secondArgs = { root, report: reportFile, session: second.session.sessionId };
-    await assert.rejects(acceptReport({ ...secondArgs, observe: [`${fresh[0].writeId}=${JSON.stringify({ ...fresh[0], writeDigest: "0".repeat(64) })}`] }, () => {}), /digest mismatch/u);
-    await assert.rejects(acceptReport({ ...secondArgs, observe: [`${fresh[0].writeId}=${JSON.stringify({ ...fresh[0], observedAt: "2000-01-01T00:00:00Z" })}`] }, () => {}), /older/u);
-    await assert.rejects(acceptReport({ ...secondArgs, observe: [`${fresh[0].writeId}=${JSON.stringify({ ...fresh[0], state: "missing" })}`] }, () => {}), /absent=true/u);
-    const missing = { ...fresh[0], state: "missing", absent: true };
-    assert.equal((await acceptReport({ ...secondArgs, observe: [`${missing.writeId}=${JSON.stringify(missing)}`] }, () => {})).status, "observations-pending");
-    assert.equal(reconcile({ action: "reconcile", issue: ack.issue, attempt: 1, idempotencyKey: `${ack.issue}:${queue[0].id}`, write: expandedWrite(queue[0], report) }, { root, reportFile, sessionId: second.session.sessionId }).state, "missing");
-    const secondObservations = fresh.map(item => `${item.writeId}=${JSON.stringify(item)}`);
-    assert.equal((await acceptReport({ ...secondArgs, observe: secondObservations }, () => {})).status, "confirmed");
-    assert.equal((await acceptReport(secondArgs, () => {})).status, "confirmed", "same session/effects confirmation is idempotent");
-    const retryOutput = [], retry = await acceptReport({ root, report: reportFile }, value => retryOutput.push(value));
-    assert.equal(retry.status, 'confirmed'); assert.equal(retryOutput.length, 1);
-    assert.deepEqual(retry.writes, [], 'confirmed writes never become application instructions on report retry');
-    validateConfirmation(report, readJson(confirmationFile));
-    await t.test("confirm-after-session-open: session failure leaves an empty queue unconfirmed", async () => {
-      const empty = publishPhase({ ...report, sequence: 2, linear_mutations_pending: [], capsule: { ...report.capsule, open_queue: [] } }, reportFile);
-      const sessions = path.join(root, "consumed/MONO-999-a1/sessions"), backup = sessions + ".saved";
-      const emptyConfirmation = path.join(root, "confirmations/MONO-999-phase-code-a1-s2.confirmed.json");
-      fs.renameSync(sessions, backup); write(sessions, "session setup is unavailable");
-      try {
-        await assert.rejects(acceptReport({ root, report: reportFile }, () => {}), /ENOTDIR/u);
-        assert.equal(fs.existsSync(emptyConfirmation), false, "no confirmation before session setup succeeds");
-      } finally { fs.unlinkSync(sessions); fs.renameSync(backup, sessions); }
-      const emptyOutput = [], completed = await acceptReport({ root, report: reportFile }, value => emptyOutput.push(value));
-      assert.equal(completed.status, "confirmed");
-      assert.equal(emptyOutput[0].session.sessionId, completed.session.sessionId);
-      assert.ok(fs.existsSync(path.join(sessions, completed.session.sessionId, "session.json")));
-      validateConfirmation(empty, readJson(emptyConfirmation));
-    });
-    const prematureFile = path.join(root, "reports/MONO-999-phase-ship.json"), premature = { ...report, phase: "ship", capsule: { ...report.capsule, phase: "ship" } };
-    atomicJson(prematureFile, premature); const prematureOutput = [];
-    await assert.rejects(acceptReport({ root, report: prematureFile }, value => prematureOutput.push(value)), /phase preflight report is missing/u);
-    assert.deepEqual(prematureOutput, [], "predecessor refusal occurs before any connector writes/session are exposed");
-    assert.equal(fs.existsSync(path.join(root, "consumed/MONO-999-a1/sessions", `current-${digest(premature)}.json`)), false);
-    const apply = spawnSync(path.join(runtime, "orchestrator/linear-adapter.mjs"), [], { env, encoding: "utf8", input: JSON.stringify({ action: "apply", issue: ack.issue, attempt: 1, write: queue[0] }) });
-    assert.equal(apply.status, 0); assert.equal(apply.stdout, ""); assert.match(apply.stderr, /not success/u);
+    const report = publishPhase(base, reportFile);
+    assert.equal(fs.existsSync(path.join(root, "confirmations")), false, "an empty phase report advances without any confirmation");
     const pins = effectivePins(readJson(path.join(root, "workers.json"))[ack.issue]);
     const request = { ...pins, pins: entry.pins, head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:1` };
     const collect = { id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } };
@@ -1103,7 +1044,7 @@ const p=JSON.parse(process.argv.at(-1));console.log(p.probeMarker);
             assert.equal(effectivePins(readJson(registryFile)[ack.issue]).reviewDatasetVersion, 7);
             assert.equal(Object.hasOwn(readJson(result.pinsFile), "reviewDatasetVersion"), false);
             const worker = readJson(registryFile)[ack.issue], current = effectivePins(worker);
-            const published = JSON.parse(/\n(\{[\s\S]*\})\nPreserve the full queue/u.exec(fs.readFileSync(result.resumeFile, "utf8"))[1]);
+            const published = JSON.parse(/\n(\{[\s\S]*\})\nKeep a pending collection request/u.exec(fs.readFileSync(result.resumeFile, "utf8"))[1]);
             assert.deepEqual(published, current, "resume block must match registered pins after a prior old amendment");
             assert.deepEqual(worker.last_amendment.effectiveInputs, current, "replay inputs use the same canonical overlay");
             assert.equal(current.reviewDataset, archive); assert.equal(current.reviewDatasetDigest, legacy.reviewDatasetDigest);
@@ -1391,7 +1332,7 @@ if (process.argv.includes("-axo")) console.log("${process.pid} 1 ${process.pid} 
   } finally { process.env.PATH = oldPath; fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("collector confirms an empty phase and leaves connector queues and terminal reports alone", async () => {
+test("collector leaves empty phases unconfirmed and refuses queued Linear writes and terminal reports", async () => {
   const { collectOnce } = await import("./orchestrator/collector.mjs");
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-empty-"));
   const root = path.join(scratch, "root"), repo = path.join(scratch, "repo");
@@ -1404,10 +1345,10 @@ test("collector confirms an empty phase and leaves connector queues and terminal
     atomicJson(path.join(root, "workers.json"), { [issue]: entry });
     const file = path.join(root, "reports", `${issue}-phase-code.json`); atomicJson(file, report);
     await collectOnce({ root, issue, attempt: 1 });
-    validateConfirmation(report, readJson(path.join(root, "confirmations", `${issue}-phase-code-a1-s1.confirmed.json`)));
+    assert.equal(fs.existsSync(path.join(root, "confirmations")), false, "an empty report needs no confirmation");
     report.sequence = 2; report.linear_mutations_pending = report.capsule.open_queue = [{ id: "comment-1", operation: "comment", target: issue, payload: "hello" }];
-    atomicJson(file, report); await collectOnce({ root, issue, attempt: 1 });
-    assert.equal(fs.existsSync(path.join(root, "confirmations", `${issue}-phase-code-a1-s2.confirmed.json`)), false);
+    atomicJson(file, report); await assert.rejects(collectOnce({ root, issue, attempt: 1 }), /Linear writes are not queued/u);
+    assert.equal(fs.existsSync(path.join(root, "confirmations")), false);
     atomicJson(file, { ...entry, status: "green" });
     await assert.rejects(collectOnce({ root, issue, attempt: 1 }), /phase identity/u);
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
@@ -1620,7 +1561,8 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
     started = await collectorStart(options); processes.track(started.pid); assert.ok(started.procStart);
     await assert.rejects(collectorStart(options), /locked/u);
     assert.equal(collectorStatus(options).status, "running-or-unverified");
-    await waitUntil(() => fs.existsSync(path.join(root, "confirmations", `${issue}-phase-code-a1-s1.confirmed.json`)));
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(fs.existsSync(path.join(root, "confirmations")), false, "the running collector leaves an empty code report unconfirmed");
     const request = { ...pins, pins: collectionPinsBinding(entry), head, collect: false, workerVerification: { head: head, exitCode: 0 }, collectionId: `preflight-collect:${head}:1` };
     const queued = { id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } };
     const report = phase("preflight", 1, [queued]), reportFile = path.join(root, "reports", `${issue}-phase-preflight.json`);
@@ -2161,118 +2103,25 @@ test('retry-normal-completion: both collection and collect:false clear the watch
   });
 });
 
-test('queue-carried-confirmed: mixed queue collects and inherits only verified same-attempt evidence', async () => {
+test('queue-collection-only: a Linear write beside the collection request is refused before any collection', async () => {
   await collectionRetryFixture('complete', async f => {
-    const comment = { id: 'already-confirmed', operation: 'comment', target: f.options.issue, payload: 'once' };
-    const codeFile = path.join(f.options.root, 'reports/MONO-999-phase-code.json');
-    const code = f.phase('code', 2, [comment]); atomicJson(codeFile, code);
-    const prior = await confirmQueue(code, f.options.root, () => ({ state: 'present', evidence: 'verified previous comment' }));
+    const comment = { id: 'worker-comment', operation: 'comment', target: f.options.issue, payload: 'written by the worker itself' };
     f.report.capsule.open_queue.unshift(comment); f.report.linear_mutations_pending = f.report.capsule.open_queue;
-    f.publish();
-    const output = [];
-    const opened = await acceptReport({ root: f.options.root, report: f.reportFile }, value => output.push(value));
-    assert.equal(output.length, 1); assert.deepEqual(opened.writes.map(w => w.operation), ['preflight-collect']);
-    assert.equal(opened.status, 'observations-pending');
-    await f.poll();
-    assert.deepEqual(readJson(f.stateFile), { collections: 1, reconciles: 1 });
-    const ack = readJson(f.confirmation); validateConfirmation(f.report, ack);
-    assert.deepEqual(ack.results[0], prior.results[0]);
-    assert.equal(ack.results[1].evidence.receipt, f.template.receipt);
-    const replay = await acceptReport({ root: f.options.root, report: f.reportFile }, () => {});
-    assert.equal(replay.status, 'confirmed'); assert.deepEqual(replay.writes, []);
-  });
-});
-
-test('queue-new-connector-and-collect: only all present observations in the active open session permit collection', async () => {
-  await collectionRetryFixture('complete', async f => {
-    const comments = ['new-one', 'new-two'].map(id => ({ id, operation: 'comment', target: f.options.issue, payload: id }));
-    f.report.capsule.open_queue.unshift(...comments); f.report.linear_mutations_pending = f.report.capsule.open_queue;
-    f.publish();
-    const args = { root: f.options.root, report: f.reportFile };
-    const open = () => acceptReport(args, () => {});
-    const observe = async (session, writes = comments, overrides = {}) => {
-      for (const write of writes) await recordObservation(f.options.root, f.reportFile, session.sessionId, write.id,
-        { sessionId: session.sessionId, writeId: write.id, reportDigest: digest(f.report), writeDigest: digest(write),
-          observedAt: new Date().toISOString(), state: 'present', evidence: `connector:${write.id}`, ...overrides });
-    };
-    const noCollection = async () => {
-      await f.poll(); assert.equal(readJson(f.stateFile).collections, 0);
-      assert.equal(fs.existsSync(f.confirmation), false);
-    };
-    await noCollection();
-    const first = await open(); await observe(first.session, [comments[0]]); await noCollection();
-    await observe(first.session, [comments[1]], { state: 'missing', absent: true }); await noCollection();
-    await observe(first.session);
-    const second = await open(); await noCollection();
-    await assert.rejects(observe(first.session), /stale/);
-    await observe(second.session);
-    const sessionFile = path.join(f.options.root, 'consumed/MONO-999-a1/sessions', second.session.sessionId, 'session.json');
-    atomicJson(sessionFile, { ...second.session, closedAt: new Date().toISOString() }); await noCollection();
-    const third = await open(); await observe(third.session);
-    const pending = await acceptReport({ ...args, session: third.session.sessionId }, () => {});
-    assert.equal(pending.status, 'observations-pending', 'whole report still awaits collection');
-    await f.poll();
-    assert.deepEqual(readJson(f.stateFile), { collections: 1, reconciles: 1 });
-    const ack = readJson(f.confirmation); validateConfirmation(f.report, ack);
-    assert.deepEqual(ack.results.slice(0, 2).map(r => r.evidence), comments.map(w => `connector:${w.id}`));
-    assert.equal(ack.results[2].evidence.receipt, f.template.receipt);
-  });
-});
-
-test('observation-bound-message: report, session and future boundaries are named', async () => {
-  await collectorAttentionFixture(async f => {
-    const comment = { id: 'time-bound', operation: 'comment', target: f.options.issue, payload: 'time' };
-    const report = f.phase('code', 2, [comment]);
-    report.publishedAt = new Date(Date.now() - 2000).toISOString();
-    const file = path.join(f.options.root, 'reports/MONO-999-phase-code.json'); atomicJson(file, report);
-    const { session } = await acceptReport({ root: f.options.root, report: file }, () => {});
-    const observation = { sessionId: session.sessionId, writeId: comment.id, reportDigest: digest(report), writeDigest: digest(comment), state: 'present', evidence: 'read-back' };
-    for (const [observedAt, message] of [[new Date(Date.parse(report.publishedAt) - 1).toISOString(), /report publication boundary/],
-      [new Date(Date.parse(session.openedAt) - 1).toISOString(), /session opening boundary/],
-      [new Date(Date.now() + 10000).toISOString(), /future.*current time boundary/]]) {
-      await assert.rejects(recordObservation(f.options.root, file, session.sessionId, comment.id, { ...observation, observedAt }), message);
-    }
-  });
-});
-
-test('cli-single-object: open, reopen and confirmed invocations each print one JSON object', async () => {
-  await collectorAttentionFixture(async f => {
-    const comment = { id: 'cli-comment', operation: 'comment', target: f.options.issue, payload: 'once' };
-    const report = f.phase('code', 2, [comment]);
-    const file = path.join(f.options.root, 'reports/MONO-999-phase-code.json'); atomicJson(file, report);
-    const cli = extra => {
-      const output = pass(spawnSync(process.execPath, [path.join(checkout, 'scripts/orchestrator/accept.mjs'), 'report',
-        '--root', f.options.root, '--report', file, ...extra], { encoding: 'utf8' }));
-      assert.equal(output.split('\n').length, 1);
-      return JSON.parse(output);
-    };
-    assert.deepEqual(cli([]).reread, []);
-    const reopened = cli([]); assert.equal(reopened.reread.length, 1);
-    const observation = { sessionId: reopened.session.sessionId, writeId: comment.id, reportDigest: digest(report), writeDigest: digest(comment),
-      observedAt: new Date().toISOString(), state: 'present', evidence: 'connector read-back' };
-    assert.equal(cli(['--session', reopened.session.sessionId, '--observe', `${comment.id}=${JSON.stringify(observation)}`]).status, 'confirmed');
-    validateConfirmation(report, readJson(path.join(f.options.root, 'confirmations/MONO-999-phase-code-a1-s2.confirmed.json')));
-  });
-});
-
-test('queue-session-replaced-during-collection: signed receipt survives but stale observations cannot confirm', async () => {
-  await collectionRetryFixture('complete', async f => {
-    const comment = { id: 'session-change', operation: 'comment', target: f.options.issue, payload: 'new' };
-    f.report.capsule.open_queue.unshift(comment); f.report.linear_mutations_pending = f.report.capsule.open_queue; f.publish();
-    const args = { root: f.options.root, report: f.reportFile };
-    const observe = session => recordObservation(f.options.root, f.reportFile, session.sessionId, comment.id,
-      { sessionId: session.sessionId, writeId: comment.id, reportDigest: digest(f.report), writeDigest: digest(comment),
-        observedAt: new Date().toISOString(), state: 'present', evidence: 'fresh connector read-back' });
-    const first = await acceptReport(args, () => {}); await observe(first.session);
-    const active = path.join(f.options.root, 'consumed/MONO-999-a1/sessions', `current-${digest(f.report)}.json`);
-    fs.appendFileSync(path.join(f.request.skillsRoot, 'scripts/gate.mjs'), `\nif(q.collect)fs.unlinkSync(${JSON.stringify(active)});\n`);
-    await f.poll();
+    f.publish(); // Mailboxes are writable without invoking publish, which refuses this report.
+    await assert.rejects(f.poll(), /Linear writes are not queued/);
+    assert.equal(readJson(f.stateFile).collections, 0);
     assert.equal(fs.existsSync(f.confirmation), false);
-    assert.deepEqual(readJson(f.stateFile), { collections: 1, reconciles: 0 });
-    await f.poll(); assert.equal(fs.existsSync(f.confirmation), false);
-    const next = await acceptReport(args, () => {}); await observe(next.session); await f.poll();
-    validateConfirmation(f.report, readJson(f.confirmation));
-    assert.deepEqual(readJson(f.stateFile), { collections: 1, reconciles: 1 }, 'recovery reuses the signed receipt');
+  });
+});
+test('collection-order: a new collection is not admitted while an earlier admitted one is unconfirmed', async () => {
+  await collectorAttentionFixture(async f => {
+    const first = publishPhase(f.report(1), f.reportFile);
+    assert.equal((await admitCollection(f.options.root, first)).length, 1);
+    const second = { ...f.report(2), publishedAt: new Date().toISOString() };
+    atomicJson(f.reportFile, second); // A worker can overwrite its mailbox without publishing.
+    await assert.rejects(admitCollection(f.options.root, second), /earlier collection preflight-collect:.*:1 is not confirmed/);
+    await confirmQueue(first, f.options.root, async () => ({ state: 'present', evidence: await f.signedHistory(f.request(1)) }));
+    assert.equal((await admitCollection(f.options.root, second)).length, 1, 'confirmation of the earlier collection releases the next one');
   });
 });
 
@@ -2289,9 +2138,6 @@ test('collection-id-reuse: older confirmed reports remain reserved after a newer
     assert.throws(() => publishPhase(reused, f.reportFile), /нужен новый идентификатор сбора/);
     assert.equal(fs.readFileSync(f.reportFile, 'utf8'), bytes);
     atomicJson(f.reportFile, reused); // Mailboxes are writable without invoking publish.
-    const printed = [];
-    await assert.rejects(acceptReport({ root: f.options.root, report: f.reportFile }, value => printed.push(value)), /нужен новый идентификатор сбора/);
-    assert.deepEqual(printed, [], 'carried collection proof cannot bypass report admission');
     await assert.rejects(f.poll(), /нужен новый идентификатор сбора/);
     assert.equal(fs.existsSync(path.join(f.options.root, 'confirmations/MONO-999-phase-preflight-a1-s3.confirmed.json')), false);
   });
@@ -2327,6 +2173,22 @@ test('retry-budget-after-restart: persisted launches and publication deadline ca
     await f.signedHistory(f.request); await f.poll();
     assert.equal(readJson(f.stateFile).collections, 0, 'late first receipt is never executed again');
     assert.equal(fs.existsSync(f.confirmation), true);
+  });
+});
+test('retry-late-reconcile: after the deadline the stopped collector confirms only an existing signed receipt', async () => {
+  await collectionRetryFixture('complete', async f => {
+    const { collectOnce } = await import('./orchestrator/collector.mjs');
+    f.report.publishedAt = new Date(Date.now() - 120_000).toISOString();
+    f.entry.spawned_at = new Date(Date.now() - 180_000).toISOString(); atomicJson(f.registry, { [f.options.issue]: f.entry });
+    f.publish(); await admitCollection(f.options.root, f.report);
+    await collectOnce({ ...f.options, late: true });
+    assert.equal(fs.existsSync(f.confirmation), false, 'no receipt: late reconciliation does nothing');
+    assert.deepEqual(readJson(f.stateFile), { collections: 0, reconciles: 0 });
+    await f.signedHistory(f.request); await f.poll();
+    assert.equal(fs.existsSync(f.confirmation), false, 'the ordinary collector keeps the original deadline');
+    await collectOnce({ ...f.options, late: true });
+    validateConfirmation(f.report, readJson(f.confirmation));
+    assert.deepEqual(readJson(f.stateFile), { collections: 0, reconciles: 1 }, 'the signed receipt is reconciled without a new review');
   });
 });
 test('retry-late-start: no launch without the pinned run budget and reserve', async () => {

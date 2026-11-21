@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { writeWatcherFixture } from './plugin-fixture.mjs';
 
 // U2's incompatible protocol change; expected values do not come from runtime.
-const currentProtocol = 5, previousProtocol = 4;
+const currentProtocol = 6, previousProtocol = 5;
 
 test('plugin layout shares the repository paths and reads VERSION identity', () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mono-plugin-layout-')));

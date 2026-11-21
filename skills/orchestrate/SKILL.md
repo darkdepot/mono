@@ -31,7 +31,7 @@ Read when — load the file only when its condition is true for this run:
 
 - `references/orchestration-stages.md` — before launching or answering a pre-delivery stage agent, and before any `by=orchestrator` record.
 - `references/orchestration-dispatch.md` — before any worker dispatch, spawn or resume, and while a registry entry still carries startup `gates` or an unconsumed gate ack.
-- `references/orchestration-delivery.md` — before the watcher starts, while `workers.json` holds an entry or a worker report, capsule or queued write is unreconciled, and before QA, merge or deploy of a shipped Issue.
+- `references/orchestration-delivery.md` — before the watcher starts, while `workers.json` holds an entry or a worker report or capsule is unreconciled, and before QA, merge or deploy of a shipped Issue.
 - `templates/orchestrator-dispatch.md` — when a worker dispatch is prepared.
 - `templates/orchestrator-brief.md` — before writing a status, wave report or decision brief.
 - `templates/orchestrator-report.md` — when a worker report, phase capsule or registry entry is read, validated or written.
@@ -123,8 +123,8 @@ Workflow states:
    - Find surviving `codex-cli` and `claude-cli` workers by thread id instead of
      respawning them only when the registry and `surfaceRevision`
      match; never rebind a thread from another surface revision.
-   - Apply queued Linear mutations from worker reports that were never
-     applied.
+   - Read each live attempt's Issue comments and status back from Linear; the
+     worker writes them, a dead worker's park you write.
    - Here and on every exit from a wait, find «веди до Handoff» marks on
      Projects before Delivery and continue their chain (Decision Authority in
      `references/orchestration.md`).
@@ -238,39 +238,29 @@ Workflow states:
      Ack/report ambiguity requires transport/worktree reconciliation. A blocked
      ack waits for its correlated report before consumption; rejected attempt
      requires a new verified attempt, never same-attempt nudge.
-   - No start-comment queue. Only the generated implemented-needs-preflight
-     Issue report defers to Preflight; do not block its worker. Carry/replacement,
-     fingerprints and stopped-report confirmation: worker-contract.
-   - Consume phase events AND poll phase files. Validate capsule and full queue;
+   - The worker writes and reads back its own Issue reports, comments and
+     statuses through Linear MCP; you neither queue nor confirm them (Delivery
+     Write Barriers). You write only start moves and «Изменение задачи».
+   - Consume phase events AND poll phase files. Validate capsule and queue;
      start `scripts/orchestrator/collector.mjs start --root DIR --issue KEY
-     --attempt N` outside worker sandboxes for empty/collection-only queues; inspect
-     `status` and its reports log, and `stop` at attempt end. Connector queues still
-     apply Delivery Write Barriers (same file) through installed
-     `scripts/orchestrator/accept.mjs report`: open a reconciliation session,
-     inspect expanded writes (reread first on retry), apply through the connector,
-     submit --session/--observe read-backs and confirm the full queue with the
-     pack `scripts/orchestrator/linear-adapter.mjs`. Old session observations
-     never authorize a new confirmation; printed apply instructions prove nothing.
+     --attempt N` outside worker sandboxes for collection requests; inspect
+     `status` and its reports log, and `stop` at attempt end.
      Use `accept.mjs amend --text` for upward risk/critical, dataset-version or
      complete-grant amendments and --full-snapshot when requested; it registers
      pins.v<n>.json after resume.mjs succeeds, under the collection admission lock.
      Refused resume leaves the current registry pins unchanged.
-     Keep durable per-write results/reconciliation.
      Grant workers reports/ only; publish confirmations/ outside their grants. Handle preflight-collect at the pinned evidenceRoot: a read-only review round, then sandboxed verification. The collector host needs both the Codex and Claude CLIs logged in by subscription, from different model families; a single-family setup gives `not-reviewed`. Approve nothing between rounds ([Review rounds](../../references/orchestration-delivery.md#review-rounds)); recheck collect:false before ship.
-     Publish whole-queue confirmation; never send a stage-resume prompt to a
-     worker waiting on a file. Preserve certificate-before-review,
-     drift-before-PR, In-Review-after-PR ordering. On recovery read capsule and
-     reconcile Linear before applying only missing writes.
+     Never send a stage-resume prompt to a worker waiting on a file.
    - Validate each terminal verification_items list against every Issue line;
      missing coverage or wholesale deferral without pass is non-green. Green
-     requires all confirmations plus an independently run installed ship gate.
-     Parked requires dictionary reason/text: reflect it in Linear with read-back
-     in this same turn, then route decide-or-escalate. A failed Linear write stays
+     requires an independently run installed ship gate.
+     Parked requires dictionary reason/text: read the worker's park comment back
+     (a dead worker's you write) in this same turn, then route decide-or-escalate. A failed Linear write stays
      visible as pending, never reported applied.
    - For stall/dead/spawn-fail inspect latest state before healing. Startup ack
      pause is not death; reconcile unconsumed ack first. Wait consumption keeps
      suppression until log continues, at most one stallSec from fixed consumedAt.
-     Phase confirmation wait
+     Collection confirmation wait
      is bounded by config. These deadlines take priority over unfinished commands.
      Ordinary silent live writers with pending commands defer stall for a fixed
      60-minute best-effort diagnostic from first watcher observation; process descendants alone prove
@@ -298,8 +288,9 @@ Rules:
   deploy scripts, infra config, docs address sweeps — and every such change
   is ALWAYS recorded in the ledger as a control-plane exception naming the
   mandate. Feature code NEVER qualifies; it always routes through workers.
-- Single Linear writer for implement/preflight/ship workers: this session applies
-  their queued mutations. Stage sessions write and read back their own artifacts.
+- Delivery workers write and read back their own Issue reports, comments and
+  statuses; this session writes only their start moves and «Изменение задачи».
+  Stage sessions write and read back their own artifacts.
 - Never skip or weaken lifecycle gates; the orchestrator sequences gates, it
   does not replace them.
 - Never ask the user an unprepared question; exhaust autonomous work first

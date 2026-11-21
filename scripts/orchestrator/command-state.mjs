@@ -4,7 +4,7 @@ import { qaDeliveryState, requireQaPassed } from '../qa-gate.mjs';
 import path from "node:path";
 import crypto from "node:crypto";
 import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, shipBotChecks, baseModelConfig, processStart } from "../runtime.mjs";
-import { validatePhase, requirePredecessors, classifyQueue, confirmationPath, validateConfirmation, resolveWrite } from "../delivery-state.mjs";
+import { validatePhase, requirePredecessors, classifyQueue, confirmationPath } from "../delivery-state.mjs";
 import { checkIdea, IDEA_GATE_DEFAULT_SINCE } from '../idea-gate.mjs';
 
 export function dispatchIdea(directory, config, issue, lane = null) {
@@ -110,10 +110,6 @@ export function correlatedPhase(root, file) {
   return { report, entry };
 }
 
-export function expandedWrite(write, report) {
-  return resolveWrite(write, report);
-}
-
 // Validate the full queue without adapter calls or confirmation side effects.
 export async function validateReportBarriers(root, report, reportsDir) {
   requirePredecessors(report, root, reportsDir, "confirming");
@@ -145,7 +141,14 @@ export function confirmedShip(root, entry) {
   const { report } = correlatedPhase(root, files[0]);
   if (report.issue !== entry.issue || report.attempt !== entry.attempt || report.phase !== "ship" || report.status !== "green")
     throw new Error("ship report is not green for this attempt");
-  validateConfirmation(report, readJson(confirmationPath(report, root)));
+  // A ship report carries no queue: the worker wrote and read back its certificate.
+  // The phase chain still holds: earlier reports exist and a collection request is confirmed.
+  if (report.capsule.open_queue.length) throw new Error("ship report must not carry queued writes");
+  requirePredecessors(report, root, path.dirname(files[0]), "landing");
+  // Host-owned admissions: no admitted review round may stay unconfirmed, even if
+  // the worker overwrote that preflight request with a later report.
+  const unconfirmed = admittedUnconfirmed(root, report, Infinity);
+  if (unconfirmed.length) throw new Error(`collection ${unconfirmed[0]} is not confirmed; landing waits for every admitted review round`);
   validateShipCertificate(report);
   return { report };
 }
@@ -334,10 +337,25 @@ export function admitUnderLock(root, report) {
     }
     if (request.collect !== false || request.head !== report.head || canonical(report.capsule.writable_roots) !== canonical(pins.workerWritableRoots))
       throw new CollectionAdmissionRefusal("collection head/grants/collect mismatch");
-    const record = { collectionId: write.id, reportDigest, pinsVersion: pins.pinsVersion, manifestDigest: digest(pins) };
+    // Host-owned order: a collection admitted at an earlier sequence is confirmed
+    // before a later one, even when a worker overwrote its mailbox without publishing.
+    const unconfirmed = admittedUnconfirmed(root, report);
+    if (unconfirmed.length) throw new CollectionAdmissionRefusal(`earlier collection ${unconfirmed[0]} is not confirmed; reconcile it before a new collection request`);
+    const record = { collectionId: write.id, reportDigest, pinsVersion: pins.pinsVersion, manifestDigest: digest(pins), sequence: report.sequence };
     atomicJson(file, record); admitted.push(record);
   }
   return admitted;
+}
+
+// As before T9, an earlier sequence of this phase is confirmed before a later one;
+// admissions are host-owned, so a worker cannot hide an unconfirmed request.
+function admittedUnconfirmed(root, report, before = report.sequence) {
+  const admissions = path.join(attemptDirectory(root, report), "admissions");
+  return (fs.existsSync(admissions) ? fs.readdirSync(admissions).filter(name => name.endsWith(".json")) : [])
+    .map(name => readJson(path.join(admissions, name)))
+    .filter(prior => Number.isInteger(prior.sequence) && prior.sequence < before &&
+      !fs.existsSync(confirmationPath({ ...report, phase: "preflight", sequence: prior.sequence }, root)))
+    .map(prior => prior.collectionId);
 }
 
 // U11: registry evidence decides state; the pending file only records preparation

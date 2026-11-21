@@ -8,10 +8,10 @@ dispatch, spawn or resume, and while a registry entry still carries startup
 ## Orchestration Mode Precedence
 
 Apply the Orchestration Mode Precedence section of `references/worker-contract.md`.
-Apply Delivery Write Barriers in `references/orchestration-delivery.md`; only the closed code-report exception in worker-contract defers confirmation to Preflight; consume final green/parked separately. The resume sweep is crash recovery,
+Apply Delivery Write Barriers in `references/orchestration-delivery.md`: the worker writes and reads back its own Issue records; consume final green/parked separately. The resume sweep is crash recovery,
 never the normal application path. Dispatch lifecycle moves use the handshake
 below: gates precede application and the worker resumes only on verified state.
-Never defer a check onto a queued mutation or describe pending state as applied.
+Never describe pending state as applied.
 
 ### Generated dispatch as audience adapter
 
@@ -489,7 +489,7 @@ handshake.
 | Consume `.blocked` | Only after the correlated stage report is present and valid: atomically publish the private consumption record with `outcome: blocked`, rename every ack candidate, then remove `gates` and route the report. |
 | Malformed `gates` on a gate-carrying entry | Treat it as a producer contract error and terminate the attempt; verified-respawn a NEW gate attempt with a correct list. |
 | `gates` retained after startup consumption | Reconcile the private consumption record and finish cleanup before processing phase reports. |
-| Phase advance | Reconcile startup ack first; preserve delivery stage/log and confirm the complete phase queue. Never dispatch a new stage. |
+| Phase advance | Reconcile startup ack first; preserve delivery stage/log; a collection request goes to the collector. Never dispatch a new stage. |
 | Crash after consumption-record publication | Resume treats the well-formed private CURRENT-attempt record as intent: finish renaming every remaining ack candidate to the suffix selected by `outcome`, then remove stale `gates`. Tombstones and mailbox files never authorize either action. |
 
 Blocked path: a gate that fails makes the ack `status: blocked`, and the worker
@@ -608,6 +608,8 @@ in every generated dispatch and registry entry, with unknown values kept
 separate from the policy target:
 
 - `claude-cli`: managed launch and resume through installed spawn/resume scripts.
+  Delivery dispatch refuses it while its worker has no Linear MCP to write and
+  read back its own Issue records; deliver on `codex-cli`.
   The immutable BASE selects this transport and role; incompatible role, pairing,
   provider endpoint or credential reference refuses before attempt registration.
   Only native Anthropic subscription login is supported. Before each launch,
@@ -640,7 +642,7 @@ separate from the policy target:
   model_launch.delivery_differences and the ready certificate disclose both facts.
   Never print credentials: native session transcripts retain command output
   outside journal redaction. A refused shell command follows report-before-stop.
-  Phase and collection confirmations use the plain pack blocking wait command
+  Collection confirmations use the plain pack blocking wait command
   in the foreground under the raised Bash timeout ceiling. The seam proves an
   outstanding Bash call by session, Issue/attempt, current runner PID/procStart
   and call ID. Each runner writes a mono.worker-instance marker before CLI output;

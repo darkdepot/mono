@@ -1,15 +1,12 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { atomicJson, readJson, digest, canonical, withLock, isMain, validateEvidenceGrants } from "../runtime.mjs";
-import { registryEntry, effectivePins, collectionPinsBinding, correlatedPhase, expandedWrite, attemptDirectory, admitUnderLock, commandFlags, allowedFlags, sha256File, validateReportBarriers, amendmentState, amendmentChange, amendmentMatches, amendmentDocuments, validateAmendment, restoreAmendmentGrants } from "./command-state.mjs";
+import { registryEntry, effectivePins, collectionPinsBinding, commandFlags, allowedFlags, sha256File, amendmentState, amendmentChange, amendmentMatches, amendmentDocuments, validateAmendment, restoreAmendmentGrants } from "./command-state.mjs";
 import { reviewContext, ROUND_LIMIT } from "../gate.mjs";
 import { consumeAck } from "./consume-gate-ack.mjs";
-import { recordObservation, sessionContext, reconcile } from "./linear-adapter.mjs";
-import { classifyQueue } from "../delivery-state.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const run = (script, args, options = {}) => {
@@ -69,57 +66,6 @@ export async function acceptAck(args, print = value => console.log(JSON.stringif
   });
   if (!action) return { planned: true };
   const result = await consumeAck({ root, issue, attempt, ...action }); print(result); return result;
-}
-
-export async function acceptReport(args, print = value => console.log(JSON.stringify(value))) {
-  allowedFlags(args, ["report", "root", "config", "session", "observe"]);
-  const reportFile = path.resolve(args.report), root = args.root;
-  let context, instructions = {};
-  if (!args.session) {
-    if (args.observe?.length) throw new Error("--observe requires the opened --session");
-    await withLock(path.join(root, "launch.lock"), async () => {
-      const { report } = correlatedPhase(root, reportFile);
-      await validateReportBarriers(root, report, path.dirname(reportFile));
-      if (classifyQueue(report, root).collection) await admitUnderLock(root, report);
-      const dir = attemptDirectory(root, report);
-      await withLock(path.join(dir, "session.lock"), () => {
-        const reportDigest = digest(report), sessions = path.join(dir, "sessions"), activeFile = path.join(sessions, `current-${reportDigest}.json`);
-        const queue = classifyQueue(report, root);
-        const writes = report.capsule.open_queue.filter(write => !queue.carried.has(write.id)).map(write => expandedWrite(write, report));
-        const reread = fs.existsSync(activeFile) ? writes.map(write => ({ id: write.id, target: write.target,
-          instruction: write.operation === "comment" ? "Find the existing comment by marker/idempotency key before any republication." : "Read the desired effect through its source before retrying." })) : [];
-        const session = { sessionId: crypto.randomUUID(), openedAt: new Date().toISOString(), reportDigest };
-        atomicJson(path.join(sessions, session.sessionId, "session.json"), session); atomicJson(activeFile, session);
-        context = sessionContext(root, reportFile, session.sessionId);
-        instructions = { writes, writeDigests: Object.fromEntries(writes.map(write => [write.id, digest(write)])), reread };
-      });
-    });
-  } else context = sessionContext(root, reportFile, args.session);
-  for (const value of args.observe ?? []) {
-    const separator = value.indexOf("=");
-    if (separator < 1) throw new Error("--observe expects writeId=JSON (or writeId=@file)");
-    const id = value.slice(0, separator), encoded = value.slice(separator + 1);
-    const observation = encoded.startsWith("@") ? readJson(encoded.slice(1)) : JSON.parse(encoded);
-    await recordObservation(root, reportFile, context.session.sessionId, id, observation);
-  }
-  // Reopening a session and confirming it share session.lock. No old session can
-  // create a confirmation while a new session invalidates its observations.
-  const result = await withLock(path.join(attemptDirectory(root, context.report), "session.lock"), () => {
-    context = sessionContext(root, reportFile, context.session.sessionId);
-    const { carried } = classifyQueue(context.report, root);
-    const complete = context.report.capsule.open_queue.every(queued => {
-      if (carried.has(queued.id)) return true;
-      const write = expandedWrite(queued, context.report);
-      return reconcile({ action: "reconcile", issue: context.report.issue, attempt: context.report.attempt, idempotencyKey: `${context.report.issue}:${write.id}`, write },
-        { root, reportFile, sessionId: context.session.sessionId }).state === "present";
-    });
-    if (!complete) return { session: context.session, status: "observations-pending" };
-    run("../delivery-state.mjs", ["confirm", "--report", reportFile, "--root", root, "--adapter", path.join(directory, "linear-adapter.mjs"), ...(args.config ? ["--config", args.config] : [])],
-      { env: { ...process.env, MONO_ACCEPT_ROOT: root, MONO_ACCEPT_REPORT: reportFile, MONO_ACCEPT_SESSION: context.session.sessionId } });
-    return { session: context.session, status: "confirmed" };
-  });
-  const response = { ...instructions, ...result };
-  print(response); return response;
 }
 
 function checkBotUnavailableRound(args, entry) {
@@ -224,7 +170,7 @@ export async function acceptAmend(args) {
         atomicJson(pinsFile, { pinsVersion: version, risk, critical, botUnavailable,
           workerWritableRoots, fullSnapshot });
         const updated = effectivePins({ ...entry, pinsVersion: version });
-        text += `\n\n## Effective attempt pins\npinsVersion: ${version}\npins file: ${pinsFile}\nSHA-256: ${sha256File(pinsFile)}\n${JSON.stringify(updated, null, 2)}\nPreserve the full queue and wait for its confirmation before advancing. Risk determines required local review even when the immutable launch profile was short.`;
+        text += `\n\n## Effective attempt pins\npinsVersion: ${version}\npins file: ${pinsFile}\nSHA-256: ${sha256File(pinsFile)}\n${JSON.stringify(updated, null, 2)}\nKeep a pending collection request and wait for its confirmation before advancing; write your own Linear comments and statuses through Linear MCP and read them back. Risk determines required local review even when the immutable launch profile was short.`;
         fs.writeFileSync(resumeFile, text + "\n");
         const previousLaunchGrants = { workerWritableRoots: entry.workerWritableRoots, writable_roots: entry.writable_roots,
           capsuleRoots: entry.capsule.writable_roots, network_access: entry.network_access };
@@ -278,12 +224,11 @@ export async function acceptAmend(args) {
 
 if (isMain(import.meta.url)) {
   try {
-    const [command, ...argv] = process.argv.slice(2), args = commandFlags(argv, ["full-snapshot", "preapply"], ["observe"]);
-    if (command === "--help" || args.help) console.log("Usage: accept.mjs ack --root DIR --issue KEY --attempt N [--outcome applied|blocked|rejected] [--readback FILE]\naccept.mjs report --root DIR --report FILE [--config FILE] [--session UUID --observe 'writeId=JSON']\nObservation: {sessionId,writeId,reportDigest,writeDigest,observedAt,state:'present|missing',evidence,absent?:true}; repeat --observe for multiple writes; @file is supported. Without --session open a new session, invalidate prior observations and print expanded writes (reread first on retry).\naccept.mjs amend --root DIR --issue KEY --attempt N --text TEXT [--risk CLASS] [--critical TEXT] [--bot-unavailable REASON] [--worker-writable-roots JSON] [--full-snapshot --snapshot DIR]\nA new or prepared-but-undelivered --bot-unavailable amendment is refused when the current HEAD/base/contract has a reusable round and at least ROUND_LIMIT - 1 rounds are completed.\nAdmission files: consumed/KEY-aN/admissions/collectionId.json; launch.lock serializes admissions and amendments. --preapply requires a new dispatch after artifact-owner repair. No script writes to Linear.");
+    const [command, ...argv] = process.argv.slice(2), args = commandFlags(argv, ["full-snapshot", "preapply"]);
+    if (command === "--help" || args.help) console.log("Usage: accept.mjs ack --root DIR --issue KEY --attempt N [--outcome applied|blocked|rejected] [--readback FILE]\naccept.mjs amend --root DIR --issue KEY --attempt N --text TEXT [--risk CLASS] [--critical TEXT] [--bot-unavailable REASON] [--worker-writable-roots JSON] [--full-snapshot --snapshot DIR]\nA new or prepared-but-undelivered --bot-unavailable amendment is refused when the current HEAD/base/contract has a reusable round and at least ROUND_LIMIT - 1 rounds are completed.\nAdmission files: consumed/KEY-aN/admissions/collectionId.json; launch.lock serializes admissions and amendments. --preapply requires a new dispatch after artifact-owner repair. No script writes to Linear; the delivery worker writes its own comments and statuses through Linear MCP, so there is no report confirmation command.");
     else if (command === "ack") await acceptAck(args);
-    else if (command === "report") await acceptReport(args);
     else if (command === "amend") console.log(JSON.stringify(await acceptAmend(args)));
-    else throw new Error("expected ack, report or amend");
+    else throw new Error("expected ack or amend");
   } catch (error) {
     if (process.argv[2] === "amend") console.log(JSON.stringify(error.amendment ?? { version: null, state: null, outcome: "refused", reason: error.message }));
     console.error(`accept: ${error.message}`); process.exitCode = 1;

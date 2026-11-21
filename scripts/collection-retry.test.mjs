@@ -27,22 +27,22 @@ test('retry-late-start: deadline is publication plus registry timeout, never inv
   assert.equal(collectionBudget({ confirmationTimeoutSec: 1800, collectionTimeoutSec: 123, collectionRetries: 0 }, { publishedAt }).timeoutMs, 123_000);
 });
 
-test('retry-slow-confirmation: late reconciliation cannot publish confirmation or apply writes', async () => {
+test('retry-slow-confirmation: late reconciliation cannot publish confirmation', async () => {
   const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path');
   const { publishPhase, confirmQueue } = await import('./delivery-state.mjs');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-confirm-budget-'));
-  const queue = [{ id: 'one', operation: 'comment', target: 'MONO-999', payload: 'fixture' }];
-  const report = { issue: 'MONO-999', stage: 'mono-deliver', attempt: 1, packVersion: 'fixture', surfaceRevision: 4,
-    phase: 'code', sequence: 1, kind: 'phase', head: 'a'.repeat(40), linear_mutations_pending: queue,
-    capsule: { phase: 'code', head: 'a'.repeat(40), open_queue: queue, decisions: [], writable_roots: [path.join(root, 'reports')] } };
+  const head = 'a'.repeat(40), id = `preflight-collect:${head}:1`;
+  const queue = [{ id, operation: 'preflight-collect', target: head, payload: { request: { collectionId: id } } }];
+  const report = { issue: 'MONO-999', stage: 'mono-deliver', attempt: 1, packVersion: 'fixture', surfaceRevision: 6,
+    phase: 'code', sequence: 1, kind: 'phase', head, linear_mutations_pending: [],
+    capsule: { phase: 'code', head, open_queue: [], decisions: [], writable_roots: [path.join(root, 'reports')] } };
   try {
-    const published = publishPhase(report, path.join(root, 'reports/MONO-999-phase-code.json'));
-    let applied = false;
-    await assert.rejects(confirmQueue(published, root, async action => {
-      if (action === 'apply') applied = true;
+    publishPhase(report, path.join(root, 'reports/MONO-999-phase-code.json'));
+    const published = publishPhase({ ...report, phase: 'preflight', kind: 'confirmation-request', linear_mutations_pending: queue,
+      capsule: { ...report.capsule, phase: 'preflight', open_queue: queue } }, path.join(root, 'reports/MONO-999-phase-preflight.json'));
+    await assert.rejects(confirmQueue(published, root, async () => {
       await new Promise(resolve => setTimeout(resolve, 40)); return { state: 'missing' };
     }, path.join(root, 'reports'), Date.now() + 10), /timed-out.*confirmation/);
-    assert.equal(applied, false);
-    assert.equal(fs.existsSync(path.join(root, 'confirmations/MONO-999-phase-code-a1-s1.confirmed.json')), false);
+    assert.equal(fs.existsSync(path.join(root, 'confirmations/MONO-999-phase-preflight-a1-s1.confirmed.json')), false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
