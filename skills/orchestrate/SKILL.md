@@ -241,7 +241,7 @@ Workflow states:
    - The worker writes and reads back its own Issue reports, comments and
      statuses through Linear MCP; you neither queue nor confirm them (Delivery
      Write Barriers). You write only start moves and «Изменение задачи».
-   - Consume phase events AND poll phase files; validate the capsule. The
+   - Consume phase, parked and green events AND poll phase files; validate the capsule. The
      collector starts with the attempt and takes the worker's round requests
      itself; if the launch result or the worker reports it stopped, restart it
      with `scripts/orchestrator/collector.mjs start --root DIR --issue KEY

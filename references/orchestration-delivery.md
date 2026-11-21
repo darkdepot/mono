@@ -381,7 +381,7 @@ pack root; the same source serves development and fixtures. It reads worker
 state and, in persistent mode, atomically writes its own `watcher.json` each tick: pid,
 procStart, packVersion, startedAt, beatAt, intervalSec. It emits one stable
 line per watcher event to stdout —
-`<ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
+`<ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|parked|green|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
 `phase-rejected` names the task and mismatched identity fields when a phase
 report fails strict report-to-task correlation. It never accepts the report or
 suppresses liveness on its strength.
@@ -411,6 +411,9 @@ directory's history; retired Issues' logs are outside its scope.
   refuses an automatic duplicate.
   If the session and watcher disappear together while a worker runs, the pack
   cannot detect that loss; the orchestrator environment owns that supervision.
+- `parked` (detail `reason= next= phase=`) and `green` (ship) come from the
+  attempt's newest correlated report or capsule and repeat every `--repeat-sec`
+  until a resume, a new attempt or deregistration: act on them at once.
 - Each changed phase report file emits `phase`, regardless of stage order.
   Deduplication stays per file/mtime/size; a round wait follows the round
   request file and its ledger result, not the phase reports.

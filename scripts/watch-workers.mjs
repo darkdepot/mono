@@ -4,7 +4,7 @@
 // "## Heartbeat"). Watches one orchestrator mailbox root and prints one
 // stable line per worker liveness event to stdout:
 //
-//   <ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>
+//   <ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|parked|green|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>
 //
 // Checks per scan (log checks apply only to Issues present in workers.json,
 // the active registry; logs of retired Issues are history and are skipped
@@ -32,6 +32,12 @@
 // exact set equality for `gates-passed`; `blocked` accepts a non-empty subset
 // but still rejects foreign or duplicate names.
 //
+// Parked and green events: the newest correlated stage report or phase capsule
+// of the registered attempt that stopped (parked, blocked, needs-decision,
+// needs-owner, needs-human, failed) or finished ship green prints
+// EVENT:parked / EVENT:green with reason, next and phase, and repeats every
+// --repeat-sec until a resume, a new attempt or deregistration.
+//
 // Report and gate-ack events apply to managed CLI workers with a
 // correlated A5 identity and use file mtime+size as the in-process version
 // key. Idle follows the A5 retirement contract: registry entries remain
@@ -44,7 +50,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { validatePhase, correlatedDeliveryReport } from "./delivery-state.mjs";
+import { validatePhase, correlatedDeliveryReport, PARKED_REASONS } from "./delivery-state.mjs";
 import { readLedger, admissionFor, collectorAlive, roundRequestName } from "./review-rounds.mjs";
 import { atomicJson, deliveryConfig, processStart, IDENTITY_FIELDS, identity, packLayout, runtimePackRoot } from "./runtime.mjs";
 
@@ -89,7 +95,7 @@ function usage(exitCode = 2) {
   console.error("");
   console.error("Watch an orchestrator mailbox root (logs/, reports/, workers.json) and");
   console.error("print one line per worker liveness event to stdout:");
-  console.error("  <ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>");
+  console.error("  <ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|parked|green|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>");
   console.error("");
   console.error("Options:");
   console.error("  --root <dir>        Orchestrator root, e.g. ~/.mono-agent-workflow/orchestrator/<product> (required)");
@@ -1172,15 +1178,59 @@ function checkPhase(log, entry, nowMs) {
   // while the collector of this attempt lives; a stopped collector is a stall to report.
   const roundFile = [path.join(roots[0], "reports", roundRequestName(log.issue, entry.attempt)),
     path.join(roots[1], roundRequestName(log.issue, entry.attempt))].find(file => fs.existsSync(file));
-  if (!roundFile) return phases.length ? { waiting: false, pending: false } : false;
+  const latest = phases[0] ?? null;
+  if (!roundFile) return phases.length ? { waiting: false, pending: false, latest } : false;
   try {
     const round = JSON.parse(fs.readFileSync(roundFile, "utf8"));
-    if (admissionFor(readLedger(args.root, log.issue, entry.attempt), round.request?.collectionId)?.result) return { waiting: false, pending: false };
-  } catch { return { waiting: false, pending: false }; }
+    if (admissionFor(readLedger(args.root, log.issue, entry.attempt), round.request?.collectionId)?.result) return { waiting: false, pending: false, latest };
+  } catch { return { waiting: false, pending: false, latest }; }
   const transport = workerTransport(entry.transport);
   const waiting = collectorAlive(args.root, log.issue, entry.attempt) && (!transport?.waitingPhase ||
     (writerPidState(entry) === "alive" && processStart(entry.pid) === entry.procStart && transport.waitingPhase(entry, roundFile) !== null));
-  return { waiting, pending: true };
+  return { waiting, pending: true, latest };
+}
+
+// A worker that stopped (parked, blocked, needs a decision, failed) or finished
+// green needs the orchestrator now, not when it next opens a report. The newest
+// correlated stage report or phase capsule of this attempt decides; the event
+// repeats every --repeat-sec while that state stands and the Issue stays
+// registered. Log growth past the shutdown tail or a registry launch time
+// after the publication means a resume; a new attempt or deregistration drops
+// the old state by correlation, so the reminder stops on any reaction.
+const STOP_STATES = new Set(["parked", "failed", "needs-owner", ...PARKED_REASONS]);
+// Older reports pair status parked with a transition result and no reason; that is a hand-off, not a stop.
+const TRANSITION_RESULTS = new Set(["implemented-needs-preflight", "ready", "in-progress"]);
+
+function stopDetail(value) {
+  return typeof value === "string" && value.trim() ? value.trim().replace(/\s+/g, "_").slice(0, DETAIL_SNIPPET_LENGTH) : "-";
+}
+
+function checkStop(log, entry, report, latestPhase, nowMs) {
+  const candidates = [];
+  if (latestPhase) candidates.push({ file: latestPhase.file, stat: latestPhase.stat, report: latestPhase.report });
+  if (report !== null) {
+    try {
+      if (report.stat.size <= 4 * 1024 * 1024)
+        candidates.push({ file: report.reportPath, stat: report.stat, report: JSON.parse(fs.readFileSync(report.reportPath, "utf8")) });
+    } catch { /* unreadable now: the next scan sees the settled file */ }
+  }
+  const at = candidate => { const ms = Date.parse(candidate.report?.publishedAt); return Number.isFinite(ms) ? ms : candidate.stat.mtimeMs; };
+  candidates.sort((a, b) => at(b) - at(a));
+  const source = candidates[0];
+  if (!source || log.stat.mtimeMs > source.stat.mtimeMs + args.stallSec * 1000) return;
+  // A resume after the publication registers a new launch time: the worker runs again.
+  if (Date.parse(entry?.last_activity_at) > Math.max(at(source), source.stat.mtimeMs)) return;
+  const { status, phase_result: result, reason, next, sequence, attempt } = source.report ?? {};
+  const phase = source.report?.phase ?? source.report?.capsule?.phase;
+  let event = null;
+  if (STOP_STATES.has(result) || (STOP_STATES.has(status) && (reason || !TRANSITION_RESULTS.has(result)))) event = "parked";
+  else if ((status === "green" || result === "green") && (phase ?? "ship") === "ship") event = "green";
+  if (event === null) return;
+  const why = reason ?? (STOP_STATES.has(result) ? result : status);
+  const where = `phase=${stopDetail(phase ?? log.stage)}`, then = `next=${stopDetail(next)}`;
+  const detail = `${event === "parked" ? `reason=${stopDetail(why)} ${then} ${where}` : `${where} ${then}`}` +
+    ` sequence=${sequence ?? "-"} attempt=${attempt ?? log.attempt ?? "-"} report=${path.basename(source.file)}`;
+  emitEvent(event, log.issue, detail, `${event}:${source.file}:${source.stat.mtimeMs}:${source.stat.size}`, nowMs);
 }
 
 function scan() {
@@ -1251,6 +1301,7 @@ function scan() {
     checkGateAck(attemptLog, gateAck, nowMs);
     checkReport(log, report, nowMs);
     const waitingOnPhase = checkPhase(attemptLog, registryEntry, nowMs);
+    checkStop(attemptLog, registryEntry, report, waitingOnPhase?.latest ?? null, nowMs);
     if (!waitingOnPhase?.waiting) checkLog(attemptLog, gateAck, report, registry, nowMs, waitingOnPhase?.pending);
   }
   checkRegistry(registry, nowMs);

@@ -1187,6 +1187,75 @@ function watcherProcessFixture(root) {
   return { ...process.env, PATH: bin + path.delimiter + process.env.PATH };
 }
 
+test('watcher wakes the orchestrator on a parked or green attempt and repeats while it stands', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-stop-watch-'));
+  const env = watcherProcessFixture(root);
+  const issue = 'MONO-994', log = path.join(root, 'logs', `${issue}-mono-deliver-a1.jsonl`), head = 'c'.repeat(40);
+  const entry = { issue, stage: 'mono-deliver', transport: 'codex-cli', attempt: 1, packVersion: 'test', sourceCommit: 'a'.repeat(40), surfaceRevision: 4,
+    pid: process.pid, procStart: 'fixture-start', thread_id: 'fixture-thread', worktree: path.join(root, 'repo'), log };
+  const phase = (name, sequence, extra) => write(path.join(root, 'reports', `${issue}-phase-${name}.json`), { ...entry, head, phase: name, sequence, kind: 'phase',
+    publishedAt: new Date().toISOString(), capsule: { phase: name, head, decisions: [], writable_roots: [entry.worktree] }, ...extra });
+  const watch = () => pass(run(process.execPath, ['scripts/watch-workers.mjs', '--root', root, '--once'], checkout, env)).stdout;
+  try {
+    write(log, JSON.stringify({ type: 'thread.started', thread_id: 'fixture-thread' }) + '\n');
+    write(path.join(root, 'workers.json'), { [issue]: entry }); write(path.join(root, 'control.json'), { state: 'active' });
+    phase('code', 1, { status: 'parked', reason: 'blocked', next: 'owner', phase_result: 'in-progress' });
+    const parked = watch();
+    assert.match(parked, new RegExp(`EVENT:phase ${issue}`), 'the existing phase event stays');
+    assert.match(parked, new RegExp(`EVENT:parked ${issue} reason=blocked next=owner phase=code sequence=1 attempt=1 report=${issue}-phase-code.json`));
+    assert.doesNotMatch(parked, /EVENT:green/);
+
+    // Repeat: a live watcher reminds again after --repeat-sec while the state stands.
+    const { spawn } = await import('node:child_process');
+    const child = spawn(process.execPath, ['scripts/watch-workers.mjs', '--root', root, '--interval-sec', '1', '--repeat-sec', '1'], { cwd: checkout, env });
+    let out = ''; child.stdout.on('data', chunk => { out += chunk; });
+    try {
+      for (let waited = 0; waited < 30000 && (out.match(/EVENT:parked/g) ?? []).length < 2; waited += 100) await new Promise(resolve => setTimeout(resolve, 100));
+    } finally { child.kill('SIGTERM'); }
+    assert.ok((out.match(new RegExp(`EVENT:parked ${issue}`, 'g')) ?? []).length >= 2, out);
+
+    // A worker that runs again after the stop (log grows past the shutdown tail) is not reminded.
+    const later = new Date(Date.now() + 200_000); fs.utimesSync(log, later, later);
+    assert.doesNotMatch(watch(), /EVENT:parked/);
+    const now = new Date(); fs.utimesSync(log, now, now);
+    // A resume registers a launch time after the publication, even before the log grows.
+    write(path.join(root, 'workers.json'), { [issue]: { ...entry, last_activity_at: new Date(Date.now() + 1000).toISOString() } });
+    assert.doesNotMatch(watch(), /EVENT:parked/);
+    write(path.join(root, 'workers.json'), { [issue]: entry });
+    // A final stage report names its phase only in the capsule.
+    const stageReport = path.join(root, 'reports', `${issue}-mono-deliver.json`);
+    write(stageReport, { ...entry, status: 'parked', reason: 'needs-decision', next: 'orchestrator', text: 'pick one', capsule: { phase: 'code' },
+      publishedAt: new Date(Date.now() + 500).toISOString() });
+    assert.match(watch(), new RegExp(`EVENT:parked ${issue} reason=needs-decision next=orchestrator phase=code .*report=${issue}-mono-deliver.json`));
+    fs.unlinkSync(stageReport);
+
+    // A normal transition is not a stop.
+    phase('code', 2, { phase_result: 'implemented-needs-preflight', next: 'mono:preflight', summary: 'done', not_built: [], not_verified: [],
+      criteria: [{ criterion: 'c1', done: true, outcome: 'confirmed', proof: 'p', result: 'r', head, worktree_fingerprint: 'd'.repeat(64) }] });
+    const transition = watch();
+    assert.match(transition, new RegExp(`EVENT:phase ${issue} phase code sequence 2`), 'the transition capsule is read');
+    assert.doesNotMatch(transition, /EVENT:(parked|green)/, transition);
+    phase('code', 3, { status: 'parked', reason: null, phase_result: 'implemented-needs-preflight', next: 'mono:preflight', summary: 'done', not_built: [], not_verified: [],
+      criteria: [{ criterion: 'c1', done: true, outcome: 'confirmed', proof: 'p', result: 'r', head, worktree_fingerprint: 'd'.repeat(64) }] });
+    const legacy = watch();
+    assert.match(legacy, new RegExp(`EVENT:phase ${issue} phase code sequence 3`));
+    assert.doesNotMatch(legacy, /EVENT:(parked|green)/, 'a parked status on a transition without a reason is a hand-off');
+
+    // A preflight stop expressed only through phase_result still wakes.
+    phase('preflight', 1, { phase_result: 'drift-candidate', next: 'mono:ship' });
+    assert.match(watch(), new RegExp(`EVENT:parked ${issue} reason=drift-candidate next=mono:ship phase=preflight`));
+
+    phase('ship', 1, { status: 'green', phase_result: 'green', next: 'mono:deploy', reason: null });
+    const green = watch();
+    assert.match(green, new RegExp(`EVENT:green ${issue} phase=ship next=mono:deploy sequence=1 attempt=1 report=${issue}-phase-ship.json`));
+    assert.doesNotMatch(green, /EVENT:parked/);
+
+    // Deregistration ends the reminder.
+    write(path.join(root, 'workers.json'), {});
+    assert.doesNotMatch(watch(), /EVENT:(parked|green)/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('watcher shares configured clocks and bounds wait continuation after consumption', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-wait-watch-'));
   const env = watcherProcessFixture(root);
