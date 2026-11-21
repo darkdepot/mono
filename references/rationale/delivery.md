@@ -2,7 +2,7 @@
 
 Package approval and implementation-start approval carry different consequences. Snapshot-based orchestration keeps one writer per record: the worker writes and reads back its own Issue reports, comments and statuses through Linear MCP (the MONO-449 probe proved this for codex-cli), while the orchestrator applies start moves. A queue with per-write confirmation cost hours of waiting without catching defects. Lifecycle-dependent gates still need the explicit dispatch handshake.
 
-Attempt-numbered acknowledgements bind gates to their writer; time ordering alone cannot separate overlapping attempts. The orchestrator's durable consumption journal handles crash recovery and duplicate delivery, while workers need only acknowledgement, pause and amended-state obligations.
+Attempt-numbered acknowledgements bind gates to their writer; time ordering alone cannot separate overlapping attempts. The orchestrator's durable consumption journal handles crash recovery and duplicate delivery, while workers need only acknowledgement, pause and applied-state obligations.
 
 A shared worker contract removes transport/registry/watcher instructions from stage reading. The read budget counts conditional and mandatory references together so changing a read's tier cannot reduce the measured corpus. Bytes divided by four is only an approximate token measure; actual reads and cost remain log-derived telemetry.
 

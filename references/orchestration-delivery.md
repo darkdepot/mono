@@ -204,7 +204,7 @@ round itself. The pinned risk sets the completed rounds per task attempt (`risky
 three, the fast path one), counted from the attempt's receipts;
 rounds after the first read only the fixes and open findings; the same head
 reuses its round; `not-reviewed` spends nothing. `ROUND_LIMIT` stays 3 and
-`reviewContext` counts as before, for the installed `accept.mjs`.
+`reviewContext` in `gate.mjs` counts from the receipt history.
 
 Fast path: after its round the worker fixes, runs the full verification on the
 final head and requests it with `workerVerification: {head, exitCode: 0}`; the
@@ -403,8 +403,8 @@ directory's history; retired Issues' logs are outside its scope.
   `watcher-required` gives the start command; refusal registers no attempt and
   consumes no attempt allowance. Read-only `spawn --pins` is exempt.
   The common launch path rechecks the pulse before spawn under the same lock.
-  Amendments record possible delivery only at that boundary; pre-spawn refusals
-  and failed process creation leave no marker, while an indeterminate real
+  A launch registers its attempt and a resume records its task change only at that
+  boundary; pre-spawn refusals and failed process creation leave neither, while an indeterminate real
   launch retains its recovery evidence and refuses an automatic duplicate.
   If the session and watcher disappear together while a worker runs, the pack
   cannot detect that loss; the orchestrator environment owns that supervision.

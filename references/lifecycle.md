@@ -319,4 +319,4 @@ Forbidden:
 
 ## One Delivery Context
 
-For orchestrated work dispatch mono:deliver once. Its code, preflight and ship phases retain the owners and order above. Each phase publishes its capsule; the worker writes its Linear records and advances only after reading them back, and a collection request waits for its confirmation. In-phase barriers preserve drift-before-PR, certificate-before-formal-review and In-Review-after-PR ordering. Recover the same phase after interruption; final status is green or parked with a dictionary reason, read back from Linear in the same orchestrator turn.
+For orchestrated work dispatch mono:deliver once. Its code, preflight and ship phases retain the owners and order above. Each phase publishes its capsule; the worker writes its Linear records and advances only after reading them back, and a review round request waits for its result with `wait-round`. In-phase barriers preserve drift-before-ready, certificate-before-formal-review and In-Review-after-ready ordering. Recover the same phase after interruption; final status is green or parked with a dictionary reason, read back from Linear in the same orchestrator turn.
