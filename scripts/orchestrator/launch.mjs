@@ -6,7 +6,8 @@ import { startGate } from "../gate.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
 import { workerTransport } from "../worker-transport.mjs";
-import { effectivePins, attemptState, validateAmendment } from "./command-state.mjs";
+import { effectivePins, attemptState, recordTaskChange, dropTaskChange } from "./command-state.mjs";
+import { ensureCollector } from "./collector.mjs";
 
 function releasePin(request) {
   if (!request.pins) return false;
@@ -46,12 +47,11 @@ function deliveryLaunch(request, transport) {
   if (!["short", "full"].includes(profile)) throw new Error("invalid profile");
   if (profile === "short" && (!["tiny", "standard"].includes(request.risk) || request.critical !== null ||
       request.afk !== true || request.openDecisions !== 0)) throw new Error("short requires tiny/standard, critical null, afk true and openDecisions 0");
-  if (request.pinsVersion !== undefined && request.pinsVersion !== 0) throw new Error("launch pinsVersion must be 0");
   const pins = request.pins ?? null;
   if (pins !== null && (!path.isAbsolute(pins.file ?? "") || !/^[a-f0-9]{64}$/.test(pins.digest ?? "") ||
       crypto.createHash("sha256").update(fs.readFileSync(pins.file)).digest("hex") !== pins.digest)) throw new Error("dispatch pins digest mismatch");
   if (pins === null && (handshake === "wait" || profile === "short")) throw new Error("dispatch pins required for wait/short");
-  return { handshake, profile, pins, pinsVersion: 0 };
+  return { handshake, profile, pins };
 }
 function selectedTransport(request) {
   const config = baseModelConfig(request.worktree, request.base);
@@ -155,7 +155,7 @@ async function launchTransport(root, entry, prompt, resume, prepared, lifecycle 
     const options = { cwd: entry.worktree, detached: true,
       stdio: piped ? ["pipe", "ignore", "ignore"] : ["ignore", stdout, stderr],
       env: { ...transport.environment(entry.modelRoutes?.roles[entry.model_policy.role], process.env,
-        { ...prepared, timeoutSec: entry.confirmationTimeoutSec, tempDir: temporaryDirectory(transport, entry, roots) }),
+        { ...prepared, tempDir: temporaryDirectory(transport, entry, roots) }),
         ...(piped ? { MONO_WORKER_JOURNAL_IDENTITY: JSON.stringify({ issue: entry.issue, attempt: entry.attempt, thread_id: entry.thread_id }) } : {}) } };
     guard(root, resume);
     requireWatcher(root);
@@ -300,7 +300,6 @@ export async function spawnWorker(request, preparation = {}) {
       let prepared;
       try {
         prepared = transport.prepare?.(model_policy, { cwd: request.worktree,
-          timeoutSec: deliveryConfig(request.config).confirmationTimeoutSec,
           roots, tempDir: temporaryDirectory(transport, request, roots) });
       } catch (error) {
         atomicJson(path.join(request.root, "launch-refusals", request.issue + "-a" + (used + 1) + ".json"),
@@ -327,8 +326,6 @@ export async function spawnWorker(request, preparation = {}) {
         skillsRoot: request.skillsRoot, spawned_at: new Date().toISOString(), last_activity_at: null, log, dispatchFile: request.dispatchFile,
         modelRoutes, model_policy, model_launch, model: model_policy.model, effort: model_policy.effort,
         writable_roots: roots, workerWritableRoots: roots, evidenceRoot: resolvedLocation(request.evidenceRoot), network_access: true, lifecycle_moves: request.lifecycle_moves,
-        confirmationTimeoutSec: deliveryConfig(request.config).confirmationTimeoutSec,
-        collectionTimeoutSec: deliveryConfig(request.config).collectionTimeoutSec,
         collectionRetries: deliveryConfig(request.config).collectionRetries,
         capsule: { phase: "code", head: worktreeGit(request.worktree, ["HEAD"]),
           open_queue: [], decisions: [], writable_roots: roots } };
@@ -347,24 +344,26 @@ export async function spawnWorker(request, preparation = {}) {
       throw error;
     }
   });
-  return { attempt: launched.entry.attempt, ...await confirmStartup(request.root, launched.entry, launched) };
+  const started = await confirmStartup(request.root, launched.entry, launched);
+  return { attempt: launched.entry.attempt, ...started, collector: await startCollector(request.root, launched.entry) };
 }
+// The collector starts with the attempt, without an orchestrator turn, and waits for round requests.
+// A failure is reported, not fatal: the worker's wait-round names a stopped collector.
+async function startCollector(root, entry) {
+  try { const holder = await ensureCollector({ root, issue: entry.issue, attempt: entry.attempt }); return { status: "running", pid: holder.pid }; }
+  catch (error) { return { status: "not-started", reason: error.message }; }
+}
+// Resume carries text only: a task change («Изменение задачи» comment, taskChange = its link) or recovery input.
+// Risk, critical and grants come from the immutable launch pins; changing them is a new attempt on the same branch.
 export async function resumeWorker(request) {
   checkRequest(request); guard(request.root, true);
+  const extra = Object.keys(request).filter(key => !["root", "issue", "resumeFile", "taskChange"].includes(key));
+  if (extra.length) throw new Error(`resume takes only root, issue, resumeFile and taskChange; ${extra.join(", ")}: a risk or grant change is a new attempt on the same branch`);
   const launched = await withLock(path.join(request.root, "launch.lock"), async () => {
     guard(request.root, true);
     requireWatcher(request.root);
     const entry = readJson(path.join(request.root, "workers.json"))[request.issue];
     if (!entry || !identity(entry) || !entry.thread_id || entry.stage !== "mono-deliver") throw new Error("no resumable delivery thread");
-    let amendment;
-    const amendmentFile = entry.pins ? path.join(path.dirname(entry.pins.file), "amendment.pending.json") : null;
-    if (amendmentFile && fs.existsSync(amendmentFile)) {
-      amendment = readJson(amendmentFile);
-      if (canonical(request) !== canonical(readJson(amendment.resumeRequest)) ||
-          validateAmendment(entry, amendment).state !== "prepared" || amendment.launchMayHaveStartedAt ||
-          (entry.pinsVersion ?? 0) !== amendment.currentVersion || canonical(entry.last_resume ?? null) !== canonical(amendment.previousResume))
-        throw new Error("amendment launch boundary mismatch; preserve evidence");
-    }
     if (entry.pid) {
       try { process.kill(entry.pid, 0); throw new Error("worker process is still live; resume refused"); }
       catch (error) { if (error.code !== "ESRCH") throw error; }
@@ -376,8 +375,8 @@ export async function resumeWorker(request) {
     const installed = packLayout(runtimePackRoot()).identity();
     requireCompatiblePack(installed, entry);
     const prompt = fs.readFileSync(request.resumeFile, "utf8");
-    if (request.network_access !== undefined && typeof request.network_access !== "boolean") throw new Error("network_access override must be boolean");
-    const roots = effectiveGrants(entry, request.root, request.extraWritable ?? [], request.workerWritableRoots ?? entry.workerWritableRoots);
+    if (request.taskChange !== undefined && !entry.pins) throw new Error("taskChange requires a pinned attempt");
+    const roots = effectiveGrants(entry, request.root);
     const transport = workerTransport(entry.transport) ?? workerTransport("codex-cli");
     transport.assertStopped?.(entry);
     if (transport.startupEvent && !transport.workerRoles.includes(entry.model_policy.role)) throw new Error("registered worker role/transport mismatch");
@@ -385,26 +384,21 @@ export async function resumeWorker(request) {
       throw new Error("GitHub private configuration directory missing; reconcile the pinned attempt before resume");
     transport.validateRoute?.(entry.modelRoutes?.roles[entry.model_policy.role]);
     const prepared = transport.prepare?.(entry.modelRoutes.roles[entry.model_policy.role], { cwd: entry.worktree,
-      timeoutSec: entry.confirmationTimeoutSec, roots, tempDir: temporaryDirectory(transport, entry, roots),
+      roots, tempDir: temporaryDirectory(transport, entry, roots),
       githubConfigDir: entry.githubConfigDir, previousCredentialPaths: entry.githubCredentialPaths });
-    const updated = { ...entry, capsule: { ...entry.capsule, writable_roots: roots }, writable_roots: roots, workerWritableRoots: roots, network_access: request.network_access ?? entry.network_access };
+    const updated = { ...entry, capsule: { ...entry.capsule, writable_roots: roots }, writable_roots: roots, workerWritableRoots: roots };
     if (prepared?.credentialPaths) updated.githubCredentialPaths = [...new Set([...(entry.githubCredentialPaths ?? []), ...prepared.credentialPaths])];
     const registry = readJson(path.join(request.root, "workers.json")); registry[request.issue] = updated;
     atomicJson(path.join(request.root, "workers.json"), registry);
+    let change = null;
     return { entry: updated, ...await launchTransport(request.root, updated, prompt, true, prepared, { beforeSpawn() {
-      if (amendment) {
-        if (canonical(readJson(amendmentFile)) !== canonical(amendment)) throw new Error("amendment changed before spawn");
-        amendment = { ...amendment, launchMayHaveStartedAt: new Date().toISOString() };
-        atomicJson(amendmentFile, amendment);
-      }
+      // Recorded at delivery: the review round reads every delivered task change with the Issue.
+      if (request.taskChange !== undefined) change = recordTaskChange(path.dirname(entry.pins.file), request.taskChange, prompt);
     }, onRefusal() {
-      if (amendment?.launchMayHaveStartedAt) {
-        if (canonical(readJson(amendmentFile)) !== canonical(amendment)) throw new Error("amendment changed during refused spawn; preserve evidence");
-        delete amendment.launchMayHaveStartedAt;
-        atomicJson(amendmentFile, amendment);
-      }
+      if (change) dropTaskChange(path.dirname(entry.pins.file), change);
     } }) };
   });
-  if (workerTransport(launched.entry.transport)?.startupEvent) return confirmStartup(request.root, launched.entry, launched);
-  return { pid: launched.pid, thread_id: launched.thread_id, procStart: launched.procStart };
+  const collector = await startCollector(request.root, launched.entry);
+  if (workerTransport(launched.entry.transport)?.startupEvent) return { ...await confirmStartup(request.root, launched.entry, launched), collector };
+  return { pid: launched.pid, thread_id: launched.thread_id, procStart: launched.procStart, collector };
 }

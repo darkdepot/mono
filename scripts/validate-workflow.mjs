@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { createHash, createHmac, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveRole, roleDefaults, requiredPairings, canonical } from "./runtime.mjs";
+import { resolveRole, roleDefaults, requiredPairings } from "./runtime.mjs";
 import { checkPlugin, resolveSkillPath } from "./validate-plugin.mjs";
 import { measureReadBudget, readingPaths, READ_BUDGET_MAX_BYTES, DELIVERY_SKILLS } from "./read-budget.mjs";
 import { RUSSIAN_STAGES, isRussianStage } from "./russian-stages.mjs";
@@ -5087,25 +5087,23 @@ function validateWaveCostBehavior() {
       fail("wave-cost fully measured Russian summary must be one compact sentence of at most 320 characters");
     }
 
-    // Named behavior fixture: signed gate receipts replace the legacy helper-log review counters.
-    const evidence = path.join(fixtureRoot, "evidence"), receiptKey = randomBytes(32);
+    // Named behavior fixture: gate receipts (evidenceRoot outside every worker grant) replace the legacy helper-log review counters.
+    const evidence = path.join(fixtureRoot, "evidence");
     fs.mkdirSync(path.join(evidence, "history"), { recursive: true });
-    fs.writeFileSync(path.join(evidence, "receipt.key"), receiptKey);
     const reviewRound = { number: 1, head: "a".repeat(40), base: "b".repeat(40), costs: [
       { role: "reviewer", engine: "codex", usage: { input_tokens: 100, cached_input_tokens: 40, output_tokens: 5, reasoning_output_tokens: 2 } },
       { role: "checker", engine: "claude", usage: { input_tokens: 10, cache_creation_input_tokens: 30, cache_read_input_tokens: 60, output_tokens: 5 } },
     ] };
-    for (const [runId, issue, signingKey] of [["first", "MONO-999", receiptKey], ["reused", "MONO-999", receiptKey], ["other", "MONO-9999", receiptKey], ["forged", "MONO-999", randomBytes(32)]]) {
+    for (const [runId, issue] of [["first", "MONO-999"], ["reused", "MONO-999"], ["other", "MONO-9999"]]) {
       const receipt = { producer: "gate-review-v3", runId, pins: { file: path.join(fixtureRoot, "dispatch", `${issue}-a1`, "pins.json") },
-        review: { outcome: "clean", spent: runId !== "reused", record: { contractDigest: "c".repeat(64), rounds: [runId === "forged" ? { ...reviewRound, number: 2 } : reviewRound] } } };
-      fs.writeFileSync(path.join(evidence, "history", `${runId}.json`),
-        JSON.stringify({ receipt, signature: createHmac("sha256", signingKey).update(canonical(receipt)).digest("hex") }));
+        review: { outcome: "clean", spent: runId !== "reused", record: { contractDigest: "c".repeat(64), rounds: [reviewRound] } } };
+      fs.writeFileSync(path.join(evidence, "history", `${runId}.json`), JSON.stringify({ receipt }));
     }
     const receiptOutput = parseWaveCostOutput(runNode(["scripts/wave-cost.mjs", "MONO-999", "--root", fixtureRoot, "--evidence-root", evidence]));
     if (receiptOutput.json.autoreview.receipts?.rounds !== 1 || receiptOutput.json.autoreview.receipts.calls !== 2 ||
       receiptOutput.json.autoreview.usage.input_tokens !== 200 || receiptOutput.json.autoreview.usage.cached_input_tokens !== 100 ||
       !receiptOutput.line.includes("авто-ревью: кругов 1, 210 токенов") || receiptOutput.line.includes("проходов авто-ревью")) {
-      fail("review receipt cost fixture must count each signed round of the Issue once and ignore forged or foreign receipts");
+      fail("review receipt cost fixture must count each round of the Issue once and ignore foreign receipts");
     }
 
     fs.appendFileSync(
@@ -5893,7 +5891,8 @@ const STRING_PINS = [
   ["templates/orchestrator-dispatch.md","{{base}}"],
   ["templates/orchestrator-dispatch.md","{{branch}}"],
   ["templates/orchestrator-dispatch.md","{{budget}}"],
-  ["templates/orchestrator-dispatch.md","{{confirmation_timeout}}"],
+  ["templates/orchestrator-dispatch.md","{{round_request}}"],
+  ["templates/orchestrator-dispatch.md","{{wait_round}}"],
   ["templates/orchestrator-dispatch.md","{{constraints}}"],
   ["templates/orchestrator-dispatch.md","{{context_seam}}"],
   ["templates/orchestrator-dispatch.md","{{decisions}}"],
@@ -6594,7 +6593,8 @@ const MACHINE_TOKENS = new Set([
   "{{base}}",
   "{{branch}}",
   "{{budget}}",
-  "{{confirmation_timeout}}",
+  "{{round_request}}",
+  "{{wait_round}}",
   "{{constraints}}",
   "{{context_seam}}",
   "{{decisions}}",
@@ -6643,7 +6643,7 @@ const MACHINE_TOKENS = new Set([
   "planDigest", "reportDigest", "writeDigest", "observedAt", "manifestDigest",
 
   // MONO-93: command names, request/registry/config dictionary keys and values.
-  "wait-ack", "handshake", "profile", "short", "full", "pinsVersion",
+  "wait-ack", "wait-round", "handshake", "profile", "short", "full",
   "procStart", "last_wait", "consumedAt", "ackWaitSec", "stallSec",
 
   ...README_SECTIONS,
@@ -7090,7 +7090,7 @@ function validateDocumentSkeleton() {
       fail(`${file}: changed section step skeleton ${section}`);
   }
   for (const [file, tokens] of [
-    ["templates/orchestrator-dispatch.md", ["handshake", "profile", "pinsVersion", "wait-ack"]],
+    ["templates/orchestrator-dispatch.md", ["handshake", "profile", "wait-round", "wait-ack"]],
     ["references/orchestration-dispatch.md", ["handshake", "profile", "procStart", "last_wait", "consumedAt", "ackWaitSec"]],
     ["references/orchestration-delivery.md", ["procStart", "last_wait", "consumedAt", "ackWaitSec", "stallSec"]],
   ]) for (const token of tokens) assertIncludes(file, token);

@@ -253,21 +253,19 @@ test('CLI check enforces pair refusal and acceptance on real config files', () =
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('Mono config pins the confirmation window and CLI rejects a window at the evidence limit', () => {
+test('Mono config carries no collection windows and CLI still accepts an older config with them', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-delivery-config-'));
   try {
     const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
-    assert.equal(config.orchestration.delivery.confirmationTimeoutSec, 4500);
-    assert.equal(config.orchestration.delivery.collectionTimeoutSec, 3600);
+    for (const key of ['confirmationTimeoutSec', 'collectionTimeoutSec']) assert.equal(Object.hasOwn(config.orchestration.delivery, key), false);
     fs.mkdirSync(path.join(root, '.agents'));
     const file = path.join(root, '.agents/mono-workflow.config.json');
     const check = () => spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
     fs.writeFileSync(file, JSON.stringify(config));
     let result = check(); assert.equal(result.status, 0, result.stderr);
-    config.orchestration.delivery.confirmationTimeoutSec = 5400;
-    config.orchestration.delivery.evidenceLimitSec = 5400;
+    Object.assign(config.orchestration.delivery, { confirmationTimeoutSec: 5400, collectionTimeoutSec: 5400, evidenceLimitSec: 5400 });
     fs.writeFileSync(file, JSON.stringify(config));
-    result = check(); assert.equal(result.status, 1); assert.match(result.stderr, /confirmationTimeoutSec.*5400.*evidenceLimitSec.*5400/);
+    result = check(); assert.equal(result.status, 0, result.stderr);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

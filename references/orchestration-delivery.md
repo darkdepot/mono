@@ -24,7 +24,7 @@ and main recording in the task; the project pass also publishes its report in th
 Project. Worker self-assessment cannot replace this pass.
 
 Failed/unverified holds merge and wave installation. Send concrete bugs, steps,
-expected/actual and evidence through the existing ship-fix amendment, preserving
+expected/actual and evidence through a ship-fix task change, preserving
 the task attempt and prior ship state. After new head passes ship, launch QA again
 on the **entire list**, with fresh evidence; do not reuse prior green items or cap
 QA attempts. Recheck disputed items yourself; keep false alarms in the report with
@@ -148,9 +148,10 @@ rename before gates removal; tombstones never authorize cleanup.
 
 A fresh passed startup ack is a contracted pause, not death. Any stall/dead while
 its ack remains unconsumed is a consumption boundary: reconcile writer/mailbox
-before healing. Phase event: validate capsule/attempt; a collection request goes
-through the collector below; do not resume a worker waiting on a confirmation file.
-The watcher suppresses phase liveness only for the bounded collection wait.
+before healing. Phase event: validate capsule/attempt; review rounds go through
+the collector started with the attempt; do not resume a worker waiting on a round.
+The watcher suppresses liveness only while a round request has no result and the
+attempt's collector lives.
 Startup suppression remains stallSec × 4 from log silence. With --config, watcher
 --stall-sec defaults to product stallSec (120); an explicit flag overrides, minimum
 90. Config ackWaitSec (420) must be ≤ stallSec × 4 − pollSec (10); watcher startup
@@ -190,7 +191,7 @@ Material scope drift parks scope-drift-needs-handoff and goes to owner decision.
 ## Review rounds
 
 A collection runs one read-only review round on the committed head (reviewer
-and checker from different model families) and signs one `gate-review-v3`
+and checker from different model families) and writes one `gate-review-v3`
 receipt with `verification.exitCode: null`: the worker runs the full product
 verification and sends `workerVerification {head, exitCode}`; the receipt passes
 only with exit 0 on its head. Receipts of older attempts keep their sandbox verification. The collector host needs both the Codex and
@@ -200,14 +201,14 @@ runs only when the reviewer reports findings).
 
 Between rounds do nothing: the worker fixes open findings and requests the next
 round itself. The pinned risk sets the completed rounds per task attempt (`risky`
-three, the fast path one), counted from signed receipts over every pins version;
+three, the fast path one), counted from the attempt's receipts;
 rounds after the first read only the fixes and open findings; the same head
 reuses its round; `not-reviewed` spends nothing. `ROUND_LIMIT` stays 3 and
 `reviewContext` counts as before, for the installed `accept.mjs`.
 
 Fast path: after its round the worker fixes, runs the full verification on the
 final head and requests it with `workerVerification: {head, exitCode: 0}`; the
-collection signs that head without another round (`review clean (round 1 of 1),
+collection accepts that head without another round (`review clean (round 1 of 1),
 fixes after it confirmed by the worker's full verification`), unless the round
 found out-of-contract work or a raised risk (needs-decision). The bot sees the
 result on the PR.
@@ -224,12 +225,12 @@ Parks:
 - needs-decision, `review not-converged after round 3` or `review round limit
   reached` (strict path): the orchestrator decides; merging needs green CI, passed
   required checks and no open finding harming the main path, data or the owner's
-  install; otherwise split the Issue or change the approach in a new attempt. An
-  amend keeps the count and adds no rounds.
+  install; otherwise split the Issue or change the approach in a new attempt. A
+  task change keeps the count and adds no rounds.
 - needs-decision, `verification failed on the reviewed head` (older attempts):
   decide whether the code or the environment is wrong.
-- blocked, `not-reviewed twice in a row`: restore both CLI logins, then amend to
-  resume.
+- blocked, `not-reviewed twice in a row`: restore both CLI logins, then resume
+  the worker with a task change (the streak belongs to one contract; the count stays).
 
 `clean-with-successors` passes. Its candidates are older defects (on the strict
 path only harmless ones), minor P3
@@ -239,17 +240,18 @@ worker through Linear MCP when it has access, otherwise the orchestrator) files
 every `must-file` entry of the receipt's `review.successors` list (an older dangerous defect; a minor one
 only for data, security or gate bypass) and decide
 which of the rest become Issues; the gate line and ready certificate repeat the
-list. The collection window (`collectionTimeoutSec`) must cover a round, which
-takes up to 25 minutes on a large risky change.
+list. A round takes up to 25 minutes on a large risky change; every reviewer role
+has its own time limit, so a hung CLI ends the round instead of a window; a gate
+stuck outside them (a blocking Git read) is stopped after a fixed two-hour safety
+ceiling, also when its collector died, and the round fails.
 
 ## Delivery Write Barriers
 
 The worker is the sole writer of its Issue's reports, comments and statuses: it
 writes them through Linear MCP and reads each back before advancing. The
 orchestrator neither queues nor confirms them; it writes only the handshake start
-moves (`lifecycle_moves`) and «Изменение задачи». Only a preflight
-confirmation-request with its one collection write waits for confirmation;
-timeout parks write-unconfirmed. Other reports never wait.
+moves (`lifecycle_moves`) and «Изменение задачи». No report waits for the
+orchestrator.
 
 Poll phase reports as well as events; events accelerate, never prove application.
 Use installed `scripts/orchestrator/accept.mjs ack --root DIR --issue KEY
@@ -260,48 +262,53 @@ After connector writes, --readback FILE requires that planDigest and one dated
 read-back per move observed no earlier than the plan. Identical prior consumption
 completes rename/gate cleanup without a new plan; contradictory records refuse.
 
-Run installed `scripts/orchestrator/collector.mjs start|stop|status --root DIR
---issue KEY --attempt N` outside all worker sandboxes. Start once per attempt;
-stop at retirement. It confirms collection requests; other reports need none.
-After the publication deadline, with the collector stopped, `collector.mjs
-reconcile` confirms an admitted request from its existing signed receipt without
-a new review; with no receipt it does nothing. Inspect `reports/KEY-collector-aN.log` for refusals/results.
-`reports/KEY-collect-attention-aN.json` signals an admission refusal to the orchestrator once per report digest/current registry pinsVersion/current decision digest tuple, persists across restarts, and clears when the current collection-only preflight report is admitted, including a replacement for the refused report.
+Attempt launch (`spawn.mjs`, `dispatch.mjs`) starts the attempt's collector
+outside all worker sandboxes, without an orchestrator turn, and resume starts a
+stopped one; the launch result names it (`collector`). `scripts/orchestrator/
+collector.mjs start|stop|status --root DIR --issue KEY --attempt N` restarts or
+inspects it; it exits when the attempt leaves the registry. A review round: the
+worker runs `gate.mjs preflight` collect:false, writes `{issue, attempt, request:
+<publishRequest>}` to `reports/KEY-round-aN.json` and runs `delivery-state.mjs
+wait-round --request FILE`, which returns the collector's result for exactly that
+request and fails fast when no live collector holds the attempt lock.
+
+The host-owned ledger `consumed/KEY-aN/rounds/` keeps `<n>.json` (ordinal,
+collectionId, request digest, the request) and `<n>.result.json` (`done`,
+`refused` or `failed`, bound to the same collectionId and digest). Admission
+(launch.lock) is monotonic: a new collectionId only after every earlier round has
+a result; the same collectionId never takes another request; an in-flight round is
+finished first even when the worker overwrote its mailbox. A request off the
+launch pins or before the code report is admitted only to record `refused`. The
+gate's collect:true requires the admission bound to its request; collect:false
+with a replaced request under an admitted collectionId refuses. Landing waits for
+a result of every admitted round, and a refused or failed round never blocks it.
+Inspect `reports/KEY-collector-aN.log` for admissions, results and attention.
 The attempt lock `reports/KEY-collector-aN.lock` stores pid/procStart and the
 active gate incarnation. Start reclaims only a dead holder and dead gate tree;
 unknown process telemetry refuses. Collector and gate use separate dedicated process groups. A gate waits on stdin
 until the collector durably records its incarnation; parent death before release
 cannot launch an unregistered gate. Validation also registers its gate group in
 the held per-head lock before release; reclamation checks both recorded trees.
-Group membership preserves orphan descendants.
-Legacy locks without group metadata require manual reconciliation; an unrelated
-live member of a shared group also prevents reclaim. Stop verifies incarnation,
-requests graceful shutdown and lets an active gate finish before releasing locks.
+Group membership preserves orphan descendants; a group left after the gate closes
+is stopped before reconciliation. Stop verifies incarnation, requests graceful
+shutdown and lets an active gate finish before releasing locks.
 
-Phase correlation uses validatePhase, registry issue/attempt/pack identity, the
-sole standard/fallback location, report digest and existing predecessor barriers;
-terminal delivery reports never substitute for phase reports. Collection admission
-shares launch.lock with amend, reads registry pinsVersion, and seals reportDigest
-and manifestDigest; a request at a later sequence waits until every earlier
-admitted sequence is confirmed. Old admitted requests recover against their admitted version;
-new stale-version requests refuse. Before collection, find signed history by
-collectionId and compare actual receipt bindings (including risk/critical, dataset,
-grants and verification) against the admitted request. Under the per-head lock,
-restore the mutable head envelope from history and confirm completion, including
-failed runs, without repeating review. A durable collection-start record in
-`consumed/KEY-aN/collections/<collectionId>.json` stores launches and the active
-gate incarnation alongside the attempt's admissions. Before a receipt exists,
-a dead group permits a bounded retry of the same collectionId/admission. Recheck
-current class/cap on every launch without reserving new capacity. The counter
-survives collector restarts. Any signed receipt, including provider failure,
-ends collection retries; immutable history wins over mutable head evidence.
-Reclaim a stale per-head lock only through
-its exclusive `.reclaim` marker after proving holder/group descendants dead.
-Live or unverified holders refuse. History-first receipt order and gate semantics
-remain unchanged; collection confirmations use delivery-state's existing barriers.
+Before collection, find history by collectionId and compare actual receipt
+bindings (including risk/critical, grants and verification) against the admitted
+request. Under the per-head lock, restore the mutable head envelope from history
+and record the result, including failed reviews, without repeating review. A
+durable collection-start record in `consumed/KEY-aN/collections/<collectionId>.json`
+stores launches and the active gate incarnation. Before a receipt exists, a dead
+group permits `collectionRetries` (default 1) more launches of the same
+collectionId; exhausted retries record `failed`. A live or unverified gate keeps
+the round in flight, never failed. Any receipt, including provider failure, ends
+retries; immutable history wins over mutable head evidence. Reclaim a stale
+per-head lock only through its exclusive `.reclaim` marker after proving
+holder/group descendants dead.
 
-No report confirmation command exists: the worker's own Linear read-back replaces
-it. No command writes to Linear.
+Receipts carry no signature: `evidenceRoot` sits outside every worker grant
+(launch, gate and collector check it), so its regular files under `history/` are
+the receipts; older signed envelopes still read. No command writes to Linear.
 
 Ship pins capture orchestration.ship.botChecks from the immutable base: unique
 names, default ["Greptile Review"], [] means no bot. Workers cannot override them.
@@ -313,12 +320,9 @@ checks/late bot remarks with that line. CI and owner remarks remain blockers.
 Bot checks must not be required by branch protection (Mono requires only validate).
 Products set [] only after installing this compatible release and restarting orchestration.
 
-Old pinned attempts keep their old gate: thirty minutes after first fully green
-mandatory CI, apply accept.mjs amend --bot-unavailable "<reason>" with current
---issue/--attempt and --text. If accept refuses because the unchanged HEAD/base/
-review contract has a completed round and ROUND_LIMIT − 1 rounds spent, start a new
-attempt on that head. Never leave indefinite bot waiting. Retain ROUND_LIMIT=3,
-REVIEW_PRODUCER, verification fields, PR body marker and amendment protocol.
+Attempts from before the bot clock end before this release installs in quiescence;
+no bot-unavailability amendment exists. ROUND_LIMIT stays 3, REVIEW_PRODUCER,
+verification fields and the PR body marker stay.
 A ship-fix still names a new gate attempt/stateFile/head/proof and preserves old
 state; task bot clock in reports/<Issue>-a<attempt>-ship-bot.json survives all of them.
 
@@ -334,108 +338,34 @@ PR/review id and finding. Record/read back the Issue before advancing the journa
 cursor. Failed writes leave the point unchanged. On first adoption, create the four
 known outstanding P1 Issues immediately; the PR worker does not own these writes.
 
-Launch pins are immutable. `accept.mjs amend --root DIR --issue KEY --attempt N
---text TEXT` writes `pins.v<n>.json` and prepares a resume file/request before
-calling resume.mjs; only a successful resume advances pinsVersion in the registry.
-A refused resume prints its reason and leaves the registry unchanged. Amendments
-serialize across preparation and resume; registration and admission share launch.lock.
-Before resume, `amendment.pending.json` beside the version files retains their digests,
-attempt/thread identity and the prior registered resume. An identical retry compares
-that record with the newly registered resume and finishes the pins update without
-launching again. Changed prepared bytes or a different amendment refuse while a
-delivered version awaits registration. Cleanup after registration is recoverable too.
-The launch-may-have-started marker is written before resume. Clear it only for
-this invocation's positively identified pre-spawn refusal for a live wait worker,
-after launch.lock verifies unchanged attempt/thread, current version, prior resume
-and wait record. Restore prior grants and keep the version prepared for retry
-after worker exit. Changed state, post-spawn refusal or ambiguous failure retains
-all evidence and refuses automatic restart; correlated delivery recovers forward.
-Risk/critical only escalate; --worker-writable-roots must be the
-complete effective grants; --full-snapshot --snapshot DIR includes the full docs
-in the resume amendment. The document bytes participate in amendment identity;
-changed bytes require a new version even at the same source path. The version
-stores fullSnapshot directory/digest and subsequent independent amendments carry
-those verified documents forward without requiring the caller to resupply them.
-Same amendment bytes recover the same version.
-Registered amendments retain completion history by amendment digest, including
-prepared-file digests and their resume results, after pending cleanup. Identical
-completed retries return the original result without another launch, whether the
-delivered worker is live or has exited. Later amendments preserve these records;
-replaying an earlier result leaves the current pins, grants and worker unchanged.
-Changed completed bytes refuse; a new delivery needs a new amendment text.
-An undelivered pending replacement retains the original rollback grants;
-provisional grant expansion from an interrupted resume cannot become its baseline.
-`command-state.mjs admitCollection` and amend use launch.lock. Admission layout:
-`consumed/KEY-aN/admissions/<collectionId>.json` contains exactly
-`{collectionId, reportDigest, pinsVersion, manifestDigest}`; manifestDigest is the
-canonical digest of launch pins overlaid with that amendment version. New bound requests
-derive their version from pins.file (pins.json = 0; pins.v<n>.json = n), require the
-current registry version, and match the full file path, digest and effective
-request/grant fields. The stale
-version refusal names the full expected pins path; no report version is required.
-Previously admitted requests recover before new-request checks; U14 report-digest/registry-version
-bindings remain; attention also tracks current decision state. Registered launch pins
-require request pins. Identical previously admitted requests remain recoverable under their
-original version. MONO-96 owns receipt collection/recovery, not these commands.
+Launch pins are immutable with their fingerprint (`effectivePins`, round binding);
+pins versions no longer exist and an amended registry entry from an older pack is
+refused. A task change: write the «Изменение задачи» comment on the Issue in
+words, then resume the same session with `resume.mjs` request `{root, issue,
+resumeFile, taskChange: <comment link>}`; the resume file repeats the comment's
+words and its link, since reviewers cannot open Linear.
+Resume records the delivered text append-only in `dispatch/KEY-aN/task-changes.json`
+and the review round reads it with the Issue; a refused resume records nothing.
+Resume carries no grants or network override: a risk, critical or grant change is
+a new attempt on the same branch.
 
-Validate identity/attempt/head/sequence and the queue: at most one collection write.
-
-For the preflight-collect write the collector returns the gate receipt. Validate the single-item confirmation-request against dispatch product, pinned
-installed skillsRoot, risk/critical, verification command, worktree/head/base and
-evidenceRoot. On spawn, pin evidenceRoot and the complete workerWritableRoots in the request/registry. On resume, any extra grant requires an amended dispatch with the complete effective list; the runtime refuses evidence-root overlap and persists effective grants before launch. Build collection and worker verification requests from these current pins, never an earlier dispatch. Use ~/.mono-agent-workflow/evidence/<product>/ outside EVERY
+On spawn, pin evidenceRoot and the complete workerWritableRoots in the request/registry. Build collection and worker verification requests from the launch pins. Use ~/.mono-agent-workflow/evidence/<product>/ outside EVERY
 worker-writable root (including the orchestrator root and temporary grants).
-Only the orchestrator outside all worker sandboxes runs collect:true. The gate runs the read-only review round ([Review rounds](#review-rounds)) on an export of the pinned tree and runs no verification. Keep all orchestrator control state read-only. Pause the worker during collection. Repository-configured executable Git filters are unsupported by privileged gate reads: the gate refuses before execution. If a product requires such filters, obtain a trusted isolation policy instead of disabling this check. Reconcile
-an existing authenticated receipt matching request.collectionId and all pins before repeating collection; failed
-reviews are completed runs too, not missing actions. Return present evidence as
-{receipt: <evidenceRoot>/history/<runId>.json, receiptDigest: <SHA-256 of canonical envelope>, gate: <exact gate answer>}, including a fail. The runtime checks immutable history identity, digest, signature and collection ID before confirming or accepting confirmation; the mutable head receipt is never confirmation evidence. Fsync that result
-and confirm through the same runtime. Publish and confirm enforce code → preflight → ship: read the latest earlier phase reports; a report that carried a collection request needs its confirmation before the next publication. Confirmations retain the report snapshot, so overwritten phase files do not erase sequence evidence. Missing or mismatched predecessors refuse before adapter calls. Fallback publication supplies --root; confirmation reads the report directory and root mailbox and refuses conflicting copies. Worker collect:false must pass before ready;
-A review fix uses a new head/write ID. Use write.id=request.collectionId=preflight-collect:<head>:<n>. Increment n for each collection request on that head, including transient retries after a recorded failure; also advance the phase sequence. Never reuse the failed collection ID for a new run; a lost response retains its original ID. Bind confirmation evidence to the immutable history receipt as well as the current head receipt. Never let a worker collect or select new
-pins. Preserve failed receipts. Configure confirmationTimeoutSec BEFORE dispatch
-to cover the review. Defaults: `confirmationTimeoutSec=6300`,
-`collectionTimeoutSec=4500`, `collectionRetries=1` (nonnegative integer).
-Require `collectionTimeoutSec < confirmationTimeoutSec < evidenceLimitSec`.
-Launch pins all three collection/confirmation settings in the registry; old
-attempts retain their existing confirmation timeout and use the new collection
-defaults, so an old 1200-second window refuses collection without adequate budget.
-One deadline is phase `publishedAt + confirmationTimeoutSec`; config changes and
-collector restarts never reset it. Before a collection launch reserve its full
-run limit plus 30 seconds for teardown, reconciliation and confirmation. A
-receipt reconciliation uses the remaining window (at most the run limit),
-reserving 10 seconds for teardown/confirmation; it requires at least 30 seconds
-to start. Confirmation requires 5 seconds left and checks the deadline again
-before publication. No new run starts without its budget. An early crash may
-leave enough time to retry; a full-length timeout normally will not.
-The released gate also holds its original deadline watchdog, including at most
-2 seconds of teardown reserve; it kills its group even if the collector dies. After the gate finishes, the watchdog remains until
-descendant telemetry proves its group empty.
-On timeout signal the isolated group with TERM, then KILL if necessary, and
-verify no live descendants remain before retry. Unknown/live groups refuse.
-Exhausted retries, insufficient time or stalled reconciliation write `timed-out`
-with the technical reason to the collector log and attention file; preserve
-history for explicit orchestrator recovery. The reviewer runs at most once per collection.
-Keep it below evidenceLimitSec as a configuration consistency rule. The evidence
-limit runs from the ship attempt's startedAt, while confirmation waiting runs
-separately from the phase report's publishedAt; the inequality does not prove
-evidence freshness.
-The gate locks collection per head in evidenceRoot. Spawn releases the registry lock after durable PID registration, waits for thread.started outside it, and registers the same attempt/PID thread under a short lock. Collector reclaim uses the incarnation/group checks and marker above; never remove a live or unverified lock or start a competing collector. Never extend an in-flight deadline; reconcile any late collector completion. Before the ship gate independently run preflight
-collect:false with the same dispatch request. The pack collector uses the existing receipt key; no key service.
+Only the collector outside all worker sandboxes runs collect:true. The gate runs the read-only review round ([Review rounds](#review-rounds)) on an export of the pinned tree and runs no verification. Keep all orchestrator control state read-only. Repository-configured executable Git filters are unsupported by privileged gate reads: the gate refuses before execution. If a product requires such filters, obtain a trusted isolation policy instead of disabling this check.
+Publish enforces code → preflight → ship: read the latest earlier phase reports; missing or mismatched predecessors refuse. Fallback publication supplies --root. Worker collect:false must pass before ready.
+A review fix uses a new head and collectionId: preflight-collect:<head>:<n>, with n incremented for each round request on that head, including a retry after a refused or failed round. Never let a worker collect or select new pins. Preserve failed receipts.
+The gate locks collection per head in evidenceRoot. Spawn releases the registry lock after durable PID registration, waits for thread.started outside it, and registers the same attempt/PID thread under a short lock. Collector reclaim uses the incarnation/group checks and marker above; never remove a live or unverified lock or start a competing collector. Before the ship gate independently run preflight collect:false with the same dispatch request; Preflight and merge stay bound to the head (`deploy.mjs --match-head-commit`).
+Keep reports as the sole writable mailbox; journal, registry and the round ledger remain outside the sandbox grant. Hostile local operator attestation remains out of scope.
 
-Publish collection confirmations under <root>/confirmations/, outside all worker write grants. The worker wait refuses any confirmation path overlapping capsule.writable_roots. Keep reports as the sole writable mailbox; journal and registry remain outside the sandbox grant. Hostile local operator attestation remains out of scope.
-
-A confirmation timeout parking the worker as `write-unconfirmed` is an expected
-path while a collection continues. Reconcile the late result with the same
-collection ID, then confirm the original request and resume the worker; do not
-create a replacement request for a response that was merely late.
-
-A confirmation binds the report digest. The worker keeps in-phase order: drift
-sync before PR, ready certificate before formal review, In Review after PR. Keep
-phase=code|preflight|ship and the same delivery context/log. A retry after
-terminal parked archives a reconciled capsule only after the new attempt has read
-the Issue's Linear state back; never erase old receipts.
+The worker keeps in-phase order: drift sync before PR, ready certificate before
+formal review, In Review after PR. Keep phase=code|preflight|ship and the same
+delivery context/log. A retry after terminal parked archives a reconciled capsule
+only after the new attempt has read the Issue's Linear state back; never erase old
+receipts.
 
 Consume final green only after current preflight/ship gates; landing still
-requires the code and preflight reports and a confirmation for every admitted
-collection of the attempt. For parked, read
+requires the code and preflight reports and a result for every admitted round of
+the attempt. For parked, read
 the worker's park comment back; if the worker died without one, write the
 reason/text and next action to Linear in this SAME turn, read it back,
 and then decide/escalate; missing write access remains an explicit pending action,
@@ -479,8 +409,8 @@ directory's history; retired Issues' logs are outside its scope.
   If the session and watcher disappear together while a worker runs, the pack
   cannot detect that loss; the orchestrator environment owns that supervision.
 - Each changed phase report file emits `phase`, regardless of stage order.
-  Deduplication stays per file/mtime/size; the confirmation wait uses the latest
-  publishedAt, then sequence, rather than the furthest stage.
+  Deduplication stays per file/mtime/size; a round wait follows the round
+  request file and its ledger result, not the phase reports.
 - Watcher liveness events are Monitoring Protocol triggers: treat `stall`,
   `dead`, and `spawn-fail` lines as inspection triggers — read the worker's
   latest state first, then act on confirmed need. An alarm alone is no owner

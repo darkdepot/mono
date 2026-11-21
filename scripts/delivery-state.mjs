@@ -4,8 +4,8 @@ import { validateShipCertificate } from "./ship-certificate.mjs";
 import { qaDeliveryState } from './qa-gate.mjs';
 export { qaDeliveryState } from './qa-gate.mjs';
 import path from "node:path";
-import crypto from "node:crypto";
-import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, isMain, flags, withLock, deliveryConfig, validateEvidenceGrants, REVIEW_PRODUCER } from "./runtime.mjs";
+import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, isMain, flags, deliveryConfig } from "./runtime.mjs";
+import { waitForRound } from "./review-rounds.mjs";
 
 import { workerTransport } from "./worker-transport.mjs";
 
@@ -14,12 +14,6 @@ import { implementationComment, implementationExit } from './implementation-comm
 export { captureCriteria } from "./delivery-criteria.mjs";
 
 export const PHASES = ["code", "preflight", "ship"];
-// The worker writes Linear itself and reads it back; only a review-round
-// collection request waits for the orchestrator-side confirmation.
-export function requiresConfirmation(report) {
-  validatePhase(report);
-  return report.capsule.open_queue.length > 0;
-}
 export const PARKED_REASONS = ["blocked", "needs-decision", "needs-human", "drift-candidate", "timed-out", "scope-drift-needs-handoff", "write-unconfirmed", "evidence-limit"];
 export function correlatedDeliveryReport(report, stat, entry, logStat, stallSec = 120) {
   return workerTransport(entry?.transport)?.correlatesReports === true && entry.stage === "mono-deliver" && identity(entry) && identity(report) &&
@@ -30,41 +24,17 @@ export function correlatedDeliveryReport(report, stat, entry, logStat, stallSec 
     stat.isFile() && logStat.isFile() && stat.mtimeMs >= logStat.birthtimeMs &&
     stat.mtimeMs >= logStat.mtimeMs - stallSec * 1000 && stat.mtimeMs <= Date.now() + 5000;
 }
-function validateCollectionEvidence(write, evidence, report) {
-  if (write.operation !== "preflight-collect") return;
-  const request = write.payload.request;
-  const root = validateEvidenceGrants(request.evidenceRoot,
-    [request.worktree, request.root, ...request.workerWritableRoots, ...report.capsule.writable_roots]);
-  if (!path.isAbsolute(evidence?.receipt ?? "") || !/^[a-f0-9]{64}$/.test(evidence.receiptDigest ?? "") ||
-      !/^gate preflight: (pass|fail): .+/.test(evidence.gate ?? "")) throw new Error("immutable collection evidence required");
-  const envelope = readJson(evidence.receipt), receipt = envelope.receipt;
-  if (!/^[a-f0-9-]{36}$/.test(receipt?.runId ?? "") ||
-      fs.realpathSync(evidence.receipt) !== path.join(root, "history", `${receipt.runId}.json`) ||
-      digest(envelope) !== evidence.receiptDigest || receipt.producer !== REVIEW_PRODUCER ||
-      receipt.collectionId !== write.id || receipt.head !== write.target || receipt.evidenceRoot !== root)
-    throw new Error("collection evidence does not identify this immutable receipt");
-  const key = fs.readFileSync(path.join(root, "receipt.key"));
-  const signature = crypto.createHmac("sha256", key).update(canonical(receipt)).digest("hex");
-  if (key.length !== 32 || envelope.signature !== signature) throw new Error("collection receipt authentication failed");
-}
 export function validatePhase(report) {
   if (!/^[A-Z][A-Z0-9]*-\d+$/.test(report?.issue) || report.stage !== "mono-deliver" || !identity(report) ||
       !Number.isInteger(report.attempt) || report.attempt < 1 || !Number.isInteger(report.sequence) || report.sequence < 1 ||
-      !PHASES.includes(report.phase) || !["phase", "confirmation-request"].includes(report.kind) || !/^[a-f0-9]{40}$/.test(report.head)) throw new Error("invalid phase identity");
+      !PHASES.includes(report.phase) || report.kind !== "phase" || !/^[a-f0-9]{40}$/.test(report.head)) throw new Error("invalid phase identity");
   const capsule = report.capsule;
-  if (capsule?.phase !== report.phase || capsule.head !== report.head || !Array.isArray(capsule.decisions) || !Array.isArray(capsule.open_queue) ||
+  if (capsule?.phase !== report.phase || capsule.head !== report.head || !Array.isArray(capsule.decisions) ||
       !Array.isArray(capsule.writable_roots) || !capsule.writable_roots.length || capsule.writable_roots.some(root => !path.isAbsolute(root))) throw new Error("invalid state capsule");
-  if (!Array.isArray(report.linear_mutations_pending) || canonical(report.linear_mutations_pending) !== canonical(capsule.open_queue)) throw new Error("full write queue differs from capsule");
-  const ids = new Set();
-  for (const write of capsule.open_queue) {
-    if (!/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(write.id) || ids.has(write.id) ||
-        typeof write.operation !== "string" || !write.operation || typeof write.target !== "string" || !write.target || !Object.hasOwn(write, "payload")) throw new Error("invalid or duplicate write");
-    if (write.operation !== "preflight-collect")
-      throw new Error(`write ${write.id}: Linear writes are not queued; the worker writes comments and statuses through Linear MCP and reads them back. The queue carries only the review-round collection request`);
-    if (write.operation === "preflight-collect" && (write.id !== write.payload?.request?.collectionId ||
-        write.target !== report.head || !new RegExp(`^preflight-collect:${report.head}:[1-9][0-9]*$`).test(write.id))) throw new Error("invalid collection write ID/head");
-    ids.add(write.id);
-  }
+  // No write queue: the worker writes Linear itself and requests a review round with a round file.
+  for (const queued of [report.linear_mutations_pending, capsule.open_queue])
+    if (queued !== undefined && !(Array.isArray(queued) && !queued.length))
+      throw new Error("queued writes no longer exist: write Linear through Linear MCP and request a review round with KEY-round-aN.json");
   refuseDecisionEntries(report);
   if (report.phase === "code" && report.phase_result !== undefined && report.phase_result !== "in-progress")
     validateImplementationReport(report);
@@ -101,25 +71,7 @@ function refuseDecisionEntries(report) {
     if (report[field] !== undefined && !(Array.isArray(report[field]) && !report[field].length))
       throw new Error(`${field}: decision entries no longer exist; remove the field from the report`);
 }
-export function confirmationPath(report, root) {
-  return path.join(root, "confirmations", `${report.issue}-phase-${report.phase}-a${report.attempt}-s${report.sequence}.confirmed.json`);
-}
-export function validateConfirmation(report, confirmation) {
-  validatePhase(report);
-  if (confirmation?.issue !== report.issue || confirmation.attempt !== report.attempt || confirmation.phase !== report.phase ||
-      confirmation.sequence !== report.sequence || confirmation.reportDigest !== digest(report) || confirmation.status !== "confirmed" ||
-      !Array.isArray(confirmation.results) || confirmation.results.length !== report.capsule.open_queue.length) throw new Error("confirmation does not cover this report");
-  for (const [index, write] of report.capsule.open_queue.entries()) {
-    const result = confirmation.results[index];
-    if (result.issue !== report.issue || result.attempt !== report.attempt || result.id !== write.id ||
-        result.writeDigest !== digest(write) || result.state !== "present" || !result.evidence) throw new Error("confirmation has an unverified write");
-    validateCollectionEvidence(write, result.evidence, report);
-  }
-  return true;
-}
-// Earlier phases must exist for this attempt. A report that carried a collection
-// request is confirmed before the next one; publication checks the same-phase
-// predecessor, so only the latest earlier-phase report is checked here.
+// Earlier phases must exist for this attempt; only the latest earlier-phase report is checked here.
 export function requirePredecessors(report, root, reportsDir, action) {
   const sameAttempt = candidate => candidate.issue === report.issue && candidate.attempt === report.attempt &&
     IDENTITY_FIELDS.every(field => candidate[field] === report[field]);
@@ -132,58 +84,12 @@ export function requirePredecessors(report, root, reportsDir, action) {
     const latest = candidates[0];
     if (!sameAttempt(latest) || latest.phase !== phase || candidates.some(other => canonical(other) !== canonical(latest)))
       throw new Error(`phase ${phase} report is foreign or conflicts between mailboxes; reconcile before ${action} ${report.phase}`);
-    if (!requiresConfirmation(latest)) continue;
-    const label = `phase ${phase} sequence ${latest.sequence}`, file = confirmationPath(latest, root);
-    if (!fs.existsSync(file)) throw new Error(`${label} is not confirmed; wait for it before ${action} ${report.phase}`);
-    const ack = readJson(file);
-    if (canonical(ack.report) !== canonical(latest)) throw new Error(`${label} confirmation does not match its published report/attempt`);
-    validateConfirmation(latest, ack);
   }
 }
 function codeHistory(root, report, directory = path.join(root, 'reports')) {
   return path.join(directory, `${report.issue}-phase-code-a${report.attempt}-s${report.sequence}.json`);
 }
-function verifiedConfirmations(report, root) {
-  const dir = path.join(root, "confirmations");
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir).filter(name => PHASES.some(phase =>
-    name.startsWith(`${report.issue}-phase-${phase}-a${report.attempt}-s`) && name.endsWith('.confirmed.json')))
-    .map(name => {
-      const ack = readJson(path.join(dir, name)), prior = validatePhase(ack.report);
-      if (prior.issue !== report.issue || prior.attempt !== report.attempt || IDENTITY_FIELDS.some(key => prior[key] !== report[key]))
-        throw new Error('previous confirmation attempt/identity mismatch');
-      validateConfirmation(prior, ack);
-      return ack;
-    }).filter(ack => ack.report.phase !== report.phase || ack.report.sequence <= report.sequence);
-}
-// Only a verified whole-report confirmation carries collection evidence.
-export function classifyQueue(report, root) {
-  validatePhase(report);
-  const confirmed = new Map();
-  for (const ack of verifiedConfirmations(report, root)) for (const result of ack.results) {
-    if (confirmed.has(result.id) && confirmed.get(result.id).result.writeDigest !== result.writeDigest)
-      throw new Error(`write ${result.id} changed within attempt`);
-    confirmed.set(result.id, { result, reportDigest: ack.reportDigest });
-  }
-  const carried = new Map(), collections = [];
-  for (const write of report.capsule.open_queue) {
-    const hash = digest(write), prior = confirmed.get(write.id);
-    const file = path.join(root, 'consumed', `${report.issue}-a${report.attempt}`, `${write.id}.json`);
-    const durable = fs.existsSync(file) ? readJson(file) : null;
-    if ((prior && prior.result.writeDigest !== hash) || (durable &&
-        (durable.writeDigest !== hash || durable.issue !== report.issue || durable.attempt !== report.attempt)))
-      throw new Error(`write ${write.id} changed within attempt`);
-    if (prior && write.operation === 'preflight-collect' && prior.reportDigest !== digest(report))
-      throw new Error('нужен новый идентификатор сбора: collection proof belongs to another reportDigest');
-    if (prior) carried.set(write.id, prior.result);
-    else collections.push(write);
-  }
-  if (collections.length > 1 || (collections.length && (report.phase !== 'preflight' || report.kind !== 'confirmation-request')))
-    throw new Error('collection requires a single preflight confirmation-request');
-  return { carried, collection: collections[0] ?? null };
-}
-export function publishPhase(report, output, previousConfirmation, root = previousConfirmation
-  ? path.dirname(path.dirname(previousConfirmation)) : path.dirname(path.dirname(output))) {
+export function publishPhase(report, output, root = path.dirname(path.dirname(output))) {
   validatePhase(report);
   if (report.phase === 'code' && report.pre_capture_stop?.kind === 'capture-refused') {
     const history = codeHistory(root, report, path.dirname(output));
@@ -205,23 +111,9 @@ export function publishPhase(report, output, previousConfirmation, root = previo
   const content = value => { const { publishedAt, ...rest } = value; return rest; };
   const identical = previous && canonical(content(previous)) === canonical(content(report));
   let published = { ...report, publishedAt: new Date().toISOString() };
-  if (!identical) {
-    const used = verifiedConfirmations(published, root).map(ack => ack.report);
-    if (previous?.issue === report.issue && previous.attempt === report.attempt) used.push(previous);
-    for (const write of report.capsule.open_queue.filter(write => write.operation === 'preflight-collect')) {
-      if (used.some(prior => prior.capsule.open_queue.some(item => item.operation === 'preflight-collect' &&
-          item.payload.request.collectionId === write.payload.request.collectionId)))
-        throw new Error('нужен новый идентификатор сбора: collectionId already used with another reportDigest');
-    }
-  }
   requirePredecessors(report, root, path.dirname(output), "publishing");
   if (fs.existsSync(output)) {
     if (identical) return previous;
-    if (requiresConfirmation(previous)) {
-      const ackPath = previousConfirmation ?? confirmationPath(previous, root);
-      if (!fs.existsSync(ackPath)) throw new Error("previous phase report is unconfirmed");
-      validateConfirmation(previous, readJson(ackPath));
-    }
     if (report.attempt !== previous.attempt || report.sequence <= previous.sequence) throw new Error("phase report sequence must advance in the same attempt; archive reconciled old attempts first");
   }
   if (implementationExit(published)) {
@@ -234,50 +126,6 @@ export function publishPhase(report, output, previousConfirmation, root = previo
   }
   atomicJson(output, published);
   return published;
-}
-export async function confirmQueue(report, root, adapter, reportsDir = path.join(root, "reports"), deadline = Infinity) {
-  validatePhase(report);
-  const inTime = () => { if (Date.now() >= deadline) throw new Error("timed-out: collection confirmation deadline expired"); };
-  const dir = path.join(root, "consumed", `${report.issue}-a${report.attempt}`);
-  return withLock(path.join(dir, "queue.lock"), async () => {
-    requirePredecessors(report, root, reportsDir, "confirming");
-    const { carried } = classifyQueue(report, root);
-    const results = [];
-    for (const write of report.capsule.open_queue) {
-      if (carried.has(write.id)) { inTime(); results.push(carried.get(write.id)); continue; }
-      const file = path.join(dir, `${write.id}.json`);
-      const hash = digest(write);
-      const prior = fs.existsSync(file) ? readJson(file) : null;
-      if (prior && (prior.writeDigest !== hash || prior.issue !== report.issue || prior.attempt !== report.attempt)) throw new Error(`write ${write.id} changed within attempt`);
-      // Reconcile even a durable result: only the current collection receipt is proof.
-      inTime();
-      const observed = await adapter("reconcile", write, report);
-      inTime();
-      if (observed?.state !== "present" || !observed.evidence) throw new Error(`write ${write.id} not confirmed by its collection receipt`);
-      validateCollectionEvidence(write, observed.evidence, report);
-      const result = { issue: report.issue, attempt: report.attempt, id: write.id, writeDigest: hash, state: "present", evidence: observed.evidence };
-      atomicJson(file, result); results.push(result);
-    }
-    requirePredecessors(report, root, reportsDir, "confirming");
-    const confirmation = { report, issue: report.issue, attempt: report.attempt, phase: report.phase, sequence: report.sequence,
-      reportDigest: digest(report), status: "confirmed", results };
-    inTime();
-    atomicJson(confirmationPath(report, root), confirmation);
-    return confirmation;
-  });
-}
-export async function waitForConfirmation(report, file, timeoutSec, pollSec = 1) {
-  validatePhase(report);
-  if (!requiresConfirmation(report)) return;
-  validateEvidenceGrants(file, report.capsule.writable_roots, "confirmation path");
-  const started = Date.parse(report.publishedAt);
-  if (!Number.isFinite(started) || started > Date.now()) throw new Error("invalid barrier publication time");
-  const deadline = started + timeoutSec * 1000;
-  while (true) {
-    if (fs.existsSync(file)) { validateConfirmation(report, readJson(file)); return; }
-    if (Date.now() >= deadline) throw new Error("write-unconfirmed: запись не подтверждена");
-    await new Promise((resolve) => setTimeout(resolve, Math.min(pollSec * 1000, deadline - Date.now())));
-  }
 }
 export async function waitForGateAck({ root, issue, attempt, ack, moves, config }) {
   if (!path.isAbsolute(root ?? "") || !path.isAbsolute(ack ?? "") ||
@@ -316,7 +164,7 @@ export async function waitForGateAck({ root, issue, attempt, ack, moves, config 
 if (isMain(import.meta.url)) {
   try {
     const [command, ...rest] = process.argv.slice(2); const args = flags(rest);
-    if (command === "--help" || args.help) console.log("Usage: delivery-state.mjs capture-criteria --issue <KEY> --attempt <N> --issue-file <approved Issue read> --root <delivery root> | publish --report <file> --output <file> [--confirmation <previous ack>] [--root <orchestrator root>] | comment --report <published code report> | wait-ack --root <root> --issue <KEY> --attempt <N> --ack <path> --moves <json-file> [--config <file>] | wait --report <file> --confirmation <file> [--config <file>]\nPhase: {issue,stage:'mono-deliver',attempt,packVersion,sourceCommit,surfaceRevision,phase:'code|preflight|ship',sequence,kind:'phase|confirmation-request',head,linear_mutations_pending:[collection write only],capsule:{phase,head,open_queue:[same],decisions:[],writable_roots:[dispatch grants]}}. The worker writes Linear comments and statuses through Linear MCP and reads them back; the queue carries only the preflight-collect write of a confirmation-request, and only that report waits for its confirmation. publish adds publishedAt, so resumed waits retain the original deadline. Publish requires the latest earlier phase reports of this attempt and the confirmation of any report that carried a collection request. comment prints the Russian implementation comment body of a published code report for the worker to post verbatim.");
+    if (command === "--help" || args.help) console.log("Usage: delivery-state.mjs capture-criteria --issue <KEY> --attempt <N> --issue-file <approved Issue read> --root <delivery root> | publish --report <file> --output <file> [--root <orchestrator root>] | comment --report <published code report> | wait-ack --root <root> --issue <KEY> --attempt <N> --ack <path> --moves <json-file> [--config <file>] | wait-round --request <KEY-round-aN.json>\nPhase: {issue,stage:'mono-deliver',attempt,packVersion,sourceCommit,surfaceRevision,phase:'code|preflight|ship',sequence,kind:'phase',head,capsule:{phase,head,decisions:[],writable_roots:[dispatch grants]}}. The worker writes Linear comments and statuses through Linear MCP and reads them back; there is no write queue. A review round: write {issue,attempt,request:<gate publishRequest>} to reports/KEY-round-aN.json, then wait-round prints the collector's result bound to that request (collectionId and digest) and exits 0 when the round ran; rerun gate preflight collect:false. Publish requires the latest earlier phase reports of this attempt. comment prints the Russian implementation comment body of a published code report for the worker to post verbatim.");
     else if (command === 'qa-status') {
       const report = readJson(args.report);
       if (['stage', 'phase', 'attempt', 'sequence', 'capsule'].some(key => Object.hasOwn(report, key))) validatePhase(report);
@@ -334,15 +182,17 @@ if (isMain(import.meta.url)) {
         ack: args.ack, moves: readJson(args.moves), config: args.config });
       console.log(JSON.stringify(record));
       console.log("delivery-state wait-ack: pass");
+    } else if (command === "wait-round") {
+      const result = await waitForRound(args.request);
+      console.log(JSON.stringify(result));
+      if (result.status !== "done") throw new Error(`review round ${result.status}: ${result.reason ?? "see the collector log"}`);
+      console.log("delivery-state wait-round: pass");
     } else {
       const report = validatePhase(readJson(args.report));
-      if (command === "publish") publishPhase(report, args.output, args.confirmation, args.root);
+      if (command === "publish") publishPhase(report, args.output, args.root);
       else if (command === "comment") {
         if (!implementationExit(report)) throw new Error("comment requires a code exit report");
         process.stdout.write(implementationComment(report).payload.body + "\n");
-      } else if (command === "wait") {
-        const config = deliveryConfig(args.config);
-        await waitForConfirmation(report, args.confirmation, config.confirmationTimeoutSec, config.pollSec);
       } else throw new Error(`unknown command ${command}`);
       if (command !== "comment") console.log(`delivery-state ${command}: pass`);
     }

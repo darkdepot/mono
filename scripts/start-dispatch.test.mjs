@@ -35,6 +35,6 @@ test('startup refuses a stale attempt even with identical branch/base/pack, and 
     atomicJson(path.join(root, 'workers.json'), { [request.issue]: { ...entry, pinsVersion: 1 } });
     atomicJson(path.join(root, 'attempts.json'), { [request.issue]: 1 });
     atomicJson(path.join(path.dirname(file), 'pins.v1.json'), { pinsVersion: 1, risk: 'risky' });
-    assert.throws(() => startGate(request), /stale dispatch pins/);
+    assert.throws(() => startGate(request), /pins versions no longer exist; start a new attempt/);
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });

@@ -203,7 +203,7 @@ Workflow states:
    - Dispatch mono:deliver once per approved [execution Issues](references/lifecycle.md#задачи-этапов) with the full snapshot,
      exact identity command, start-gate request and required phase capabilities.
      Pin request handshake=wait|resume (default resume), profile=short|full
-     (default full), pins {file,digest}, pinsVersion=0; short only tiny/standard,
+     (default full), immutable pins {file,digest}; short only tiny/standard,
      critical null, afk true, openDecisions 0 (last two supplied by orchestrator).
      Use installed scripts/orchestrator/spawn.mjs; never session-local helpers.
      Select worker role by the model policy and recorded technical judgment;
@@ -225,7 +225,7 @@ Workflow states:
      with empty registry. halt refuses spawn/resume without stopping workers.
      Keep attempts.json when an entry retires; never reset the cap.
 5. `monitor`
-   - Apply the thirty-minute old-attempt release and durable late-bot-feedback cursor
+   - Apply the durable late-bot-feedback cursor
      in references/orchestration-delivery.md on restore and each deploy; P1/P2
      correction Issues must be read back before advancing the journal point.
    - Apply Monitoring Protocol in `references/orchestration-delivery.md` before
@@ -241,16 +241,15 @@ Workflow states:
    - The worker writes and reads back its own Issue reports, comments and
      statuses through Linear MCP; you neither queue nor confirm them (Delivery
      Write Barriers). You write only start moves and «Изменение задачи».
-   - Consume phase events AND poll phase files. Validate capsule and queue;
-     start `scripts/orchestrator/collector.mjs start --root DIR --issue KEY
-     --attempt N` outside worker sandboxes for collection requests; inspect
-     `status` and its reports log, and `stop` at attempt end.
-     Use `accept.mjs amend --text` for upward risk/critical, dataset-version or
-     complete-grant amendments and --full-snapshot when requested; it registers
-     pins.v<n>.json after resume.mjs succeeds, under the collection admission lock.
-     Refused resume leaves the current registry pins unchanged.
-     Grant workers reports/ only; publish confirmations/ outside their grants. Handle preflight-collect at the pinned evidenceRoot: a read-only review round, then sandboxed verification. The collector host needs both the Codex and Claude CLIs logged in by subscription, from different model families; a single-family setup gives `not-reviewed`. Approve nothing between rounds ([Review rounds](../../references/orchestration-delivery.md#review-rounds)); recheck collect:false before ship.
-     Never send a stage-resume prompt to a worker waiting on a file.
+   - Consume phase events AND poll phase files; validate the capsule. The
+     collector starts with the attempt and takes the worker's round requests
+     itself; if the launch result or the worker reports it stopped, restart it
+     with `scripts/orchestrator/collector.mjs start --root DIR --issue KEY
+     --attempt N` and read its reports log. A task change: write «Изменение
+     задачи» on the Issue in words, then resume.mjs with taskChange set to its
+     link and those words in the resume file; a risk or grant change is a new attempt on the same branch.
+     Grant workers reports/ only. The collector host needs both the Codex and Claude CLIs logged in by subscription, from different model families; a single-family setup gives `not-reviewed`. Approve nothing between rounds ([Review rounds](../../references/orchestration-delivery.md#review-rounds)); recheck collect:false before ship.
+     Never send a stage-resume prompt to a worker waiting on a round.
    - Validate each terminal verification_items list against every Issue line;
      missing coverage or wholesale deferral without pass is non-green. Green
      requires an independently run installed ship gate.
@@ -260,8 +259,7 @@ Workflow states:
    - For stall/dead/spawn-fail inspect latest state before healing. Startup ack
      pause is not death; reconcile unconsumed ack first. Wait consumption keeps
      suppression until log continues, at most one stallSec from fixed consumedAt.
-     Collection confirmation wait
-     is bounded by config. These deadlines take priority over unfinished commands.
+     A round wait holds only while its collector lives. These deadlines take priority over unfinished commands.
      Ordinary silent live writers with pending commands defer stall for a fixed
      60-minute best-effort diagnostic from first watcher observation; process descendants alone prove
      nothing. At «идёт команда дольше 60 минут», inspect progress as before.

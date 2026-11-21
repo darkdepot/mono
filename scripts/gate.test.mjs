@@ -200,7 +200,7 @@ test("review refusal and successor lines: an older dangerous defect must be file
     review: { outcome: 'not-converged', round: 1, successors: [], record: { findings: many } } };
   assert.throws(() => validatePreflight(receipt, head, base), error => error.message.length < 48000 && /^review not-converged \(round 1 of 3\); fix and request the next round; 200 open: /.test(error.message) && / more in the next round$/.test(error.message));
 });
-test("review rounds are counted per task attempt from signed history", () => {
+test("review rounds are counted per task attempt from receipt history", () => {
   const pins = { file: '/root/dispatch/MONO-1-a1/pins.json', digest: 'd' }, base = 'b'.repeat(40), contractDigest = 'c'.repeat(64);
   const heads = ['1', '2', '3', '4'].map(digit => digit.repeat(40));
   let clock = 0;
@@ -219,22 +219,21 @@ test("review rounds are counted per task attempt from signed history", () => {
   assert.deepEqual([read(failed).spent, read(failed).notReviewed, read(failed, heads[1]).notReviewed], [0, 2, 1], 'not-reviewed spends nothing and counts in a row per head');
   assert.equal(read([...failed, receipt(heads[0], 'clean')]).notReviewed, 0);
   assert.equal(read([...failed, receipt(heads[0], 'refused')]).notReviewed, 2, 'a refusal is not a review attempt');
-  assert.equal(reviewHistory(failed, { pins: { file: '/root/dispatch/MONO-1-a1/pins.v1.json', digest: 'e' }, head: heads[0], base, contractDigest }).notReviewed, 0, 'an amendment clears the failure streak');
-  const amended = { file: '/root/dispatch/MONO-1-a1/pins.v1.json', digest: 'e' }, amendedContract = 'f'.repeat(64);
-  assert.deepEqual(reviewHistory(three, { pins: amended, head: heads[3], base, contractDigest: amendedContract }), { spent: 3, notReviewed: 0, reuse: null, record: three[2].review.record },
-    'an amendment keeps the count and continues the record');
-  assert.equal(reviewHistory(three, { pins: amended, head: heads[2], base, contractDigest: amendedContract }).reuse, null, 'a changed contract never reuses a round');
-  assert.equal(reviewHistory([...three.slice(0, 2), { ...three[2], pins: amended }], { pins, head: heads[3], base, contractDigest }).spent, 3, 'rounds under every pins version of the attempt count');
-  assert.deepEqual(read(three.slice(0, 2), heads[1], { contractDigest: amendedContract }), { spent: 2, notReviewed: 0, reuse: null, record: three[1].review.record }, 'a new contract continues the record');
+  const changedContract = 'f'.repeat(64);
+  assert.equal(read(failed, heads[0], { contractDigest: changedContract }).notReviewed, 0, 'a task change clears the failure streak');
+  assert.deepEqual(read(three, heads[3], { contractDigest: changedContract }), { spent: 3, notReviewed: 0, reuse: null, record: three[2].review.record },
+    'a task change keeps the count and continues the record');
+  assert.equal(read(three, heads[2], { contractDigest: changedContract }).reuse, null, 'a changed contract never reuses a round');
+  assert.deepEqual(read(three.slice(0, 2), heads[1], { contractDigest: changedContract }), { spent: 2, notReviewed: 0, reuse: null, record: three[1].review.record }, 'a new contract continues the record');
   assert.deepEqual(read(three.slice(0, 2), heads[1], { base: 'e'.repeat(40) }), { spent: 2, notReviewed: 0, reuse: null, record: null }, 'a new base starts a fresh record and keeps the count');
   const foreign = [{ ...three[0], producer: 'gate-autoreview-v2' }, { ...three[1], pins: { file: '/root/dispatch/MONO-2-a1/pins.json', digest: 'd' } },
     { ...three[2], pins: { file: '/root/dispatch/MONO-1-a2/pins.json', digest: 'd' } }, { producer: REVIEW_PRODUCER, pins }, null];
   assert.equal(read(foreign).spent, 0, 'old receipts, other tasks and other attempts are never counted');
 });
-test('shared review context refreshes the remote base, uses HEAD while dirty, and reads only signed current-contract rounds', async () => {
+test('shared review context refreshes the remote base, uses HEAD while dirty, and reads this attempt\'s current-contract rounds with delivered task changes', async () => {
   const { execFileSync } = await import('node:child_process');
-  const { createHmac } = await import('node:crypto');
-  const { atomicJson, canonical } = await import('./runtime.mjs');
+  const { atomicJson } = await import('./runtime.mjs');
+  const { recordTaskChange, dropTaskChange, taskChanges } = await import('./orchestrator/command-state.mjs');
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-context-'));
   try {
     const repo = path.join(scratch, 'repo'), origin = path.join(scratch, 'origin.git');
@@ -250,28 +249,28 @@ test('shared review context refreshes the remote base, uses HEAD while dirty, an
     const root = path.join(scratch, 'control'), attempt = path.join(root, 'dispatch/MONO-999-a1');
     fs.mkdirSync(path.join(attempt, 'snapshot'), { recursive: true });
     fs.writeFileSync(path.join(attempt, 'snapshot/issue-MONO-999.md'), 'Approved task.');
-    const pins = { file: path.join(attempt, 'pins.v1.json'), digest: 'a'.repeat(64) };
-    atomicJson(path.join(root, 'workers.json'), { 'MONO-999': { issue: 'MONO-999', attempt: 1, stage: 'mono-deliver',
-      packVersion: 'fixture', surfaceRevision: 5, completed_amendments: {
-        later: { pinsVersion: 2, change: { text: 'Future amendment.' } },
-        now: { pinsVersion: 1, change: { text: 'Registered amendment.' } } } } });
-    fs.writeFileSync(path.join(attempt, 'resume.v3.md'), 'Prepared only.');
+    const pins = { file: path.join(attempt, 'pins.json'), digest: 'a'.repeat(64) };
+    const url = 'https://linear.app/darkdepot/issue/MONO-999/x#comment-1';
+    recordTaskChange(attempt, url, `Изменение задачи: ${url}\nNarrow to input.mjs.`);
+    assert.throws(() => recordTaskChange(attempt, url, 'no link in the text'), /quoted in the resume file/);
+    const undelivered = recordTaskChange(attempt, url + '0', `Undelivered: ${url}0`);
+    dropTaskChange(attempt, { ...undelivered, number: 9 }); assert.equal(taskChanges(attempt).length, 2, 'only the exact recorded change is dropped');
+    dropTaskChange(attempt, undelivered); assert.equal(taskChanges(attempt).length, 1, 'a refused spawn drops its undelivered change');
     const evidenceRoot = path.join(scratch, 'evidence'); fs.mkdirSync(path.join(evidenceRoot, 'history'), { recursive: true });
-    const key = Buffer.alloc(32, 23); fs.writeFileSync(path.join(evidenceRoot, 'receipt.key'), key);
-    const expected = 'Approved task.\n\n## Orchestrator amendment 1\nRegistered amendment.';
+    const expected = `Approved task.\n\n## Изменение задачи 1 (${url})\nИзменение задачи: ${url}\nNarrow to input.mjs.`;
     const receipt = { producer: REVIEW_PRODUCER, pins, head: tip, base: second, recordedAt: '2026-11-15T00:00:01Z',
       review: { spent: true, contractDigest: digest(expected), record: {}, outcome: 'clean' } };
-    const seal = (name, value, signed = true) => atomicJson(path.join(evidenceRoot, 'history', name + '.json'), {
-      receipt: value, signature: signed ? createHmac('sha256', key).update(canonical(value)).digest('hex') : 'forged' });
-    seal('valid', receipt); seal('forged', receipt, false);
+    const seal = (name, value) => atomicJson(path.join(evidenceRoot, 'history', name + '.json'), { receipt: value });
+    seal('valid', receipt);
     seal('other-attempt', { ...receipt, pins: { ...pins, file: path.join(root, 'dispatch/MONO-999-a2/pins.json') } });
+    fs.symlinkSync(path.join(evidenceRoot, 'history', 'valid.json'), path.join(evidenceRoot, 'history', 'linked.json'));
     const request = { worktree: repo, baseRef: 'origin/main', evidenceRoot, pins };
-    const result = reviewContext(request, { pinsVersion: 1 });
+    const result = reviewContext(request, {});
     assert.equal(result.head, tip); assert.equal(result.base, second);
     assert.equal(git('rev-parse', 'origin/main'), second, 'base refresh uses the gate remote fetch');
     assert.equal(result.contract, expected); assert.equal(result.contractDigest, digest(expected));
     assert.equal(result.history.spent, 1); assert.deepEqual(result.history.reuse, receipt);
-    const live = reviewContext(request, { pinsVersion: 1 }, first);
+    const live = reviewContext(request, {}, first);
     assert.equal(live.base, first, 'the live PR base remains authoritative'); assert.equal(live.history.reuse, null);
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
@@ -345,7 +344,7 @@ test("named collection fixtures through the gate CLI", async t => {
   const fs = await import("node:fs"), path = await import("node:path"), os = await import("node:os"), crypto = await import("node:crypto");
   const { spawnSync } = await import("node:child_process");
   const { atomicJson, canonical, digest } = await import("./runtime.mjs");
-  const { sha256File } = await import("./orchestrator/command-state.mjs");
+  const { sha256File, recordTaskChange } = await import("./orchestrator/command-state.mjs");
   const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collection-idea|collection-review)-.*\.json$/u.test(name));
   for (const name of files) await t.test(name, async () => {
     const fixture = JSON.parse(fs.readFileSync(path.join("scripts/fixtures", name), "utf8"));
@@ -408,40 +407,28 @@ test("named collection fixtures through the gate CLI", async t => {
       const call = value => { atomicJson(file, value); return spawnSync(process.execPath, ["scripts/gate.mjs", "preflight", "--request", file], { env, encoding: "utf8" }); };
       const admit = async value => {
         if(!fs.existsSync(registryFile))return;
-        const {admitCollection}=await import('./orchestrator/command-state.mjs');
-        const request={...value,collect:false},queue=[{id:request.collectionId,operation:'preflight-collect',target:request.head,payload:{request}}];
-        return admitCollection(root,{...entry,phase:'preflight',kind:'confirmation-request',sequence:1,head:request.head,
-          linear_mutations_pending:queue,capsule:{phase:'preflight',head:request.head,decisions:[],open_queue:queue,writable_roots:request.workerWritableRoots}});
+        // The collector's ledger: earlier rounds of the fixture are closed before the next admission.
+        const {admitRound,recordResult,readLedger,inFlight}=await import('./review-rounds.mjs');
+        for (const { admission } of inFlight(readLedger(root,'MONO-999',1))) if (admission.collectionId !== value.collectionId) recordResult(root,'MONO-999',1,admission,{status:'done'});
+        return admitRound(root,'MONO-999',1,{...value,collect:false});
       };
       const collect = async (value, expected = 0) => { await admit(value); const r = call({ ...value, collect: true }); assert.equal(r.status, expected, r.stdout + r.stderr); return JSON.parse(fs.readFileSync(receiptFile, "utf8")); };
-      const seal = envelope => { envelope.signature = crypto.createHmac("sha256", fs.readFileSync(path.join(evidence, "receipt.key"))).update(canonical(envelope.receipt)).digest("hex"); atomicJson(receiptFile, envelope); };
+      const seal = envelope => atomicJson(receiptFile, envelope);
       if (fixture.mode === "compatibility") {
         delete request.reviewDatasetDigest;
         if (!fixture.populated) delete request.reviewDataset;
-        // Old admission is serialized using the full original pins, before any amendment.
-        await admit(request);
-        const admissionFile = path.join(root, "consumed/MONO-999-a1/admissions", request.collectionId + ".json");
-        const admission = JSON.parse(fs.readFileSync(admissionFile));
-        assert.equal(admission.manifestDigest, digest({ ...pins, pinsVersion: 0 }));
-        const amended = path.join(path.dirname(pinsFile), "pins.v1.json");
-        atomicJson(amended, { pinsVersion: 1, risk: "standard", critical: null }); entry.pinsVersion = 1; register();
-        // Recovery uses the admission's old version even when the registry moved forward.
-        const collected = call({ ...request, collect: true }); assert.equal(collected.status, 0, collected.stdout + collected.stderr);
+        // An old manifest with retired fields still collects, and an old signed receipt still reads.
+        await collect(request);
         const envelope = JSON.parse(fs.readFileSync(receiptFile));
         assert.equal(Object.hasOwn(envelope.receipt, "reviewDataset"), false, "new gate receipt omits retired binding");
+        assert.equal(Object.hasOwn(envelope, "signature"), false, "receipts are no longer signed");
         const beforeArchive = fixture.populated ? fs.readFileSync(pins.reviewDataset) : null;
-        const oldBinding = fixture.populated ? { source: pins.reviewDataset, digest: pins.reviewDatasetDigest,
+        envelope.receipt.reviewDataset = fixture.populated ? { source: pins.reviewDataset, digest: pins.reviewDatasetDigest,
           copy: ".orchestrator/review-dataset-old.md", archive: pins.reviewDataset, version: 1 } : null;
-        envelope.receipt.reviewDataset = oldBinding; seal(envelope);
+        envelope.signature = "0".repeat(64); seal(envelope);
         if (fixture.populated) fs.unlinkSync(pins.reviewDataset);
         assert.equal(call(request).status, 0, "old signed receipt reads without inspecting the obsolete archive");
-        assert.deepEqual(JSON.parse(fs.readFileSync(admissionFile)), admission, "prior admission manifest is unchanged");
         if (fixture.populated) write(pins.reviewDataset, beforeArchive);
-        const next = { ...request, pins: { file: amended, digest: sha256File(amended) }, collectionId: `preflight-collect:${head}:2` };
-        await collect(next);
-        assert.equal(call(next).status, 0, "a new amendment over the old base also collects and reads");
-        assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(receiptFile)).receipt, "reviewDataset"), false);
-        if (fixture.populated) assert.deepEqual(fs.readFileSync(pins.reviewDataset), beforeArchive);
         else assert.equal(fs.existsSync(path.join(evidence, "datasets")), false);
         return;
       }
@@ -525,7 +512,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         receipt = await round(withRemarks(at(second)), 0, /pass: review clean \(round 2 of 3\) and verification verified on head/);
         assert.deepEqual(receipt.prRemarks, prRemarks, 'the remarks are bound in the signed receipt');
         assert.ok(receipt.review.record.findings.some(finding => finding.class === 'pr-remark' && finding.status === 'closed'), 'the checker closed the fixed remark');
-        const unbound = call(at(second)); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /receipt prRemarks differ from the request/);
+        const unbound = call(at(second)); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /collection request mismatch: admission; expected "the admitted round request for collectionId"/);
         const malformed = call(withRemarks(at(second, 2), { prRemarks: [{ ...prRemarks[0], file: '../outside' }] })); assert.equal(malformed.status, 1); assert.match(malformed.stdout, /invalid PR remark location/);
         assert.deepEqual([fs.existsSync(verifySaw), receipt.verification], [false, { ...pins.verification, exitCode: null }], 'the collection records the verification unrun');
         const gh = path.join(bin, 'gh');
@@ -540,7 +527,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         let shipped = ship(); assert.match(shipped.stdout, /fail: checks not created on head/, shipped.stdout + shipped.stderr);
         assert.equal(JSON.parse(fs.readFileSync(stateFile)).preflightReceipt.runId, receipt.runId, 'ship read the signed review receipt');
         const sealed = fs.readFileSync(stored(second)), old = JSON.parse(sealed); old.receipt.producer = 'gate-autoreview-v2';
-        old.signature = crypto.createHmac("sha256", fs.readFileSync(path.join(evidence, "receipt.key"))).update(canonical(old.receipt)).digest("hex"); atomicJson(stored(second), old);
+        atomicJson(stored(second), old);
         for (const refused of [ship(), call(withRemarks(at(second)))]) { assert.equal(refused.status, 1); assert.match(refused.stdout, /old receipt format/); }
         fs.writeFileSync(stored(second), sealed);
         // Without the worker's verification of this head the signed round does not pass; the same head with it does, without a new round.
@@ -561,19 +548,17 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         const unpublished = call(at(fourth)); assert.equal(unpublished.status, 1, 'refused before the worker publishes'); assert.match(unpublished.stdout, limit);
         receipt = await round(at(fourth), 1, limit);
         assert.equal(receipt.review.outcome, 'refused'); assert.equal(reviewCalls(bin).length, calls, 'a fourth round is never launched');
-        const amended = path.join(path.dirname(pinsFile), 'pins.v1.json'), resnapshot = path.join(path.dirname(pinsFile), 'snapshot.v1');
-        write(path.join(resnapshot, 'issue-MONO-999.md'), '# MONO-999\n\nNarrowed fixture contract.\n');
-        atomicJson(amended, { pinsVersion: 1, fullSnapshot: { directory: resnapshot } });
-        const resumeFile = path.join(path.dirname(pinsFile), 'resume.v1.md'); write(resumeFile, 'Narrow: only input.mjs.\n\n## Effective attempt pins\npinsVersion: 1\n');
-        write(path.join(path.dirname(pinsFile), 'resume.v0.md'), 'A prepared amendment that was never delivered.\n');
-        entry.completed_amendments = { 1: { pinsVersion: 1, resumeFile, change: { text: 'Narrow: only input.mjs.\n\n## issue-only note\nKept.' } } };
-        entry.pinsVersion = 1; register();
-        const next = { file: amended, digest: sha256File(amended) }, launchContract = receipt.review.contractDigest;
+        // A task change («Изменение задачи» plus resume) keeps the count and reaches the reviewer with the Issue.
+        const url = 'https://linear.app/darkdepot/issue/MONO-999/x#comment-2', launchContract = receipt.review.contractDigest;
+        recordTaskChange(path.dirname(pinsFile), url, `Изменение задачи: ${url}\nNarrow: only input.mjs.`);
         const fifth = commit('export const five = 5;\n');
-        receipt = await round(at(fifth, 1, next), 1, limit);
-        assert.equal(receipt.review.outcome, 'refused'); assert.equal(reviewCalls(bin).length, calls, 'an amendment keeps the count: no fourth round');
-        assert.notEqual(receipt.review.contractDigest, launchContract, 'a full-snapshot amendment supplies the reviewed contract');
-        assert.equal(receipt.review.contractDigest, digest('# MONO-999\n\nNarrowed fixture contract.\n\n\n## Orchestrator amendment 1\nNarrow: only input.mjs.\n\n## issue-only note\nKept.'), 'the reviewer reads the amendment text with the Issue');
+        receipt = await round(at(fifth), 1, limit);
+        assert.equal(receipt.review.outcome, 'refused'); assert.equal(reviewCalls(bin).length, calls, 'a task change keeps the count: no fourth round');
+        assert.notEqual(receipt.review.contractDigest, launchContract);
+        assert.equal(receipt.review.contractDigest, digest(`# MONO-999\n\nFixture task contract.\n\n\n## Изменение задачи 1 (${url})\nИзменение задачи: ${url}\nNarrow: only input.mjs.`), 'the reviewer reads the task change with the Issue');
+        git('checkout', '-q', third);
+        const stale = call(at(third)); assert.equal(stale.status, 1, 'a clean round from before the task change no longer counts');
+        assert.match(stale.stdout, /the task changed after this review round/);
         return;
       }
       if (fixture.mode === 'review-fast') {
@@ -600,7 +585,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         receipt = await round(verified, 0, /pass: review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification, and verification verified on head/);
         assert.equal(reviewCalls(bin).length, calls, 'no second round on the fast path');
         assert.deepEqual([receipt.review.spent, receipt.workerVerification, receipt.review.workerVerification], [false, verified.workerVerification, verified.workerVerification]);
-        const unbound = call(at(fixed, 1, { workerVerification: undefined })); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /receipt workerVerification differs from the request/);
+        const unbound = call(at(fixed, 1, { workerVerification: undefined })); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /collection request mismatch: admission; expected "the admitted round request for collectionId"/);
         const fresh = () => { for (const name of fs.readdirSync(path.join(evidence, 'history'))) fs.unlinkSync(path.join(evidence, 'history', name)); };
         // An older harmful defect passed by the round stays a must-file successor on the worker-verified head.
         fresh(); setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'Older', title: 'Older' })], verdict: reviewVerdict({ origin: 'pre-existing', danger: true, dangerCase: 'data', dangerReason: 'Data may be lost.' }) });
@@ -621,13 +606,18 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
       if (fixture.mode === "mismatch") { expectedField = fixture.field; expectedValue = pins[fixture.field]; if (fixture.omit) delete request[fixture.field]; else request[fixture.field] = fixture.value; }
       if (fixture.mode === "pins-digest") { request.pins = { ...binding, digest: "0".repeat(64) }; expectedField = "pins.digest"; expectedValue = binding.digest; }
       if (fixture.mode === "no-pins") { delete request.pins; expectedField = "pins"; expectedValue = binding; }
-      if (["amended", "admitted"].includes(fixture.mode)) {
-        if (fixture.mode === "admitted") { await collect(request); expectedStatus = 0; }
-        if (fixture.mode === "admitted") atomicJson(path.join(root, "consumed/MONO-999-a1/admissions", `${request.collectionId}.json`),
-          { collectionId: request.collectionId, reportDigest: "f".repeat(64), pinsVersion: 0, manifestDigest: digest({ ...pins, pinsVersion: 0 }) });
-        const amendment = path.join(path.dirname(pinsFile), "pins.v1.json"); atomicJson(amendment, { pinsVersion: 1 });
+      if (fixture.mode === "amended") {
+        // Pins versions no longer exist: an amended attempt from an older pack is refused, never read as launch pins.
         entry.pinsVersion = 1; register();
-        if (fixture.mode === "amended") { expectedField = "pins.file"; expectedValue = amendment; }
+        const result = call(request); assert.equal(result.status, 1); assert.match(result.stdout, /pins versions no longer exist; start a new attempt/);
+        return;
+      }
+      if (fixture.mode === "replaced-request") {
+        // A worker cannot replace an admitted request under the same collectionId: collection refuses it.
+        await admit(request);
+        const result = call({ ...request, risk: "tiny", collect: true }); assert.equal(result.status, 1);
+        assert.match(result.stdout, /collection request mismatch: admission; expected "the admitted round request for collectionId"/);
+        assert.equal(fs.existsSync(receiptFile), false); return;
       }
       if (fixture.mode === "other-head") {
         const envelope = await collect(request); envelope.receipt.collectionId = `preflight-collect:${head}:2`; seal(envelope);
@@ -675,7 +665,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         const bytes = fs.readFileSync(history), verified = call({ ...request, collect: false }); assert.equal(verified.status, 0, verified.stdout);
         assert.deepEqual(fs.readFileSync(history), bytes, 'signed output survives a fresh gate process and ordinary log edits');
         const tampered = call({ ...request, collect: false, workerVerification: { head, exitCode: 1 } }); assert.equal(tampered.status, 1);
-        assert.match(tampered.stdout, /receipt workerVerification differs from the request/);
+        assert.match(tampered.stdout, /collection request mismatch: admission; expected "the admitted round request for collectionId"/);
         // The cost report reads the round exactly as the gate signed it.
         write(path.join(root, 'logs/MONO-999-mono-deliver-a1.jsonl'), JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }) + '\n');
         const cost = spawnSync(process.execPath, ['scripts/wave-cost.mjs', 'MONO-999', '--root', root, '--evidence-root', evidence], { encoding: 'utf8' });

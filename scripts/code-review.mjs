@@ -375,8 +375,11 @@ function runInvocation(invocation, prompt, timeoutMs) {
       const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
       const interrupt = () => { interrupted = true; kill(); };
       process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
-      const cleanup = () => { clearTimeout(timer); process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', interrupt); };
+      let drain;
+      const cleanup = () => { clearTimeout(timer); clearTimeout(drain); process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', interrupt); };
       const timer = setTimeout(() => { exceeded = true; kill(); }, timeoutMs);
+      // A helper outside the role's group may keep its pipes open after it exits: close them shortly after exit.
+      child.once('exit', () => { drain = setTimeout(() => { kill(); child.stdout.destroy(); child.stderr.destroy(); }, 5000); });
       child.stdout.on('data', data => { stdoutBytes += data.length; if (stdoutBytes > 16 * 1024 * 1024) { exceeded = true; kill(); } else stdout.push(data); });
       child.stderr.on('data', data => { stderrBytes += data.length; if (stderrBytes > 1024 * 1024) { exceeded = true; kill(); } else stderr.push(data); });
       child.stdin.on('error', error => { if (error.code !== 'EPIPE') reject(new Error('role process input failed')); });
@@ -502,9 +505,9 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     requireValue(['tiny', 'standard', 'deep', 'risky', 'riskyCritical'].includes(risk), 'unknown risk class');
     requireValue(number <= 3, 'three-round limit reached for this task attempt');
     const contractDigest = digest(contract);
-    // An amended contract continues the record: open findings stay open and the next round stays narrow.
+    // A changed contract (a delivered task change) continues the record: open findings stay open and the next round stays narrow.
     requireValue(!record.base || record.base === base, 'stage base changed');
-    // The amendment may approve disputed work, so scope and risk objections are judged again against it:
+    // The task change may approve disputed work, so scope and risk objections are judged again against it:
     // they return to the checker this round and stand only if the checker raises them again.
     const rejudge = new Set(record.contractDigest && record.contractDigest !== contractDigest
       ? record.findings.filter(finding => finding.outOfContract || finding.riskRaised).map(finding => finding.key) : []);

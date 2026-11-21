@@ -143,5 +143,5 @@ pre-applied `.agents/` files parks blocked with exact replacement bytes;
 class 2 only when guarded R/AE/AC, non-goals, visible behavior, risk and [execution Issues](lifecycle.md#задачи-этапов) set
 are unchanged, with snapshot synchronization, fingerprint recomputation and
 certificate staleness; changed risk/scope selects class 3 with owner reapproval.
-After repair, require a NEW `dispatch.mjs --preapply` attempt for [execution Issues](lifecycle.md#задачи-этапов), never amend/resume.
+After repair, require a NEW `dispatch.mjs --preapply` attempt for [execution Issues](lifecycle.md#задачи-этапов), never resume.
 Issue-only manifests live in the Issue and renew through `mono:issue`.

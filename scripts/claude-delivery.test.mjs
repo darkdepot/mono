@@ -6,9 +6,9 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { workerTransport } from "./worker-transport.mjs";
-import { correlatedDeliveryReport, confirmationPath } from "./delivery-state.mjs";
+import { correlatedDeliveryReport } from "./delivery-state.mjs";
 
-// Event shapes come from the documented discovery. Real confirmation waits and
+// Event shapes come from the documented discovery. Real round waits and
 // collection remain the orchestrator's closeout probe. Synthetic logs below are
 // separate from the recorded MONO-322 PR probe at the end of this file.
 // No model is invoked. Every executable fixture uses a private, closed PATH.
@@ -25,22 +25,22 @@ const withFixture = async run => {
       packVersion: "test", sourceCommit: "a".repeat(40), surfaceRevision: 4,
       packRoot: "/fixture/pack",
       worktree: path.join(root, "repo"), thread_id: "fixture-session", pid: process.pid, procStart: "fixture-start" };
-    // Only a collection request waits for confirmation; Linear writes are the worker's own.
+    // Only a review round waits: the worker's round request until the collector records its result.
     const reportFile = path.join(root, "reports", `${issue}-phase-preflight.json`), head = "b".repeat(40);
-    const collect = { id: `preflight-collect:${head}:1`, operation: "preflight-collect", target: head,
-      payload: { request: { collectionId: `preflight-collect:${head}:1` } } };
-    const report = { ...entry, phase: "preflight", head, sequence: 1, kind: "confirmation-request",
-      status: "ready", linear_mutations_pending: [collect],
-      capsule: { phase: "preflight", head, decisions: [], open_queue: [collect], writable_roots: [path.dirname(reportFile), entry.worktree] } };
-    const confirmation = confirmationPath(report, root);
+    const report = { ...entry, phase: "preflight", head, sequence: 1, kind: "phase",
+      status: "ready", capsule: { phase: "preflight", head, decisions: [], writable_roots: [path.dirname(reportFile), entry.worktree] } };
+    const confirmation = path.join(root, "reports", `${issue}-round-a1.json`);
+    put(confirmation, { issue, attempt: 1, request: { collectionId: `preflight-collect:${head}:1`, head, root, collect: false } });
+    // The collector of this attempt is alive while the worker waits.
+    put(path.join(root, "reports", `${issue}-collector-a1.lock`), { pid: process.pid, procStart: "fixture-start", processGroup: process.pid });
     const instance = { type: "mono.worker-instance", issue, attempt: 1, thread_id: entry.thread_id, pid: entry.pid, procStart: entry.procStart };
     const init = { type: "system", subtype: "init", session_id: entry.thread_id, model: "fixture-model" };
     const call = { type: "assistant", session_id: entry.thread_id, message: { content: [{ type: "tool_use", id: "fixture-call", name: "Bash",
-      input: { command: `node '/fixture/pack/scripts/delivery-state.mjs' wait --report '${reportFile}' --confirmation '${confirmation}' --config '/fixture/config.json'` } }] } };
+      input: { command: `node '/fixture/pack/scripts/delivery-state.mjs' wait-round --request '${confirmation}'` } }] } };
     const events = [instance, init, call];
     const journal = values => put(log, values.map(value => JSON.stringify(value)).join("\n") + "\n");
     const bin = path.join(root, "bin");
-    put(path.join(bin, "ps"), '#!/usr/bin/env node\nconsole.log("fixture-start");\n');
+    put(path.join(bin, "ps"), `#!/usr/bin/env node\nconsole.log(process.argv.includes('-axo') ? '${process.pid} 1 ${process.pid} S fixture-start' : 'fixture-start');\n`);
     fs.chmodSync(path.join(bin, "ps"), 0o700);
     fs.symlinkSync(process.execPath, path.join(bin, "node"));
     put(path.join(root, "control.json"), { state: "active" });
@@ -51,13 +51,12 @@ const withFixture = async run => {
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 };
 
-test('watch-phase-regress selects the current confirmation wait by publishedAt, then sequence', () => withFixture(f => {
+test('watch-phase-regress keeps a round wait while later phase reports arrive', () => withFixture(f => {
   const now = new Date().toISOString();
-  put(path.join(f.root, 'workers.json'), { [f.entry.issue]: { ...f.entry, confirmationTimeoutSec: 1800 } });
+  put(path.join(f.root, 'workers.json'), { [f.entry.issue]: f.entry });
   const shipFile = path.join(f.root, 'reports', `${f.entry.issue}-phase-ship.json`);
   const code = { ...f.report, publishedAt: now, sequence: 3 };
   put(f.reportFile, code);
-  f.journal(JSON.parse(JSON.stringify(f.events).replaceAll('-s1.confirmed.json', '-s3.confirmed.json')));
   for (const publishedAt of [new Date(Date.now() - 2_000_000).toISOString(), now]) {
     put(shipFile, { ...code, phase: 'ship', sequence: 2, publishedAt, capsule: { ...code.capsule, phase: 'ship' } });
     const stale = new Date(Date.now() - 181_000); fs.utimesSync(f.entry.log, stale, stale);
@@ -68,9 +67,9 @@ test('watch-phase-regress selects the current confirmation wait by publishedAt, 
 }));
 
 test("Claude foreground phase wait binds session, attempt, process instance and call ID", () => withFixture(f => {
-  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+  assert.equal(transport.waitingPhase(f.entry, f.confirmation)?.callId, "fixture-call");
   for (const change of [{ thread_id: "other" }, { attempt: 2 }, { pid: 42 }, { procStart: "other" }]) {
-    assert.equal(transport.waitingPhase({ ...f.entry, ...change }, f.reportFile, f.confirmation), null);
+    assert.equal(transport.waitingPhase({ ...f.entry, ...change }, f.confirmation), null);
   }
   for (const ending of [
     { type: "user", session_id: f.entry.thread_id, message: { content: [{ type: "tool_result", tool_use_id: "fixture-call", content: "released" }] } },
@@ -79,31 +78,33 @@ test("Claude foreground phase wait binds session, attempt, process instance and 
     { ...f.instance, pid: 42, procStart: "old-process" },
   ]) {
     f.journal([...f.events, ending]);
-    assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation), null);
+    assert.equal(transport.waitingPhase(f.entry, f.confirmation), null);
   }
   f.journal([f.instance, f.init, { ...f.call, session_id: "other" }]);
-  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation), null);
+  assert.equal(transport.waitingPhase(f.entry, f.confirmation), null);
   f.journal([f.instance, f.init, { ...f.call, message: { content: [{ ...f.call.message.content[0], input: { command: f.call.message.content[0].input.command + " &" } }] } }]);
-  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation), null);
+  assert.equal(transport.waitingPhase(f.entry, f.confirmation), null);
   for (const input of [{ ...f.call.message.content[0].input, run_in_background: true },
     { command: f.call.message.content[0].input.command.replace("/fixture/pack/", "/foreign/pack/") }]) {
     f.journal([f.instance, f.init, { ...f.call, message: { content: [{ ...f.call.message.content[0], input }] } }]);
-    assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation), null);
+    assert.equal(transport.waitingPhase(f.entry, f.confirmation), null);
   }
 }));
 
-test("Claude watcher recognizes bounded foreground waits, expiry, progress and completion without report", () => withFixture(f => {
+test("Claude watcher recognizes foreground round waits, a stopped collector, progress and completion without report", () => withFixture(f => {
   const report = { ...f.report, publishedAt: new Date().toISOString() };
   put(f.reportFile, report);
-  put(path.join(f.root, "workers.json"), { [f.entry.issue]: { ...f.entry, confirmationTimeoutSec: 1200, collectionTimeoutSec: 1000 } });
+  put(path.join(f.root, "workers.json"), { [f.entry.issue]: f.entry });
   const silence = () => { const past = new Date(Date.now() - 150_000); fs.utimesSync(f.entry.log, past, past); };
   silence();
   assert.doesNotMatch(f.watch(), /EVENT:(stall|dead)/);
   f.journal([...f.events, { ...f.instance, pid: 42 }]); silence();
   assert.match(f.watch(), /EVENT:stall/);
   f.journal(f.events); silence();
-  put(f.reportFile, { ...report, publishedAt: new Date(Date.now() - 1_300_000).toISOString() });
-  assert.match(f.watch(), /EVENT:stall/);
+  const lock = path.join(f.root, "reports", `${f.entry.issue}-collector-a1.lock`), holder = fs.readFileSync(lock);
+  fs.unlinkSync(lock);
+  assert.match(f.watch(), /EVENT:stall/, "a wait without a live collector is a stall");
+  fs.writeFileSync(lock, holder);
   f.journal([...f.events, { type: "tool_progress", session_id: f.entry.thread_id, tool_use_id: "fixture-call", elapsed_time_seconds: 30 }]);
   assert.doesNotMatch(f.watch(), /EVENT:(stall|dead)/);
   fs.unlinkSync(f.reportFile);
@@ -117,7 +118,7 @@ test("historical malformed output does not invalidate current-instance wait or c
   const values = [{ ...f.instance, pid: 42 }, f.init];
   f.journal(values);
   fs.appendFileSync(f.entry.log, 'historical incomplete output\n' + f.events.map(event => JSON.stringify(event)).join("\n") + "\n");
-  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+  assert.equal(transport.waitingPhase(f.entry, f.confirmation)?.callId, "fixture-call");
   fs.appendFileSync(f.entry.log, JSON.stringify({ type: "result", session_id: f.entry.thread_id, is_error: false }) + "\n");
   assert.equal(transport.turnState(f.entry)?.status, "completed");
   fs.appendFileSync(f.entry.log, 'current incomplete output\n');
@@ -127,45 +128,45 @@ test("historical malformed output does not invalidate current-instance wait or c
 test("Claude monitoring reuses the read position and handles partial, replaced and truncated logs", () => withFixture(f => {
   f.journal([...f.events, ...Array.from({ length: 1000 }, () => ({ type: "tool_progress", session_id: f.entry.thread_id,
     tool_use_id: "fixture-call", elapsed_time_seconds: 30, text: "progress".repeat(100) }))]);
-  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+  assert.equal(transport.waitingPhase(f.entry, f.confirmation)?.callId, "fixture-call");
   const read = fs.readSync, whole = fs.readFileSync;
   let bytes = 0;
   fs.readSync = (...args) => { const count = read(...args); bytes += count; return count; };
   fs.readFileSync = (file, ...args) => { assert.notEqual(file, f.entry.log, "monitoring must not reread the whole journal"); return whole(file, ...args); };
   try {
     assert.equal(transport.turnState(f.entry), null);
-    assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+    assert.equal(transport.waitingPhase(f.entry, f.confirmation)?.callId, "fixture-call");
     assert.ok(bytes <= 128, "unchanged monitoring reads only the cache boundary");
     const result = JSON.stringify({ type: "result", session_id: f.entry.thread_id, is_error: false });
     fs.appendFileSync(f.entry.log, result.slice(0, 40));
-    assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation), null);
+    assert.equal(transport.waitingPhase(f.entry, f.confirmation), null);
     fs.appendFileSync(f.entry.log, result.slice(40) + "\n");
     assert.equal(transport.turnState(f.entry)?.status, "completed");
     assert.ok(bytes < 1024, "appending a result must not rescan historical progress");
   } finally { fs.readSync = read; fs.readFileSync = whole; }
   fs.unlinkSync(f.entry.log);
   f.journal([{ ...f.instance, pid: 42 }, f.init, f.call]);
-  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation), null);
+  assert.equal(transport.waitingPhase(f.entry, f.confirmation), null);
   f.journal(f.events);
-  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+  assert.equal(transport.waitingPhase(f.entry, f.confirmation)?.callId, "fixture-call");
   f.journal([f.instance]);
-  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation), null);
+  assert.equal(transport.waitingPhase(f.entry, f.confirmation), null);
 }));
 
 test("Claude monitoring evicts retired journals and rebuilds their current-instance proof on reuse", () => withFixture(f => {
-  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+  assert.equal(transport.waitingPhase(f.entry, f.confirmation)?.callId, "fixture-call");
   for (let index = 0; index < 100; index++) {
     const log = path.join(f.root, "logs", `retired-${index}.jsonl`);
     fs.copyFileSync(f.entry.log, log);
-    assert.equal(transport.waitingPhase({ ...f.entry, log }, f.reportFile, f.confirmation)?.callId, "fixture-call");
+    assert.equal(transport.waitingPhase({ ...f.entry, log }, f.confirmation)?.callId, "fixture-call");
   }
   const read = fs.readSync; let bytes = 0;
   fs.readSync = (...args) => { const count = read(...args); bytes += count; return count; };
   try {
-    assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+    assert.equal(transport.waitingPhase(f.entry, f.confirmation)?.callId, "fixture-call");
     assert.ok(bytes >= fs.statSync(f.entry.log).size, "retired log must be reloaded after eviction");
     bytes = 0;
-    assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+    assert.equal(transport.waitingPhase(f.entry, f.confirmation)?.callId, "fixture-call");
     assert.ok(bytes <= 128, "reused log is cached again");
   } finally { fs.readSync = read; }
 }));
@@ -222,6 +223,7 @@ test("Claude result usage sums resumed turns, normalizes caches and keeps missin
 
 test('Claude silent Bash calls defer stalls until every matching result arrives', () => withFixture(f => {
   put(path.join(f.root, 'workers.json'), { [f.entry.issue]: f.entry });
+  fs.unlinkSync(f.confirmation); // No review round is in flight.
   const command = id => ({ ...f.call, message: { content: [{ type: 'tool_use', name: 'Bash', id, input: { command: 'node scripts/verify.mjs' } }] } });
   const result = id => ({ type: 'user', session_id: f.entry.thread_id, message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'done' }] } });
   const watch = events => {

@@ -18,7 +18,7 @@ An empty list means no bot; workers cannot override pins. Bots must not be branc
 2. Run gate.mjs ship while polling CI and feedback. Its task-level Ship bot state stores
    startedAt at the first fully green mandatory CI (red/pending CI never opens it).
    Recover earlier green PR heads of this attempt on entry.
-   Thirty minutes later silence becomes «молчал», without park or amendment.
+   Thirty minutes later silence becomes «молчал», without park.
    Restart, fixes and new gate state files never reset this task clock. With []: «нет».
 3. Timely reply: fix P1 in this PR; fix P2 or publish a reasoned reply. Keep decisions
    in judgment.botRemarks; threads need published closure replies. Subsequent heads
@@ -36,7 +36,7 @@ its thirty minutes and quiet pause; CI/read failures still expire.
 
 ## Authorized Ship Fix
 
-A ship-fix amendment names the next gate attempt, new head/stateFile/proof; preserve
+A ship fix names the next gate attempt, new head/stateFile/proof; preserve
 old state and task attempt. No gate-attempt cap; rounds per review-admission.md.
 Task bot state stays in reports/<Issue>-a<attempt>-ship-bot.json (standalone:
 ship-bot-<owner>-<repo>-<PR>.json beside stateFile, retain it). Never reset it or old evidence deadlines.

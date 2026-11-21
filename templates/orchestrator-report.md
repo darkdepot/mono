@@ -9,7 +9,7 @@ either shape.
 
 ## Worker Report
 
-Use the Worker Report section of `references/worker-contract.md` for phase capsules, confirmations, final green/parked reports, verbatim verification items and the parked-reason dictionary.
+Use the Worker Report section of `references/worker-contract.md` for phase capsules, round requests, final green/parked reports, verbatim verification items and the parked-reason dictionary.
 
 ## Worker Registry
 
@@ -44,7 +44,6 @@ is the durable source of the gate names dispatched for the current attempt.
     "branch": "<branch>",
     "stage": "mono-deliver",
     "attempt": "<positive integer>",
-    "confirmationTimeoutSec": 6300,
     "product_name": "<product-language name for owner-facing statuses, or omitted>",
     "gates": ["<dispatched gate name>"],
     "packVersion": "<installed plugin packVersion>",
@@ -153,4 +152,4 @@ Path: `~/.mono-agent-workflow/orchestrator/<product>/ledger.md`
 
 Only the orchestrator writes the ledger. Routine polling is never recorded.
 
-Delivery entries keep stage=mono-deliver across phases. Startup gates are removed only after durable handshake consumption. Phase reports bind attempt, sequence, head and at most one collection request; its confirmation binds the report digest. Use scripts/orchestrator tools from the installed runtime. attempts.json retains per-Issue counts after active entries retire; never reset it to bypass a configured cap. halt refuses both spawn and resume without touching an existing process.
+Delivery entries keep stage=mono-deliver across phases. Startup gates are removed only after durable handshake consumption. Phase reports bind attempt, sequence and head; a review round is a round request whose collector result binds that request. Use scripts/orchestrator tools from the installed runtime. attempts.json retains per-Issue counts after active entries retire; never reset it to bypass a configured cap. halt refuses both spawn and resume without touching an existing process.

@@ -90,7 +90,7 @@ test('stop-after-start-refusal publishes blocked or integrity stop before captur
       assert.match(implementationComment(out).payload.body, /Проверка старта отказала/);
       assert.match(implementationComment(out).payload.body, /# Критерии приемки/);
       assert.doesNotMatch(implementationComment(out).payload.body, /Недостающие метки/);
-      assert.throws(() => publishPhase({ ...r, kind: 'confirmation-request' }, path.join(root, 'reports/bad.json')), /implementation report/);
+      assert.throws(() => publishPhase({ ...r, kind: 'confirmation-request' }, path.join(root, 'reports/bad.json')), /invalid phase identity/);
       assert.throws(() => publishPhase({ ...r, pre_capture_stop: { ...r.pre_capture_stop, exit: 0, verdict: 'pass' } }, path.join(root, 'bad.json')), /implementation report/);
       const incomplete = { ...r, pre_capture_stop: { ...r.pre_capture_stop } }; delete incomplete.pre_capture_stop.verdict;
       assert.throws(() => publishPhase(incomplete, path.join(root, 'bad.json')), /implementation report/);
@@ -106,7 +106,7 @@ test('work-without-capture still refuses completed and ordinary stopped reports'
     const r = report(root);
     fs.unlinkSync(path.join(root, 'reports/MONO-993-criteria-a1.json'));
     for (const phase_result of ['implemented-needs-preflight', 'blocked', 'needs-human', 'scope-drift-needs-handoff'])
-      for (const kind of ['phase', 'confirmation-request'])
+      for (const kind of ['phase'])
         assert.throws(() => publishPhase({ ...r, kind, phase_result }, path.join(root, 'out.json')), /missing immutable/);
     const stop = preCaptureReport(root, { kind: 'capture-refused', issue_file: approvedIssue,
       command: 'capture-criteria', exit: 1, reason: 'Pretend refusal of valid input' });

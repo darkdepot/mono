@@ -1,24 +1,28 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, isMain, withLock, reclaimLock, lockTreeDead, processStart, resolvedLocation, validateEvidenceGrants, packLayout, deliveryConfig, REVIEW_PRODUCER } from "../runtime.mjs";
-import { confirmQueue, confirmationPath, validateConfirmation, classifyQueue } from "../delivery-state.mjs";
-import { commandFlags, allowedFlags, registryEntry, correlatedPhase, validateReportBarriers, admitCollection, CollectionAdmissionRefusal, effectivePins, sha256File, attemptDirectory } from "./command-state.mjs";
+import { commandFlags, allowedFlags, registryEntry, admitCollection, CollectionAdmissionRefusal } from "./command-state.mjs";
+import { readLedger, inFlight, admissionFor, recordResult, roundRequestName, collectorLock, requestDigest } from "../review-rounds.mjs";
 
-const lockPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.lock`);
+const lockPath = ({ root, issue, attempt }) => collectorLock(root, issue, attempt);
 const logPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.log`);
-const attentionPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collect-attention-a${attempt}.json`);
+const noted = new Map();
 function log(options, text) { fs.appendFileSync(logPath(options), `${new Date().toISOString()} ${text}\n`); }
+// Repeated attention for the same subject is logged once per collector process.
+function attention(options, subject, text) {
+  if (noted.get(subject) === text) return;
+  noted.set(subject, text); log(options, `attention: ${text}`);
+}
+// The receipt is trusted because evidenceRoot is outside every worker grant (launch and gate check it);
+// it is a regular file named by its runId in history and bound to the admitted request.
 function verifyReceipt(file, request) {
   const envelope = readJson(file), receipt = envelope.receipt;
-  const key = fs.readFileSync(path.join(request.evidenceRoot, "receipt.key"));
-  const signature = crypto.createHmac("sha256", key).update(canonical(receipt)).digest("hex");
-  if (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink() || key.length !== 32 || envelope.signature !== signature ||
+  if (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink() ||
       receipt?.producer !== REVIEW_PRODUCER || !/^[a-f0-9-]{36}$/.test(receipt.runId ?? "") ||
-      fs.realpathSync(file) !== path.join(fs.realpathSync(request.evidenceRoot), "history", `${receipt.runId}.json`)) throw new Error("invalid signed history receipt");
+      fs.realpathSync(file) !== path.join(fs.realpathSync(request.evidenceRoot), "history", `${receipt.runId}.json`)) throw new Error("invalid history receipt");
   const expected = { ...(request.packRoot ? { packRoot: request.packRoot } : {}), collectionId: request.collectionId, head: request.head, product: request.product, skillsRoot: request.skillsRoot,
     ...(request.pins ? { pins: request.pins } : {}),
     root: fs.realpathSync(request.root), worktree: fs.realpathSync(request.worktree), evidenceRoot: fs.realpathSync(request.evidenceRoot),
@@ -35,31 +39,11 @@ function historyReceipt(request) {
   if (matches.length > 1) throw new Error("multiple history receipts for collectionId");
   return matches.length ? { file: matches[0], envelope: verifyReceipt(matches[0], request) } : null;
 }
-// Deadlines are wall-clock instants; one-shot timers count only awake time on Darwin.
-const DEADLINE_POLL_MS = 250;
-class CollectionTimeout extends Error {}
-export function collectionBudget(entry, report) {
-  const defaults = deliveryConfig();
-  const deadline = Date.parse(report.publishedAt) + (entry.confirmationTimeoutSec ?? defaults.confirmationTimeoutSec) * 1000;
-  const timeoutMs = (entry.collectionTimeoutSec ?? defaults.collectionTimeoutSec) * 1000;
-  const retries = entry.collectionRetries ?? defaults.collectionRetries;
-  const remaining = () => deadline - Date.now();
-  const beforeLaunch = (collect = true) => {
-    if (!Number.isFinite(deadline) || remaining() < (collect ? timeoutMs + 30_000 : 30_000))
-      throw new CollectionTimeout('timed-out: insufficient collection budget for launch, teardown, reconciliation and confirmation');
-  };
-  const beforeConfirm = () => {
-    if (remaining() < 5000) throw new CollectionTimeout('timed-out: insufficient collection budget for confirmation');
-  };
-  return { deadline, timeoutMs, retries, beforeLaunch, beforeConfirm, runLimit: collect => collect ? timeoutMs : Math.min(timeoutMs, remaining() - 10_000) };
-}
-// Explicit orchestrator recovery after the publication deadline: it only reconciles
-// an existing signed receipt for the admitted request, never launches a review.
-function lateBudget(entry) {
-  const timeoutMs = (entry.collectionTimeoutSec ?? deliveryConfig().collectionTimeoutSec) * 1000;
-  return { deadline: Infinity, timeoutMs, retries: 0, runLimit: () => timeoutMs, beforeConfirm: () => {},
-    beforeLaunch: collect => { if (collect) throw new CollectionTimeout('timed-out: late reconciliation never launches a review'); } };
-}
+// A live or unverified gate keeps its round in flight: it may still write a receipt.
+class GateAlive extends Error {}
+// Not a collection window: a safety ceiling for a gate stuck outside the reviewer time limits
+// (for example a blocking Git read). Past it the gate group is stopped and the round fails.
+export const GATE_STUCK_MS = 2 * 60 * 60 * 1000;
 async function stopGate(gate) {
   const signal = name => {
     try { process.kill(-gate.processGroup, name); }
@@ -75,31 +59,24 @@ async function stopGate(gate) {
       await new Promise(resolve => setTimeout(resolve, 50));
     } while (Date.now() < until);
   }
-  throw new CollectionTimeout('timed-out: gate descendants live/unverified; retry refused');
+  throw new GateAlive('gate descendants live/unverified; retry refused');
 }
-async function runGate(options, request, budget, heldLock = null, startedFile = null) {
-  budget.beforeLaunch(request.collect);
-  const runDeadline = Date.now() + budget.runLimit(request.collect);
+async function runGate(options, request, heldLock = null, startedFile = null) {
   const file = path.join(options.root, "reports", `${options.issue}-collector-a${options.attempt}-request.json`);
   atomicJson(file, request);
   const script = packLayout(request.packRoot ?? request.skillsRoot).script("gate.mjs");
   // Release the isolated gate only after its incarnation is durably registered.
   // Parent death before release closes stdin, so no unregistered gate can run.
+  // Each reviewer role has its own time limit, so a hung CLI ends the gate. The gate also
+  // holds the safety ceiling itself, on wall-clock time (sleep pauses timers), so it ends
+  // even when its collector died.
+  const ceilingAt = Date.now() + (options.gateStuckMs ?? GATE_STUCK_MS);
   const runner = `let token=""; for await (const chunk of process.stdin) token += chunk;
 if (token !== "go\\n") process.exit(1);
-const killGroup = () => { try { process.kill(-process.pid, 'SIGKILL'); } catch { process.exit(1); } };
-const watchdogDeadline = ${Math.min(runDeadline + 2000, budget.deadline - 5000)};
-const watchdog = setInterval(() => { if (Date.now() >= watchdogDeadline) killGroup(); }, ${DEADLINE_POLL_MS});
-process.on('SIGTERM', () => {}); // Survive TERM grace until descendants exit or the watchdog kills the group.
+setInterval(() => { if (Date.now() >= ${ceilingAt}) { try { process.kill(-process.pid, 'SIGKILL'); } catch { process.exit(1); } } }, 1000).unref();
 process.argv = ${JSON.stringify([process.execPath, script, "preflight", "--request", file])};
 try { await import(${JSON.stringify(pathToFileURL(script).href)}); }
-catch (error) { console.error(error); process.exitCode = 1; }
-finally {
-  try {
-    const {processTable} = await import(${JSON.stringify(new URL('../runtime.mjs', import.meta.url).href)});
-    if (!processTable().some(row => row.group === process.pid && row.pid !== process.pid && !row.state.startsWith('Z'))) clearInterval(watchdog);
-  } catch {} // Retain the watchdog when descendant telemetry is unavailable.
-}`;
+catch (error) { console.error(error); process.exitCode = 1; }`;
   const child = spawn(process.execPath, ["--input-type=module", "-e", runner], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
   const locks = [lockPath(options), heldLock].filter(Boolean);
   child.stdin.on("error", () => {}); // Child exit may close the release pipe.
@@ -118,135 +95,124 @@ finally {
     child.stdin.end("go\n");
   } catch (error) {
     child.stdin.destroy(); child.kill();
-    throw new CollectionTimeout(`timed-out: gate registration unverified; retry refused: ${error.message}`);
+    throw new GateAlive(`gate registration unverified; retry refused: ${error.message}`);
   }
   let output = "";
   for (const stream of [child.stdout, child.stderr]) stream.on("data", data => { output = (output + data).slice(-64 * 1024); fs.appendFileSync(logPath(options), data); });
-  let timer;
+  // Wait for the leader to exit, not for its pipes to close: a descendant may hold them open.
   const closed = new Promise((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
-  let timedOut, poll;
-  try {
-    timedOut = await Promise.race([closed.then(() => false), new Promise(resolve => {
-      poll = setInterval(() => { if (Date.now() >= runDeadline) resolve(true); }, DEADLINE_POLL_MS);
-    })]);
-  } finally { clearInterval(poll); }
-  // A closed leader can leave children holding pipes or surviving independently.
+  let stuck = false, ceiling;
+  await new Promise((resolve, reject) => {
+    child.once("error", reject); child.once("exit", resolve);
+    ceiling = setInterval(() => { if (Date.now() >= ceilingAt) { stuck = true; resolve(); } }, 250);
+  });
+  clearInterval(ceiling);
+  if (stuck) await stopGate(gate);
+  const settle = ms => Promise.race([closed.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), ms))]);
+  const drained = await settle(2000);
+  // A finished leader can leave children surviving independently.
   // Keep the group recorded until telemetry proves the whole group dead.
-  try {
-    let dead = false;
-    try { dead = lockTreeDead(gate); } catch {} // Force teardown if telemetry is unavailable.
-    if (timedOut || !dead) await stopGate(gate);
-  }
-  catch (error) { throw new CollectionTimeout(`timed-out: gate descendants live/unverified; retry refused: ${error.message}`); }
-  // Group death is the proof; inherited pipes must not extend the run deadline.
+  let dead = false;
+  try { dead = lockTreeDead(gate); } catch {} // Force teardown if telemetry is unavailable.
+  if (!dead) await stopGate(gate);
+  if (!drained) await settle(2000);
   child.stdout.destroy(); child.stderr.destroy();
-  try {
-    await Promise.race([closed, new Promise((_, reject) => { timer = setTimeout(() => reject(new CollectionTimeout('timed-out: gate close unverified; retry refused')), 1000); })]);
-  } finally { clearTimeout(timer); }
   for (const lock of locks) if (fs.existsSync(lock)) {
     const holder = readJson(lock);
     if (holder.pid === process.pid && holder.gate?.pid === child.pid) { delete holder.gate; atomicJson(lock, holder); }
   }
-  if (timedOut) throw new Error("gate run timed out without completion");
+  if (stuck) throw new Error("gate stuck past the safety ceiling; its process group was stopped");
   const answer = output.split("\n").reverse().find(line => /^gate preflight: (pass|fail): .+/.test(line));
   if (!answer) throw new Error("gate terminated without an answer; retain history for reconciliation");
   return answer;
 }
-async function collection(options, report, write, entry, admission) {
-  const pins = effectivePins({ ...entry, pinsVersion: admission.pinsVersion });
-  if (digest(pins) !== admission.manifestDigest || digest(report) !== admission.reportDigest) throw new Error("collection admission manifest mismatch");
-  const request = write.payload.request;
-  const evidenceRoot = validateEvidenceGrants(request.evidenceRoot, [request.root, request.worktree, ...request.workerWritableRoots, ...report.capsule.writable_roots]);
-  const headLock = path.join(evidenceRoot, `${write.target}.collect.lock`);
-  const budget = options.late ? lateBudget(entry) : collectionBudget(entry, report);
-  const started = path.join(attemptDirectory(options.root, report), "collections", `${write.id}.json`);
+async function collection(options, entry, admission) {
+  const request = admission.request;
+  const evidenceRoot = validateEvidenceGrants(request.evidenceRoot, [request.root, request.worktree, ...request.workerWritableRoots, ...entry.workerWritableRoots]);
+  const headLock = path.join(evidenceRoot, `${request.head}.collect.lock`);
+  const retries = entry.collectionRetries ?? deliveryConfig().collectionRetries;
+  const started = path.join(options.root, "consumed", `${options.issue}-a${options.attempt}`, "collections", `${admission.collectionId}.json`);
   let found = historyReceipt(request);
   while (!found) {
-    found = historyReceipt(request);
-    if (found) break;
     const prior = fs.existsSync(started) ? readJson(started) : null;
-    if (prior && (prior.reportDigest !== admission.reportDigest || prior.manifestDigest !== admission.manifestDigest))
-      throw new Error("collection retry admission mismatch");
-    if (prior?.gate && !lockTreeDead(prior.gate))
-      throw new CollectionTimeout('timed-out: previous gate descendants live/unverified; retry refused');
-    // Legacy starts already consumed one launch. Count before release so a
-    // collector crash cannot refill retries, even before gate registration.
+    if (prior && prior.requestDigest !== admission.requestDigest) throw new Error("collection retry admission mismatch");
+    if (prior?.gate) {
+      let dead;
+      try { dead = lockTreeDead(prior.gate); } catch (error) { throw new GateAlive(`previous gate telemetry unavailable; retry refused: ${error.message}`); }
+      // A gate left by a dead collector is stopped once it passes the same safety ceiling.
+      if (!dead && Date.now() - Date.parse(prior.startedAt) > (options.gateStuckMs ?? GATE_STUCK_MS)) { await stopGate(prior.gate); dead = true; }
+      if (!dead) throw new GateAlive('previous gate descendants live/unverified; retry refused');
+    }
+    // Count before release so a collector crash cannot refill retries, even before gate registration.
     const launches = prior?.launches ?? (prior ? 1 : 0);
-    if (launches >= budget.retries + 1) throw new CollectionTimeout('timed-out: collection retries exhausted without signed receipt');
-    budget.beforeLaunch();
+    if (launches >= retries + 1) throw new Error('collection retries exhausted without a receipt');
     if (fs.existsSync(headLock)) reclaimLock(headLock);
-    atomicJson(started, { ...admission, launches: launches + 1, startedAt: new Date().toISOString() });
-    log(options, `collection ${write.id} launch ${launches + 1}; deadline ${new Date(budget.deadline).toISOString()}`);
-    try { await runGate(options, { ...request, collect: true }, budget, null, started); }
+    atomicJson(started, { collectionId: admission.collectionId, requestDigest: admission.requestDigest, launches: launches + 1, startedAt: new Date().toISOString() });
+    log(options, `collection ${admission.collectionId} launch ${launches + 1}`);
+    try { await runGate(options, { ...request, collect: true }, null, started); }
     catch (error) {
-      log(options, `collection ${write.id} launch ${launches + 1}: ${error.message}`);
-      if (error instanceof CollectionTimeout) throw error;
+      log(options, `collection ${admission.collectionId} launch ${launches + 1}: ${error.message}`);
+      if (error instanceof GateAlive) throw error;
       const active = readJson(started).gate;
-      if (active && !lockTreeDead(active)) throw new CollectionTimeout('timed-out: gate descendants live/unverified; retry refused');
+      let dead = true;
+      try { dead = !active || lockTreeDead(active); } catch { dead = false; }
+      if (!dead) throw new GateAlive('gate descendants live/unverified; retry refused');
     }
     found = historyReceipt(request);
   }
   const gate = await withLock(headLock, async () => {
-    budget.beforeLaunch(false);
     // History wins, even if another run replaced the mutable head receipt.
-    atomicJson(path.join(evidenceRoot, `${write.target}.json`), found.envelope);
-    try { return await runGate(options, { ...request, collect: false }, budget, headLock); }
-    catch (error) { throw new CollectionTimeout(`timed-out: receipt reconciliation failed: ${error.message}`); }
+    atomicJson(path.join(evidenceRoot, `${request.head}.json`), found.envelope);
+    try { return await runGate(options, { ...request, collect: false }, headLock); }
+    catch (error) { if (error instanceof GateAlive) throw error; throw new Error(`receipt reconciliation failed: ${error.message}`); }
   }, { reclaim: true });
-  budget.beforeConfirm();
-  log(options, `reconciled ${write.id} from ${found.file}`);
+  log(options, `reconciled ${admission.collectionId} from ${found.file}`);
   return { receipt: found.file, receiptDigest: digest(found.envelope), gate };
 }
+async function runRound(options, entry, admission) {
+  if (admission.refusal !== null && admission.refusal !== undefined) {
+    recordResult(options.root, options.issue, options.attempt, admission, { status: "refused", reason: admission.refusal });
+    log(options, `round ${admission.ordinal} ${admission.collectionId}: refused: ${admission.refusal}`);
+    return;
+  }
+  try {
+    const evidence = await collection(options, entry, admission);
+    recordResult(options.root, options.issue, options.attempt, admission, { status: "done", ...evidence });
+    log(options, `round ${admission.ordinal} ${admission.collectionId}: done`);
+  } catch (error) {
+    if (error instanceof GateAlive) { attention(options, admission.collectionId, error.message); return; }
+    recordResult(options.root, options.issue, options.attempt, admission, { status: "failed", reason: error.message });
+    log(options, `round ${admission.ordinal} ${admission.collectionId}: failed: ${error.message}`);
+  }
+}
+// One pass: finish an admitted round first, then admit the worker's current round request.
 export async function collectOnce(options) {
   const entry = registryEntry(options.root, options.issue, options.attempt);
-  for (const phase of ["code", "preflight", "ship"]) {
-    const name = `${options.issue}-phase-${phase}.json`;
-    const files = [path.join(options.root, "reports", name), path.join(entry.worktree, ".orchestrator", name)].filter(file => fs.existsSync(file));
-    if (!files.length) continue;
-    const { report } = correlatedPhase(options.root, files[0]);
-    // Only a collection request waits; the worker writes and reads back Linear itself.
-    const collectWrite = classifyQueue(report, options.root).collection;
-    if (!collectWrite) continue;
-    const confirmation = confirmationPath(report, options.root);
-    if (fs.existsSync(confirmation)) { validateConfirmation(report, readJson(confirmation)); continue; }
-    const attentionFile = attentionPath(options);
-    const attention = fs.existsSync(attentionFile) ? readJson(attentionFile) : null;
-    const reportDigest = digest(report), pinsVersion = entry.pinsVersion ?? 0;
-    if (options.late && !historyReceipt(collectWrite.payload.request)) continue;
-    if (!options.late && attention?.reportDigest === reportDigest && attention.pinsVersion === pinsVersion) {
-      const lateReceipt = attention.reason.startsWith('timed-out:') && collectionBudget(entry, report).deadline - Date.now() >= 30_000 &&
-        historyReceipt(collectWrite.payload.request);
-      if (!lateReceipt) continue;
-    }
-    await validateReportBarriers(options.root, report, path.dirname(files[0]));
-    let admissions;
-    try { admissions = await admitCollection(options.root, report); }
-    catch (error) {
-      if (!(error instanceof CollectionAdmissionRefusal)) throw error;
-      atomicJson(attentionFile, { reportDigest, collectionId: collectWrite.id, reason: error.message, pinsVersion, at: new Date().toISOString() });
-      log(options, `attention: ${error.message}`);
-      continue;
-    }
-    // A current preflight admission also replaces attention for an older report.
-    if (attention && fs.existsSync(attentionFile) && digest(readJson(attentionFile)) === digest(attention)) fs.unlinkSync(attentionFile);
-    try {
-      const evidence = await collection(options, report, collectWrite, entry,
-        admissions.find(item => item.collectionId === collectWrite.id));
-      const budget = options.late ? lateBudget(entry) : collectionBudget(entry, report);
-      budget.beforeConfirm();
-      await confirmQueue(report, options.root, (action, write) => {
-        if (action !== 'reconcile' || write.id !== collectWrite.id) throw new Error('collector confirms only its collection request');
-        budget.beforeConfirm();
-        return { state: 'present', evidence };
-      }, path.dirname(files[0]), budget.deadline);
-    } catch (error) {
-      if (!(error instanceof CollectionTimeout) && !(error instanceof CollectionAdmissionRefusal) && !error.message.startsWith('timed-out:')) throw error;
-      atomicJson(attentionFile, { reportDigest, collectionId: collectWrite.id, reason: error.message, pinsVersion, at: new Date().toISOString() });
-      log(options, `attention: ${error.message}`);
-      continue;
-    }
-    log(options, `confirmed ${phase} sequence ${report.sequence}: ${report.capsule.open_queue.length} writes`);
+  const open = inFlight(readLedger(options.root, options.issue, options.attempt));
+  if (open.length) return runRound(options, entry, open[0].admission);
+  const name = roundRequestName(options.issue, options.attempt);
+  const files = [path.join(options.root, "reports", name), path.join(entry.worktree, ".orchestrator", name)].filter(file => fs.existsSync(file));
+  if (!files.length) return;
+  let round;
+  try {
+    const rounds = files.map(file => readJson(file));
+    if (rounds.some(other => canonical(other) !== canonical(rounds[0]))) throw new Error("round request differs between mailboxes; keep one");
+    round = rounds[0];
+    if (round?.issue !== options.issue || round.attempt !== options.attempt) throw new Error("round request names another issue or attempt");
+  } catch (error) { attention(options, "request", error.message); return; }
+  const known = admissionFor(readLedger(options.root, options.issue, options.attempt), round.request?.collectionId);
+  if (known) {
+    if (known.admission.requestDigest !== requestDigest(round.request)) attention(options, "request", `collectionId ${round.request.collectionId} already admitted for another request`);
+    return;
   }
+  let admitted;
+  try { admitted = await admitCollection(options.root, round, path.dirname(files[0])); }
+  catch (error) {
+    if (!(error instanceof CollectionAdmissionRefusal) && !/invalid round request/.test(error.message)) throw error;
+    attention(options, "request", error.message); return;
+  }
+  log(options, `admitted round ${admitted.admission.ordinal} ${admitted.admission.collectionId}`);
+  return runRound(options, entry, admitted.admission);
 }
 export async function collectorStart(options) {
   registryEntry(options.root, options.issue, options.attempt);
@@ -261,6 +227,11 @@ export async function collectorStart(options) {
   const holder = await awaitCollectorReady(child, lock);
   child.unref();
   return holder;
+}
+// Attempt launch and resume: a running collector stays, a stopped or stale one starts.
+export async function ensureCollector(options) {
+  const status = collectorStatus(options);
+  return status.status === "running-or-unverified" ? status : collectorStart(options);
 }
 export async function awaitCollectorReady(child, lock, timeoutMs = 5000) {
   let exited = false, failure;
@@ -303,7 +274,7 @@ if (isMain(import.meta.url)) {
   try {
     const [command, ...rest] = process.argv.slice(2), args = commandFlags(rest, ["foreground"]);
     allowedFlags(args, ["root", "issue", "attempt", "foreground"]);
-    if (command === "--help" || args.help) console.log("Usage: collector.mjs start|stop|status|reconcile --root DIR --issue KEY --attempt N\nOrchestrator only, outside worker sandboxes. Confirms collection requests; other reports need no confirmation because the worker reads its own Linear writes back. Recovery uses signed history and dead isolated process trees; unknown/live locks refuse. reconcile (collector stopped) confirms an admitted request from its existing signed receipt after the publication deadline, without a new review.");
+    if (command === "--help" || args.help) console.log("Usage: collector.mjs start|stop|status --root DIR --issue KEY --attempt N\nOrchestrator side, outside worker sandboxes. Attempt launch and resume start it; start here only restarts a stopped collector. It waits for the worker's round request reports/KEY-round-aN.json, admits it into consumed/KEY-aN/rounds/ (a new collectionId only after every earlier round has a result; the same collectionId never with another request) and records one result per round: done, refused or failed. Recovery uses receipt history and dead isolated process trees; unknown/live locks refuse. It exits when the attempt leaves the registry.");
     else {
       const options = { root: args.root, issue: args.issue, attempt: Number(args.attempt) };
       if (command === "start" && args.foreground) {
@@ -316,7 +287,12 @@ if (isMain(import.meta.url)) {
           atomicJson(lockPath(options), { ...holder, ready: true });
           log(options, "started");
           while (!stopping) {
-            try { await collectOnce(options); } catch (error) { log(options, `attention: ${error.message}`); }
+            try { await collectOnce(options); }
+            catch (error) {
+              // A retired or replaced attempt ends this collector.
+              if (/request not registry-correlated|no such file.*workers\.json/.test(error.message)) break;
+              attention(options, "loop", error.message);
+            }
             if (!stopping) await new Promise(resolve => setTimeout(resolve, 1000));
           }
           log(options, "stopped");
@@ -324,11 +300,6 @@ if (isMain(import.meta.url)) {
       } else if (command === "start") console.log(JSON.stringify(await collectorStart(options)));
       else if (command === "stop") console.log(JSON.stringify(collectorStop(options)));
       else if (command === "status") console.log(JSON.stringify(collectorStatus(options)));
-      else if (command === "reconcile") {
-        if (collectorStatus(options).status === "running-or-unverified") throw new Error("stop the collector before late reconciliation");
-        await collectOnce({ ...options, late: true });
-        console.log(JSON.stringify({ status: "reconciled" }));
-      }
       else throw new Error(`unknown command ${command}`);
     }
   } catch (error) { console.error(`collector: ${error.message}`); process.exitCode = 1; }
