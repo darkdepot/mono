@@ -59,6 +59,8 @@ label. Intake never activates delivery; mono:implement owns its check and move.
 This repository opted in for its own one-PR work with its owner principal;
 consumers remain disabled until explicit repository opt-in.
 
+Before showing the Issue to the owner, validate the reread live body with a draft five-field marker through the existing resolver; its review-gate section names exactly one class.
+
 Resolver is pure: structure, freshness, eligibility and provenance-agreement,
 not identity authentication. The caller supplies trusted --label issue-only and
 --approval-verified <fingerprint> after reading Linear. Marker approval, live
