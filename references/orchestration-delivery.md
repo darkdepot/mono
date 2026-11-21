@@ -241,7 +241,9 @@ every `must-file` entry of the receipt's `review.successors` list (an older dang
 only for data, security or gate bypass) and decide
 which of the rest become Issues; the gate line and ready certificate repeat the
 list. A round takes up to 25 minutes on a large risky change; every reviewer role
-has its own time limit, so a hung CLI ends the round instead of a window.
+has its own time limit, so a hung CLI ends the round instead of a window; a gate
+stuck outside them (a blocking Git read) is stopped after a fixed two-hour safety
+ceiling, also when its collector died, and the round fails.
 
 ## Delivery Write Barriers
 

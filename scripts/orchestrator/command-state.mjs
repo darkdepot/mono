@@ -331,6 +331,11 @@ export function taskChanges(pinsDirectory) {
     throw new Error("invalid task-changes.json");
   return changes;
 }
+// A proven refused spawn delivered nothing: drop exactly the change it recorded.
+export function dropTaskChange(pinsDirectory, change) {
+  const changes = taskChanges(pinsDirectory);
+  if (canonical(changes.at(-1) ?? null) === canonical(change)) atomicJson(taskChangesFile(pinsDirectory), changes.slice(0, -1));
+}
 export function recordTaskChange(pinsDirectory, url, text) {
   if (!LINEAR_URL.test(url ?? "") || !text.includes(url))
     throw new Error("taskChange must be the Linear URL of the «Изменение задачи» comment, quoted in the resume file");

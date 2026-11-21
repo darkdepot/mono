@@ -233,7 +233,7 @@ test("review rounds are counted per task attempt from receipt history", () => {
 test('shared review context refreshes the remote base, uses HEAD while dirty, and reads this attempt\'s current-contract rounds with delivered task changes', async () => {
   const { execFileSync } = await import('node:child_process');
   const { atomicJson } = await import('./runtime.mjs');
-  const { recordTaskChange } = await import('./orchestrator/command-state.mjs');
+  const { recordTaskChange, dropTaskChange, taskChanges } = await import('./orchestrator/command-state.mjs');
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-context-'));
   try {
     const repo = path.join(scratch, 'repo'), origin = path.join(scratch, 'origin.git');
@@ -253,6 +253,9 @@ test('shared review context refreshes the remote base, uses HEAD while dirty, an
     const url = 'https://linear.app/darkdepot/issue/MONO-999/x#comment-1';
     recordTaskChange(attempt, url, `Изменение задачи: ${url}\nNarrow to input.mjs.`);
     assert.throws(() => recordTaskChange(attempt, url, 'no link in the text'), /quoted in the resume file/);
+    const undelivered = recordTaskChange(attempt, url + '0', `Undelivered: ${url}0`);
+    dropTaskChange(attempt, { ...undelivered, number: 9 }); assert.equal(taskChanges(attempt).length, 2, 'only the exact recorded change is dropped');
+    dropTaskChange(attempt, undelivered); assert.equal(taskChanges(attempt).length, 1, 'a refused spawn drops its undelivered change');
     const evidenceRoot = path.join(scratch, 'evidence'); fs.mkdirSync(path.join(evidenceRoot, 'history'), { recursive: true });
     const expected = `Approved task.\n\n## Изменение задачи 1 (${url})\nИзменение задачи: ${url}\nNarrow to input.mjs.`;
     const receipt = { producer: REVIEW_PRODUCER, pins, head: tip, base: second, recordedAt: '2026-11-15T00:00:01Z',

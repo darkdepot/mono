@@ -41,6 +41,9 @@ function historyReceipt(request) {
 }
 // A live or unverified gate keeps its round in flight: it may still write a receipt.
 class GateAlive extends Error {}
+// Not a collection window: a safety ceiling for a gate stuck outside the reviewer time limits
+// (for example a blocking Git read). Past it the gate group is stopped and the round fails.
+export const GATE_STUCK_MS = 2 * 60 * 60 * 1000;
 async function stopGate(gate) {
   const signal = name => {
     try { process.kill(-gate.processGroup, name); }
@@ -94,7 +97,13 @@ catch (error) { console.error(error); process.exitCode = 1; }`;
   for (const stream of [child.stdout, child.stderr]) stream.on("data", data => { output = (output + data).slice(-64 * 1024); fs.appendFileSync(logPath(options), data); });
   // Wait for the leader to exit, not for its pipes to close: a descendant may hold them open.
   const closed = new Promise((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
-  await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", resolve); });
+  let stuck = false, ceiling;
+  await new Promise((resolve, reject) => {
+    child.once("error", reject); child.once("exit", resolve);
+    ceiling = setTimeout(() => { stuck = true; resolve(); }, options.gateStuckMs ?? GATE_STUCK_MS);
+  });
+  clearTimeout(ceiling);
+  if (stuck) await stopGate(gate);
   const settle = ms => Promise.race([closed.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), ms))]);
   const drained = await settle(2000);
   // A finished leader can leave children surviving independently.
@@ -108,6 +117,7 @@ catch (error) { console.error(error); process.exitCode = 1; }`;
     const holder = readJson(lock);
     if (holder.pid === process.pid && holder.gate?.pid === child.pid) { delete holder.gate; atomicJson(lock, holder); }
   }
+  if (stuck) throw new Error("gate stuck past the safety ceiling; its process group was stopped");
   const answer = output.split("\n").reverse().find(line => /^gate preflight: (pass|fail): .+/.test(line));
   if (!answer) throw new Error("gate terminated without an answer; retain history for reconciliation");
   return answer;
@@ -125,6 +135,8 @@ async function collection(options, entry, admission) {
     if (prior?.gate) {
       let dead;
       try { dead = lockTreeDead(prior.gate); } catch (error) { throw new GateAlive(`previous gate telemetry unavailable; retry refused: ${error.message}`); }
+      // A gate left by a dead collector is stopped once it passes the same safety ceiling.
+      if (!dead && Date.now() - Date.parse(prior.startedAt) > (options.gateStuckMs ?? GATE_STUCK_MS)) { await stopGate(prior.gate); dead = true; }
       if (!dead) throw new GateAlive('previous gate descendants live/unverified; retry refused');
     }
     // Count before release so a collector crash cannot refill retries, even before gate registration.

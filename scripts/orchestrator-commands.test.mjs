@@ -1419,6 +1419,7 @@ const state=readJson(stateFile);state[q.collect?'collections':'reconciles']++;at
 if(!q.collect)console.log('gate preflight: '+(mode==='signed-failure'?'fail: provider unavailable':'pass: reconciled'));
 else await withLock(path.join(q.evidenceRoot,q.head+'.collect.lock'),async()=>{
  if(mode==='crash-always'||(mode==='crash-once'&&state.collections===1))process.exit(78);
+ if(mode==='hang'){setInterval(()=>{},1000);await new Promise(()=>{});}
  if(mode==='orphan'||mode==='orphan-pipe'){
   const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:mode==='orphan-pipe'?['ignore','inherit','inherit']:'ignore'});
   child.unref();atomicJson(stateFile,{...state,descendant:child.pid,group:process.pid});
@@ -1521,6 +1522,16 @@ for (const probeError of ['EPERM', 'unavailable']) test(`retry-unverified-group:
       assert.equal(f.result(), null, 'unknown telemetry keeps the round in flight, never failed');
       assert.match(f.lines().at(-1), /previous gate telemetry unavailable; retry refused/);
     } finally { child.kill('SIGKILL'); await closed; }
+  });
+});
+test('retry-stuck-gate: a gate stuck past the safety ceiling is stopped and the round fails', async () => {
+  await collectionRetryFixture('hang', async f => {
+    f.entry.collectionRetries = 0; atomicJson(f.registry, { [f.options.issue]: f.entry });
+    const { collectOnce } = await import('./orchestrator/collector.mjs');
+    f.publish(); await collectOnce({ ...f.options, gateStuckMs: 800 });
+    assert.equal(f.result().status, 'failed'); assert.match(f.result().reason, /retries exhausted/);
+    assert.match(fs.readFileSync(path.join(f.options.root, 'reports/MONO-999-collector-a1.log'), 'utf8'), /gate stuck past the safety ceiling/);
+    const gate = readJson(f.startFile).gate; assert.throws(() => process.kill(-gate.processGroup, 0), { code: 'ESRCH' });
   });
 });
 for (const mode of ['orphan', 'orphan-pipe']) test(`retry-${mode}-group: a descendant left by a finished gate is stopped before reconciliation, even holding its pipes`, async () => {

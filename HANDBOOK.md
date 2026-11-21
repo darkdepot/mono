@@ -42,7 +42,8 @@ each round request the worker writes (`reports/KEY-round-aN.json`) into a
 host-owned ledger with one result per round (`done`, `refused`, `failed`) bound to
 that request; the worker waits with `delivery-state.mjs wait-round`. There are no
 collection or confirmation windows (`confirmationTimeoutSec`, `collectionTimeoutSec`
-are ignored): every reviewer role has its own time limit. A crash before a receipt
+are ignored): every reviewer role has its own time limit, and a gate stuck outside
+them is stopped after a fixed two-hour safety ceiling. A crash before a receipt
 may retry `collectionRetries` times (default 1) with the same admission; failure
 receipts reconcile without another review. Receipts are unsigned: `evidenceRoot`
 outside every worker grant is the trust anchor.

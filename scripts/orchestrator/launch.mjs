@@ -6,7 +6,7 @@ import { startGate } from "../gate.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
 import { workerTransport } from "../worker-transport.mjs";
-import { effectivePins, attemptState, recordTaskChange } from "./command-state.mjs";
+import { effectivePins, attemptState, recordTaskChange, dropTaskChange } from "./command-state.mjs";
 import { ensureCollector } from "./collector.mjs";
 
 function releasePin(request) {
@@ -390,9 +390,12 @@ export async function resumeWorker(request) {
     if (prepared?.credentialPaths) updated.githubCredentialPaths = [...new Set([...(entry.githubCredentialPaths ?? []), ...prepared.credentialPaths])];
     const registry = readJson(path.join(request.root, "workers.json")); registry[request.issue] = updated;
     atomicJson(path.join(request.root, "workers.json"), registry);
+    let change = null;
     return { entry: updated, ...await launchTransport(request.root, updated, prompt, true, prepared, { beforeSpawn() {
       // Recorded at delivery: the review round reads every delivered task change with the Issue.
-      if (request.taskChange !== undefined) recordTaskChange(path.dirname(entry.pins.file), request.taskChange, prompt);
+      if (request.taskChange !== undefined) change = recordTaskChange(path.dirname(entry.pins.file), request.taskChange, prompt);
+    }, onRefusal() {
+      if (change) dropTaskChange(path.dirname(entry.pins.file), change);
     } }) };
   });
   const collector = await startCollector(request.root, launched.entry);
