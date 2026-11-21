@@ -431,7 +431,8 @@ terminal parked archives a reconciled capsule only after the new attempt has rea
 the Issue's Linear state back; never erase old receipts.
 
 Consume final green only after current preflight/ship gates; landing still
-requires the code and preflight reports and any collection confirmation. For parked, read
+requires the code and preflight reports and a confirmation for every admitted
+collection of the attempt. For parked, read
 the worker's park comment back; if the worker died without one, write the
 reason/text and next action to Linear in this SAME turn, read it back,
 and then decide/escalate; missing write access remains an explicit pending action,

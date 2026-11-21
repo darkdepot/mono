@@ -347,6 +347,11 @@ test('ship-green-certificate: publication and landing share issue/head/PR valida
     const code = fs.readFileSync(file('code')); fs.unlinkSync(file('code'));
     assert.throws(() => landedShip(root, entry), /phase code report is missing/, 'landing still requires the phase chain');
     fs.writeFileSync(file('code'), code);
+    const admission = path.join(root, 'consumed', `${issue}-a1`, 'admissions', `preflight-collect:${head}:1.json`);
+    fs.mkdirSync(path.dirname(admission), { recursive: true });
+    fs.writeFileSync(admission, JSON.stringify({ collectionId: `preflight-collect:${head}:1`, sequence: 1 }));
+    assert.throws(() => landedShip(root, entry), /collection preflight-collect:.*:1 is not confirmed; landing waits/, 'an overwritten admitted review round still blocks landing');
+    fs.unlinkSync(admission);
     assert.deepEqual(landedShip(root, entry), { repo: 'owner/repo', pr: 162, head, branch: 'main' });
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

@@ -145,6 +145,10 @@ export function confirmedShip(root, entry) {
   // The phase chain still holds: earlier reports exist and a collection request is confirmed.
   if (report.capsule.open_queue.length) throw new Error("ship report must not carry queued writes");
   requirePredecessors(report, root, path.dirname(files[0]), "landing");
+  // Host-owned admissions: no admitted review round may stay unconfirmed, even if
+  // the worker overwrote that preflight request with a later report.
+  const unconfirmed = admittedUnconfirmed(root, report, Infinity);
+  if (unconfirmed.length) throw new Error(`collection ${unconfirmed[0]} is not confirmed; landing waits for every admitted review round`);
   validateShipCertificate(report);
   return { report };
 }
@@ -345,11 +349,11 @@ export function admitUnderLock(root, report) {
 
 // As before T9, an earlier sequence of this phase is confirmed before a later one;
 // admissions are host-owned, so a worker cannot hide an unconfirmed request.
-function admittedUnconfirmed(root, report) {
+function admittedUnconfirmed(root, report, before = report.sequence) {
   const admissions = path.join(attemptDirectory(root, report), "admissions");
   return (fs.existsSync(admissions) ? fs.readdirSync(admissions).filter(name => name.endsWith(".json")) : [])
     .map(name => readJson(path.join(admissions, name)))
-    .filter(prior => Number.isInteger(prior.sequence) && prior.sequence < report.sequence &&
+    .filter(prior => Number.isInteger(prior.sequence) && prior.sequence < before &&
       !fs.existsSync(confirmationPath({ ...report, phase: "preflight", sequence: prior.sequence }, root)))
     .map(prior => prior.collectionId);
 }

@@ -27,7 +27,7 @@ left context after compaction is read again when its condition holds.
   workers, which write and read back their own Issue records. Stage agents write their own records.
 - Stage agent: one stage, its own dialogue and tools, confirmed record and selected
   transition returned to the orchestrator. Never starts the next stage or stage agents.
-- Worker: one Issue, `mono:deliver` phases under the AFK contract, no direct Linear writes.
+- Worker: one Issue, `mono:deliver` phases under the AFK contract; writes and reads back its own Issue reports, comments and statuses through Linear MCP, no other Linear writes.
 
 ## Stage Ownership
 
