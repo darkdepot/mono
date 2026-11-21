@@ -56,14 +56,17 @@ export function evidenceTouched(snapshot, evidenceRoot, pinsFile) {
   }
   return touched.length ? `evidence changed during host verification: ${touched.join(", ")}` : null;
 }
-// Kills the run's group until telemetry shows no live member; returns an error text otherwise.
-export async function stopHostGroup(group) {
+// Kills the run's group until telemetry shows no live member; returns an error text otherwise. A group id can
+// be reused only after the group is gone: a live leader with another start identity means ours already ended,
+// and members whose original leader exited still carry our id and are ours.
+export async function stopHostGroup(group, procStart = null) {
   for (let attempt = 0; attempt < 40; attempt++) {
-    try { process.kill(-group, "SIGKILL"); } catch (error) { if (!["ESRCH", "EPERM"].includes(error.code)) return `verification group not stopped: ${error.message}`; }
-    let live;
-    try { live = processTable().some(row => row.group === group && !row.state.startsWith("Z")); }
+    let members;
+    try { members = processTable().filter(row => row.group === group && !row.state.startsWith("Z")); }
     catch (error) { return `verification descendants unverified: ${error.message}`; }
-    if (!live) return null;
+    const leader = members.find(row => row.pid === group);
+    if (!members.length || (procStart && leader && leader.procStart !== procStart)) return null;
+    try { process.kill(-group, "SIGKILL"); } catch (error) { if (!["ESRCH", "EPERM"].includes(error.code)) return `verification group not stopped: ${error.message}`; }
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   return "verification descendants still live after SIGKILL";
@@ -76,7 +79,7 @@ export async function recoverHostRun(evidenceRoot, collectionId, pinsFile) {
   const state = readJson(marker);
   // A marker without a group was written before the run was released: nothing ran.
   if (state.group !== null) {
-    const failure = Number.isInteger(state.group) && state.group > 0 ? await stopHostGroup(state.group) : "invalid verification group";
+    const failure = Number.isInteger(state.group) && state.group > 0 ? await stopHostGroup(state.group, state.procStart ?? null) : "invalid verification group";
     if (failure) throw new Error(`host verification group of ${collectionId} not confirmed stopped: ${failure}`);
   }
   const touched = evidenceTouched(state.snapshot ?? [], evidenceRoot, pinsFile);

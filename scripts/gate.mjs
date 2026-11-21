@@ -209,13 +209,15 @@ export async function runHostVerification({ command, args }, repo, evidenceRoot,
   const startedAt = Date.now();
   // The wrapper leads the group and runs the command only after "go": the group is durable in the marker first,
   // and a gate that dies before that closes stdin, so nothing unregistered runs.
-  const wrapper = `let token="";for await(const chunk of process.stdin)token+=chunk;if(token!=="go\\n")process.exit(1);
-const r=require("node:child_process").spawnSync(${JSON.stringify(command)},${JSON.stringify(args)},{stdio:["ignore","inherit","inherit"]});
-if(r.error)console.error(r.error.message);process.exit(r.status??(r.signal?128:1));`;
+  // Fixed code: the command arrives as data in argv, never inside the code.
+  const wrapper = `(async()=>{let token="";for await(const chunk of process.stdin)token+=chunk;if(token!=="go\\n")process.exit(1);
+const [command,...args]=JSON.parse(process.argv[1]);
+const r=require("node:child_process").spawnSync(command,args,{stdio:["ignore","inherit","inherit"]});
+if(r.error)console.error(r.error.message);process.exit(r.status??(r.signal?128:1));})()`;
   try {
     let group = null, registered = null;
     const { exitCode, error } = await new Promise(resolve => {
-      const child = spawn(process.execPath, ["--input-type=commonjs", "-e", `(async()=>{${wrapper}})()`], { cwd: repo, detached: true, stdio: ["pipe", fd, fd],
+      const child = spawn(process.execPath, ["--input-type=commonjs", "-e", wrapper, JSON.stringify([command, ...args])], { cwd: repo, detached: true, stdio: ["pipe", fd, fd],
         env: { ...process.env, TMPDIR: tempRoot, TMP: tempRoot, TEMP: tempRoot } });
       child.stdin.on("error", () => {});
       child.once("error", cause => resolve({ exitCode: null, error: cause.message }));

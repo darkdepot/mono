@@ -100,6 +100,14 @@ test("host run recovery: a gate that died mid-run leaves no planted or edited re
     assert.equal(fs.readdirSync(path.join(evidence, "quarantine")).length, 2);
     assert.equal(fs.existsSync(marker), false);
     assert.equal(await recoverHostRun(evidence, id, pinsFile), null, "nothing to settle without a marker");
+    // A reused group id (live leader with another start identity) is never signalled: ours already ended.
+    const stranger = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { detached: true, stdio: "ignore" });
+    try {
+      fs.writeFileSync(marker, JSON.stringify({ collectionId: id, group: stranger.pid, procStart: "Mon Jan  1 00:00:00 2001", snapshot: evidenceSnapshot(evidence, pinsFile) }));
+      assert.equal(await recoverHostRun(evidence, id, pinsFile), "host run interrupted");
+      assert.equal(stranger.exitCode === null && stranger.signalCode === null, true, "a foreign group survives");
+      assert.notEqual(processStart(stranger.pid), null);
+    } finally { try { process.kill(-stranger.pid, "SIGKILL"); } catch {} }
     // A marker written before the run was released names no group: nothing ran, nothing is signalled.
     fs.writeFileSync(marker, JSON.stringify({ collectionId: id, group: null, snapshot: evidenceSnapshot(evidence, pinsFile) }));
     assert.equal(await recoverHostRun(evidence, id, pinsFile), "host run interrupted");
