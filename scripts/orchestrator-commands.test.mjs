@@ -1409,8 +1409,8 @@ const state=readJson(stateFile);state[q.collect?'collections':'reconciles']++;at
 if(!q.collect)console.log('gate preflight: '+(mode==='signed-failure'?'fail: provider unavailable':'pass: reconciled'));
 else await withLock(path.join(q.evidenceRoot,q.head+'.collect.lock'),async()=>{
  if(mode==='crash-always'||(mode==='crash-once'&&state.collections===1))process.exit(78);
- if(mode==='orphan'){
-  const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
+ if(mode==='orphan'||mode==='orphan-pipe'){
+  const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:mode==='orphan-pipe'?['ignore','inherit','inherit']:'ignore'});
   child.unref();atomicJson(stateFile,{...state,descendant:child.pid,group:process.pid});
  }
  const envelope=${JSON.stringify(envelope)};
@@ -1513,8 +1513,8 @@ for (const probeError of ['EPERM', 'unavailable']) test(`retry-unverified-group:
     } finally { child.kill('SIGKILL'); await closed; }
   });
 });
-test('retry-orphan-group: a descendant left by a finished gate is stopped before reconciliation', async () => {
-  await collectionRetryFixture('orphan', async f => {
+for (const mode of ['orphan', 'orphan-pipe']) test(`retry-${mode}-group: a descendant left by a finished gate is stopped before reconciliation, even holding its pipes`, async () => {
+  await collectionRetryFixture(mode, async f => {
     f.publish(); await f.poll();
     const { descendant } = readJson(f.stateFile);
     assert.ok(descendant); assert.throws(() => process.kill(descendant, 0), { code: 'ESRCH' });

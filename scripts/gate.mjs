@@ -358,6 +358,9 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       requireThat(canonical(receipt[key]) === canonical(value), `receipt ${key} differs from dispatch request`);
     }
     requireThat(canonical({ command: receipt.verification?.command, args: receipt.verification?.args }) === canonical(request.verification), "receipt verification differs from dispatch request");
+    // A delivered task change («Изменение задачи») changes the reviewed contract: an earlier round no longer counts.
+    requireThat(!contractDigest || !receipt.review?.contractDigest || receipt.review.contractDigest === contractDigest,
+      "the task changed after this review round («Изменение задачи»); request a new round on this head");
   }
   verifyModelPins(request, base);
   validateEvidenceGrants(request.skillsRoot, [repo], "installed skillsRoot");

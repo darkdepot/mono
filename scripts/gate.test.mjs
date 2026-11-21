@@ -554,6 +554,9 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.equal(receipt.review.outcome, 'refused'); assert.equal(reviewCalls(bin).length, calls, 'a task change keeps the count: no fourth round');
         assert.notEqual(receipt.review.contractDigest, launchContract);
         assert.equal(receipt.review.contractDigest, digest(`# MONO-999\n\nFixture task contract.\n\n\n## Изменение задачи 1 (${url})\nИзменение задачи: ${url}\nNarrow: only input.mjs.`), 'the reviewer reads the task change with the Issue');
+        git('checkout', '-q', third);
+        const stale = call(at(third)); assert.equal(stale.status, 1, 'a clean round from before the task change no longer counts');
+        assert.match(stale.stdout, /the task changed after this review round/);
         return;
       }
       if (fixture.mode === 'review-fast') {

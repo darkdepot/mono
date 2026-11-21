@@ -92,12 +92,18 @@ catch (error) { console.error(error); process.exitCode = 1; }`;
   }
   let output = "";
   for (const stream of [child.stdout, child.stderr]) stream.on("data", data => { output = (output + data).slice(-64 * 1024); fs.appendFileSync(logPath(options), data); });
-  await new Promise((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
-  // A closed leader can leave children surviving independently.
+  // Wait for the leader to exit, not for its pipes to close: a descendant may hold them open.
+  const closed = new Promise((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
+  await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", resolve); });
+  const settle = ms => Promise.race([closed.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), ms))]);
+  const drained = await settle(2000);
+  // A finished leader can leave children surviving independently.
   // Keep the group recorded until telemetry proves the whole group dead.
   let dead = false;
   try { dead = lockTreeDead(gate); } catch {} // Force teardown if telemetry is unavailable.
   if (!dead) await stopGate(gate);
+  if (!drained) await settle(2000);
+  child.stdout.destroy(); child.stderr.destroy();
   for (const lock of locks) if (fs.existsSync(lock)) {
     const holder = readJson(lock);
     if (holder.pid === process.pid && holder.gate?.pid === child.pid) { delete holder.gate; atomicJson(lock, holder); }

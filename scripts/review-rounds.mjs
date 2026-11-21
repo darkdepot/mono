@@ -3,7 +3,7 @@
 // records one terminal result bound to that request (collectionId and digest).
 import fs from "node:fs";
 import path from "node:path";
-import { atomicJson, canonical, digest, readJson, lockTreeDead } from "./runtime.mjs";
+import { atomicJson, canonical, digest, readJson, lockTreeDead, syncDir } from "./runtime.mjs";
 
 export const TERMINAL = ["done", "refused", "failed"];
 export const roundRequestName = (issue, attempt) => `${issue}-round-a${attempt}.json`;
@@ -57,8 +57,11 @@ export function admitRound(root, issue, attempt, request, extra = {}) {
     request: { ...request, collect: false }, admittedAt: new Date().toISOString(), ...extra };
   const file = path.join(roundsDirectory(root, issue, attempt), `${admission.ordinal}.json`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const fd = fs.openSync(file, "wx", 0o600); fs.closeSync(fd);
-  atomicJson(file, admission);
+  // Publish the complete admission exclusively: a crash never leaves an empty ledger entry.
+  const temporary = `${file}.${process.pid}.tmp`, fd = fs.openSync(temporary, "w", 0o600);
+  try { fs.writeFileSync(fd, JSON.stringify(admission, null, 2) + "\n"); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  try { fs.linkSync(temporary, file); } finally { fs.unlinkSync(temporary); }
+  syncDir(path.dirname(file));
   return admission;
 }
 export function recordResult(root, issue, attempt, admission, outcome) {

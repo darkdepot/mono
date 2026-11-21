@@ -25,6 +25,7 @@ test("round-admission-monotonic: a new round waits for the previous result and a
       "a new collectionId is not admitted while the earlier round is in flight");
     assert.equal(inFlight(readLedger(root, "MONO-451", 1)).length, 1);
     recordResult(root, "MONO-451", 1, first, { status: "refused", reason: "fixture" });
+    fs.writeFileSync(path.join(root, "consumed", "MONO-451-a1", "rounds", "2.json.999.tmp"), "");
     const second = admitRound(root, "MONO-451", 1, request(root, 2));
     assert.equal(second.ordinal, 2, "ordinals are host-assigned and only grow");
     assert.equal(inFlight(readLedger(root, "MONO-451", 1)).length, 1);
