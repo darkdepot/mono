@@ -87,7 +87,7 @@ test("host run recovery: a gate that died mid-run leaves no planted or edited re
     writer = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { detached: true, stdio: "ignore" });
     const marker = hostRunMarker(evidence, id);
     fs.mkdirSync(path.dirname(marker), { recursive: true });
-    fs.writeFileSync(marker, JSON.stringify({ collectionId: id, group: writer.pid, snapshot: evidenceSnapshot(evidence, pinsFile) }));
+    fs.writeFileSync(marker, JSON.stringify({ collectionId: id, group: writer.pid, procStart: processStart(writer.pid), snapshot: evidenceSnapshot(evidence, pinsFile) }));
     fs.writeFileSync(path.join(evidence, "history", "next.json"), receipt(`preflight-collect:${head}:2`, { verification: { host: true, exitCode: 0 } }));
     fs.writeFileSync(path.join(evidence, `${head}.json`), receipt(id));
     fs.appendFileSync(earlier, " ");
@@ -107,6 +107,11 @@ test("host run recovery: a gate that died mid-run leaves no planted or edited re
       assert.equal(await recoverHostRun(evidence, id, pinsFile), "host run interrupted");
       assert.equal(stranger.exitCode === null && stranger.signalCode === null, true, "a foreign group survives");
       assert.notEqual(processStart(stranger.pid), null);
+      // A group without a start identity is never signalled: the round stays in flight with the marker kept.
+      fs.writeFileSync(marker, JSON.stringify({ collectionId: id, group: stranger.pid, snapshot: evidenceSnapshot(evidence, pinsFile) }));
+      await assert.rejects(recoverHostRun(evidence, id, pinsFile), /without a start identity/);
+      assert.equal(fs.existsSync(marker), true);
+      assert.equal(stranger.exitCode === null && stranger.signalCode === null, true);
     } finally { try { process.kill(-stranger.pid, "SIGKILL"); } catch {} }
     // A marker written before the run was released names no group: nothing ran, nothing is signalled.
     fs.writeFileSync(marker, JSON.stringify({ collectionId: id, group: null, snapshot: evidenceSnapshot(evidence, pinsFile) }));

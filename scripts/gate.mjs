@@ -223,7 +223,9 @@ if(r.error)console.error(r.error.message);process.exit(r.status??(r.signal?128:1
       child.once("error", cause => resolve({ exitCode: null, error: cause.message }));
       child.once("exit", (code, signal) => resolve({ exitCode: code ?? (signal ? 128 : null), error: signal ? `signal ${signal}` : null }));
       try {
-        group = child.pid; atomicJson(marker, { ...readJson(marker), group, procStart: processStart(group) });
+        group = child.pid; const procStart = processStart(group);
+        if (!procStart) throw new Error("verification group incarnation unavailable");
+        atomicJson(marker, { ...readJson(marker), group, procStart });
         registered = true; child.stdin.end("go\n");
       } catch (cause) { child.stdin.destroy(); registered = cause.message; }
     });

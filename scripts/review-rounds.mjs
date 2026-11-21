@@ -79,7 +79,8 @@ export async function recoverHostRun(evidenceRoot, collectionId, pinsFile) {
   const state = readJson(marker);
   // A marker without a group was written before the run was released: nothing ran.
   if (state.group !== null) {
-    const failure = Number.isInteger(state.group) && state.group > 0 ? await stopHostGroup(state.group, state.procStart ?? null) : "invalid verification group";
+    // The gate registers a group only with its start identity; without one no group is ever signalled.
+    const failure = Number.isInteger(state.group) && state.group > 0 && state.procStart ? await stopHostGroup(state.group, state.procStart) : "verification group without a start identity";
     if (failure) throw new Error(`host verification group of ${collectionId} not confirmed stopped: ${failure}`);
   }
   const touched = evidenceTouched(state.snapshot ?? [], evidenceRoot, pinsFile);
