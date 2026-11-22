@@ -98,26 +98,25 @@ its end of turn returns control. Owner-led separate-session Design stays separat
 
 ## Approval countercheck
 
-Before every `by=orchestrator` record (PRD including renewals/Design callbacks,
-mockup, tech page, work start, package-repair approval), run a different-family
-second model per `references/model-policy.md`, read-only, foreground. It is the
-only different-model check of a Discovery, Design or Tech Evaluation version:
-stage agents run no stage second model. Give result, exact approved text/version
+Research start `by=orchestrator` is not approval: reason, no second model.
+Before each orchestrator approval (PRD/renewals/Design callbacks, mockup, tech page,
+package repair) and work start, run a different-family second model per
+`references/model-policy.md`, read-only, foreground. It alone checks Discovery,
+Design or Tech Evaluation versions; stage agents run no second model. Give result, exact approved text/version
 (tech page with the Tech Spec draft, sources and scout report; ask what is
 excess, which case is uncovered, any hidden owner decision, what breaks nearby,
 whether Spec answers every PRD open question, whether the page reads without
 technical words), PRD, earlier owner decisions, package review report for work
 start and proposed reason. Ask the checker to label each objection «по сути» or
 «по формулировке» itself; no label means substance. Pass text/local paths, never Linear links: no owner
-connections. Resolve model/effort by policy, then use the appropriate invocation:
+connections. Resolve model/effort by policy; invoke:
 
 ```bash
-codex exec --ignore-user-config --disable apps -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null
+codex exec --ignore-user-config --disable apps --skip-git-repo-check -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null
 claude -p --strict-mcp-config --model <модель> --effort <усилие> "<задание>" < /dev/null
 ```
 
-`--disable apps` also blocks ChatGPT app connectors, enabled by default even
-when user config is ignored.
+`--disable apps` blocks default ChatGPT connectors even with user config ignored.
 
 Record verdict with model and reviewed-text version outside fences in that same
 approval comment, alongside reason; machine lines unchanged. Text or reason changes:
@@ -131,7 +130,7 @@ model, reviewed version and «Поправки по формулировке: б
 Any substance objection or other text/reason change requires another round.
 In a Project expecting one Issue reject a blocker only by source refutation
 proving it wrong; “it was so before” is not refutation. Only the owner approves issue-only.
-Objection: explain it in words without approving. Repeated objection on the same
+Explain objections without approving. Repeated objection on the same
 point: decide (one-Issue blockers still require source refutation), retain
 objection/rejection reason in record; first owner-result line:
 «Решил за тебя: … вопреки второй модели, потому что …». No response after one retry:

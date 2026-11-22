@@ -56,8 +56,8 @@ from that comment. Without either the owner leads: only owner starts
 Research and work (`by=owner`). Do not add `by` to strict `mono-idea` records.
 A `stale`/`legacy-migrate` Idea stops autonomous Research/work despite delegation:
 carry it to owner for approval in words on the shown version, confirmed new record and fresh check first.
-The orchestrator's reply or bundled start cannot approve that Idea snapshot.
-Only delegated Projects with that current approval allow autonomous Research/work,
+Neither reply nor bundled start approves Idea.
+Only currently approved delegated Projects allow autonomous Research/work,
 write start `by=orchestrator` with a reason, answer and approve after Idea, including
 irreversible, deferred and contrary-to-owner decisions.
 
@@ -73,10 +73,10 @@ recorded and complete; an unfinished one (e.g. Handoff with its package record b
 without Issues, checks or Ready) re-enters to finish the missing steps, reusing
 existing records without duplicates (`skills/handoff/references/run.md`). The owner's correction in words reopens that stage; your approval of the
 earlier version no longer counts. Stage approval does not
-execute external writes or spending. Configured deploy targets and the owner-approved rollback remain required.
+execute external writes/spending. Configured deploy targets and owner-approved rollback remain required.
 
-Before each `by=orchestrator` record apply the Approval countercheck in
-`references/orchestration-stages.md`. The owner keeps
+Apply Approval countercheck (`references/orchestration-stages.md`) before approvals/work start;
+Research start is not approval: reason, no second model. The owner keeps
 Idea approval, first-product exemplars and consent to new taste rules. Their words
 reopen any approval. Owner-led stage sessions never accept another agent's reply
 as approval; the sole exception is a stage launched by the orchestrator, never Idea or `mono:issue`.

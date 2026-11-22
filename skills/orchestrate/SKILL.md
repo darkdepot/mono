@@ -111,26 +111,22 @@ the product. The product repo still keeps only
 At session start, report the informational self-check from
 [role:orchestrator](references/model-policy.md#roles):
 «Модель оркестратора: <модель запуска> | не удалось определить».
-Use authoritative launch-environment data, with no verdict; prompt
+Use launch-environment data, no verdict; prompt
 self-identification is not evidence and this status never switches the session.
 
 Workflow states:
 
 1. `resume`
-   - Rebuild the full picture from Linear + ledger + mailbox + worker
-     registry + live session list before any action (Resume procedure in
-     `references/orchestration.md`).
-   - Find surviving `codex-cli` and `claude-cli` workers by thread id instead of
-     respawning them only when the registry and `surfaceRevision`
-     match; never rebind a thread from another surface revision.
+   - Rebuild state from Linear + ledger + mailbox + workers + sessions before acting (Resume in `references/orchestration.md`).
+     Idea check: `node <pack-root>/scripts/idea-gate.mjs check --mode fresh --dump <dir> --config <config>`.
+   - Find live `codex-cli`/`claude-cli` workers by thread id, not respawn; registry and
+     `surfaceRevision` must match. Never rebind another surface revision's thread.
    - Read each live attempt's Issue comments and status back from Linear; the
      worker writes them, a dead worker's park you write.
    - Here and on every exit from a wait, find «веди до Handoff» marks on
      Projects before Delivery and continue their chain (Decision Authority in
      `references/orchestration.md`).
-   - Output the rebuilt status (the «Статус» shape from
-     `templates/orchestrator-brief.md` with its «Техника» table) before
-     taking new actions.
+   - Before acting, output «Статус» with «Техника» per `templates/orchestrator-brief.md`.
 2. `intake-and-discovery`
    - Follow Director Discovery and Stage agent permissions in `references/orchestration-stages.md`.
      Build `~/.claude/agents/` stage/scout definitions from `templates/stage-agent.md`
@@ -160,9 +156,9 @@ Workflow states:
    - `stale`/`legacy-migrate` Idea stops autonomous Research/work despite delegation.
      Carry it to owner; require their Idea agreement in words, confirmed record and fresh check.
      Never approve that snapshot through your reply or work-start comment.
-   - Before every `by=orchestrator` record run the foreground read-only different-
-     family countercheck in `references/orchestration-stages.md`, including exact text,
-     version and reason. Verdict/model/version outside fences in the same comment;
+   - Research start `by=orchestrator` is not approval: reason only, no second model.
+     Before orchestrator approvals/work start run the foreground read-only different-family
+     countercheck in `references/orchestration-stages.md`: text/version/reason; verdict/model/version outside fences in the same comment;
      changed text/reason needs recheck. Explain the objection in words without approval; repeated
      objection may be overridden with explicit reason; no answer after one retry
      means no approval, other Projects continue.
