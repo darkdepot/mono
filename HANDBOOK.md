@@ -1568,6 +1568,8 @@ credential-read limitation and required live boundary tests.
 
 Bot-limit fixtures: `node --test scripts/gate.test.mjs scripts/deploy.test.mjs scripts/delivery-runtime.test.mjs` cover first green, red/pending CI, restart/fixes, empty policy, new/legacy certificates, and retained CI/owner blockers. Check-run bot responses are synthetic; recorded PR 244 replies remain in `scripts/fixtures/claude-pr-replies/`. A live silent-bot → timed Ship → Deploy merge check before review is separate evidence; skill scenarios run through the orchestrator in test Linear (U3).
 
+Fixture children: worker and collector launches are detached, so a fixture that starts them guards its scratch directory with `scripts/test-fixtures/fixture-processes.mjs` (stub owner watchdog, a janitor for a killed test, and an after-test check that no process naming the directory survives); `node --test scripts/fixture-processes.test.mjs` covers the guards.
+
 Pack installation fixtures: `node --test scripts/pack-install.test.mjs` uses fake Claude/Codex CLIs and temporary profiles; it covers interrupted installation, immutable rollback targets, holders, dual-file pins, tree proof, fresh-session discovery and the wave cycle.
 
 The recorded [Claude PR publication probe](references/worker-contract.md#claude-pr-probe)

@@ -10,6 +10,7 @@ import { effectivePins, sha256File, admitCollection } from "./orchestrator/comma
 import { checkSpawnAvailability } from "./orchestrator/launch.mjs";
 import { renderDispatch } from "./orchestrator/dispatch.mjs";
 import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
+import { guardScratch, ownerWatchdog, reapScratch } from './test-fixtures/fixture-processes.mjs';
 
 const scenarios = ["clean-branch", "file-edit", "prefix-edit", "rename", "release", "forged-release", "branch-removes-policy", "inherited-after-rebase", "no-pins", "no-policy", "branch-introduces-policy"];
 test("landing U2 named gate fixtures", async t => {
@@ -103,6 +104,7 @@ test("landing U2 dispatch renders landing block only with BASE policy", () => {
 
 test("landing U2 installed dispatch validates release and reserves a single release for direct spawn", async t => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-landing-dispatch-"));
+  guardScratch(scratch);
   const skills = path.join(scratch, "skills"), repo = path.join(scratch, "repo"), root = path.join(scratch, "root"), bin = path.join(scratch, "bin");
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`,
     GIT_AUTHOR_NAME: "Fixture", GIT_AUTHOR_EMAIL: "fixture@example.invalid", GIT_COMMITTER_NAME: "Fixture", GIT_COMMITTER_EMAIL: "fixture@example.invalid" };
@@ -110,11 +112,11 @@ test("landing U2 installed dispatch validates release and reserves a single rele
   const pass = r => { assert.equal(r.status, 0, r.stdout + r.stderr); return r.stdout.trim(); };
   const git = (...args) => pass(run("git", args, repo));
   const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
-  let pid;
+  let pid, passed = false;
   try {
     for (const dir of [repo, bin, root]) fs.mkdirSync(dir, { recursive: true });
     copyPluginFixture(skills);
-    write(path.join(bin, "codex"), '#!/usr/bin/env node\nconsole.log(JSON.stringify({type:"thread.started",thread_id:"landing-fixture"}));setInterval(()=>{},1000);\n'); fs.chmodSync(path.join(bin, "codex"), 0o700);
+    write(path.join(bin, "codex"), `#!/usr/bin/env node\n${ownerWatchdog()}\nconsole.log(JSON.stringify({type:"thread.started",thread_id:"landing-fixture"}));setInterval(()=>{},1000);\n`); fs.chmodSync(path.join(bin, "codex"), 0o700);
     atomicJson(path.join(root, "control.json"), { state: "active" }); atomicJson(path.join(root, "workers.json"), {});
     writeWatcherFixture(root, env);
     git("init", "-b", "main"); const origin = path.join(scratch, "origin.git"); pass(run("git", ["init", "--bare", origin])); git("remote", "add", "origin", origin);
@@ -157,5 +159,12 @@ test("landing U2 installed dispatch validates release and reserves a single rele
       assert.equal(Object.keys(JSON.parse(fs.readFileSync(path.join(root, "workers.json")))).length, 1);
       assert.equal(JSON.parse(fs.readFileSync(path.join(root, "attempts.json")))["MONO-998"], undefined);
     });
-  } finally { if (pid) process.kill(pid, "SIGTERM"); fs.rmSync(scratch, { recursive: true, force: true }); }
+    passed = true;
+  } finally {
+    if (pid) { try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ } }
+    fs.rmSync(scratch, { recursive: true, force: true });
+    // MONO-463: detached worker and collector children never outlive the test.
+    const leaked = await reapScratch(scratch, { graceMs: 20_000 });
+    if (passed) assert.deepEqual(leaked.map(row => row.command), [], "no fixture child outlives its test");
+  }
 });
