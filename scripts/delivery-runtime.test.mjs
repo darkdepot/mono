@@ -10,6 +10,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { spawnSync, execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { installReviewClis, setReview, reviewCalls, reviewFinding } from "./test-fixtures/review-clis.mjs";
+import { guardScratch, ownerWatchdog, reapScratch } from "./test-fixtures/fixture-processes.mjs";
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, typeof value === "string" ? value : JSON.stringify(value)); };
@@ -75,10 +76,11 @@ await admitCollection(root,{issue:entry.issue,attempt:1,request:{...request,coll
 
 test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and durable ack", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-delivery-installed-"));
+  guardScratch(root);
   const skills = path.join(root, "skills"), state = path.join(root, "orchestrator"), repo = path.join(root, "repo"), bin = path.join(root, "bin");
   const mailbox = path.join(state, "reports");
   const env = { ...process.env, HOME: path.join(root, "home"), PATH: `${bin}:${process.env.PATH}` };
-  let livePid;
+  let livePid, passed = false;
   const oldPath = process.env.PATH;
   try {
     copyPluginFixture(skills);
@@ -579,6 +581,7 @@ console.log(JSON.stringify(result));
     write(path.join(state, "control.json"), { state: "active", halt: false }); writeWatcherFixture(state, env); write(path.join(state, "workers.json"), {});
     const capture = path.join(root, "codex-args.json"), threadReady = path.join(root, "thread-ready");
     write(path.join(bin, "codex"), `#!/usr/bin/env node
+${ownerWatchdog()}
 const fs=require('node:fs'); fs.writeFileSync(${JSON.stringify(capture)},JSON.stringify(process.argv.slice(2)));
 fs.writeSync(1,JSON.stringify({type:'startup-noise',text:'x'.repeat(2*1024*1024)})+'\\n');
 const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){clearInterval(wait);console.log(JSON.stringify({type:'thread.started',thread_id:'fixture-thread'}));}},10);setInterval(()=>{},1000);
@@ -709,10 +712,14 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     await assert.rejects(spawnWorker(request), /attempt cap/);
     const price = pass(run(process.execPath, [path.join(runtime, "wave-cost.mjs"), request.issue, "--root", state], root, env));
     assert.equal(JSON.parse(price.stdout.split("\nЦена волны")[0]).model.model, entry.model);
+    passed = true;
   } finally {
     process.env.PATH = oldPath;
     if (livePid) { try { process.kill(livePid, "SIGTERM"); } catch { /* already exited */ } }
     fs.rmSync(root, { recursive: true, force: true });
+    // MONO-463: detached worker children never outlive the test.
+    const leaked = await reapScratch(root, { graceMs: 20_000 });
+    if (passed) assert.deepEqual(leaked.map(row => row.command), [], "no fixture child outlives its test");
   }
 });
 
