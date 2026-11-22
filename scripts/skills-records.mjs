@@ -423,7 +423,10 @@ function documentPresentation(data,exchange,binding,dump) {
  if(shown.resultLine>=exchange.line)throw new Error('document read outside shown boundary');
  if(!linksShown(exchange.text,shown.value,binding,exchange.expected.stage==='design',dump))throw new Error('summary link does not bind native document');
  if(binding.text!==bodyOf(shown.value))throw new Error('presentation body differs from native document');
- if(!exchange.expected.outcome.approval&&!exchange.expected.outcome.startNext)return {documentId:idOf(shown.value),shownBody:bodyOf(shown.value),shownHash:sha256(bodyOf(shown.value)),shownReadLine:shown.line};
+ if(!exchange.expected.outcome.approval&&!exchange.expected.outcome.startNext){
+  if(!dump.project||!dump.all.some(row=>idOf(row)===idOf(shown.value)))throw new Error(`shown record outside current project: ${idOf(shown.value)}`);
+  return {documentId:idOf(shown.value),shownBody:bodyOf(shown.value),shownHash:sha256(bodyOf(shown.value)),shownReadLine:shown.line};
+ }
  const fresh=presentationRead(data,binding.currentLine,binding.currentRecordId);
  if(shown.resultLine>=exchange.line||fresh.line<=exchange.replyLine||fresh.resultLine>=exchange.response.line)throw new Error('document read outside shown/reply version boundary');
  if(idOf(shown.value)!==idOf(fresh.value)||(binding.documentId!==undefined&&binding.documentId!==idOf(shown.value)))throw new Error('approved document changed');
