@@ -14,8 +14,8 @@
 
 ## Вторая модель
 
-Один проход, только чтение: Bash без `run_in_background`, таймаут `600000`, жди итога.
-Проверяющего запусти тем же сообщением в фоне; вторая модель в фон не уходит. Модель/усилие по `<корень>/references/model-policy.md`;
+Один проход, только чтение: отдельный вызов Bash с `run_in_background: false` и таймаутом
+`600000`, без `sleep` и опроса. В фон уходит только агент-проверяющий, даже в том же сообщении. Модель/усилие по `<корень>/references/model-policy.md`;
 из Claude Code роль `second-voice`:
 `codex exec --ignore-user-config --disable apps --skip-git-repo-check -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null`;
 из Codex роль `second-voice-alt`:
