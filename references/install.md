@@ -56,8 +56,10 @@ in every product.
 3. Compare each place's version cache with `git archive v<VERSION>`: every path,
    type, mode and content must match. Allowed extras are only tool service
    objects: Claude's `.in_use/`, Codex's `.git/` and `.codex-marketplace-install.json`.
-   That Codex file must be valid JSON with `revision` equal to the full commit
-   of `v<VERSION>`; otherwise the Codex place is not verified.
+   Codex commit proof: take `source.path` of the Mono entry from
+   `codex plugin list --json`; `revision` in its `.codex-marketplace-install.json`
+   when the file exists, else `git -C <source.path> rev-parse HEAD`, must equal
+   the full commit of `v<VERSION>`; otherwise the Codex place is not verified.
 4. Fresh run in each host: `claude -p` and `codex exec` must load a Mono skill
    from the new version folder. Running sessions keep old rules until restarted.
 
