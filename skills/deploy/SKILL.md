@@ -28,7 +28,8 @@ Read when:
    fingerprint against approval (../../references/issue-only-lane.md); changed or
    revoked approval: stop.
    Product block needs owner yes; Mono may use delegated package approval/reason.
-   No block: no merge; ignore legacy workflows.deploy / deployApproval.
+   No block: same merge gates, close unverified; invalid block refuses. Ignore legacy
+   workflows.deploy / deployApproval.
 2. Request JSON outside checkout: absolute root/config/worktree, repo, issue, head,
    certificate (full text); root is existing product state root. Run
    `node <pack-root>/scripts/deploy.mjs merge --request <file>`; merge waits up to
@@ -39,9 +40,11 @@ Read when:
 3. Follow affected target references. Commands merge, prove, local, check, rollback,
    return, outcome use same request plus target index. Inspect returned JSON;
    acknowledgement is not proof. Model reports observations; script decides.
-   Affected none: show «не проверено: <reason>»; do not claim that part shipped.
+   Affected none: check surface none, scenario, id = merge, observed version (+release
+   if stated). Verified only if observed is merge or tagged release; else «не проверено: <reason>».
 4. outcome closes/read-backs supported categories, worst first. No targets: note,
-   no outcome/update. Stop: no outcome, run open, other PRs wait. Keep state.
+   no outcome/update. No block: unverified with reason, no update.
+   Stop: no outcome, run open, other PRs wait. Keep state.
 5. Close Issue on confirmed merge; comment truth using output.md. Create/read back
    returned followup Issues. Repair gets Прод на откате; unverified closed Issue
    gets Не проверено, reason/checker/date. Resolve labels at first use. One recorded

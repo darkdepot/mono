@@ -84,7 +84,8 @@ export async function runDeploy(command, request, clock = {}) {
   need(['merge', 'prove', 'local', 'check', 'rollback', 'return', 'outcome'].includes(command), 'unknown command');
   need(path.isAbsolute(request.root ?? '') && path.isAbsolute(request.config ?? '') && path.isAbsolute(request.worktree ?? ''), 'absolute root/config/worktree required');
   need(/^[\w.-]+\/[\w.-]+$/.test(request.repo ?? '') && SHA.test(request.head ?? '') && /^[A-Z][A-Z0-9]*-\d+$/.test(request.issue ?? ''), 'repo, head and issue required');
-  const config = readJson(request.config), deploy = validateDeployConfig(config.deploy), started = now();
+  const config = readJson(request.config), started = now(); // No block: merge after the same gates, honest «не проверено».
+  const deploy = Object.hasOwn(config, 'deploy') ? validateDeployConfig(config.deploy) : null;
   const lock = path.join(request.root, 'deploy.lock'), runFile = path.join(request.root, 'landing/deploy', `${request.head}.json`);
   // The ledger gets a line only when the run state changes, not on every repeated call.
   const phase = r => JSON.stringify([r.merge, r.landing?.code, r.stop?.reason, r.closedAt, r.targets.map(t => [t.proof?.id, !!t.unread, t.rolledBack, t.returned, t.failed])]);
@@ -145,7 +146,7 @@ export async function runDeploy(command, request, clock = {}) {
         files.length === pr.changed_files && files.every(file => typeof file?.filename === 'string' && file.filename.length);
       if (!complete) {
         const reason = `PR file list ${fileError ? `unavailable: ${fileError}` : `incomplete: expected ${pr.changed_files}, read ${files?.length ?? 0}`}`;
-        return { state: 'blocked', outcome: null, targets: deploy.targets.map((_, index) => index), reason, lines: [`Не вливаю: ${reason}.`] };
+        return { state: 'blocked', outcome: null, targets: (deploy?.targets ?? []).map((_, index) => index), reason, lines: [`Не вливаю: ${reason}.`] };
       }
       if (request.afk && !pr.merged && files.some(file => /(^|\/)migrations\//.test(file.filename) &&
         (typeof file.patch !== 'string' || !file.patch.trim() || file.patch.split('\n').some(line => /^\+[^+]/.test(line) && /\b(drop|rename|truncate)\b/i.test(line))))) return { state: 'waiting-morning', outcome: null, reason: 'destructive migration' };
@@ -157,7 +158,7 @@ export async function runDeploy(command, request, clock = {}) {
         target.browserReady = mark; return true;
       };
       if (!run) {
-        run = { head: request.head, repo: request.repo, issue: request.issue, pr: binding.pr, config: deploy, createdAt: now(), intents: {}, targets: deploy.targets.map((recipe, index) => ({ key: digest(recipe).slice(0, 16), index, recipe, checks: [] })).filter(target => affected(target.recipe, files.flatMap(file => [file.filename, file.previous_filename].filter(Boolean)))) };
+        run = { head: request.head, repo: request.repo, issue: request.issue, pr: binding.pr, config: deploy, createdAt: now(), intents: {}, targets: (deploy?.targets ?? []).map((recipe, index) => ({ key: digest(recipe).slice(0, 16), index, recipe, checks: [] })).filter(target => affected(target.recipe, files.flatMap(file => [file.filename, file.previous_filename].filter(Boolean)))) };
         for (const target of run.targets) if (target.recipe.kind === 'vercel') {
           target.baseline = domain(target); target.projectId = target.baseline.projectId;
           need(ready(target.baseline) && target.baseline.id && target.baseline.url && target.projectId, 'production rollback target unavailable');
@@ -317,22 +318,24 @@ export async function runDeploy(command, request, clock = {}) {
     }
     if (command === 'check') {
       need(['quick', 'scenario'].includes(request.kind) && ['green', 'red', 'unavailable'].includes(request.result) && [1, 2].includes(request.attempt), 'check kind/result/attempt invalid');
-      const rb = rollback(target), allowed = [target.proof, target.baseline, rb?.deployment, rb?.rollback].filter(Boolean);
+      const surface = request.surface, available = request.browserAvailable === true || request.blockedBy === 'auth';
+      need(['domain', 'browser', 'local', 'none'].includes(surface), 'check surface required');
+      need(['local', 'none'].includes(surface) ? target.recipe.kind === surface : target.recipe.kind === 'vercel', 'check surface mismatches target');
+      const rb = rollback(target), allowed = [target.proof, target.baseline, rb?.deployment, rb?.rollback, surface === 'none' && { id: run.merge }].filter(Boolean);
       const d = allowed.find(d => d.id === request.id);
       need(d, 'check deployment/process id not in run');
-      const surface = request.surface;
-      need(['domain', 'browser', 'local'].includes(surface), 'check surface required');
-      need(surface === 'local' ? target.recipe.kind === 'local' : target.recipe.kind === 'vercel', 'check surface mismatches target');
+      need(request.blockedBy === undefined || (request.blockedBy === 'auth' && surface === 'browser' && request.result === 'unavailable'), 'blockedBy auth marks only an unavailable own-URL browser check');
+      if (surface === 'none') need(typeof request.observed === 'string' && request.observed.trim() && (request.release === undefined || /^v?\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(request.release)), 'none scenario needs observed version; release must be a version');
       need(request.kind === 'scenario' || surface === 'browser', 'only browser quick checks are model observations');
       if (rb?.phase === 'awaiting-prod' && surface === 'domain') need(request.attempt === 1, 'production return check has no repeat');
       if (surface === 'domain') need(domain(target).id === request.id && url(request.url) === url(target.recipe.domain), 'domain/id mismatch');
       if (surface === 'browser') need(url(request.url) === url(d.url), 'own deployment URL mismatch');
       if (request.result === 'unavailable') need(request.reason && request.who, 'unavailable check needs reason and who');
       need(!currentChecks(target).some(check => check.id === request.id && check.kind === request.kind && check.surface === surface && check.attempt === request.attempt && check.result !== 'unavailable'), 'check attempt already recorded');
-      target.checks.push({ id: request.id, url: request.url, kind: request.kind, result: request.result, reason: request.reason, who: request.who, browserAvailable: request.browserAvailable, attempt: request.attempt, surface, at: now() });
-      if ((request.result !== 'unavailable' || request.browserAvailable === true) && run.stop?.browser && !browserMissing(target)) delete run.stop;
+      target.checks.push({ id: request.id, url: request.url, kind: request.kind, result: request.result, reason: request.reason, who: request.who, browserAvailable: available || undefined, blockedBy: request.blockedBy, observed: request.observed, release: request.release, attempt: request.attempt, surface, at: now() });
+      if ((request.result !== 'unavailable' || available) && run.stop?.browser && !browserMissing(target)) delete run.stop;
       persist();
-      if (surface === 'browser' && request.result === 'unavailable' && request.browserAvailable !== true) return stopped(request.reason, target, true);
+      if (surface === 'browser' && request.result === 'unavailable' && !available) return stopped(request.reason, target, true);
       return { state: 'recorded' };
     }
     if (command === 'rollback') {
@@ -453,7 +456,7 @@ export async function runDeploy(command, request, clock = {}) {
       const order = ['откатили', 'выкатка упала, прод на старой версии', 'выкатили, не проверено', 'влито, ждёт выпуска', 'выкатили и проверили'];
       const rows = [];
       for (const t of run.targets) {
-        let outcome, reason;
+        let outcome, reason, note;
         const activeRollback = rollback(t);
         if (activeRollback?.fix?.head === run.head && !t.returned) return stopped('repair awaits verified return', t);
         const expectedWeb = t.failed ? t.failureProof ?? t.baseline : t.proof;
@@ -482,40 +485,54 @@ export async function runDeploy(command, request, clock = {}) {
             need(follows(run.merge, sha), 'installed release does not contain this merge');
             t.proof = { id: sha, places: installed.places }; persist();
           } else if (installed) { t.proof = { id: installed.places?.map(place => place.actual).join(','), places: installed.places }; persist(); }
-        } else if (t.recipe.kind === 'none') { outcome = order[2]; reason = t.recipe.reason; }
+        } else if (t.recipe.kind === 'none') { // Verified only when the observed version is the merge or its tagged release.
+          const s = latest(t, run.merge, 'none', 'scenario'), green = s?.result === 'green';
+          let tagged = false;
+          if (green && s.release && s.observed === s.release) try { tagged = follows(run.merge, gh(`repos/${run.repo}/commits/v${s.release.replace(/^v/, '')}`).sha); } catch { /* No tag: stays unverified. */ }
+          if (green && (s.observed === run.merge || tagged)) { outcome = order[4]; t.proof = { id: run.merge, observed: s.observed, release: s.release }; persist(); }
+          else { outcome = order[2]; reason = [t.recipe.reason, s && (green ? `наблюдённая версия ${s.observed} не совпала с влитой` : `сценарий ${s.result === 'red' ? 'красный' : 'недоступен'}: ${s.reason ?? ''}`)].filter(Boolean).join('; '); }
+        }
         else {
           need(t.proof, 'version not proven');
           if (browserMissing(t)) return stopped('browser with Vercel login unavailable', t, true);
           const surface = t.recipe.kind === 'local' ? 'local' : 'domain';
-          if (t.recipe.kind === 'vercel') need(latest(t, t.proof.id, 'browser', 'quick') && latest(t, t.proof.id, 'browser', 'scenario'), 'own URL browser quick and scenario results required');
-          const scenario = latest(t, t.proof.id, t.recipe.kind === 'vercel' ? 'browser' : surface, 'scenario');
-          need(scenario, 'task scenario result or explicit unavailable reason/checker must be recorded');
-          const checkFor = kind => kind === 'scenario' ? scenario : latest(t, t.proof.id, surface, 'quick');
-          const reds = ['quick', 'scenario'].filter(kind => checkFor(kind)?.result === 'red' || latest(t, t.proof.id, surface, kind)?.result === 'red' || (t.recipe.kind === 'vercel' && latest(t, t.proof.id, 'browser', kind)?.result === 'red'));
-          const unavailable = [...new Set(['quick', 'scenario'].flatMap(kind => [checkFor(kind), latest(t, t.proof.id, surface, kind), latest(t, t.proof.id, 'browser', kind)]))].filter(check => check?.result === 'unavailable');
-          const discrepancy = reds.length && reds.every(kind => latest(t, t.proof.id, 'browser', kind)?.result === 'green');
-          const known = reds.length && reds.every(kind => latest(t, t.baseline.id, 'browser', kind)?.result === 'red');
-          if (discrepancy) { // S19 is the explicit U5 exception; preserve the red domain result.
-            outcome = order[2]; reason = 'проверка по домену красная, по адресу сборки зелёная'; followup(t, reason, 'discrepancy');
-          } else if (known) {
-            const otherKinds = ['quick', 'scenario'].filter(kind => !reds.includes(kind));
-            const remaining = otherKinds.flatMap(kind => kind === 'quick' && t.recipe.kind === 'vercel' ? [checkFor(kind), latest(t, t.proof.id, 'browser', kind)] : [checkFor(kind)]);
-            need(remaining.every(Boolean), 'remaining scenario/check must be recorded');
-            outcome = remaining.every(check => check.result === 'green') && !unavailable.length ? order[4] : order[2];
-            reason = 'известная поломка на прошлой сборке'; followup(t, reason);
-          }
+          // Own build URL behind a login: green production quick and scenario on the proven version verify it.
+          const own = ['quick', 'scenario'].map(kind => latest(t, t.proof.id, 'browser', kind)).filter(Boolean), prod = ['quick', 'scenario'].map(kind => latest(t, t.proof.id, 'domain', kind));
+          const walled = t.recipe.kind === 'vercel' && own.some(check => check.blockedBy === 'auth') && own.every(check => check.result === 'green' || check.blockedBy === 'auth');
+          if (walled && prod.some(check => check?.result === 'red')) return stopped('проверка по домену красная, а адрес сборки закрыт входом: сравнить нельзя', t);
+          if (walled && prod.every(check => check?.result === 'green')) { outcome = order[4]; note = 'проверено на проде: адрес сборки закрыт входом'; }
           else {
-            need(!reds.length, 'red check unresolved; compare in browser before outcome');
-            const checked = scenario.result === 'green' && checkFor('quick')?.result === 'green' && (scenario.surface !== 'browser' || latest(t, t.proof.id, 'browser', 'quick')?.result === 'green');
-            need(checked || unavailable.length, 'scenario result or unavailable reason/checker must be recorded');
-            outcome = checked && !unavailable.length ? order[4] : order[2];
+            if (t.recipe.kind === 'vercel') need(latest(t, t.proof.id, 'browser', 'quick') && latest(t, t.proof.id, 'browser', 'scenario'), 'own URL browser quick and scenario results required');
+            const scenario = latest(t, t.proof.id, t.recipe.kind === 'vercel' ? 'browser' : surface, 'scenario');
+            need(scenario, 'task scenario result or explicit unavailable reason/checker must be recorded');
+            const checkFor = kind => kind === 'scenario' ? scenario : latest(t, t.proof.id, surface, 'quick');
+            const reds = ['quick', 'scenario'].filter(kind => checkFor(kind)?.result === 'red' || latest(t, t.proof.id, surface, kind)?.result === 'red' || (t.recipe.kind === 'vercel' && latest(t, t.proof.id, 'browser', kind)?.result === 'red'));
+            const unavailable = [...new Set(['quick', 'scenario'].flatMap(kind => [checkFor(kind), latest(t, t.proof.id, surface, kind), latest(t, t.proof.id, 'browser', kind)]))].filter(check => check?.result === 'unavailable');
+            const discrepancy = reds.length && reds.every(kind => latest(t, t.proof.id, 'browser', kind)?.result === 'green');
+            const known = reds.length && reds.every(kind => latest(t, t.baseline.id, 'browser', kind)?.result === 'red');
+            if (discrepancy) { // S19 is the explicit U5 exception; preserve the red domain result.
+              outcome = order[2]; reason = 'проверка по домену красная, по адресу сборки зелёная'; followup(t, reason, 'discrepancy');
+            } else if (known) {
+              const otherKinds = ['quick', 'scenario'].filter(kind => !reds.includes(kind));
+              const remaining = otherKinds.flatMap(kind => kind === 'quick' && t.recipe.kind === 'vercel' ? [checkFor(kind), latest(t, t.proof.id, 'browser', kind)] : [checkFor(kind)]);
+              need(remaining.every(Boolean), 'remaining scenario/check must be recorded');
+              outcome = remaining.every(check => check.result === 'green') && !unavailable.length ? order[4] : order[2];
+              reason = 'известная поломка на прошлой сборке'; followup(t, reason);
+            }
+            else {
+              need(!reds.length, 'red check unresolved; compare in browser before outcome');
+              const checked = scenario.result === 'green' && checkFor('quick')?.result === 'green' && (scenario.surface !== 'browser' || latest(t, t.proof.id, 'browser', 'quick')?.result === 'green');
+              need(checked || unavailable.length, 'scenario result or unavailable reason/checker must be recorded');
+              outcome = checked && !unavailable.length ? order[4] : order[2];
+            }
+            if (unavailable.length) reason = [...new Set([reason, ...unavailable.map(check => `${check.reason}; проверит ${check.who}`)])].filter(Boolean).join('; ');
           }
-          if (unavailable.length) reason = [...new Set([reason, ...unavailable.map(check => `${check.reason}; проверит ${check.who}`)])].filter(Boolean).join('; ');
         }
-        rows.push({ target: t.index, outcome, reason, versionProven: !!t.proof && !t.unread && !t.failed, proof: (t.failed ? expectedWeb : t.proof)?.id });
+        rows.push({ target: t.index, outcome, reason, note, versionProven: !!t.proof && !t.unread && !t.failed, proof: (t.failed ? expectedWeb : t.proof)?.id });
       }
       rows.sort((a, b) => order.indexOf(a.outcome) - order.indexOf(b.outcome));
-      const result = { outcome: rows[0]?.outcome ?? null, targets: rows, followups: run.followups ?? [], noTargets: !rows.length, projectUpdateAllowed: rows.length > 0 && rows.every(row => row.versionProven && ['выкатили и проверили', 'выкатили, не проверено'].includes(row.outcome)) };
+      const bare = !run.config && { reason: 'у продукта нет настроек выкатки (блок `deploy`)', noDeployBlock: true };
+      const result = { outcome: rows[0]?.outcome ?? (bare ? order[2] : null), ...bare, targets: rows, followups: run.followups ?? [], noTargets: !rows.length && !bare, projectUpdateAllowed: rows.length > 0 && rows.every(row => row.versionProven && ['выкатили и проверили', 'выкатили, не проверено'].includes(row.outcome)) };
       run.closedAt = now(); run.outcome = result; persist();
       return { state: 'closed', ...result };
     }
