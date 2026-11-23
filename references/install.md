@@ -32,125 +32,29 @@ not. The plugin has the repository layout: `skills/`, `references/`, `templates/
 
 ## Plugin Updates
 
-Run the released pack installer from a verified checkout with the release tag
-available locally. The tag must point at the verified landing tip T; ordinary
-merged tasks wait for the wave's release task. Installation always comes from
-GitHub marketplace `darkdepot/mono`.
+The Mono session installs a merged, tagged release `v<VERSION>` in every place:
+each Claude Code profile and Codex.
 
-```bash
-node scripts/pack-install.mjs --root /path/to/pack-state --repo /path/to/verified/checkout --tag v<VERSION> --config /path/to/product/.agents/mono-workflow.config.json --wave
-```
+1. Claude Code, in each profile (another profile via `CLAUDE_CONFIG_DIR`, with
+   `--scope user` and `--scope project` where both are installed):
+   `claude plugin marketplace update mono-marketplace`, then
+   `claude plugin update mono@mono-marketplace`.
+2. Codex: `codex plugin marketplace remove mono-marketplace`,
+   `codex plugin marketplace add darkdepot/mono --ref v<VERSION>`, then
+   `codex plugin add mono@mono-marketplace`.
+3. Compare each place's version cache with `git archive v<VERSION>`: every path,
+   type, mode and content must match. Allowed extras are only tool service
+   objects: Claude's `.in_use/`, Codex's `.git/` and `.codex-marketplace-install.json`.
+4. Fresh run in each host: `claude -p` and `codex exec` must load a Mono skill
+   from the new version folder. Running sessions keep old rules until restarted.
 
-The installing Mono session owns this command. Manual “выпусти” uses the same
-command without `--wave`; wave mode performs `landing-drain verify` → installation
-→ `close`. It never closes a wave after rollback or a failed check.
+A mismatch or failed fresh run means the place is not installed: repeat the
+commands, or report it with the reason. Deploy's `packResult` lists each place
+([Pack](../skills/deploy/references/pack.md)).
 
-For a first installation the command creates its own `--root` if needed. Missing
-`control.json` means `{"state":"idle"}` and missing `workers.json` means `{}`;
-these defaults are saved atomically under the install/launch locks and read back.
-Existing files are preserved, and corrupt state stops the command. Missing or
-corrupt state in another product stops installation; it is never bootstrapped.
-Use a dedicated pack-state directory directly under the products directory.
-
-All `~/.claude*` profiles with `mono@mono-marketplace` are discovered, alongside
-`~/.claude`, the current `CODEX_HOME` (default `~/.codex`) and places retained
-from the previous installation record. Repeat `--profile /path/to/profile` for
-additional Claude profiles. A disappeared remembered place stops installation;
-only explicit `--remove-place /path/to/profile` retires it from this and subsequent runs. The
-immutable first record retains its previous version for recovery.
-Physical paths are compared through symbolic links: Claude and Codex may not
-share a directory, including a remembered place reached through a new alias.
-
-The installer holds launch locks across product registries, calls
-`updateBlockers` for replaced folders and reports live, dead and unknown holders
-with product and Issue. Live/unknown holders found before installation yield `waiting` without replacement.
-Holders are checked again before each replacement, including rollback: a newly
-opened session stops further changes with `waiting`, restores the pause and lists
-the actual places already changed for the next resume.
-Unavailable process commands or session directories are unknown holders and wait.
-Dead records are named and never removed. Live Codex processes using its outgoing
-folder also wait. An ordinary Codex session in a product folder is an unknown
-holder unless its exclusion from the updated home is proven; the installer does
-not overwrite its cache. Use `--breaking` for an incompatible release: every product
-must pass `verifyQuiescence`, including before rollback. The installing wave
-retains its provenance: only records proven landed and stopped by `attemptState`
-are excluded from its active-worker view. Paused/unproven attempts still block;
-other product registries must be empty, and all controls must be idle.
-
-Before replacement, `landing/install/<tag>.json` records every place's previous
-version/commit and `control.json.pre-update-<version>` saves the original control.
-Both are written once and read back. Retry retains them even after an interruption
-with `halt` already set. A different tag stops and names the unfinished
-installation after restoring its original control; resume that tag first.
-Resuming a recorded rollback does not recheck the outgoing wave's admission;
-holders still gate every replacement. Failed results reread actual place versions,
-including when there is no previous release to restore.
-Once an installation completes, the same tag can add
-explicit or newly discovered Claude profiles and a changed `CODEX_HOME`. Their
-first recovery state is appended before replacement to numbered JSON records in
-`landing/install/<tag>.places/`; the original record, prior extensions and control
-snapshot are never overwritten. Added places remain remembered across retries
-and future releases, including extensions made to an older tag after a newer
-installation record exists. Paths are normalized before deduplication; a remembered Claude directory cannot
-be reused as a Codex home, or vice versa. An intended
-clean place not yet created when installation was interrupted can be resumed; a
-previously present place or one whose creation was already recorded by an intent
-result still requires explicit removal if it disappears. An unfinished installation must be resumed before adding
-further places. An archived wave is closed idempotently before these additional
-places are installed. Only places whose proof differs are installed again.
-Intent and result read-backs live beside the record in `<tag>.progress.json`.
-A pause intent is saved before `halt`; only an unfinished pause restores its saved
-control. Repeating an already completed installation preserves current owner
-control changes. A wave interrupted after `close` observes its archive and replays
-the idempotent close only while all installed places still match, before checking
-quiescence so the pending/archive overlap is settled canonically. Dead pending
-and current-tip guard locks are reclaimed only after the entire holder group is
-proven stopped; live or unverified locks are preserved. Worker records are never
-removed by this recovery.
-
-Claude permanently pins the same `ref` in `settings.json` /
-`extraKnownMarketplaces` and `plugins/known_marketplaces.json`, with atomic file
-replacement and paired read-back before any CLI update. One-sided pinning breaks
-the catalog; catalog refusal restores both preceding records. Session-start
-`autoUpdate` behavior is unverified, so automatic updates stay disabled.
-Downgrade uses marketplace update + plugin update, without uninstall/reinstall.
-A same-version plugin update may be a no-op: a corrupt tree that still differs
-after retry triggers rollback, or `stopped` if no previous release can be restored.
-Codex registers the release with `marketplace add --ref` and `plugin add`.
-
-Each managed place is checked by installed version, tag commit and complete Git
-tree (paths, types, executable modes, content hashes and symlink targets).
-Only tool service objects absent from the release are excluded: Claude's
-`.in_use/`, Codex's `.git/` and `.codex-marketplace-install.json`; the latter
-must contain the expected `revision`. Codex's persistent config `ref` and GitHub source are checked, as are both Claude
-marketplace sources. Matching files alone cannot prove a foreign marketplace.
-A fresh session in each profile must find `mono:ship` in the verified folder.
-A mismatch after one retry, missing fresh-session skill, or failed new watcher restores every place's
-recorded previous tag and verifies again. Each resolved rollback tag must still
-match its recorded previous commit; a moved tag stops restoration. A clean place with no preceding release
-has no rollback target; failed initial installation is reported as `stopped`.
-
-Before removing the pause, the installer restarts each product's watcher from
-the verified installed folder and observes each fresh `watcher.json` pulse.
-The pack product uses `--config`; other products use their recorded worker config,
-or explicit repeated `--watcher-config /path/to/product-state=/path/to/config.json`.
-Missing or ambiguous config stops before installation. Every caught failure
-restores the original `control.json`; other products' controls, registries,
-configs and local plugin copies are never rewritten. `mono@mono-dev` and foreign
-`projectPath` copies are listed for their owning product sessions.
-
-The CLI runs in a dedicated process group and waits in the caller, so crash
-recovery does not confuse a live caller with installer descendants. The watcher
-PID/start identity is validated before signalling. The final restart inventory
-also includes sessions started during installation.
-
-Stdout is one JSON line: `outcome` is `installed`, `rolled-back`, `waiting` or
-`stopped`; `places` names expected/actual versions and proof, `holders` names
-blocking and dead records, `restart` lists Claude/Codex sessions with product
-folders, and `localCopies` names separate copies. Exit codes: 0 installed,
-2 waiting, 1 rollback or failure. Restart the named sessions; loaded rules do
-not change in an already running session. The JSON is evidence, not a claim that
-those owner sessions have restarted.
+An optional installer automates the same steps with holders, pauses and rollback; nobody uses it now:
+`node scripts/pack-install.mjs --root DIR --repo DIR --tag v<VERSION> --config FILE`
+(`--wave`, `--profile`, `--remove-place`, `--watcher-config`, `--breaking`; see `--help`).
 
 ## Compatibility
 
@@ -178,12 +82,12 @@ above; they do not require machine-wide quiescence.
 ## Install-Source Verification (Deploy)
 
 Verify the expected GitHub merge SHA for per-merge, or T and every task's merge
-ancestry for wave-drain, from its matching main checkout. A mismatch is a deploy
+ancestry for the optional wave-drain path, from its matching main checkout. A mismatch is a deploy
 blocker. The checkout verifies Git objects; GitHub is the plugin copy source.
 
 ### Wave Installation Source
 
-Apply [Landing Install](landing.md#install): halt, retain landed/stopped records,
+Optional wave path, not used now. Apply [Landing Install](landing.md#install): halt, retain landed/stopped records,
 verify T/ancestry/validation, install released plugin, verify both tools, close,
 then release halts. A changed GitHub tip requires matching checkout and complete
 verification again. Record both installed folders/versions, T, tag target and
