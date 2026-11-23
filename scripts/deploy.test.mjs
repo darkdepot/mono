@@ -55,12 +55,12 @@ if(name==='gh') {
  if(endpoint?.endsWith('/commits/main')) send({sha:s.main});
  if(endpoint?.includes('/commits/v')) send({sha:s.tags?.[endpoint.split('/').at(-1)]||'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'});
  if(endpoint?.includes('/compare/')) { const pair=endpoint.split('/compare/')[1]; send(s.comparisons[pair]||{status:pair.split('...')[0]===pair.split('...')[1]?'identical':'behind',files:[]}); }
- if(endpoint?.includes('/check-runs')) { if(s.merged&&s.landingPending>0&&s.landingPending--) send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'in_progress',conclusion:null}]}); send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'completed',conclusion:s.landingRed?'failure':'success',completed_at:new Date(s.clock).toISOString()}]}); }
+ if(endpoint?.includes('/check-runs')) { if(s.checkDelay) s.clock+=s.checkDelay; if(s.merged&&s.landingPending>0&&s.landingPending--) send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'in_progress',conclusion:null}]}); send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'completed',conclusion:s.landingRed?'failure':'success',completed_at:new Date(s.clock).toISOString()}]}); }
  if(endpoint?.endsWith('/pulls/1')) send({number:1,changed_files:Object.hasOwn(s,'changedFiles')?s.changedFiles:s.files.length,user:{login:'owner'},head:{sha:s.head},base:{ref:'main',repo:{full_name:'test/product'}},state:s.merged?'closed':'open',merged:s.merged,mergeable_state:(s.mergeState||'CLEAN').toLowerCase(),merged_at:s.merged?new Date(s.clock- (s.mergeAge||0)).toISOString():null,merge_commit_sha:s.merge});
  fail('unexpected gh '+JSON.stringify(a));
 }
 if(name==='vercel') {
- if(s.vercelError) fail(s.vercelError);
+ if(s.vercelError&&(!s.vercelErrorOn||a.includes(s.vercelErrorOn))) fail(s.vercelError);
  if(a[0]==='rollback'||a[0]==='promote') { if(s.actionUnknown) send({}); s.domain=s.deployments[a[1]]; s.project.autoAssignCustomDomains=a[0]==='promote'; s.project.targets.production=s.domain; send({}); }
  const endpoint=a[1];
  if(endpoint==='/v13/deployments' && a.includes('POST')) { s.retryBody=JSON.parse(fs.readFileSync(a[a.indexOf('--input')+1])); const d={...s.deployments.new,id:'repeated',createdAt:s.clock,readyState:s.repeatState||'READY'}; s.deployments.repeated=d; s.project.latestDeployments=[d]; if(s.repeatDomain) s.domain=d; send(d); }
@@ -629,7 +629,7 @@ test('merge waits for the main check inside one call, outside deploy.lock', asyn
 });
 test('merge stops waiting after 8 minutes with waiting-validation and the repeat continues', async t => {
   const f = fixture(t, [{ kind: 'pack' }]); guarded(f); f.mutate(s => s.landingPending = 100);
-  const r = await f.call('merge'); assert.equal(r.state, 'waiting-validation'); assert.match(r.reason, /ещё идёт, повтори merge/); assert.equal(f.read().clock - T, 480_000);
+  const r = await f.call('merge'); assert.equal(r.state, 'waiting-validation'); assert.match(r.reason, /ещё идёт, повтори merge/); assert.ok(f.read().clock - T <= 480_000 && f.read().clock - T >= 400_000);
   f.mutate(s => s.landingPending = 0); assert.equal((await f.call('merge')).state, 'merged'); assert.equal(f.read().calls.filter(c => c[1] === 'pr' && c[2] === 'merge').length, 1);
 });
 test('repeated call without a run state change writes no ledger line', async t => {
@@ -647,4 +647,25 @@ test('new local restore refuses when the installed version changed after before'
   const f = fixture(t, [{ kind: 'local', command: 'node local.mjs', check: 'node health.mjs' }]); await f.call('merge');
   f.mutate(s => { s.health = 1; s.localAfterHealth = { copyCommit: F, processCommit: F, startedAt: T, installing: false, restoring: false }; });
   const r = await f.call('local'); assert.equal(r.state, 'stopped'); assert.match(r.reason, /локальная версия изменилась; откат не делаю/); assert.equal(f.read().calls.some(c => c[0] === 'local' && c[1] === 'restore'), false);
+});
+test('a waiter never overwrites a newer persisted main check result', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); guarded(f); f.mutate(s => s.landingPending = 2); let first = true;
+  const r = await runDeploy('merge', { ...f.request, target: 0 }, { now: () => f.read().clock, sleep: async ms => { if (first) { first = false; f.editRun(run => { run.landing = { ...run.landing, code: 1, outcome: 'stop', reason: 'newer red' }; }); } f.mutate(s => { s.clock += ms; }); } });
+  assert.equal(r.state, 'waiting-validation'); assert.equal(r.landing.reason, 'newer red'); assert.equal(f.savedRun().landing.reason, 'newer red');
+});
+test('slow main check reads still end the merge call within 8 minutes', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); guarded(f); f.mutate(s => { s.landingPending = 100; s.checkDelay = 5_000; });
+  const r = await f.call('merge'); assert.equal(r.state, 'waiting-validation'); assert.ok(f.read().clock - T <= 480_000, `${f.read().clock - T}`);
+});
+test('ledger records a prove that becomes unverified and its recovery on the same build', async t => {
+  const f = fixture(t); const lines = () => fs.readFileSync(path.join(f.root, 'ledger.md'), 'utf8').split('\n').filter(line => line.includes(' DEPLOY ')).length;
+  await f.prove(); const proven = lines(); f.mutate(s => s.unread = true); assert.equal((await f.call('prove')).state, 'unverified'); assert.equal(lines(), proven + 1);
+  f.mutate(s => s.unread = false); assert.equal((await f.call('prove')).state, 'proven'); assert.equal(f.savedRun().targets[0].proof.id, 'new'); assert.equal(lines(), proven + 2);
+});
+for (const mutation of ['rollback', 'promote', 'POST']) test(`Vercel logout during ${mutation} keeps the login guidance in the Stop without replay`, async t => {
+  const f = fixture(t); const fail = () => f.mutate(s => { s.vercelError = 'spawnSync vercel ETIMEDOUT'; s.vercelErrorOn = mutation; }); let r;
+  if (mutation === 'rollback') { await f.badNew(); fail(); r = await f.call('rollback', { repairIssue: 'MONO-424' }); }
+  else if (mutation === 'promote') { await f.repair(); await f.check('quick', 'green', 'fix'); await f.check('scenario', 'green', 'fix'); fail(); r = await f.call('return'); }
+  else { await f.call('merge'); fail(); r = await f.call('prove'); }
+  assert.equal(r.state, 'stopped'); assert.match(r.reason, /did not confirm.*Vercel CLI не вошёл в аккаунт.*Stop without repeating/); assert.equal(f.read().calls.filter(c => c[0] === 'vercel' && c.includes(mutation)).length, 1);
 });

@@ -63,7 +63,7 @@ export async function performIntent({ state, key, action, target, persist, obser
       const fact = await observe(intent);
       if (fact.state === 'occurred') { intent.result = fact.value; persist(); return intent.result; }
       if (fact.state === 'not-executed' && !intent.replayed) { intent.replayed = true; persist(); break; }
-      need(now() < deadline, `${action} did not confirm; Stop without repeating`);
+      need(now() < deadline, `${action} did not confirm${intent.error ? ` (${intent.error})` : ''}; Stop without repeating`);
       await sleep(Math.min(20_000, deadline - now()));
     }
   } else {
@@ -73,7 +73,7 @@ export async function performIntent({ state, key, action, target, persist, obser
   while (true) {
     const fact = await observe(intent);
     if (fact.state === 'occurred') { intent.result = fact.value; persist(); return intent.result; }
-    need(now() < deadline, `${action} did not confirm; Stop without repeating`);
+    need(now() < deadline, `${action} did not confirm${intent.error ? ` (${intent.error})` : ''}; Stop without repeating`);
     await sleep(Math.min(20_000, deadline - now()));
   }
 }
@@ -87,7 +87,7 @@ export async function runDeploy(command, request, clock = {}) {
   const config = readJson(request.config), deploy = validateDeployConfig(config.deploy), started = now();
   const lock = path.join(request.root, 'deploy.lock'), runFile = path.join(request.root, 'landing/deploy', `${request.head}.json`);
   // The ledger gets a line only when the run state changes, not on every repeated call.
-  const phase = r => JSON.stringify([r.merge, r.landing?.code, r.stop?.reason, r.closedAt, r.targets.map(t => [t.proof?.id, t.rolledBack, t.returned, t.failed])]);
+  const phase = r => JSON.stringify([r.merge, r.landing?.code, r.stop?.reason, r.closedAt, r.targets.map(t => [t.proof?.id, !!t.unread, t.rolledBack, t.returned, t.failed])]);
   const write = (r, logged) => {
     save(runFile, r); if (phase(r) === logged) return logged;
     const fd = fs.openSync(path.join(request.root, 'ledger.md'), 'a', 0o600);
@@ -520,18 +520,18 @@ export async function runDeploy(command, request, clock = {}) {
       return { state: 'closed', ...result };
     }
   });
-  // Merge waits ≤8 min for the main check outside deploy.lock; only the result write retakes it.
+  // Merge waits ≤8 min for the main check outside deploy.lock; a pause plus a bounded guard read (≤40 s) must fit.
   let landing = command === 'merge' ? result.landing : null, waited = false;
-  while (landing?.code === 2 && now() < started + 480_000) {
-    await sleep(Math.min(30_000, started + 480_000 - now())); waited = true;
-    landing = await landingCheck({ root: request.root, repo: request.repo, sha: result.merge, config: request.config });
+  while (landing?.code === 2 && now() + 70_000 <= started + 480_000) {
+    await sleep(30_000); waited = true; landing = await landingCheck({ root: request.root, repo: request.repo, sha: result.merge, config: request.config });
   }
-  if (waited && landing.code !== 2) return withLock(lock, () => {
+  if (waited) landing = await withLock(lock, () => { // Only the result write retakes the lock; a newer persisted result wins.
     const run = readJson(runFile), logged = phase(run);
     need(run.merge === result.merge && !run.closedAt, 'run changed while waiting for main check');
-    run.landing = landing; write(run, logged); return { ...result, state: landing.code ? 'waiting-validation' : 'merged', landing };
+    if (canonical(run.landing) === canonical(result.landing)) { run.landing = landing; write(run, logged); } return run.landing;
   });
-  return landing?.code === 2 ? { ...result, reason: 'проверка main ещё идёт, повтори merge' } : result;
+  const state = waited ? { ...result, state: landing.code ? 'waiting-validation' : 'merged', landing } : result;
+  return landing?.code === 2 ? { ...state, reason: 'проверка main ещё идёт, повтори merge' } : state;
 }
 
 if (isMain(import.meta.url)) {
