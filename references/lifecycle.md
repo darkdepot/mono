@@ -252,32 +252,8 @@ Gate: `mono-ship green certificate`, then `mono:deploy`.
 
 ## Deploy
 
-After `mono-ship green certificate`, `mono:deploy` runs in the product session.
-The configured `deploy.targets` block authorizes merge; absent block refuses.
-Check tester results before merge when qa.beforeMerge requires them. Script
-rereads head/checks/remarks and landing tip, saves rollback target, then squash
-merges that head. Night web requires a fresh signed-in browser readiness mark;
-destructive migrations wait until morning. No messages or live sends.
-
-Close the Issue on confirmed merge with a truthful check comment. Prove production
-version before checking the Issue scenario and product quick check. New repeated
-browser failure versus green saved old build permits one platform rollback and
-one recorded repair. Stop without outcome when browser/action is unavailable;
-keep run open. Pack PR awaits release, installed pack proves every named place.
-
-Only proven delivery earns an update; verified or explicitly unverified with
-reason/checker/date. A missing/failed update never changes delivery verdict.
-One Issue/result in product language: title at most 10 words, body at most 35,
-Issue chip last. Issue-only uses its named theme and never changes Project status.
-Only shipment of the last open Project Issue may complete the Project: every
-attached task has status TYPE completed, canceled or duplicate; other/unknown
-types block. Write/read back Completed before final prefix; already Completed or
-unconfirmed writes use ordinary form. No completion sweep after a hand-closed tail.
-
-Five outcomes, worst first: rolled back; deployment failed/production old;
-deployed unverified; merged awaiting release; deployed verified. No targets:
-Issue note only. Main design-file synchronization belongs to Design. Retire the
-worker after closeout; keep pending checks visible with label Не проверено.
+After `mono-ship green certificate`, `mono:deploy` merges, proves delivery, closes the Issue and retires the worker after closeout.
+Rules, outcomes and owner lines live in [skills/deploy/SKILL.md](../skills/deploy/SKILL.md) and its references.
 
 ## Orchestration
 

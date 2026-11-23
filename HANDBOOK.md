@@ -414,8 +414,8 @@ Ready — готовность, не старт: обычный проект и 
 проходит с коротким сертификатом и причиной; продукт без рецепта продолжает
 прежний путь с записью «тестировщик не подключён».
 
-Последнюю задачу определяет состояние PR в GitHub: задачи уже влитых PR могут
-оставаться In Review до установки волной. После последнего merge финальная
+Последнюю задачу определяет состояние PR в GitHub: задача закрывается при
+вливании своего PR. После последнего merge финальная
 проверка по-прежнему нужна перед установкой. Сохранённый finalIssue не заменяет
 свежие сведения о merge. Единственный невлитый PR становится финальным даже
 после завершённой удержанной цепочки. При нескольких невлитых PR удержанная
@@ -1009,56 +1009,17 @@ stage-agent allowlists and start fresh sessions after changes.
 
 ### Install or update a release
 
-Use `scripts/pack-install.mjs` from a verified release checkout. The same script
-handles owner “выпусти” and the orchestrator wave; add `--wave` only for the latter.
-
-```bash
-node scripts/pack-install.mjs --root /path/to/pack-state --repo /path/to/verified/checkout --tag v<VERSION> --config /path/to/product/.agents/mono-workflow.config.json --wave
-```
-
-A first run bootstraps missing `control.json` / `workers.json` only in its own
-pack-state root as idle / empty; existing or foreign state is never replaced.
-Corrupt own state and missing/corrupt foreign state stop installation.
-
-The script discovers installed `~/.claude*` profiles, adds the default Claude and
-Codex homes and remembers past places. Use repeated `--profile DIR` to include
-another profile, `--remove-place DIR` to explicitly retire a remembered place,
-and `--breaking` for an incompatible release. Permanent Claude pins update both
-profile records; Codex pins the release tag. Automatic updates remain disabled.
-The host probe verified update/downgrade commands, not session-start auto-update.
-After completion, rerunning the same tag may add profiles or a different
-`CODEX_HOME`: numbered records in `landing/install/<tag>.places/` retain their
-first recovery state without rewriting the original baseline or control snapshot.
-An interrupted installation resumes its recorded places before further additions.
-Canonical paths and the union of all past records retain older-tag extensions.
-A clean place recorded before its directory was created remains resumable;
-disappearance after a recorded creation, even before the whole run completes,
-still requires explicit removal. Remembered Claude and Codex directories cannot
-change type, including through symbolic links to the same physical directory.
-
-All places must match the version, commit and Git tree, and each fresh CLI session
-must find `mono:ship`. Persistent mismatch or a failed skill probe triggers
-rollback to the immutable recorded versions. Same-version CLI updates may leave
-a corrupt tree untouched; retry then rolls back, or stops when no previous release
-exists. Both tool marketplace sources must be the canonical GitHub repository;
-rollback tags must still match the saved commits. Holders are rechecked before
-each replacement, including rollback, so late sessions leave a resumable wait.
-Unavailable process inventory or session directories also yield unknown holders.
-Live/unknown holders wait; dead
-records are named without removal. The original control snapshot survives retries
-and is restored on failure. Watcher restart from the verified version and a fresh
-pulse precede unhalt. Wave mode retains the existing verify → install → close
-cycle. A recorded rollback resumes without rechecking the outgoing wave's admission.
-A different tag stops at an unfinished installation and releases its recorded
-pause; resume the named tag first. Failed results include actual place versions
-even without a rollback target. Full procedure and JSON/exit meanings:
+The Mono session installs each tagged release by plugin update in every place:
+each Claude Code profile (`claude plugin marketplace update`, then
+`claude plugin update`) and Codex (re-add the marketplace on `v<VERSION>`, then
+`codex plugin add`). It compares every version cache with `git archive v<VERSION>`
+and checks that a fresh `claude -p` and `codex exec` load the new version; restart
+running sessions to load new rules. Exact commands and allowed service files:
 [Plugin Updates](references/install.md#plugin-updates).
 
-Read the `places`, `holders`, `restart` and `localCopies` fields. Restart
-listed Claude/Codex sessions to load new rules; a product session owns updating
-its local plugin copies. The installer never updates them on its behalf.
-For isolated verification, run the fake-CLI fixtures with a temporary HOME:
-`node --test scripts/deploy.test.mjs
+The optional installer `scripts/pack-install.mjs` automates the same steps with
+holders, pauses and rollback; it is not used now. Its fake-CLI fixtures run with a
+temporary HOME: `node --test scripts/deploy.test.mjs
 node --test scripts/pack-install.test.mjs`; do not use owner profiles.
 
 To try unreleased code without installation, launch Claude from the checkout with
@@ -1189,9 +1150,9 @@ domain, team (Vercel team ID, never a slug), check; `local` has paths, command, 
 `none` has paths/reason. Unknown fields and a sixth field fail. Paths are root
 relative * / ** globs; omitted means all files. See the [web](skills/deploy/references/web.md),
 [local](skills/deploy/references/local.md) and [pack](skills/deploy/references/pack.md)
-recipes. Each block needs owner yes in its own product session. Zeni's web paths
-cover its ignore-build list and mobile uses none. CallCatch/Red need rollback
-before opting in. Mono's exact block is `{"targets":[{"kind":"pack"}]}`.
+recipes. Each block needs owner yes in its own product session. Web paths cover
+the product's ignore-build list and mobile uses none. Mono's exact block is
+`{"targets":[{"kind":"pack"}]}`.
 
 `deploy.mjs` commands merge/prove/local/check/rollback/return/outcome accept
 `--request FILE`. It locks one open run per product in landing/deploy, records
@@ -1221,8 +1182,10 @@ morning. No browser: Stop/open run/no outcome; do not mint bypass secrets.
 
 Five outcomes worst first: rolled back; deployment failed/production old; deployed
 unverified; merged awaiting release; deployed verified. No targets means no outcome.
-Every unavailable check keeps its reason/checker. Installer JSON belongs to the
-separate release PR's run; closed ordinary pack PR runs keep their waiting outcome.
+Every unavailable check keeps its reason/checker. An ordinary pack PR is Done on
+merge with «влито, ждёт выпуска». A release PR passes `mono:qa` on its head before
+the tag; after installation its run gets `packResult` with every place verified,
+which gives «выкатили и проверили». Closed ordinary pack PR runs keep their waiting outcome.
 Owner lines and Issue closeout use [output](skills/deploy/references/output.md);
 project update only for proven delivery uses its short [rule](skills/deploy/references/project-update.md).
 Deploy's entire reading union is capped at **13,000 bytes** by read-budget.mjs.
@@ -1335,13 +1298,12 @@ Ordinary merges and installation wait
 for a green main tip; a repair uses the named corrective exception. See
 [merge validation](references/landing.md#merge-validation) for commands, result
 codes and first-rollout qualification. Mono selects `landing.install: "wave-drain"`:
-the orchestrator records each merged task and updates the plugin once after the
-release task and after every registered worker is stopped and landed.
-Verification under halt fixes the batch, checks
-GitHub's installation tip and every merge's ancestry; close after installation
-read-back preserves per-task delivery proof. Failed installation retains pending
-tasks for correction. Installed versions in both tools must equal `VERSION` at
-the landing tip, and its version tag must point to that tip. See
+Deploy records each registered task's merge in `pending-install.json`. The task
+is Done on merge and its worker is retired after that closeout; the records do
+not block retirement. Each release installs by plugin update with cache and
+fresh-run checks ([Plugin Updates](references/install.md#plugin-updates)), and
+nothing closes these records. Collecting a wave (`landing-drain verify/close`,
+`pack-install --wave`) is optional and not used now. See
 [install and recovery](references/landing.md#install) and
 [one-time migration](#migrate-from-the-local-installer).
 
@@ -1359,7 +1321,7 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-08.** Exclude SHAs, build numbers, PRs, slices, rounds, reviews, stages, sessions, dates and completion percentages from project-update prose while permitting product vocabulary, so the update describes the product — [Invariants, item 15](templates/project-update.md#invariants).
 - **K-09.** Give separate outcomes separate updates and use no subheadings, lists or more than one link inside an update, so each result stays visible — [Invariants, item 14](templates/project-update.md#invariants).
 - **K-10.** Use the State form when no shipment occurred, report factual Project health, make the link optional and end with the owner's needed action, so progress cannot look like delivery — [State update](templates/project-update.md#state-update).
-- **K-11.** Complete a Project only through the shipment of its last open Issue and begin its final update with the configured “Project completed” prefix, so the feed has a delivered conclusion — [Deploy](references/lifecycle.md#deploy) and [Invariants, item 13](templates/project-update.md#invariants).
+- **K-11.** Complete a Project only through the shipment of its last open Issue and begin its final update with the configured “Project completed” prefix, so the feed has a delivered conclusion — [Deploy project update](skills/deploy/references/project-update.md#project-update) and [Invariants, item 13](templates/project-update.md#invariants).
 - **K-12.** Name the theme Project in an issue-only Issue and send its shipment update there, so a projectless result still has a visible home — [Theme project](references/issue-only-lane.md#theme-project).
 - **K-13.** Assign new agent-created Project leads and Issue assignees to the acting owner while preserving existing assignments, so created work reaches the owner's lists — [Linear Artifact Rules](references/artifact-rules.md#linear-artifact-rules).
 - **K-14.** Treat project updates as informational closeout results whose absence or failure cannot block delivery or change its verdict, so reporting cannot stop shipment — [Skill Design Rules](AGENTS.md#skill-design-rules).
@@ -1373,8 +1335,8 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-22.** Run the code review round at every risk class with the policy's reviewer and checker from different model families, pinned at launch, so the reviewer has the capability and depth to challenge the author — [Roles](references/model-policy.md#roles) and [Review admission](references/review-admission.md#review-admission).
 - **K-23.** Classify work as tiny, standard, deep or risky to set artifact requirements and review depth, treating money, data, access, production and public interfaces as risky domains, so dangerous work cannot pass through a light process — [Risk Classification](references/readiness-gates.md#risk-classification).
 - **K-24.** Require both pre-write package reviewers for a single Issue at every risk, including tiny; multiple Issues keep up to three rounds and tiny advisory with reason. Formal pre-ship review for standard/deep/risky stays unchanged — [Review Gate Policy](references/readiness-gates.md#review-gate-policy).
-- **K-25.** Close an Issue on confirmed merge and keep delivery truth, proof, checker and date in its closeout comment — [Deploy](references/lifecycle.md#deploy).
-- **K-26.** Verify user-facing changes live against Issue acceptance after deployment and file defects as immediate out-of-queue hotfixes, and keep unverified results visible in the closed Issue, so automated checks cannot substitute for the user experience — [Deploy](references/lifecycle.md#deploy).
+- **K-25.** Close an Issue on confirmed merge and keep delivery truth, proof, checker and date in its closeout comment — [Deploy](skills/deploy/SKILL.md#run).
+- **K-26.** Verify user-facing changes live against Issue acceptance after deployment and file defects as immediate out-of-queue hotfixes, and keep unverified results visible in the closed Issue, so automated checks cannot substitute for the user experience — [Deploy](skills/deploy/SKILL.md#run).
 - **K-27.** Include a compact checked/not-checked boundary in every stage result and call uninspected work unverified, so the owner cannot infer unsupported confidence — [Checked / Not Checked](references/human-friendly-output.md#checked--not-checked).
 - **K-28.** Report a stop with completed work, the exact blocking point, unperformed work and the smallest unblock action, so unfinished work cannot be mistaken for ready — [Blocked / Timed-Out Shape](references/human-friendly-output.md#blocked--timed-out-shape).
 - **K-29.** Append only observed facts with actual recording times to the ledger and append corrections instead of rewriting history, so invented history cannot conceal delays — [Mailbox And Ledger](references/orchestration.md#mailbox-and-ledger).

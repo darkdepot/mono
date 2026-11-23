@@ -232,7 +232,11 @@ after success on the same SHA; they do not qualify GitHub's external behavior.
 
 ## Install
 
-`landing.install: "wave-drain"` defers installation until every registered,
+`landing.install: "wave-drain"` makes Deploy record each registered attempt's
+merge in `landing/pending-install.json` (`record` below). Collecting a wave
+(`verify`, installation, `close`) is an optional path, not used now: releases
+install by plugin update per [Plugin Updates](install.md#plugin-updates), and
+nothing closes these records. A wave would defer installation until every registered,
 unretired attempt is `landed`. The shared `attemptState` function in
 `orchestrator/command-state.mjs` also governs release uniqueness. It recognizes
 `landed` needs verified pins, confirmed green ship, connected-product QA (task
@@ -287,8 +291,9 @@ subblock, these commands report `not configured`, return 0 and change nothing.
 
 Pending mutations use their own lock and atomic JSON replacement; registry-bound
 record/verify also serialize with launch. Ledger appends share `dispatch.lock`.
-After close, close each Issue with its individual proof, then retire its attempt.
-Until then it stays In Review. A failed install or red T leaves pending records
+Each Issue is Done on merge and its worker is retired after that closeout;
+pending records do not block retirement. `verify` rereads registry entries, so
+an optional wave must keep them until `close`. A failed install or red T leaves pending records
 intact: the orchestrator removes halt, starts a corrective task, and verifies a
 new T containing the earlier merges. Removing halt is always the orchestrator's
 action, after close or after installation failure. This does not change the
@@ -302,8 +307,8 @@ substitute for first application.
 
 ### Plugin installation proof
 
-For Mono, installation happens once at the end of a wave, after its release task
-lands. Install from the GitHub marketplace repository `darkdepot/mono` when its
+Mono installs each release per [Plugin Updates](install.md#plugin-updates).
+The rest of this section applies only to the optional wave path. Install from the GitHub marketplace repository `darkdepot/mono` when its
 main branch tip equals the verified T: Claude Code refreshes the marketplace
 then the plugin; Codex re-registers the marketplace on `v<VERSION>` before
 installing. Keep the

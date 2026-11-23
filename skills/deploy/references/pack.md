@@ -1,26 +1,19 @@
 # Pack
 
-Block exactly `{"targets":[{"kind":"pack"}]}`. Ordinary PR merge/outcome:
-«влито, ждёт выпуска»; orchestrator wave or owner «выпусти». Manual PR without
-registered attempt never calls landing-drain record.
+Block exactly `{"targets":[{"kind":"pack"}]}`.
 
-Separate approved release PR assembles changelog, version, plugin manifests and
-upgrade steps. Every release installs with `pack-install.mjs`.
-Mono writes its block on main first; other products own their configs/copies.
+Ordinary pack PR: outcome «влито, ждёт выпуска»; Issue Done on merge; retire
+the worker after that closeout. A registered attempt's merge still writes its
+pending-install record; nothing closes it on this path and retirement ignores it.
 
-Wave: landing-drain verify → `node <pack-root>/scripts/pack-install.mjs` → close.
-Use --help. Breaking release/rollback requires verified quiescence.
-Installer handles profiles/holders, prior versions/pause, tag pins, mismatched
-places, version/commit/tree/fresh-session proof and watcher/pause recovery.
-List dead records (never remove); live holders wait; product copies stay listed.
-
-Pass installer JSON as packResult to the RELEASE PR's run, not a closed ordinary
-run (it keeps «влито, ждёт выпуска»). Its outcome installed means
-«выкатили и проверили»; rolled-back «откатили»; waiting/stopped NO outcome, name
-holders/failure. Show places, sessions to restart, local copies still old.
-Installed places must share verified expected/actual version; its v<VERSION>
-commit must contain this PR merge. An old release cannot prove new delivery.
-
-Transition: product sessions get owner yes/write blocks; CallCatch/Red need rollback.
-Mono removes legacy fields. Close Project after Mono/Zeni web/CallCatch/Red blocks,
-next verified pack-install release and Mono probe cleanup/archive.
+Release: a separate approved PR assembles changelog, version, plugin manifests
+and upgrade steps. Before the tag, run `mono:qa` on the release PR head. After
+merge and tag, install per `<pack-root>/references/install.md`, then pass to THIS
+release PR's run `packResult`
+`{"outcome":"installed","places":[{"place":"<profile>","expected":"<VERSION>","actual":"<VERSION>","verified":true}]}`:
+one place per Claude Code profile and Codex; expected is the tag version, actual
+the cached one; verified only when the cache equals the tag tree and a fresh
+session loaded that version. Then «выкатили и проверили»; the tag must contain
+this merge. A place that does not match: send `stopped` with the place and
+reason; no outcome, run stays open. `rolled-back` means «откатили».
+The installer is optional.

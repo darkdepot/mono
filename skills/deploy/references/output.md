@@ -67,12 +67,9 @@ unverified reason/checker/date, rollback/repair and project update; read back.
 No targets: note only. Repair label Прод на откате; unverified label Не проверено.
 Original rolled-back Issue stays closed and links repair; update awaits delivery.
 
-S19/U5 exception: domain red/own URL green is unverified, preserve red and create
-discrepancy Issue; do not emit a «Проверил» line. Without signed-in browser, Stop
-has no outcome and the run stays open. Replace ONLY the Сделал line above:
+Domain red/own URL green (web.md): no «Проверил» line. Without signed-in
+browser, Stop has no outcome and the run stays open. Replace ONLY the Сделал line above:
 ```text
 Сделал: не откатывал, проверить <прошлую сборку | сборку починки> без браузера со входом Vercel не смог; прод сейчас <на какой версии>.
 От тебя: дай браузер со входом Vercel.
 ```
-Autonomous night web requires this browser available BEFORE merge (S20), otherwise
-wait until morning without merge/outcome.
