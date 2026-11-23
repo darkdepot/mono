@@ -20,6 +20,8 @@ const url = value => `https://${String(value).replace(/^https:\/\//, '').replace
 const commit = deployment => deployment?.meta?.githubCommitSha ?? deployment?.gitSource?.sha;
 const ready = deployment => deployment?.target === 'production' && deployment.readyState === 'READY';
 const cli = (command, args, options = {}) => execFileSync(command, args, { encoding: 'utf8', timeout: 120_000, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], ...options }).trim();
+const vercel = args => { try { return cli('vercel', args); } catch (error) { // Logout and timeouts get an actionable reason; the Stop stays.
+  throw /ETIMEDOUT|not logged in|No existing credentials|\b40[13]\b/i.test(`${error.code} ${error.stderr}`) ? new Error('Vercel CLI не вошёл в аккаунт или не отвечает: войди (`vercel login`) и повтори') : error; } };
 const gh = (...args) => JSON.parse(cli('gh', ['api', ...args]));
 const pages = endpoint => gh('--paginate', '--slurp', endpoint).flat();
 const save = (file, value) => {
@@ -61,7 +63,7 @@ export async function performIntent({ state, key, action, target, persist, obser
       const fact = await observe(intent);
       if (fact.state === 'occurred') { intent.result = fact.value; persist(); return intent.result; }
       if (fact.state === 'not-executed' && !intent.replayed) { intent.replayed = true; persist(); break; }
-      need(now() < deadline, `${action} did not confirm; Stop without repeating`);
+      need(now() < deadline, `${action} did not confirm${intent.error ? ` (${intent.error})` : ''}; Stop without repeating`);
       await sleep(Math.min(20_000, deadline - now()));
     }
   } else {
@@ -71,7 +73,7 @@ export async function performIntent({ state, key, action, target, persist, obser
   while (true) {
     const fact = await observe(intent);
     if (fact.state === 'occurred') { intent.result = fact.value; persist(); return intent.result; }
-    need(now() < deadline, `${action} did not confirm; Stop without repeating`);
+    need(now() < deadline, `${action} did not confirm${intent.error ? ` (${intent.error})` : ''}; Stop without repeating`);
     await sleep(Math.min(20_000, deadline - now()));
   }
 }
@@ -82,46 +84,37 @@ export async function runDeploy(command, request, clock = {}) {
   need(['merge', 'prove', 'local', 'check', 'rollback', 'return', 'outcome'].includes(command), 'unknown command');
   need(path.isAbsolute(request.root ?? '') && path.isAbsolute(request.config ?? '') && path.isAbsolute(request.worktree ?? ''), 'absolute root/config/worktree required');
   need(/^[\w.-]+\/[\w.-]+$/.test(request.repo ?? '') && SHA.test(request.head ?? '') && /^[A-Z][A-Z0-9]*-\d+$/.test(request.issue ?? ''), 'repo, head and issue required');
-  const config = readJson(request.config), deploy = validateDeployConfig(config.deploy);
-  return withLock(path.join(request.root, 'deploy.lock'), async () => {
-    const runFile = path.join(request.root, 'landing/deploy', `${request.head}.json`);
-    let run = fs.existsSync(runFile) ? readJson(runFile) : null;
-    const persist = () => {
-      save(runFile, run);
-      const fd = fs.openSync(path.join(request.root, 'ledger.md'), 'a', 0o600);
-      try { fs.writeSync(fd, `- ${new Date(now()).toISOString()} DEPLOY ${JSON.stringify({ head: run.head, command, closed: !!run.closedAt })}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    };
+  const config = readJson(request.config), deploy = validateDeployConfig(config.deploy), started = now();
+  const lock = path.join(request.root, 'deploy.lock'), runFile = path.join(request.root, 'landing/deploy', `${request.head}.json`);
+  // The ledger gets a line only when the run state changes, not on every repeated call.
+  const phase = r => JSON.stringify([r.merge, r.landing?.code, r.stop?.reason, r.closedAt, r.targets.map(t => [t.proof?.id, !!t.unread, t.rolledBack, t.returned, t.failed])]);
+  const write = (r, logged) => {
+    save(runFile, r); if (phase(r) === logged) return logged;
+    const fd = fs.openSync(path.join(request.root, 'ledger.md'), 'a', 0o600);
+    try { fs.writeSync(fd, `- ${new Date(now()).toISOString()} DEPLOY ${JSON.stringify({ head: r.head, command, closed: !!r.closedAt })}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); } return phase(r);
+  };
+  const result = await withLock(lock, async () => {
+    let run = fs.existsSync(runFile) ? readJson(runFile) : null, logged = run && phase(run);
+    const persist = () => { logged = write(run, logged); };
     if (run) need(run.repo === request.repo && run.issue === request.issue && run.head === request.head && canonical(run.config) === canonical(deploy), 'run/config identity changed');
     const rollbackFile = target => path.join(request.root, 'landing/rollback', `${target.key}.json`);
     const rollback = target => fs.existsSync(rollbackFile(target)) ? readJson(rollbackFile(target)) : null;
-    const archive = target => {
-      const file = rollbackFile(target), value = readJson(file);
-      save(path.join(path.dirname(file), 'archive', `${target.key}-${value.head}.json`), { ...value, returnedAt: now() });
-      fs.unlinkSync(file);
-    };
-    const api = (target, endpoint) => JSON.parse(cli('vercel', ['api', endpoint, '--scope', target.recipe.team]));
+    const archive = target => { const file = rollbackFile(target), value = readJson(file);
+      save(path.join(path.dirname(file), 'archive', `${target.key}-${value.head}.json`), { ...value, returnedAt: now() }); fs.unlinkSync(file); };
+    const api = (target, endpoint) => JSON.parse(vercel(['api', endpoint, '--scope', target.recipe.team]));
     const domain = target => api(target, `/v13/deployments/${target.recipe.domain}?teamId=${encodeURIComponent(target.recipe.team)}`);
     const project = target => api(target, `/v9/projects/${target.projectId}`);
     const follows = (base, actual) => SHA.test(actual ?? '') && (actual === base || ['identical', 'ahead'].includes(gh(`repos/${run?.repo ?? request.repo}/compare/${base}...${actual}`).status));
     const quick = (target, address) => {
       let result = 'green', reason = '';
-      try {
-        const args = target.recipe.kind === 'local' ? ['-c', target.recipe.check] : ['-c', `${target.recipe.check} "$1"`, 'deploy-check', address];
-        cli('sh', args, { cwd: request.worktree });
-      }
+      try { cli('sh', target.recipe.kind === 'local' ? ['-c', target.recipe.check] : ['-c', `${target.recipe.check} "$1"`, 'deploy-check', address], { cwd: request.worktree }); }
       catch (error) { result = 'red'; reason = String(error.stderr ?? error.message).slice(0, 1500); }
       const check = { id: target.proof.id, url: address, kind: 'quick', surface: target.recipe.kind === 'local' ? 'local' : 'domain', result, reason, attempt: target.checks.filter(c => c.id === target.proof.id && c.kind === 'quick' && c.surface === 'domain').length + 1, at: now() };
       target.checks.push(check); persist(); return check;
     };
-    const health = target => {
-      const check = quick(target, target.recipe.kind === 'local' ? '' : url(target.recipe.domain));
-      need(check.result === 'green', 'restored production quick check failed; Stop');
-    };
+    const health = target => need(quick(target, target.recipe.kind === 'local' ? '' : url(target.recipe.domain)).result === 'green', 'restored production quick check failed; Stop');
     const followup = (target, reason, kind = 'repair') => {
-      run.followups ??= [];
-      if (!run.followups.some(row => row.target === target.key && row.reason === reason)) run.followups.push({ target: target.key, reason, kind });
-      persist();
-    };
+      if (!(run.followups ??= []).some(row => row.target === target.key && row.reason === reason)) run.followups.push({ target: target.key, reason, kind }); persist(); };
     const stopped = (reason, target, browser = false) => {
       run.stop = { reason, target: target?.key, browser, at: now() }; persist();
       let production = 'не подтверждён';
@@ -136,16 +129,11 @@ export async function runDeploy(command, request, clock = {}) {
         'От тебя: дай браузер со входом Vercel.'
       ] : [`Стоп в ${config.projectName}: ${reason}.`] };
     };
-    const flagMatches = async (target, expected) => {
-      const deadline = now() + 30_000;
-      while (project(target).autoAssignCustomDomains !== expected) {
-        need(now() < deadline, 'rollback file and Vercel disagree');
-        await sleep(Math.min(1_000, deadline - now()));
-      }
+    const flagMatches = async (target, expected, deadline = now() + 30_000) => {
+      while (project(target).autoAssignCustomDomains !== expected) { need(now() < deadline, 'rollback file and Vercel disagree'); await sleep(Math.min(1_000, deadline - now())); }
     };
     if (command === 'merge') {
-      const certificate = request.certificate;
-      const binding = validateShipCertificate({ issue: request.issue, head: request.head, certificate }, request.repo);
+      const binding = validateShipCertificate({ issue: request.issue, head: request.head, certificate: request.certificate }, request.repo);
       const pr = gh(`repos/${request.repo}/pulls/${binding.pr}`);
       need(pr.head?.sha === request.head, 'head changed; back to Ship');
       need(pr.state === 'open' || pr.merged === true, 'PR is not open');
@@ -200,7 +188,7 @@ export async function runDeploy(command, request, clock = {}) {
           (excludedBot && snapshot.mergeable === 'MERGEABLE' && snapshot.mergeStateStatus === 'UNSTABLE' && pr.mergeable_state === 'unstable'), 'merge state is not clean');
         need(snapshot.checks.filter(check => !waived(check)).every(check => check.head === request.head && (check.__typename === 'StatusContext' ? check.state === 'SUCCESS' : check.status === 'COMPLETED' && ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion))), 'checks unfinished or red');
         need(!afterShip({ snapshot, ...readPrPublications(request.repo, binding.pr, { includeReviews: true }) }, request.head, !!binding.bot, bots).length, 'new remarks after Ship');
-        requireQaPassed({ root: request.root, config, issue: request.issue, head: request.head, shipCertificate: certificate });
+        requireQaPassed({ root: request.root, config, issue: request.issue, head: request.head, shipCertificate: request.certificate });
         if (config.landing?.validation) {
           const tip = gh(`repos/${request.repo}/commits/main`).sha;
           const guard = await landingCheck({ root: request.root, config: request.config, repo: request.repo, sha: tip });
@@ -274,7 +262,7 @@ export async function runDeploy(command, request, clock = {}) {
         const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-deploy-'));
         try {
           const file = path.join(temporary, 'body.json'); fs.writeFileSync(file, JSON.stringify(body));
-          cli('vercel', ['api', '/v13/deployments', '--scope', target.recipe.team, '-X', 'POST', '--input', file]);
+          vercel(['api', '/v13/deployments', '--scope', target.recipe.team, '-X', 'POST', '--input', file]);
         } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
       }, deadline);
       return true;
@@ -285,7 +273,7 @@ export async function runDeploy(command, request, clock = {}) {
         // domain target stays unknown; it cannot authorize replaying a write.
         try { const d = domain(target); return ready(d) && d.id === destination.id ? { state: 'occurred', value: d } : { state: 'unknown' }; }
         catch { return { state: 'unknown' }; }
-      }, async () => cli('vercel', [action === 'promote' ? 'promote' : 'rollback', destination.id, '--yes', '--scope', target.recipe.team, '--timeout', '120s']), now() + 600_000);
+      }, async () => vercel([action === 'promote' ? 'promote' : 'rollback', destination.id, '--yes', '--scope', target.recipe.team, '--timeout', '120s']), now() + 600_000);
       target.proof = result; persist(); return result;
     };
     if (command === 'prove') {
@@ -411,8 +399,7 @@ export async function runDeploy(command, request, clock = {}) {
     }
     if (command === 'local') {
       need(target.recipe.kind === 'local', 'local target required');
-      const status = () => JSON.parse(cli('sh', ['-c', `${target.recipe.command} status`], { cwd: request.worktree }));
-      const current = () => { const s = status(); need(SHA.test(s.copyCommit) && SHA.test(s.processCommit) && Number.isFinite(stamp(s.startedAt)), 'local status invalid'); return s; };
+      const current = () => { const s = JSON.parse(cli('sh', ['-c', `${target.recipe.command} status`], { cwd: request.worktree })); need(SHA.test(s.copyCommit) && SHA.test(s.processCommit) && Number.isFinite(stamp(s.startedAt)), 'local status invalid'); return s; };
       const proveProcess = s => {
         const previous = target.proof;
         const same = previous?.copyCommit === s.copyCommit && previous.id === s.processCommit && stamp(previous.startedAt) === stamp(s.startedAt);
@@ -433,6 +420,7 @@ export async function runDeploy(command, request, clock = {}) {
       };
       const restore = async before => {
         const destination = rb?.rollback ?? target.baseline;
+        if (!run.intents[`${target.key}:restore`]) { const s = current(); need(s.copyCommit === before.copyCommit && s.processCommit === before.processCommit, 'локальная версия изменилась; откат не делаю'); }
         target.restoreFrom = before; persist();
         await action('restore', destination.processCommit, 'restore', before);
         proveProcess(current()); health(target);
@@ -522,7 +510,7 @@ export async function runDeploy(command, request, clock = {}) {
             need(checked || unavailable.length, 'scenario result or unavailable reason/checker must be recorded');
             outcome = checked && !unavailable.length ? order[4] : order[2];
           }
-          if (unavailable.length) reason = [reason, ...unavailable.map(check => `${check.reason}; проверит ${check.who}`)].filter(Boolean).join('; ');
+          if (unavailable.length) reason = [...new Set([reason, ...unavailable.map(check => `${check.reason}; проверит ${check.who}`)])].filter(Boolean).join('; ');
         }
         rows.push({ target: t.index, outcome, reason, versionProven: !!t.proof && !t.unread && !t.failed, proof: (t.failed ? expectedWeb : t.proof)?.id });
       }
@@ -532,6 +520,18 @@ export async function runDeploy(command, request, clock = {}) {
       return { state: 'closed', ...result };
     }
   });
+  // Merge waits ≤8 min for the main check outside deploy.lock; a pause plus a bounded guard read (≤40 s) must fit.
+  let landing = command === 'merge' ? result.landing : null, waited = false;
+  while (landing?.code === 2 && now() + 70_000 <= started + 480_000) {
+    await sleep(30_000); waited = true; landing = await landingCheck({ root: request.root, repo: request.repo, sha: result.merge, config: request.config });
+  }
+  if (waited) landing = await withLock(lock, () => { // Only the result write retakes the lock; a newer persisted result wins.
+    const run = readJson(runFile), logged = phase(run);
+    need(run.merge === result.merge && !run.closedAt, 'run changed while waiting for main check');
+    if (canonical(run.landing) === canonical(result.landing)) { run.landing = landing; write(run, logged); } return run.landing;
+  });
+  const state = waited ? { ...result, state: landing.code ? 'waiting-validation' : 'merged', landing } : result;
+  return landing?.code === 2 ? { ...state, reason: 'проверка main ещё идёт, повтори merge' } : state;
 }
 
 if (isMain(import.meta.url)) {

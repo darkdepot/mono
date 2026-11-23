@@ -31,7 +31,8 @@ Read when:
    No block: no merge; ignore legacy workflows.deploy / deployApproval.
 2. Request JSON outside checkout: absolute root/config/worktree, repo, issue, head,
    certificate (full text); root is existing product state root. Run
-   `node <pack-root>/scripts/deploy.mjs merge --request <file>`.
+   `node <pack-root>/scripts/deploy.mjs merge --request <file>`; merge waits up to
+   8 min for the main check; `waiting-validation`: repeat the same call.
    Script locks/rereads PR/head/checks/remarks/QA/landing and records previous
    deployment. qa.beforeMerge needs host tester on same head. Night: afk:true; destructive
    migration or web without fresh signed-in browser mark waits, no outcome.

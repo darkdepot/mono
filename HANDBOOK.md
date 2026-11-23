@@ -1198,7 +1198,9 @@ before opting in. Mono's exact block is `{"targets":[{"kind":"pack"}]}`.
 pre-merge rollback target and action intentions with read-backs, and uses raw PR
 publications after the latest Ship marker on the same head; a `Бот:` certificate
 waives only bot waits/late bot remarks. QA beforeMerge and
-landing tip remain merge gates. It never uses auto-merge. Manual pack PRs without
+landing tip remain merge gates. After merging it waits up to 8 minutes outside
+the lock for the main check on the merge commit; `waiting-validation` means repeat
+the same call. The ledger gets a DEPLOY line only when run state changes. It never uses auto-merge. Manual pack PRs without
 registry attempts skip landing-drain record. CLI calls are bounded at 120 seconds.
 Before an issue-only merge, Deploy rereads the current body, marker, label and
 approved whole-body fingerprint; changed or revoked approval stops the merge (K-21).
