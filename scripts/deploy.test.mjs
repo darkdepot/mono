@@ -53,7 +53,9 @@ if(name==='gh') {
  if(endpoint?.endsWith('/commits')) send([s.commitHistory||[]]);
  if(endpoint?.endsWith('/files')) { if(s.filesError) fail('PR file list unavailable'); send([s.files]); }
  if(endpoint?.endsWith('/commits/main')) send({sha:s.main});
- if(endpoint?.includes('/commits/v')) send({sha:s.tags?.[endpoint.split('/').at(-1)]||'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'});
+ if(endpoint?.includes('/commits/v')) send({sha:s.tags?.[endpoint.split('/').at(-1)]||s.branches?.[endpoint.split('/').at(-1)]||'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'});
+ if(endpoint?.includes('/git/ref/tags/')) { const v=s.tags?.[endpoint.split('/').at(-1)]; if(!v) fail('HTTP 404: Not Found'); send({ref:'refs/tags/'+endpoint.split('/').at(-1),object:typeof v==='string'?{type:'commit',sha:v}:{type:'tag',sha:v.tag}}); }
+ if(endpoint?.includes('/git/tags/')) send({object:{type:'commit',sha:s.tagObjects[endpoint.split('/').at(-1)]}});
  if(endpoint?.includes('/compare/')) { const pair=endpoint.split('/compare/')[1]; send(s.comparisons[pair]||{status:pair.split('...')[0]===pair.split('...')[1]?'identical':'behind',files:[]}); }
  if(endpoint?.includes('/check-runs')) { if(s.checkDelay) s.clock+=s.checkDelay; if(s.merged&&s.landingPending>0&&s.landingPending--) send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'in_progress',conclusion:null}]}); send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'completed',conclusion:s.landingRed?'failure':'success',completed_at:new Date(s.clock).toISOString()}]}); }
  if(endpoint?.endsWith('/pulls/1')) send({number:1,changed_files:Object.hasOwn(s,'changedFiles')?s.changedFiles:s.files.length,user:{login:'owner'},head:{sha:s.head},base:{ref:'main',repo:{full_name:'test/product'}},state:s.merged?'closed':'open',merged:s.merged,mergeable_state:(s.mergeState||'CLEAN').toLowerCase(),merged_at:s.merged?new Date(s.clock- (s.mergeAge||0)).toISOString():null,merge_commit_sha:s.merge});
@@ -110,8 +112,8 @@ test('merge invokes exact squash head gate, ignores empty commit statuses, and r
 test('latest Ship marker on this head admits resolved replies and ignores earlier remarks',async t=>{
  const f=fixture(t);f.mutate(s=>{s.comments=[{user:{login:'owner'},body:`<!-- mono:ship --> ${H}`,created_at:new Date(T-3000).toISOString()},{body:'earlier',created_at:new Date(T-2000).toISOString()},{user:{login:'owner'},body:`<!-- mono:ship --> ${H}`,created_at:new Date(T-1000).toISOString()}];s.threads=[{id:'x',isResolved:true,comments:[{id:'reply'}]}];s.reviewComments=[{node_id:'reply',body:'fixed',updated_at:new Date(T+100).toISOString()}];});await f.call('merge');
 });
-test('no deploy block refuses; QA beforeMerge without proof refuses',async t=>{
- const f=fixture(t);const cfg=JSON.parse(fs.readFileSync(f.config));delete cfg.deploy;fs.writeFileSync(f.config,JSON.stringify(cfg));await assert.rejects(f.call('merge'),/deploy:/);cfg.deploy={targets:[web]};cfg.qa.beforeMerge=true;fs.writeFileSync(f.config,JSON.stringify(cfg));await assert.rejects(f.call('merge'),/QA:/);
+test('invalid deploy block refuses; QA beforeMerge without proof refuses',async t=>{
+ const f=fixture(t);const cfg=JSON.parse(fs.readFileSync(f.config));for(const bad of [null,{},{targets:[]},{targets:[{kind:'vercel'}]}]){cfg.deploy=bad;fs.writeFileSync(f.config,JSON.stringify(cfg));await assert.rejects(f.call('merge'),/deploy:/);}assert.equal(f.read().calls.length,0);cfg.deploy={targets:[web]};cfg.qa.beforeMerge=true;fs.writeFileSync(f.config,JSON.stringify(cfg));await assert.rejects(f.call('merge'),/QA:/);
 });
 for(const scenario of ['drop migration','no browser','stale browser','different browser deployment'])test(`night waits without merge: ${scenario}`,async t=>{
  const f=fixture(t);if(scenario==='drop migration')f.mutate(s=>s.files=[{filename:'migrations/one.sql',patch:'+DROP TABLE users;'}]);
@@ -206,8 +208,8 @@ for(const fact of ['occurred','not-executed','unknown'])test(`U7 actual local pe
 for(const installed of ['installed','rolled-back','waiting','stopped'])test(`pack result ${installed} translates without inventing outcome`,async t=>{
  const f=fixture(t,[{kind:'pack'}]);await f.call('merge');f.mutate(s=>s.tags={'v0.2.0':M});const r=await f.call('outcome',{packResult:{outcome:installed,places:[{place:'test-profile',verified:true,expected:'0.2.0',actual:'0.2.0'}],holders:installed==='waiting'?[{pid:123,reason:'active'}]:[]}});assert.equal(r.outcome,installed==='installed'?'выкатили и проверили':installed==='rolled-back'?'откатили':null);assert.equal(!!f.savedRun().closedAt,!['waiting','stopped'].includes(installed));
 });
-test('CLI request surface returns JSON and does not merge when block is missing', t=>{
- const f=fixture(t);fs.writeFileSync(f.config,JSON.stringify({projectName:'test'}));const input=path.join(f.root,'request.json');fs.writeFileSync(input,JSON.stringify(f.request));const result=spawnSync(process.execPath,['scripts/deploy.mjs','merge','--request',input],{encoding:'utf8'});assert.equal(result.status,1);assert.match(result.stderr,/deploy:/);assert.equal(f.read().calls.length,0);
+test('CLI request surface returns JSON and does not merge when block is invalid', t=>{
+ const f=fixture(t);fs.writeFileSync(f.config,JSON.stringify({projectName:'test',deploy:{}}));const input=path.join(f.root,'request.json');fs.writeFileSync(input,JSON.stringify(f.request));const result=spawnSync(process.execPath,['scripts/deploy.mjs','merge','--request',input],{encoding:'utf8'});assert.equal(result.status,1);assert.match(result.stderr,/deploy:/);assert.equal(f.read().calls.length,0);
 });
 for(const fact of ['occurred','not-executed','unknown'])test(`U7 actual local pending restore ${fact}`,async t=>{
  const f=fixture(t,[{kind:'local',command:'node local.mjs',check:'node health.mjs'}]);await f.call('merge');
@@ -668,4 +670,71 @@ for (const mutation of ['rollback', 'promote', 'POST']) test(`Vercel logout duri
   else if (mutation === 'promote') { await f.repair(); await f.check('quick', 'green', 'fix'); await f.check('scenario', 'green', 'fix'); fail(); r = await f.call('return'); }
   else { await f.call('merge'); fail(); r = await f.call('prove'); }
   assert.equal(r.state, 'stopped'); assert.match(r.reason, /did not confirm.*Vercel CLI не вошёл в аккаунт.*Stop without repeating/); assert.equal(f.read().calls.filter(c => c[0] === 'vercel' && c.includes(mutation)).length, 1);
+});
+
+// MONO-474: no block merges unverified; login-walled own URL; none target with observed version.
+const noBlock = f => { const cfg=JSON.parse(fs.readFileSync(f.config));delete cfg.deploy;fs.writeFileSync(f.config,JSON.stringify(cfg)); };
+test('no deploy block merges after the same gates and closes unverified without proof or update',async t=>{
+ const f=fixture(t);noBlock(f);const m=await f.call('merge');assert.equal(m.state,'merged');assert.deepEqual(m.targets,[]);assert.equal(f.read().calls.filter(c=>c[1]==='pr'&&c[2]==='merge').length,1);
+ const r=await f.call('outcome');assert.equal(r.outcome,'выкатили, не проверено');assert.match(r.reason,/нет настроек выкатки/);assert.equal(r.noDeployBlock,true);assert.equal(r.noTargets,false);assert.equal(r.projectUpdateAllowed,false);assert.deepEqual(r.targets,[]);assert.equal(f.read().calls.some(c=>c[0]==='vercel'),false);assert.ok(f.savedRun().closedAt);
+});
+for(const [name,change,pattern] of [['red check',s=>s.checks[0].conclusion='FAILURE',/checks/],['remark after Ship',s=>s.comments.push({body:'fix this',created_at:new Date(T+1).toISOString()}),/new remarks/],['foreign head',s=>s.head=F,/head changed/]])test(`no deploy block still refuses ${name}`,async t=>{
+ const f=fixture(t);noBlock(f);f.mutate(change);await assert.rejects(f.call('merge'),pattern);assert.equal(f.read().calls.some(c=>c[1]==='pr'&&c[2]==='merge'),false);
+});
+test('no deploy block still honours QA beforeMerge',async t=>{
+ const f=fixture(t);const cfg=JSON.parse(fs.readFileSync(f.config));delete cfg.deploy;cfg.qa.beforeMerge=true;fs.writeFileSync(f.config,JSON.stringify(cfg));await assert.rejects(f.call('merge'),/QA:/);assert.equal(f.read().merged,false);
+});
+const walledBrowser = (f,kind='quick') => f.check(kind,'unavailable','new','browser',1,{reason:'Cloudflare Access login on own URL',who:'owner',blockedBy:'auth'});
+test('login-walled own URL with green production quick and scenario is verified with a note',async t=>{
+ const f=fixture(t);await f.prove();const r=await walledBrowser(f);assert.equal(r.state,'recorded');assert.equal(f.savedRun().stop,undefined);await f.check('scenario','green','new','domain');
+ const out=await f.call('outcome');assert.equal(out.outcome,'выкатили и проверили');assert.match(out.targets[0].note,/адрес сборки закрыт входом/);assert.equal(out.targets[0].versionProven,true);assert.equal(out.projectUpdateAllowed,true);
+});
+test('login-walled own URL without green production scenario stays unverified with reason and checker',async t=>{
+ const f=fixture(t);await f.prove();await walledBrowser(f);await walledBrowser(f,'scenario');const out=await f.call('outcome');assert.equal(out.outcome,'выкатили, не проверено');assert.match(out.targets[0].reason,/Cloudflare Access.*проверит owner/);assert.equal(out.targets[0].note,undefined);
+});
+test('login-walled own URL with red production scenario never verifies',async t=>{
+ const f=fixture(t);await f.prove();await walledBrowser(f);await f.check('scenario','red','new','domain');const out=await f.call('outcome');assert.equal(out.state,'stopped');assert.equal(out.outcome,null);assert.equal(f.savedRun().closedAt,undefined);
+});
+test('login-walled own URL with red production quick stops without outcome; rollback rules unchanged; prove again recovers',async t=>{
+ const f=fixture(t);f.mutate(s=>s.health=1);await f.prove();await walledBrowser(f);await f.check('scenario','green','new','domain');const out=await f.call('outcome');assert.equal(out.state,'stopped');assert.equal(out.outcome,null);assert.match(out.reason,/закрыт входом/);await assert.rejects(f.call('rollback'),/red twice/);assert.equal(f.read().calls.some(c=>c[1]==='rollback'),false);
+ f.mutate(s=>s.health=0);assert.equal((await f.call('prove')).state,'proven');assert.equal(f.savedRun().stop,undefined);assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
+});
+test('earlier red own-URL check is not erased by a later login-wall record',async t=>{
+ const f=fixture(t);await f.prove();await f.check('quick','red');await f.check('quick','unavailable','new','browser',2,{reason:'Cloudflare Access login',who:'owner',blockedBy:'auth'});await f.check('scenario','green','new','domain');const out=await f.call('outcome').catch(e=>({error:e.message}));assert.notEqual(out.outcome,'выкатили и проверили');
+});
+test('login-walled quick plus red own-URL scenario or other unavailable reason does not take the production path',async t=>{
+ const f=fixture(t);await f.prove();await walledBrowser(f);await f.check('scenario','red');await f.check('scenario','green','new','domain');await assert.rejects(f.call('outcome'),/red check unresolved/);
+ const g=fixture(t);await g.prove();await walledBrowser(g);await g.check('scenario','unavailable','new','browser',1,{reason:'needs real data',who:'owner',browserAvailable:true});await g.check('scenario','green','new','domain');assert.equal((await g.call('outcome')).outcome,'выкатили, не проверено');
+});
+test('login-walled own URL with unavailable production scenario closes unverified without another own-URL check',async t=>{
+ const f=fixture(t);await f.prove();await walledBrowser(f);await f.check('scenario','unavailable','new','domain',1,{reason:'needs real customer data',who:'owner by 2026-11-25'});const out=await f.call('outcome');assert.equal(out.outcome,'выкатили, не проверено');assert.match(out.targets[0].reason,/Cloudflare Access.*проверит owner/);assert.match(out.targets[0].reason,/real customer data; проверит owner by 2026-11-25/);assert.ok(f.savedRun().closedAt);
+});
+test('only browser quick behind login, production scenario missing, closes unverified with reason and checker',async t=>{
+ const f=fixture(t);await f.prove();await walledBrowser(f);const out=await f.call('outcome');assert.equal(out.outcome,'выкатили, не проверено');assert.match(out.targets[0].reason,/Cloudflare Access login on own URL; проверит owner/);assert.ok(f.savedRun().closedAt);
+});
+test('none target unavailable scenario keeps reason and checker',async t=>{
+ const f=fixture(t,[none]);await f.call('merge');await noneCheck(f,{observed:M,reason:'needs a phone',who:'owner by 2026-11-25'},'unavailable');const out=await f.call('outcome');assert.equal(out.outcome,'выкатили, не проверено');assert.match(out.targets[0].reason,/недоступен: needs a phone; проверит owner by 2026-11-25/);
+});
+test('blockedBy auth is accepted only on an unavailable own-URL browser check',async t=>{
+ const f=fixture(t);await f.prove();await assert.rejects(f.check('quick','green','new','browser',1,{blockedBy:'auth'}),/blockedBy/);await assert.rejects(f.check('scenario','unavailable','new','domain',1,{reason:'x',who:'owner',blockedBy:'auth'}),/blockedBy/);await assert.rejects(f.check('quick','unavailable','new','browser',1,{reason:'x',who:'owner',blockedBy:'vpn'}),/blockedBy/);
+});
+const none={kind:'none',paths:['src/**'],reason:'мобильное Deploy пока не смотрит'};
+const noneCheck=(f,extra,result='green',id=M)=>f.call('check',{kind:'scenario',result,id,surface:'none',attempt:1,url:'app',...extra});
+test('none target with green scenario observing the merge commit is verified',async t=>{
+ const f=fixture(t,[none]);await f.call('merge');assert.equal((await noneCheck(f,{observed:M})).state,'recorded');const out=await f.call('outcome');assert.equal(out.outcome,'выкатили и проверили');assert.equal(out.targets[0].versionProven,true);assert.equal(out.targets[0].proof,M);assert.equal(out.projectUpdateAllowed,true);
+});
+test('none target with stated release verifies only when its tag contains the merge',async t=>{
+ const f=fixture(t,[none]);await f.call('merge');f.mutate(s=>s.tags={'v1.2.0':M});await noneCheck(f,{observed:'1.2.0',release:'1.2.0'});assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
+ const g=fixture(t,[none]);await g.call('merge');g.mutate(s=>s.tags={'v1.2.0':OLD});await noneCheck(g,{observed:'1.2.0',release:'1.2.0'});const out=await g.call('outcome');assert.equal(out.outcome,'выкатили, не проверено');assert.equal(out.targets[0].versionProven,false);
+});
+test('none release verifies through an annotated tag but never through a same-named branch',async t=>{
+ const f=fixture(t,[none]);await f.call('merge');f.mutate(s=>{s.tags={'v1.2.0':{tag:'t1'}};s.tagObjects={t1:M};});await noneCheck(f,{observed:'1.2.0',release:'1.2.0'});assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
+ const g=fixture(t,[none]);await g.call('merge');g.mutate(s=>{s.branches={'v1.2.0':M};});await noneCheck(g,{observed:'1.2.0',release:'1.2.0'});const out=await g.call('outcome');assert.equal(out.outcome,'выкатили, не проверено');assert.equal(out.targets[0].versionProven,false);assert.equal(g.read().calls.some(c=>c.some(a=>String(a).includes('/commits/v'))),false);
+});
+for(const [name,extra,result,pattern] of [['other observed version',{observed:OLD},'green',/не подтверждена/],['observed differs from release',{observed:'1.2.1',release:'1.2.0'},'green',/не подтверждена/],['red scenario',{observed:M,reason:'crash on open'},'red',/красный: crash/]])test(`none target stays unverified: ${name}`,async t=>{
+ const f=fixture(t,[none]);await f.call('merge');f.mutate(s=>s.tags={'v1.2.0':M});await noneCheck(f,extra,result);const out=await f.call('outcome');assert.equal(out.outcome,'выкатили, не проверено');assert.match(out.targets[0].reason,/мобильное Deploy/);assert.match(out.targets[0].reason,pattern);assert.equal(out.projectUpdateAllowed,false);
+});
+test('none checks need observed version, merge id and a none target',async t=>{
+ const f=fixture(t,[none]);await f.call('merge');await assert.rejects(noneCheck(f,{}),/observed/);await assert.rejects(noneCheck(f,{observed:M},'green',OLD),/not in run/);await assert.rejects(noneCheck(f,{observed:M,release:'latest'}),/release/);await assert.rejects(f.call('check',{kind:'quick',result:'green',id:M,surface:'none',attempt:1,observed:M}),/model observations/);
+ const g=fixture(t);await g.prove();await assert.rejects(noneCheck(g,{observed:M}),/mismatches target/);
 });

@@ -2,7 +2,7 @@
 
 Only after proven version reached people: verified/unavailable scenario with proof,
 installed pack release, confirmed repair return. No update for awaiting release,
-failed deploy, rollback, Stop, unreadable domain or no targets.
+failed deploy, rollback, Stop, unreadable domain, no targets or no block.
 
 One Issue/result, no duplicate Issue chip. Bold product-outcome title ≤10 words;
 body 1–2 sentences ≤35 words; Issue link last. No process/IDs/dates/PRs/forecasts/
