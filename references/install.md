@@ -35,6 +35,17 @@ not. The plugin has the repository layout: `skills/`, `references/`, `templates/
 The Mono session installs a merged, tagged release `v<VERSION>` in every place:
 each Claude Code profile and Codex.
 
+Folder condition, before any command: list the installed version folders each
+update will overwrite or delete, pause launches in the affected products and run
+`node <pack-root>/scripts/verify-pack-state.mjs before-update --folder DIR
+--products-root DIR` for each folder; wait until no live or unknown session or
+worker holds it. An incompatible release instead needs [Quiescence](#quiescence)
+in every product.
+
+0. Claude Code source ref, in each profile: read the `mono-marketplace` source in
+   `settings.json` (`extraKnownMarketplaces`) and `plugins/known_marketplaces.json`.
+   A `ref` left by the installer keeps the old release: set it to `v<VERSION>` in
+   both files, or remove it from both (the current practice), then read both back.
 1. Claude Code, in each profile (another profile via `CLAUDE_CONFIG_DIR`, with
    `--scope user` and `--scope project` where both are installed):
    `claude plugin marketplace update mono-marketplace`, then
@@ -45,6 +56,8 @@ each Claude Code profile and Codex.
 3. Compare each place's version cache with `git archive v<VERSION>`: every path,
    type, mode and content must match. Allowed extras are only tool service
    objects: Claude's `.in_use/`, Codex's `.git/` and `.codex-marketplace-install.json`.
+   That Codex file must be valid JSON with `revision` equal to the full commit
+   of `v<VERSION>`; otherwise the Codex place is not verified.
 4. Fresh run in each host: `claude -p` and `codex exec` must load a Mono skill
    from the new version folder. Running sessions keep old rules until restarted.
 
@@ -77,7 +90,7 @@ Each product confirms its own quiescence; never edit another product state.
 Rollback installs the previous version under this same incompatible-update rule.
 Missing/corrupt state, active/draining control or any attempt blocks. Restart
 sessions after cut-over. Ordinary compatible updates use the folder condition
-above; they do not require machine-wide quiescence.
+in [Plugin Updates](#plugin-updates); they do not require machine-wide quiescence.
 
 ## Install-Source Verification (Deploy)
 
