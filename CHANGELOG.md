@@ -29,6 +29,9 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 <!-- fragment: MONO-465 sha256:9f9b3d89561302b788fcd101067d246f4533b35439c0ba9b771f4eef946976ea -->
 Handoff ставит Ready только по строкам `PASS` проверки пакета и задач и ждёт вторую модель на переднем плане, без фонового запуска.
 
+<!-- fragment: MONO-466 sha256:7a6bae015bee60b5c524bded201c16ec1f38e300cb6b7dcce60b2fa27692ee9e -->
+Handoff перед Ready сам выдаёт отчёт проверки пакета и задач по шаблону со строкой статуса на каждый режим и ставит Ready только при `PASS` обоих.
+
 ## [0.53.1] - 2026-11-22
 
 <!-- fragment: MONO-432 sha256:90d59700f9f502bbc77b5712fc315fb6016a9f4cee471e7c1df9178827eca193 -->
