@@ -23,7 +23,8 @@ browser|domain. Unavailable needs reason/who; closeout names date. Only recorded
 IDs/addresses and current domain accepted. No browser: unavailable without
 browserAvailable:true; real-data-only obstacle with browser: set it true. No curl.
 Own URL behind login (e.g. Cloudflare Access): unavailable with blockedBy:"auth";
-green domain quick plus domain scenario on proven id verify with note, else unverified.
+green domain quick plus domain scenario on proven id verify with note, else unverified;
+red domain Stops until prove reruns green.
 
 Domain red: browser-test new own URL twice and saved old own URL. Old also red:
 known breakage, followup, no rollback. New red twice/old green: rollback decides,

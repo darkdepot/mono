@@ -693,8 +693,12 @@ test('login-walled own URL without green production scenario stays unverified wi
 test('login-walled own URL with red production scenario never verifies',async t=>{
  const f=fixture(t);await f.prove();await walledBrowser(f);await f.check('scenario','red','new','domain');const out=await f.call('outcome');assert.equal(out.state,'stopped');assert.equal(out.outcome,null);assert.equal(f.savedRun().closedAt,undefined);
 });
-test('login-walled own URL with red production quick stops without outcome; rollback rules unchanged',async t=>{
+test('login-walled own URL with red production quick stops without outcome; rollback rules unchanged; prove again recovers',async t=>{
  const f=fixture(t);f.mutate(s=>s.health=1);await f.prove();await walledBrowser(f);await f.check('scenario','green','new','domain');const out=await f.call('outcome');assert.equal(out.state,'stopped');assert.equal(out.outcome,null);assert.match(out.reason,/закрыт входом/);await assert.rejects(f.call('rollback'),/red twice/);assert.equal(f.read().calls.some(c=>c[1]==='rollback'),false);
+ f.mutate(s=>s.health=0);assert.equal((await f.call('prove')).state,'proven');assert.equal(f.savedRun().stop,undefined);assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
+});
+test('earlier red own-URL check is not erased by a later login-wall record',async t=>{
+ const f=fixture(t);await f.prove();await f.check('quick','red');await f.check('quick','unavailable','new','browser',2,{reason:'Cloudflare Access login',who:'owner',blockedBy:'auth'});await f.check('scenario','green','new','domain');const out=await f.call('outcome').catch(e=>({error:e.message}));assert.notEqual(out.outcome,'выкатили и проверили');
 });
 test('login-walled quick plus red own-URL scenario or other unavailable reason does not take the production path',async t=>{
  const f=fixture(t);await f.prove();await walledBrowser(f);await f.check('scenario','red');await f.check('scenario','green','new','domain');await assert.rejects(f.call('outcome'),/red check unresolved/);
@@ -712,7 +716,7 @@ test('none target with stated release verifies only when its tag contains the me
  const f=fixture(t,[none]);await f.call('merge');f.mutate(s=>s.tags={'v1.2.0':M});await noneCheck(f,{observed:'1.2.0',release:'1.2.0'});assert.equal((await f.call('outcome')).outcome,'выкатили и проверили');
  const g=fixture(t,[none]);await g.call('merge');g.mutate(s=>s.tags={'v1.2.0':OLD});await noneCheck(g,{observed:'1.2.0',release:'1.2.0'});const out=await g.call('outcome');assert.equal(out.outcome,'выкатили, не проверено');assert.equal(out.targets[0].versionProven,false);
 });
-for(const [name,extra,result,pattern] of [['other observed version',{observed:OLD},'green',/не совпала/],['observed differs from release',{observed:'1.2.1',release:'1.2.0'},'green',/не совпала/],['red scenario',{observed:M,reason:'crash on open'},'red',/красный: crash/]])test(`none target stays unverified: ${name}`,async t=>{
+for(const [name,extra,result,pattern] of [['other observed version',{observed:OLD},'green',/не подтверждена/],['observed differs from release',{observed:'1.2.1',release:'1.2.0'},'green',/не подтверждена/],['red scenario',{observed:M,reason:'crash on open'},'red',/красный: crash/]])test(`none target stays unverified: ${name}`,async t=>{
  const f=fixture(t,[none]);await f.call('merge');f.mutate(s=>s.tags={'v1.2.0':M});await noneCheck(f,extra,result);const out=await f.call('outcome');assert.equal(out.outcome,'выкатили, не проверено');assert.match(out.targets[0].reason,/мобильное Deploy/);assert.match(out.targets[0].reason,pattern);assert.equal(out.projectUpdateAllowed,false);
 });
 test('none checks need observed version, merge id and a none target',async t=>{

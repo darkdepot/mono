@@ -490,7 +490,7 @@ export async function runDeploy(command, request, clock = {}) {
           let tagged = false;
           if (green && s.release && s.observed === s.release) try { tagged = follows(run.merge, gh(`repos/${run.repo}/commits/v${s.release.replace(/^v/, '')}`).sha); } catch { /* No tag: stays unverified. */ }
           if (green && (s.observed === run.merge || tagged)) { outcome = order[4]; t.proof = { id: run.merge, observed: s.observed, release: s.release }; persist(); }
-          else { outcome = order[2]; reason = [t.recipe.reason, s && (green ? `наблюдённая версия ${s.observed} не совпала с влитой` : `сценарий ${s.result === 'red' ? 'красный' : 'недоступен'}: ${s.reason ?? ''}`)].filter(Boolean).join('; '); }
+          else { delete t.proof; outcome = order[2]; reason = [t.recipe.reason, s && (green ? `наблюдённая версия ${s.observed} не подтверждена как влитая` : `сценарий ${s.result === 'red' ? 'красный' : 'недоступен'}: ${s.reason ?? ''}`)].filter(Boolean).join('; '); }
         }
         else {
           need(t.proof, 'version not proven');
@@ -498,7 +498,7 @@ export async function runDeploy(command, request, clock = {}) {
           const surface = t.recipe.kind === 'local' ? 'local' : 'domain';
           // Own build URL behind a login: green production quick and scenario on the proven version verify it.
           const own = ['quick', 'scenario'].map(kind => latest(t, t.proof.id, 'browser', kind)).filter(Boolean), prod = ['quick', 'scenario'].map(kind => latest(t, t.proof.id, 'domain', kind));
-          const walled = t.recipe.kind === 'vercel' && own.some(check => check.blockedBy === 'auth') && own.every(check => check.result === 'green' || check.blockedBy === 'auth');
+          const walled = t.recipe.kind === 'vercel' && own.some(check => check.blockedBy === 'auth') && own.every(check => check.result === 'green' || check.blockedBy === 'auth') && !t.checks.some(check => check.id === t.proof.id && check.surface === 'browser' && check.result === 'red');
           if (walled && prod.some(check => check?.result === 'red')) return stopped('проверка по домену красная, а адрес сборки закрыт входом: сравнить нельзя', t);
           if (walled && prod.every(check => check?.result === 'green')) { outcome = order[4]; note = 'проверено на проде: адрес сборки закрыт входом'; }
           else {
