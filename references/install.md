@@ -125,7 +125,7 @@ bodies, wrappers, workflow lockfiles, checkers or updater CI. Use
 `scripts/project-config.mjs --repo /path/to/product --write --clean` for config
 migration and `--check` for shape, required fields, placeholders and forbidden files.
 Config fields/policies: [handbook](../HANDBOOK.md#project-config). Use null for absent
-workflows; absent deploy blocks. `workflows.deploy` has no Land alias.
+workflows; without a deploy block merges close unverified. `workflows.deploy` has no Land alias.
 
 ## Project Policy
 

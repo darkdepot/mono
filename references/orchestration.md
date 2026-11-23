@@ -73,7 +73,7 @@ recorded and complete; an unfinished one (e.g. Handoff with its package record b
 without Issues, checks or Ready) re-enters to finish the missing steps, reusing
 existing records without duplicates (`skills/handoff/references/run.md`). The owner's correction in words reopens that stage; your approval of the
 earlier version no longer counts. Stage approval does not
-execute external writes/spending. Configured deploy targets and owner-approved rollback remain required.
+execute external writes/spending. Proven delivery needs configured deploy targets and owner-approved rollback; without them merges close unverified.
 
 Apply Approval countercheck (`references/orchestration-stages.md`) before approvals/work start;
 Research start is not approval: reason, no second model. The owner keeps
