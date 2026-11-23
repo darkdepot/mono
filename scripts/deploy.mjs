@@ -487,10 +487,11 @@ export async function runDeploy(command, request, clock = {}) {
           } else if (installed) { t.proof = { id: installed.places?.map(place => place.actual).join(','), places: installed.places }; persist(); }
         } else if (t.recipe.kind === 'none') { // Verified only when the observed version is the merge or its tagged release.
           const s = latest(t, run.merge, 'none', 'scenario'), green = s?.result === 'green';
-          let tagged = false;
-          if (green && s.release && s.observed === s.release) try { tagged = follows(run.merge, gh(`repos/${run.repo}/commits/v${s.release.replace(/^v/, '')}`).sha); } catch { /* No tag: stays unverified. */ }
+          let tagged = false; // Only refs/tags/v<release>, peeled to its commit; a same-named branch never counts.
+          if (green && s.release && s.observed === s.release) try { let o = gh(`repos/${run.repo}/git/ref/tags/v${s.release.replace(/^v/, '')}`).object;
+            for (let i = 0; o?.type === 'tag' && i < 5; i++) o = gh(`repos/${run.repo}/git/tags/${o.sha}`).object; tagged = o?.type === 'commit' && follows(run.merge, o.sha); } catch { /* No tag: stays unverified. */ }
           if (green && (s.observed === run.merge || tagged)) { outcome = order[4]; t.proof = { id: run.merge, observed: s.observed, release: s.release }; persist(); }
-          else { delete t.proof; outcome = order[2]; reason = [t.recipe.reason, s && (green ? `наблюдённая версия ${s.observed} не подтверждена как влитая` : `сценарий ${s.result === 'red' ? 'красный' : 'недоступен'}: ${s.reason ?? ''}`)].filter(Boolean).join('; '); }
+          else { delete t.proof; outcome = order[2]; reason = [t.recipe.reason, s && (green ? `наблюдённая версия ${s.observed} не подтверждена как влитая` : `сценарий ${s.result === 'red' ? 'красный' : 'недоступен'}: ${s.reason ?? ''}${s.who ? `; проверит ${s.who}` : ''}`)].filter(Boolean).join('; '); }
         }
         else {
           need(t.proof, 'version not proven');
@@ -501,6 +502,7 @@ export async function runDeploy(command, request, clock = {}) {
           const walled = t.recipe.kind === 'vercel' && own.some(check => check.blockedBy === 'auth') && own.every(check => check.result === 'green' || check.blockedBy === 'auth') && !t.checks.some(check => check.id === t.proof.id && check.surface === 'browser' && check.result === 'red');
           if (walled && prod.some(check => check?.result === 'red')) return stopped('проверка по домену красная, а адрес сборки закрыт входом: сравнить нельзя', t);
           if (walled && prod.every(check => check?.result === 'green')) { outcome = order[4]; note = 'проверено на проде: адрес сборки закрыт входом'; }
+          else if (walled) { outcome = order[2]; reason = [...new Set([...own, ...prod].filter(check => check?.result === 'unavailable').map(check => `${check.reason}; проверит ${check.who}`))].join('; '); }
           else {
             if (t.recipe.kind === 'vercel') need(latest(t, t.proof.id, 'browser', 'quick') && latest(t, t.proof.id, 'browser', 'scenario'), 'own URL browser quick and scenario results required');
             const scenario = latest(t, t.proof.id, t.recipe.kind === 'vercel' ? 'browser' : surface, 'scenario');
