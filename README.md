@@ -105,19 +105,25 @@ examples/     примеры настроек и разборы
 
 ## Установка
 
-Установку и обновление выпуска выполняет одна команда из проверенной копии
-репозитория с тегом выпуска. Укажите корень состояния Mono и конфиг своего
-продукта; для волны оркестратора добавьте `--wave`.
+Mono ставится как плагин из репозитория `darkdepot/mono`.
 
 ```bash
-node scripts/pack-install.mjs --root /path/to/pack-state --repo /path/to/verified/checkout --tag v<VERSION> --config /path/to/product/.agents/mono-workflow.config.json
+claude plugin marketplace add darkdepot/mono
+claude plugin install mono@mono-marketplace
 ```
 
-Скрипт находит профили Claude и Codex, сверяет установленную версию и файлы,
-проверяет скилл в свежей сессии и при сбое возвращает прежнюю версию. Итог называет
-держателей, отдельные локальные копии и сессии для перезапуска. Автообновление не
-используется. Условия первого запуска и восстановления — в
-[инструкции установки](references/install.md#plugin-updates).
+В Codex:
+
+```bash
+codex plugin marketplace add darkdepot/mono --ref v<VERSION>
+codex plugin add mono@mono-marketplace
+```
+
+Новый выпуск ставится обновлением плагина в каждом профиле Claude Code и в Codex.
+После обновления копия сверяется с тегом, и свежая сессия должна загрузить новую
+версию. Порядок, проверка занятых папок и сверка описаны в
+[инструкции установки](references/install.md#plugin-updates). Автообновление не
+используется; идущие сессии держат прежние правила до перезапуска.
 Для знакомства без установки можно запустить Claude с `--plugin-dir` из копии
 репозитория или читать `skills/<skill>/SKILL.md` в Codex; см.
 [справочник](HANDBOOK.md#install-or-update-a-release).
