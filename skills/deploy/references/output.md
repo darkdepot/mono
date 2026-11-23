@@ -75,4 +75,4 @@ has no outcome and the run stays open. Replace ONLY the Сделал line above:
 От тебя: дай браузер со входом Vercel.
 ```
 Autonomous night web requires this browser available BEFORE merge (S20), otherwise
-wait until morning without merge/outcome. Owner lines never expose commit/build IDs.
+wait until morning without merge/outcome.

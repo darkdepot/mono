@@ -55,11 +55,12 @@ if(name==='gh') {
  if(endpoint?.endsWith('/commits/main')) send({sha:s.main});
  if(endpoint?.includes('/commits/v')) send({sha:s.tags?.[endpoint.split('/').at(-1)]||'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'});
  if(endpoint?.includes('/compare/')) { const pair=endpoint.split('/compare/')[1]; send(s.comparisons[pair]||{status:pair.split('...')[0]===pair.split('...')[1]?'identical':'behind',files:[]}); }
- if(endpoint?.includes('/check-runs')) send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'completed',conclusion:s.landingRed?'failure':'success',completed_at:new Date(s.clock).toISOString()}]});
+ if(endpoint?.includes('/check-runs')) { if(s.merged&&s.landingPending>0&&s.landingPending--) send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'in_progress',conclusion:null}]}); send({total_count:1,check_runs:[{id:1,name:'validate',head_sha:s.main,status:'completed',conclusion:s.landingRed?'failure':'success',completed_at:new Date(s.clock).toISOString()}]}); }
  if(endpoint?.endsWith('/pulls/1')) send({number:1,changed_files:Object.hasOwn(s,'changedFiles')?s.changedFiles:s.files.length,user:{login:'owner'},head:{sha:s.head},base:{ref:'main',repo:{full_name:'test/product'}},state:s.merged?'closed':'open',merged:s.merged,mergeable_state:(s.mergeState||'CLEAN').toLowerCase(),merged_at:s.merged?new Date(s.clock- (s.mergeAge||0)).toISOString():null,merge_commit_sha:s.merge});
  fail('unexpected gh '+JSON.stringify(a));
 }
 if(name==='vercel') {
+ if(s.vercelError) fail(s.vercelError);
  if(a[0]==='rollback'||a[0]==='promote') { if(s.actionUnknown) send({}); s.domain=s.deployments[a[1]]; s.project.autoAssignCustomDomains=a[0]==='promote'; s.project.targets.production=s.domain; send({}); }
  const endpoint=a[1];
  if(endpoint==='/v13/deployments' && a.includes('POST')) { s.retryBody=JSON.parse(fs.readFileSync(a[a.indexOf('--input')+1])); const d={...s.deployments.new,id:'repeated',createdAt:s.clock,readyState:s.repeatState||'READY'}; s.deployments.repeated=d; s.project.latestDeployments=[d]; if(s.repeatDomain) s.domain=d; send(d); }
@@ -71,7 +72,7 @@ if(name==='vercel') {
 }
 `;
   for (const name of ['gh', 'vercel']) { fs.writeFileSync(path.join(root, name), fake); fs.chmodSync(path.join(root, name), 0o755); }
-  fs.writeFileSync(path.join(root, 'health.mjs'), `import fs from 'node:fs';const p=process.env.MONO_DEPLOY_FIXTURE,s=JSON.parse(fs.readFileSync(p));s.calls.push(['health',...process.argv.slice(2)]);fs.writeFileSync(p,JSON.stringify(s));process.exit(s.rejectHealthArgs&&process.argv.length>2?1:(s.healthByCommit?.[s.local.processCommit]??s.health));`);
+  fs.writeFileSync(path.join(root, 'health.mjs'), `import fs from 'node:fs';const p=process.env.MONO_DEPLOY_FIXTURE,s=JSON.parse(fs.readFileSync(p));s.calls.push(['health',...process.argv.slice(2)]);const code=s.rejectHealthArgs&&process.argv.length>2?1:(s.healthByCommit?.[s.local.processCommit]??s.health);if(s.localAfterHealth)s.local=s.localAfterHealth;fs.writeFileSync(p,JSON.stringify(s));process.exit(code);`);
   fs.writeFileSync(path.join(root, 'local.mjs'), `import fs from 'node:fs';const p=process.env.MONO_DEPLOY_FIXTURE,s=JSON.parse(fs.readFileSync(p)),[verb,sha]=process.argv.slice(2);s.calls.push(['local',verb,sha]);if(verb==='status'){console.log(JSON.stringify(s.local));}else if(!s.localUnknown){if(verb==='install')s.saved=s.local.processCommit;s.local={copyCommit:sha,processCommit:sha,startedAt:s.clock,installing:false,restoring:false};}fs.writeFileSync(p,JSON.stringify(s));`);
   const env = { PATH: process.env.PATH, MONO_DEPLOY_FIXTURE: process.env.MONO_DEPLOY_FIXTURE };
   process.env.PATH = root + path.delimiter + env.PATH; process.env.MONO_DEPLOY_FIXTURE = file;
@@ -618,4 +619,32 @@ test('empty configured bot list still ignores a late known review bot after the 
   const config = JSON.parse(fs.readFileSync(f.config)); config.orchestration = { ship: { botChecks: [] } }; fs.writeFileSync(f.config, JSON.stringify(config));
   f.mutate(s => s.comments.push({ user: { login: 'greptile-apps[bot]', type: 'Bot' }, body: 'late review', created_at: new Date(T + 1).toISOString() }));
   await f.call('merge'); assert.equal(f.read().merged, true);
+});
+
+const guarded = (f, timeoutSec = 3600) => { const c = JSON.parse(fs.readFileSync(f.config)); c.landing = { validation: { check: 'validate', timeoutSec } }; fs.writeFileSync(f.config, JSON.stringify(c)); };
+test('merge waits for the main check inside one call, outside deploy.lock', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); guarded(f); f.mutate(s => s.landingPending = 3); const pauses = [];
+  const r = await runDeploy('merge', { ...f.request, target: 0 }, { now: () => f.read().clock, sleep: async ms => { assert.equal(fs.existsSync(path.join(f.root, 'deploy.lock')), false); pauses.push(ms); f.mutate(s => { s.clock += ms; }); } });
+  assert.equal(r.state, 'merged'); assert.equal(pauses.length, 3); assert.equal(f.savedRun().landing.code, 0);
+});
+test('merge stops waiting after 8 minutes with waiting-validation and the repeat continues', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); guarded(f); f.mutate(s => s.landingPending = 100);
+  const r = await f.call('merge'); assert.equal(r.state, 'waiting-validation'); assert.match(r.reason, /ещё идёт, повтори merge/); assert.equal(f.read().clock - T, 480_000);
+  f.mutate(s => s.landingPending = 0); assert.equal((await f.call('merge')).state, 'merged'); assert.equal(f.read().calls.filter(c => c[1] === 'pr' && c[2] === 'merge').length, 1);
+});
+test('repeated call without a run state change writes no ledger line', async t => {
+  const f = fixture(t, [{ kind: 'pack' }]); const lines = () => fs.readFileSync(path.join(f.root, 'ledger.md'), 'utf8').split('\n').filter(line => line.includes(' DEPLOY ')).length;
+  await f.call('merge'); const first = lines(); assert.ok(first >= 1); await f.call('merge'); await f.call('merge'); assert.equal(lines(), first);
+});
+test('identical unverified reasons are shown once', async t => {
+  const f = fixture(t); await f.prove(); for (const kind of ['quick', 'scenario']) await f.check(kind, 'unavailable', 'new', 'browser', 1, { reason: 'нужны живые данные', who: 'владелец', browserAvailable: true });
+  const r = await f.call('outcome'); assert.equal(r.targets[0].reason.split('нужны живые данные').length, 2);
+});
+for (const error of ['spawnSync vercel ETIMEDOUT', 'Error: No existing credentials found. Please run `vercel login`', 'Error: Not authorized (403)']) test(`Vercel logout or timeout names the login: ${error}`, async t => {
+  const f = fixture(t); f.mutate(s => s.vercelError = error); await assert.rejects(f.call('merge'), /Vercel CLI не вошёл в аккаунт или не отвечает: войди \(`vercel login`\) и повтори/); assert.equal(f.read().merged, false);
+});
+test('new local restore refuses when the installed version changed after before', async t => {
+  const f = fixture(t, [{ kind: 'local', command: 'node local.mjs', check: 'node health.mjs' }]); await f.call('merge');
+  f.mutate(s => { s.health = 1; s.localAfterHealth = { copyCommit: F, processCommit: F, startedAt: T, installing: false, restoring: false }; });
+  const r = await f.call('local'); assert.equal(r.state, 'stopped'); assert.match(r.reason, /локальная версия изменилась; откат не делаю/); assert.equal(f.read().calls.some(c => c[0] === 'local' && c[1] === 'restore'), false);
 });

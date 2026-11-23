@@ -118,6 +118,7 @@ After green Ship and Independent QA above, invoke `mono:deploy` in this product'
 session; its script owns the merge, version proof, checks, rollback and outcome.
 It closes the Issue on merge and publishes an update only after delivery; retain
 proof and retire the worker after closeout. No deploy worker.
+Merge waits up to 8 min for the main check; on `waiting-validation` repeat the same call, no polling.
 
 ## Monitoring Protocol
 
