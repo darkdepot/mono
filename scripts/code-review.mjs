@@ -396,9 +396,10 @@ function runInvocation(invocation, prompt, timeoutMs) {
       child.stdin.end(prompt);
     });
 }
-async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = 600000, ensureLogin = ensureClaudeLogin }) {
+async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = 600000, ensureLogin = ensureClaudeLogin, login: checked = null }) {
   // A Claude role first gets a fresh login: on the host an expiring one is refreshed, in the worker sandbox it is only read.
-  const login = route.engine === 'claude' ? await ensureLogin() : null;
+  // A relaunch after a forced refresh reuses that refresh's result instead of checking again.
+  const login = route.engine === 'claude' ? checked ?? await ensureLogin() : null;
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-role-'));
   let captured = '', capturedErr = '', boundary = null;
   try {
@@ -568,18 +569,19 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     const call = async (role, extra, parse) => {
       const prompt = promptFor(packRoot, role, { ...context, ...extra, unreviewedFiles: [...unreviewedFiles] });
       const cost = { role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id };
+      let login = null;
       for (let attempt = 1; attempt <= 2; attempt++) {
         const started = Date.now();
         let result, answered = false;
         try {
-          result = await runRole({ role, route: roles[role], worktree: exported.root, packRoot, prompt });
+          result = await runRole({ role, route: roles[role], worktree: exported.root, packRoot, prompt, ensureLogin, ...(login ? { login } : {}) });
           answered = true;
           costs.push({ ...cost, attempt, elapsedMs: result?.elapsedMs ?? null, usage: result?.usage ?? null, boundary: result?.boundary ?? null });
           return parse(result?.response, attempt);
         } catch (error) {
           // A malformed or failed answer is retried once; an interrupted role is never relaunched.
           // A login failure gets one login refresh before that single retry.
-          if (error?.loginFailure && attempt === 1 && error?.interrupted !== true) await refreshAfterLoginFailure(error, ensureLogin);
+          if (error?.loginFailure && attempt === 1 && error?.interrupted !== true) login = await refreshAfterLoginFailure(error, ensureLogin);
           const reason = clipped(String(error?.message ?? error)).text, interrupted = error?.interrupted === true;
           if (!answered) costs.push({ ...cost, attempt, elapsedMs: Date.now() - started, usage: null, boundary: error?.boundary ?? null, failure: true });
           record.failures.push({ head, round: number, role, attempt, reason, answer: error?.answerDiagnostic ?? clipped(answered ? result?.response : error?.rawAnswer) });
@@ -706,14 +708,14 @@ export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin
   try {
     exported = exportReviewTree(worktree, head, binary);
     const context = { worktree: exported.root, head, base, diff: changed.parts.map(part => part.diff).join(''), binaryFiles: [...binary], remarks };
-    const launch = () => runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt: promptFor(packRoot, 'remark-check', context) });
+    const launch = login => runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt: promptFor(packRoot, 'remark-check', context), ensureLogin, ...(login ? { login } : {}) });
     let result;
     // Only a login failure is retried here: one login refresh, one relaunch.
     try { result = await launch(); }
     catch (error) {
       if (!error?.loginFailure || error?.interrupted === true) throw error;
-      await refreshAfterLoginFailure(error, ensureLogin);
-      try { result = await launch(); }
+      const login = await refreshAfterLoginFailure(error, ensureLogin);
+      try { result = await launch(login); }
       catch (second) { if (second?.loginFailure) second.message = `${second.message}; after one login refresh (${error.message})`; throw second; }
     }
     return { head, base, engine: route.engine, model: route.model, remarks: remarks.map(remark => ({ id: remark.id, digest: remarkDigest(remark), decision: remark.decision })),

@@ -74,9 +74,15 @@ export function runClaudeRefresh({ env = process.env, timeoutMs = LOGIN_REFRESH_
     let child, timedOut = false;
     try { child = spawn('claude', REFRESH_ARGS, { cwd: os.tmpdir(), env: refreshEnvironment(env), stdio: ['ignore', 'ignore', 'ignore'], detached: true }); }
     catch { resolve({ code: null, error: 'claude could not start' }); return; }
-    const timer = setTimeout(() => { timedOut = true; try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, timeoutMs);
-    child.once('error', () => { clearTimeout(timer); resolve({ code: null, error: 'claude could not start' }); });
-    child.once('close', code => { clearTimeout(timer); resolve({ code, timedOut }); });
+    const stopGroup = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
+    const timer = setTimeout(() => { timedOut = true; stopGroup(); }, timeoutMs);
+    // A stopped watcher or interrupted review takes the refresh run down with it,
+    // then the signal goes on to whoever else handles it, or ends the process as by default.
+    const onSignal = signal => { stopGroup(); cleanup(); if (process.listenerCount(signal) === 0) process.kill(process.pid, signal); };
+    const cleanup = () => { clearTimeout(timer); process.removeListener('SIGINT', onSignal); process.removeListener('SIGTERM', onSignal); };
+    process.once('SIGINT', onSignal); process.once('SIGTERM', onSignal);
+    child.once('error', () => { cleanup(); resolve({ code: null, error: 'claude could not start' }); });
+    child.once('close', code => { cleanup(); resolve({ code, timedOut }); });
   });
 }
 
@@ -106,14 +112,21 @@ export async function ensureClaudeLogin({ force = false, env = process.env, now 
 // Signs of an expired or missing login in a failed Claude role: stderr, plain lines,
 // and the CLI's own error events. The model's answer text is never scanned, so a
 // reviewed diff about HTTP 401 does not count.
-const LOGIN_SIGNS = /\b401\b|authentication_error|authentication_failed|OAuth (?:access )?token (?:has )?expired|token has expired|Not logged in|Please run \/login|Invalid bearer token/i;
+// A bare 401 (for example in a file path) is not enough: it must come with authentication wording.
+const LOGIN_SIGNS = new RegExp([
+  String.raw`\b401\b[^\n]{0,200}\b(?:auth\w*|oauth|unauthori[sz]ed|token|credentials?|log(?:ged)? ?in)\b`,
+  String.raw`\b(?:auth\w*|oauth|unauthori[sz]ed)\b[^\n]{0,200}\b401\b`,
+  'authentication_error', 'authentication_failed', String.raw`OAuth (?:access )?token (?:has )?expired`, 'token has expired',
+  'Not logged in', String.raw`Please run \/login`, 'Invalid bearer token', 'Invalid API key'].join('|'), 'i');
+const errorTexts = event => [event.error, ...(Array.isArray(event.errors) ? event.errors : [])]
+  .filter(value => value !== undefined && value !== null).map(value => typeof value === 'string' ? value : JSON.stringify(value));
 export function claudeLoginFailure({ stdout = '', stderr = '' } = {}) {
   const texts = [String(stderr)];
   for (const line of String(stdout).split('\n')) {
     let event; try { event = JSON.parse(line); } catch { texts.push(line); continue; }
     if (!event || typeof event !== 'object') continue;
-    if (event.type === 'result' && event.is_error === true) texts.push(String(event.result ?? ''), String(event.error ?? ''));
-    if (event.type === 'assistant' && event.error) texts.push(String(event.error),
+    if (event.type === 'result' && event.is_error === true) texts.push(String(event.result ?? ''), ...errorTexts(event));
+    if (event.type === 'assistant' && event.error) texts.push(...errorTexts(event),
       ...(Array.isArray(event.message?.content) ? event.message.content.map(part => String(part?.text ?? '')) : []));
   }
   return texts.some(value => LOGIN_SIGNS.test(value));

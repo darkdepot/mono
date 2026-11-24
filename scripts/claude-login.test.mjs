@@ -93,6 +93,11 @@ test('login failure signs come from CLI errors, never from the model answer', ()
   assert.equal(claudeLoginFailure({ stdout: event({ type: 'assistant', message: { content: [{ type: 'text', text: 'The handler returns 401 when the token has expired' }] } }) }), false);
   assert.equal(claudeLoginFailure({ stdout: event({ type: 'result', is_error: false, result: 'HTTP 401 handling reviewed' }) }), false);
   assert.equal(claudeLoginFailure({ stdout: event({ type: 'result', is_error: true, result: 'Overloaded' }), stderr: '' }), false);
+  assert.equal(claudeLoginFailure({ stdout: event({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['Not logged in · Please run /login'] }) }), true, 'CLI error arrays count');
+  assert.equal(claudeLoginFailure({ stdout: event({ type: 'result', is_error: true, errors: [{ type: 'authentication_error', message: 'expired' }] }) }), true);
+  assert.equal(claudeLoginFailure({ stderr: "ENOENT: no such file or directory, open '/tmp/401/schema.json'" }), false, 'a bare 401 in a path is not a login failure');
+  assert.equal(claudeLoginFailure({ stdout: event({ type: 'result', is_error: true, errors: ['request 401 of 900 timed out'] }) }), false);
+  assert.equal(claudeLoginFailure({ stderr: 'API Error: 401 Unauthorized' }), true);
 });
 
 test('the watcher keeps the login fresh every five minutes only while a worker is registered', async () => {
@@ -110,4 +115,32 @@ test('the watcher keeps the login fresh every five minutes only while a worker i
   release({ status: 'fresh' }); await first;
   const crashing = loginKeepalive({ ensure: async () => { throw new Error('boom'); }, now: () => time, report: () => { throw new Error('report boom'); } });
   assert.equal((await crashing.tick(true)).status, 'failed', 'a failing check never throws into the watcher');
+});
+
+test('a stopped watcher or interrupted review stops the refresh run with it', async t => {
+  const { default: fs } = await import('node:fs'), { default: os } = await import('node:os'), { default: path } = await import('node:path');
+  const { spawn } = await import('node:child_process'), { pathToFileURL, fileURLToPath } = await import('node:url');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-login-signal-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const pidFile = path.join(dir, 'claude.pid'), module = path.join(path.dirname(fileURLToPath(import.meta.url)), 'claude-login.mjs');
+  // A fake CLI only: the refresh runner is pointed at this directory, never at the real claude.
+  fs.writeFileSync(path.join(dir, 'claude'), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000);\n`, { mode: 0o700 });
+  const driver = path.join(dir, 'driver.mjs');
+  fs.writeFileSync(driver, `import { runClaudeRefresh } from ${JSON.stringify(pathToFileURL(module).href)};
+await runClaudeRefresh({ env: { PATH: ${JSON.stringify(dir)}, HOME: ${JSON.stringify(dir)}, USER: 'fixture' }, timeoutMs: 600000 });
+console.log('refresh returned');\n`);
+  for (const signal of ['SIGTERM', 'SIGINT']) {
+    fs.rmSync(pidFile, { force: true });
+    const child = spawn(process.execPath, [driver], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = ''; child.stdout.on('data', chunk => { out += chunk; });
+    const exited = new Promise(resolve => child.once('exit', (code, received) => resolve(received)));
+    t.after(() => { try { child.kill('SIGKILL'); } catch {} });
+    for (const until = Date.now() + 10000; !fs.existsSync(pidFile) && Date.now() < until;) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.ok(fs.existsSync(pidFile), 'the refresh run started');
+    const cli = Number(fs.readFileSync(pidFile, 'utf8'));
+    child.kill(signal);
+    assert.equal(await exited, signal, 'the signal still ends the parent as by default');
+    assert.equal(out, '', 'the parent did not carry on after the signal');
+    for (const until = Date.now() + 5000; Date.now() < until;) { try { process.kill(cli, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
+    assert.throws(() => process.kill(cli, 0), { code: 'ESRCH' }, `${signal} stopped the refresh process group`);
+  }
 });
