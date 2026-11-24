@@ -45,6 +45,9 @@
 // retires a remaining entry.
 //
 // Reads worker state without changing it; writes only its own watcher.json pulse.
+// In persistent mode, while workers.json names a worker, it also keeps the Claude
+// CLI login fresh on the host every five minutes (scripts/claude-login.mjs), so a
+// Claude role launched inside a worker sandbox finds a valid login.
 // Events go to stdout and diagnostics to stderr.
 
 import fs from "node:fs";
@@ -55,6 +58,7 @@ import { readLedger, admissionFor, collectorAlive, roundRequestName } from "./re
 import { atomicJson, deliveryConfig, processStart, IDENTITY_FIELDS, identity, packLayout, runtimePackRoot } from "./runtime.mjs";
 
 import { workerTransport } from "./worker-transport.mjs";
+import { loginKeepalive } from "./claude-login.mjs";
 
 const DEFAULT_STALL_SEC = 120;
 const MIN_STALL_SEC = 90;
@@ -1229,6 +1233,13 @@ function checkStop(log, entry, report, latestPhase, nowMs) {
   emitEvent(event, log.issue, detail, `${event}:${source.file}:${source.stat.mtimeMs}:${source.stat.size}`, nowMs);
 }
 
+// Login keepalive reports go to stderr only: the stdout event vocabulary is unchanged.
+const claudeLogin = loginKeepalive({ report: result => {
+  if (result.status === "refreshed") console.error("watch-workers: Claude login refreshed");
+  else if (result.status === "failed") console.error(`watch-workers: Claude login refresh failed: ${result.reason ?? "unknown reason"}`);
+  else if (result.status === "unknown" && result.reason !== "check disabled") warnOnce(`Claude login freshness unknown: ${result.reason ?? "unknown reason"}`);
+} });
+
 function scan() {
   oneShotNeedsRescan = false;
   const nowMs = Date.now();
@@ -1236,6 +1247,7 @@ function scan() {
     beatAt: new Date(nowMs).toISOString(), intervalSec: args.intervalSec });
   const registrySnapshot = loadRegistry(path.join(args.root, "workers.json"));
   const registry = registrySnapshot.entries;
+  if (!args.once) claudeLogin.tick(registrySnapshot.valid && Object.keys(registry).length > 0);
   const controlState = loadControlState(path.join(args.root, "control.json"));
   try {
     if (JSON.parse(fs.readFileSync(path.join(args.root, "control.json"), "utf8")).halt === true)

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { digest, resolveRole, runtimePackRoot, isMain } from './runtime.mjs';
+import { ensureClaudeLogin, claudeLoginFailure, LOGIN_FAILURE_REASON } from './claude-login.mjs';
 
 export const DANGER_CASES = ['data', 'security', 'gate-bypass', 'gate-stall', 'silent-result', 'readiness', 'unknown'];
 const text = value => typeof value === 'string' && value.trim().length > 0;
@@ -388,25 +389,34 @@ function runInvocation(invocation, prompt, timeoutMs) {
         try {
           const result = { stdout: decodeChildBytes(Buffer.concat(stdout)), stderr: decodeChildBytes(Buffer.concat(stderr)) };
           if (interrupted) throw Object.assign(new Error('review interrupted; role process group stopped'), { rawAnswer: result.stdout });
-          if (code !== 0 || exceeded) throw Object.assign(new Error(`role failed (${exceeded ? 'timeout/output limit' : code}); no response admitted`), { rawAnswer: result.stdout });
+          if (code !== 0 || exceeded) throw Object.assign(new Error(`role failed (${exceeded ? 'timeout/output limit' : code}); no response admitted`), { rawAnswer: result.stdout, stderrText: result.stderr, exceeded });
           resolve(result);
         } catch (error) { error.interrupted = interrupted; reject(error); }
       });
       child.stdin.end(prompt);
     });
 }
-async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = 600000 }) {
+async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = 600000, ensureLogin = ensureClaudeLogin, login: checked = null }) {
+  // A Claude role first gets a fresh login: on the host an expiring one is refreshed, in the worker sandbox it is only read.
+  // A relaunch after a forced refresh reuses that refresh's result instead of checking again.
+  const login = route.engine === 'claude' ? checked ?? await ensureLogin() : null;
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-role-'));
-  let captured = '', boundary = null;
+  let captured = '', capturedErr = '', boundary = null;
   try {
     const schemaFile = path.join(packRoot, 'skills/code-review', `${ROLE_FILES[role]}.schema.json`);
     const invocation = roleInvocation(role, route, { scratch, worktree, schemaFile });
     boundary = invocation.boundary;
+    if (login) boundary.login = { status: login.status, ...(login.reason ? { reason: login.reason } : {}) };
     const started = Date.now();
     const authArgs = route.engine === 'codex' ? ['login', 'status'] : ['--safe-mode', '--setting-sources', '', 'auth', 'status', '--json'];
     const auth = spawnSync(invocation.command, authArgs,
       { cwd: invocation.cwd, env: invocation.env, stdio: ['pipe', 'pipe', 'pipe'], input: '', timeout: 30000, maxBuffer: 64 * 1024 });
-    invocation.boundary.auth = subscriptionStatus(route.engine, { stdout: decodeChildBytes(auth.stdout), stderr: decodeChildBytes(auth.stderr), status: auth.status, error: !!auth.error });
+    const authResult = { stdout: decodeChildBytes(auth.stdout), stderr: decodeChildBytes(auth.stderr), status: auth.status, error: !!auth.error };
+    try { invocation.boundary.auth = subscriptionStatus(route.engine, authResult); }
+    catch (error) {
+      if (route.engine === 'claude') { try { error.loginFailure = JSON.parse(authResult.stdout)?.loggedIn === false; } catch {} }
+      throw error;
+    }
     if (route.engine === 'codex') {
       const probeSchema = path.join(scratch, 'boundary.schema.json');
       fs.writeFileSync(probeSchema, JSON.stringify({ type: 'object', properties: { tools: { type: 'array', items: { type: 'string' } },
@@ -423,7 +433,7 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
       boundary.probeUsage = parsed.usage;
     }
     const result = await runInvocation(invocation, prompt, timeoutMs);
-    captured = result.stdout;
+    captured = result.stdout; capturedErr = result.stderr;
     observeServedModels(boundary, captured);
     let response, usage = null;
     if (route.engine === 'claude') {
@@ -444,8 +454,21 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
   } catch (error) {
     error.rawAnswer ??= captured;
     if (boundary) observeServedModels(boundary, error.rawAnswer);
+    // An expired or missing login is named, never a bare «role failed (N)».
+    if (route.engine === 'claude' && !error.interrupted && !error.exceeded &&
+        (error.loginFailure || claudeLoginFailure({ stdout: error.rawAnswer, stderr: error.stderrText ?? capturedErr }))) {
+      error.loginFailure = true;
+      error.message = `${LOGIN_FAILURE_REASON}: ${error.message}${login && login.status !== 'fresh' ? `; login before the role: ${login.status}${login.reason ? ` (${login.reason})` : ''}` : ''}`;
+    }
+    delete error.stderrText;
     error.boundary = boundary; throw error;
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+}
+// One login refresh after a role failed on its login; the caller then relaunches the role once.
+async function refreshAfterLoginFailure(error, ensureLogin) {
+  const refresh = await ensureLogin({ force: true });
+  error.message = `${error.message}; login refresh: ${refresh.status}${refresh.reason ? ` (${refresh.reason})` : ''}`;
+  return refresh;
 }
 const ROLE_FILES = { 'code-review': 'reviewer', 'code-review-checker': 'checker', 'remark-check': 'remark-check' };
 function promptFor(packRoot, role, context) {
@@ -490,7 +513,7 @@ function pinnedDiff(worktree, base, head, files) {
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 // The only round boundary. Callers persist/sign the returned record; manual mode only prints it.
-export async function runReviewRound(input, { runRole = executeRole } = {}) {
+export async function runReviewRound(input, { runRole = executeRole, ensureLogin = ensureClaudeLogin } = {}) {
   const { worktree, head, base, contract, risk = 'standard', config = {}, packRoot = runtimePackRoot() } = input;
   const record = structuredClone(input.stageRecord ?? { schemaVersion: 1, rounds: [], findings: [], failures: [] });
   requireValue(object(record) && ['rounds', 'findings', 'failures'].every(key => Array.isArray(record[key] ?? [])), 'stage record unreadable');
@@ -546,16 +569,19 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const call = async (role, extra, parse) => {
       const prompt = promptFor(packRoot, role, { ...context, ...extra, unreviewedFiles: [...unreviewedFiles] });
       const cost = { role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id };
+      let login = null;
       for (let attempt = 1; attempt <= 2; attempt++) {
         const started = Date.now();
         let result, answered = false;
         try {
-          result = await runRole({ role, route: roles[role], worktree: exported.root, packRoot, prompt });
+          result = await runRole({ role, route: roles[role], worktree: exported.root, packRoot, prompt, ensureLogin, ...(login ? { login } : {}) });
           answered = true;
           costs.push({ ...cost, attempt, elapsedMs: result?.elapsedMs ?? null, usage: result?.usage ?? null, boundary: result?.boundary ?? null });
           return parse(result?.response, attempt);
         } catch (error) {
           // A malformed or failed answer is retried once; an interrupted role is never relaunched.
+          // A login failure gets one login refresh before that single retry.
+          if (error?.loginFailure && attempt === 1 && error?.interrupted !== true) login = await refreshAfterLoginFailure(error, ensureLogin);
           const reason = clipped(String(error?.message ?? error)).text, interrupted = error?.interrupted === true;
           if (!answered) costs.push({ ...cost, attempt, elapsedMs: Date.now() - started, usage: null, boundary: error?.boundary ?? null, failure: true });
           record.failures.push({ head, round: number, role, attempt, reason, answer: error?.answerDiagnostic ?? clipped(answered ? result?.response : error?.rawAnswer) });
@@ -661,7 +687,7 @@ export function parseRemarkCheck(value, remarks) {
 }
 // The digest of what was checked: the remark's own text, never a value the worker supplies.
 export const remarkDigest = remark => digest([remark.id, remark.source, remark.title, remark.body, remark.urgent, remark.head]);
-export async function runRemarkCheck(input, { runRole = executeRole } = {}) {
+export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin = ensureClaudeLogin } = {}) {
   const { worktree, head, base, remarks = [], config = {}, packRoot = runtimePackRoot() } = input;
   requireValue(path.isAbsolute(worktree ?? '') && /^[a-f0-9]{40}$/.test(head) && /^[a-f0-9]{40}$/.test(base), 'absolute worktree and immutable head/base required');
   requireValue(Array.isArray(remarks) && remarks.length > 0 && remarks.length <= 100, 'remarks required');
@@ -682,7 +708,16 @@ export async function runRemarkCheck(input, { runRole = executeRole } = {}) {
   try {
     exported = exportReviewTree(worktree, head, binary);
     const context = { worktree: exported.root, head, base, diff: changed.parts.map(part => part.diff).join(''), binaryFiles: [...binary], remarks };
-    const result = await runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt: promptFor(packRoot, 'remark-check', context) });
+    const launch = login => runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt: promptFor(packRoot, 'remark-check', context), ensureLogin, ...(login ? { login } : {}) });
+    let result;
+    // Only a login failure is retried here: one login refresh, one relaunch.
+    try { result = await launch(); }
+    catch (error) {
+      if (!error?.loginFailure || error?.interrupted === true) throw error;
+      const login = await refreshAfterLoginFailure(error, ensureLogin);
+      try { result = await launch(login); }
+      catch (second) { if (second?.loginFailure) second.message = `${second.message}; after one login refresh (${error.message})`; throw second; }
+    }
     return { head, base, engine: route.engine, model: route.model, remarks: remarks.map(remark => ({ id: remark.id, digest: remarkDigest(remark), decision: remark.decision })),
       ...parseRemarkCheck(result.response, remarks),
       elapsedMs: result.elapsedMs ?? null, usage: result.usage ?? null };

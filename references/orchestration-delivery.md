@@ -209,7 +209,9 @@ fast path accepts a fixed head on this run. No orchestrator step: the worker req
 `workerVerification` ([HANDBOOK](../HANDBOOK.md#host-verification)). The collector host needs both the Codex and
 Claude CLIs logged in by subscription; a single-family setup gives
 `not-reviewed`, and so does a logged-out CLI whose role has to run (the checker
-runs only when the reviewer reports findings).
+runs only when the reviewer reports findings). The Claude login refreshes itself
+on the host (before each Claude role and from the watcher); a role failed on it
+reads «вход Claude истёк или не найден» and gets one refresh and one relaunch.
 
 Between rounds do nothing: the worker fixes open findings and requests the next
 round itself. The pinned risk sets the completed rounds per task attempt (`risky`
@@ -396,7 +398,8 @@ external pulse that notices dying workers without spending orchestrator
 turns. The runtime is `scripts/watch-workers.mjs`, resolved from the dispatched
 pack root; the same source serves development and fixtures. It reads worker
 state and, in persistent mode, atomically writes its own `watcher.json` each tick: pid,
-procStart, packVersion, startedAt, beatAt, intervalSec. It emits one stable
+procStart, packVersion, startedAt, beatAt, intervalSec; while `workers.json` names a
+worker it also keeps the Claude login fresh every five minutes (stderr only). It emits one stable
 line per watcher event to stdout —
 `<ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|parked|green|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
 `phase-rejected` names the task and mismatched identity fields when a phase
