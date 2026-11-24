@@ -13,6 +13,8 @@ import { RUSSIAN_STAGES, isRussianStage } from "./russian-stages.mjs";
 import { loadCatalog } from './skills-catalog.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Fixture watchers and roles never read the real Claude login or start the real CLI.
+process.env.MONO_CLAUDE_LOGIN_CHECK = "off";
 const validationStateRoot = fs.mkdtempSync(
   path.join(os.tmpdir(), "mono-workflow-validator-state-")
 );

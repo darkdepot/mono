@@ -38,7 +38,7 @@ third round, leftovers both roles call harmless pass as successor candidates;
 anything else left after the third round parks `needs-decision` for the
 orchestrator to narrow the contract, split the Issue or change the approach. The collector host needs both the Codex and Claude CLIs logged in by
 subscription, from different model families; a single-family setup gives
-`not-reviewed`, and so does a logged-out CLI whose role has to run. See [review rounds](references/orchestration-delivery.md#review-rounds).
+`not-reviewed`, and so does a logged-out CLI whose role has to run. The Claude login refreshes itself: before each Claude role on the host, and every five minutes from the watcher while a worker is registered; a role that fails on an expired login names it («вход Claude истёк или не найден»), gets one refresh and one relaunch. See [review rounds](references/orchestration-delivery.md#review-rounds).
 Every collection requires a pinned request and correlated admission; unpinned
 legacy requests cannot start collections. Receipts of the previous format are not accepted.
 
@@ -1447,7 +1447,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | Rationale outside worker reading | [Audience](references/rationale/audience.md), [review](references/rationale/review.md), [output](references/rationale/output.md), [delivery](references/rationale/delivery.md); explanation adds no obligations |
 | Worked examples and history | [Consumer dogfood](examples/consumer-dogfood.md), [profile regression](examples/profile-workbench-regression.md), [CHANGELOG](CHANGELOG.md) |
 
-Runtime scripts live in [scripts/](scripts/): `gate.mjs` checks evidence; `delivery-state.mjs` publishes reports and waits for review rounds (`wait-round`); `review-rounds.mjs` keeps the round ledger; `runtime.mjs` provides role resolution, config validation, durable writes, locks and hashes; `orchestrator/spawn.mjs`, `resume.mjs` and `consume-gate-ack.mjs` use the shared launch implementation; `watch-workers.mjs` monitors registered work; `resolve-issue-context.mjs` resolves the issue-only seam; `verify-pack-state.mjs` verifies identity/quiescence; `wave-cost.mjs` measures cost; `read-budget.mjs` bounds reading. Invoke runtime scripts from the installed pack, with `--help` and pinned dispatch inputs. Install and update through the [GitHub marketplace](references/install.md#plugin-updates); maintain product config with `project-config.mjs` from the upstream checkout.
+Runtime scripts live in [scripts/](scripts/): `gate.mjs` checks evidence; `delivery-state.mjs` publishes reports and waits for review rounds (`wait-round`); `review-rounds.mjs` keeps the round ledger; `runtime.mjs` provides role resolution, config validation, durable writes, locks and hashes; `orchestrator/spawn.mjs`, `resume.mjs` and `consume-gate-ack.mjs` use the shared launch implementation; `watch-workers.mjs` monitors registered work and keeps the Claude login fresh (`claude-login.mjs`); `resolve-issue-context.mjs` resolves the issue-only seam; `verify-pack-state.mjs` verifies identity/quiescence; `wave-cost.mjs` measures cost; `read-budget.mjs` bounds reading. Invoke runtime scripts from the installed pack, with `--help` and pinned dispatch inputs. Install and update through the [GitHub marketplace](references/install.md#plugin-updates); maintain product config with `project-config.mjs` from the upstream checkout.
 
 ## Principles
 
@@ -1579,7 +1579,7 @@ node scripts/verify.mjs
 
 The entry point includes `git diff --check`, syntax checks, artifact/workflow checks and isolated plugin runtime fixtures.
 It also runs the recorded code-review round and evaluation fixtures:
-`node --test scripts/code-review.test.mjs scripts/code-review-eval.test.mjs scripts/code-review-real.test.mjs`.
+`node --test scripts/code-review.test.mjs scripts/code-review-eval.test.mjs scripts/code-review-real.test.mjs scripts/code-review-login.test.mjs scripts/claude-login.test.mjs`.
 These prove parsing, coverage, launch boundaries and result calculation; host
 isolation and live model quality remain host checks, as described in the
 [review dataset](evals/code-review/README.md).

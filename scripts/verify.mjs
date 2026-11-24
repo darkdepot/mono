@@ -50,7 +50,7 @@ const steps = [
   { label: "node --test deploy", cmd: "node", cmdArgs: ["--test", "scripts/deploy.test.mjs"] },
   { label: "node scripts/read-budget.mjs", cmd: "node", cmdArgs: ["scripts/read-budget.mjs"] },
   { label: "node --test pack installation", cmd: "node", cmdArgs: ["--test", "scripts/pack-install.test.mjs"] },
-  { label: "node --test code review rounds and dataset", cmd: "node", cmdArgs: ["--test", "scripts/code-review.test.mjs", "scripts/code-review-eval.test.mjs", "scripts/code-review-real.test.mjs"] },
+  { label: "node --test code review rounds and dataset", cmd: "node", cmdArgs: ["--test", "scripts/code-review.test.mjs", "scripts/code-review-eval.test.mjs", "scripts/code-review-real.test.mjs", "scripts/code-review-login.test.mjs", "scripts/claude-login.test.mjs"] },
   { label: "node --test skills probe samples", cmd: "node", cmdArgs: ["--test", "scripts/skills-probe.test.mjs", "scripts/skills-owner.test.mjs", "scripts/skills-run.test.mjs", "scripts/skills-trace.test.mjs", "scripts/skills-proof.test.mjs", "scripts/skills-records.test.mjs", "scripts/skills-process.test.mjs", "scripts/skills-catalog.test.mjs", "scripts/skills-dialogue.test.mjs", "scripts/skills-window-roles.test.mjs", "scripts/skills-release.test.mjs"] },
   { label: "node --test QA fixtures", cmd: "node", cmdArgs: ["--test", "scripts/qa-certificate.test.mjs", "scripts/qa-evals.test.mjs", "scripts/ship-evals.test.mjs", "scripts/qa-gate.test.mjs"] },
   { label: `git ${whitespaceArgs.join(" ")}`, cmd: "git", cmdArgs: whitespaceArgs },
@@ -81,7 +81,8 @@ const jobs = Number.isInteger(requestedJobs) && requestedJobs > 0
 function runStep(step) {
   return new Promise((resolve) => {
     const out = [], err = [];
-    const child = spawn(step.cmd, step.cmdArgs, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+    // Checks never read the real Claude login or start the real CLI (scripts/claude-login.mjs).
+    const child = spawn(step.cmd, step.cmdArgs, { cwd: root, env: { ...process.env, MONO_CLAUDE_LOGIN_CHECK: "off" }, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout.on("data", (chunk) => out.push(chunk));
     child.stderr.on("data", (chunk) => err.push(chunk));
     const finish = (ok, extra = "") => resolve({
