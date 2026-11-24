@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawn } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -46,6 +47,25 @@ function whitespaceCheckArgs() {
 }
 
 const whitespaceArgs = whitespaceCheckArgs();
+
+// The project skill .claude/skills/session-audit keeps its tests next to its
+// scripts; the step finds every *.test.mjs there, so new test files need no edit
+// here. No test file found is a failure, not a silent pass.
+function sessionAuditTestStep() {
+  const dir = ".claude/skills/session-audit/scripts";
+  let files = [];
+  try {
+    files = fs.readdirSync(path.join(root, dir)).filter((name) => name.endsWith(".test.mjs")).sort();
+  } catch {
+    files = [];
+  }
+  const label = "node --test session-audit skill";
+  if (files.length === 0) {
+    return { label, cmd: "node", cmdArgs: ["-e", `console.error("no *.test.mjs in ${dir}"); process.exit(1);`] };
+  }
+  return { label, cmd: "node", cmdArgs: ["--test", ...files.map((name) => path.posix.join(dir, name))] };
+}
+
 const steps = [
   { label: "node --test deploy", cmd: "node", cmdArgs: ["--test", "scripts/deploy.test.mjs"] },
   { label: "node scripts/read-budget.mjs", cmd: "node", cmdArgs: ["scripts/read-budget.mjs"] },
@@ -67,6 +87,7 @@ const steps = [
   { label: "node --test delivery runtime fixtures", cmd: "node", cmdArgs: ["--test", "--test-concurrency=4", "scripts/changelog-assemble.test.mjs", "scripts/landing-guard.test.mjs", "scripts/landing-drain.test.mjs", "scripts/project-config.test.mjs", "scripts/gate.test.mjs", "scripts/collection-retry.test.mjs", "scripts/landing.test.mjs", "scripts/fixture-processes.test.mjs", "scripts/delivery-state.test.mjs", "scripts/review-rounds.test.mjs", "scripts/implementation-report.test.mjs", "scripts/implement-evals.test.mjs", "scripts/delivery-runtime.test.mjs", "scripts/orchestrator-commands.test.mjs", "scripts/plugin-layout.test.mjs", "scripts/wave-cost.test.mjs", "scripts/ship-pr.test.mjs", "scripts/ship-fix.test.mjs"] },
   { label: "node --test Claude worker fixtures", cmd: "node", cmdArgs: ["--test", "--test-concurrency=1", "scripts/claude-worker.test.mjs", "scripts/claude-delivery.test.mjs"] },
   { label: "node scripts/validate-workflow.mjs", cmd: "node", cmdArgs: ["scripts/validate-workflow.mjs"] },
+  sessionAuditTestStep(),
 ];
 
 // Steps do not depend on each other, so they run side by side; a step keeps

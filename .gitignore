@@ -1,4 +1,7 @@
-/.claude/
+/.claude/*
+!/.claude/skills/
+/.claude/skills/*
+!/.claude/skills/session-audit/
 /.worktrees/
 /evals/results/
 .DS_Store

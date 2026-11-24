@@ -1,0 +1,57 @@
+{
+  "budget": { "minutes": 60, "tokens": 3000000 },
+  "randomSessions": 3,
+  "firstPassDays": 7,
+  "openModel": "",
+  "extract": {
+    "chunkBytes": 204800,
+    "contextBytes": 20480,
+    "secondModelBytes": 20480,
+    "planTools": ["TodoWrite", "TaskCreate", "TaskUpdate", "ExitPlanMode", "update_plan"],
+    "helperTools": ["Agent", "Task", "SendMessage", "spawn_agent"],
+    "writeToolPattern": "^mcp__.+__(save|create|update|delete)_",
+    "secondModelPattern": "(^|[\\s;&|(])(codex\\s+exec|claude\\s+(-p|--print))(\\s|$)",
+    "skipUserPrefixes": ["<task-notification>", "<system-reminder>", "<environment_context>", "<user_instructions>", "<permissions", "# AGENTS.md instructions", "<turn_aborted>", "[Request interrupted"]
+  },
+  "roots": {
+    "claude": ["~/.claude*/projects"],
+    "codex": ["~/.codex/sessions", "~/.codex/archived_sessions"]
+  },
+  "packInstallDirs": ["~/.claude*/plugins", "~/.claude*/skills", "~/.codex/plugins", "~/.codex/skills", "~/.agents/skills"],
+  "kinds": {
+    "orchestratorSkills": ["orchestrate"],
+    "reviewSkills": ["review", "code-review"],
+    "claudeHeadlessEntrypoints": ["sdk-cli", "sdk-ts", "sdk-py"],
+    "codexHeadlessOriginators": ["codex_exec"]
+  },
+  "runSkills": ["qa"],
+  "sources": [
+    { "kind": "phase-report", "dir": "reports" },
+    { "kind": "candidate-report", "dir": "candidates" },
+    { "kind": "qa-report", "dir": "qa" }
+  ],
+  "sourceSkipPattern": "(^|/)(archive|stale)(/|$)|\\.bak|\\.pre-|\\.tmp$",
+  "linkFiles": ["ledger.md", "attempts.json", "dispatch", "reports"],
+  "runPrefixes": [],
+  "standCodexHomes": [],
+  "excludedSessions": [],
+  "projectId": "",
+  "triageTeam": "",
+  "claude": {
+    "knownRecordTypes": [
+      "user", "assistant", "attachment", "system", "summary", "progress",
+      "agent-name", "ai-title", "api-request", "api-request-blob", "api-request-shape",
+      "artifact-autoreact-ledger", "artifact-comment-monitor", "atis-latch", "bridge-session",
+      "cost-state", "custom-title", "data-flow-incomplete", "data-flow-records", "derived-from",
+      "dev-mods", "file-history-delta", "file-history-snapshot", "fork-context-ref", "frame-link",
+      "last-prompt", "launched", "mode", "permission-mode", "pr-link", "queue-operation",
+      "relocated", "result", "session-owner", "started", "tools-used", "worktree-state"
+    ]
+  },
+  "codex": {
+    "knownRecordTypes": [
+      "session_meta", "response_item", "event_msg", "turn_context", "compacted",
+      "token_usage_record", "world_state", "inter_agent_communication_metadata", "realtime_item"
+    ]
+  }
+}
