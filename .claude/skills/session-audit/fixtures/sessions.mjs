@@ -41,14 +41,14 @@ const uuid = () => {
 
 export const at = (base, minutes) => new Date(Date.parse(base) + minutes * 60000).toISOString();
 
-function jsonl(file, records) {
+export function jsonl(file, records) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, records.map((record) => JSON.stringify(record)).join("\n") + "\n");
 }
 
 // ---------------------------------------------------------------- Claude shapes
 
-function claude(sessionId, cwd, entrypoint = "claude-desktop") {
+export function claude(sessionId, cwd, entrypoint = "claude-desktop") {
   const base = (type, ts, extra) => ({ parentUuid: null, isSidechain: false, type, uuid: uuid(), timestamp: ts, userType: "external", entrypoint, cwd, sessionId, version: "9.9.9", gitBranch: "main", ...extra });
   return {
     user: (ts, text) => base("user", ts, { message: { role: "user", content: text } }),
@@ -64,11 +64,11 @@ function claude(sessionId, cwd, entrypoint = "claude-desktop") {
   };
 }
 
-const numbered = (text, start = 1) => text.split("\n").filter((_line, i, all) => i < all.length - 1 || all[i] !== "").map((line, i) => `${start + i}\t${line}`).join("\n");
+export const numbered = (text, start = 1) => text.split("\n").filter((_line, i, all) => i < all.length - 1 || all[i] !== "").map((line, i) => `${start + i}\t${line}`).join("\n");
 
 // ---------------------------------------------------------------- Codex shapes
 
-function codex(id, { cwd, originator = "codex_exec", source = "exec", forkedFrom = null, parentMeta = null } = {}) {
+export function codex(id, { cwd, originator = "codex_exec", source = "exec", forkedFrom = null, parentMeta = null } = {}) {
   let ordinal = 0;
   const record = (ts, type, payload) => ({ timestamp: ts, ordinal: ordinal++, type, payload });
   return {
@@ -86,7 +86,7 @@ function codex(id, { cwd, originator = "codex_exec", source = "exec", forkedFrom
   };
 }
 
-const execCmd = (cmd) => `const r = await tools.exec_command({cmd:${JSON.stringify(cmd)},max_output_tokens:9000});\ntext(r.output)\n`;
+export const execCmd = (cmd) => `const r = await tools.exec_command({cmd:${JSON.stringify(cmd)},max_output_tokens:9000});\ntext(r.output)\n`;
 
 // ---------------------------------------------------------------- world
 

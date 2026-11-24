@@ -9,7 +9,7 @@ import {
   splitLines, versionField, realpathDeep,
 } from "./lib.mjs";
 import {
-  claudeFileIdentity, claudeItems, claudeReadContent, codexFileId, codexItems, commandStrings,
+  claudeFileIdentity, claudeItems, claudeReadContent, codexFileId, codexItems, commandCalls,
   fileReads, outputSegments, uuidsIn,
 } from "./records.mjs";
 
@@ -95,27 +95,45 @@ function claudeLoad(item, index) {
   };
 }
 
-function bestSegment(index, relCandidates, segments, wantWhole) {
-  let best = { tags: [], matchedLines: 0, rel: relCandidates[0] || null, whole: false };
-  for (const segment of segments) {
-    for (const rel of relCandidates) {
-      const whole = wantWhole && !segment.truncated;
-      const result = index.runTags(rel, segment.text, whole);
-      const score = result.tags.length ? result.matchedLines + (whole ? 1e6 : 0) : -1;
-      const bestScore = best.tags.length ? best.matchedLines + (best.whole ? 1e6 : 0) : -1;
-      if (score > bestScore) best = { ...result, rel, whole };
+// Each read of a Codex call is matched only against outputs whose whole text
+// is its file (cat) or one contiguous range of it (partial). An output that
+// fits more than one read is ambiguous and given to none; a read that fits
+// more than one output with different tags is ambiguous too.
+function assignOutputs(index, reads, segments) {
+  const matches = reads.map((read) => segments.map((segment) => {
+    let best = null;
+    for (const rel of read.rels) {
+      const whole = read.full && !segment.truncated;
+      const result = index.sliceTags(rel, segment.text, { whole, truncated: segment.truncated });
+      if (result.tags.length && (!best || result.matchedLines > best.matchedLines)) best = { ...result, rel, whole };
     }
-  }
-  return best;
+    return best;
+  }));
+  return reads.map((read, r) => {
+    const own = [];
+    segments.forEach((_segment, s) => {
+      if (!matches[r][s]) return;
+      const claimants = reads.filter((_other, o) => matches[o][s]).length;
+      if (claimants === 1) own.push(matches[r][s]);
+    });
+    if (!own.length) return null;
+    const first = JSON.stringify(own[0].tags);
+    if (own.some((match) => JSON.stringify(match.tags) !== first || match.rel !== own[0].rel)) return null;
+    return own.reduce((a, b) => (b.matchedLines > a.matchedLines ? b : a));
+  });
 }
 
-function codexReads(use, result, index, roots) {
+function codexReads(use, result, index, roots, cwd) {
   const loads = [];
   const stageReads = [];
-  const reads = commandStrings(use.input).flatMap(fileReads);
+  const reads = commandCalls(use.input).flatMap(({ cmd, workdir }) => {
+    const folder = workdir ? (path.isAbsolute(workdir) ? workdir : cwd ? path.resolve(cwd, workdir) : null) : cwd;
+    return fileReads(cmd, folder);
+  });
   if (!reads.length) return { loads, stageReads };
   const segments = outputSegments(result.text);
   const skillNames = new Set(index.skillNames());
+  const planned = [];
   for (const read of reads) {
     if (AUDIT_FILE.test(read.path)) {
       loads.push({ ts: use.ts, key: use.key, audit: true, mono: false, skill: "session-audit", via: "codex-read" });
@@ -126,40 +144,44 @@ function codexReads(use, result, index, roots) {
       const [, root, skill] = skillMatch;
       const packRoot = isMonoPackRoot(root);
       if (!skillNames.has(skill) && !packRoot) continue;
-      const wantWhole = read.full;
-      const best = bestSegment(index, [`skills/${skill}/SKILL.md`], segments, wantWhole);
-      const partial = !(wantWhole && best.whole);
-      const tags = !partial || best.matchedLines > 0 ? best.tags : [];
-      const mono = packRoot || (!partial && tags.length > 0) || (partial && best.matchedLines >= 10);
-      loads.push({ ts: use.ts, key: use.key, skill, root, baseDir: `${root}/skills/${skill}`, tags: mono ? tags : [], packRoot, audit: false, mono, partial, matchedLines: best.matchedLines, via: "codex-read", pathHint: pathVersionHint(root + "/skills/") });
-      if (mono) roots.add(root);
-      continue;
-    }
-    if (read.interpolated && /\/SKILL\.md$/.test(read.path)) {
-      const candidates = [...skillNames].map((name) => `skills/${name}/SKILL.md`);
-      const best = bestSegment(index, candidates, segments, false);
-      if (best.matchedLines >= 10) {
-        const skill = /^skills\/([^/]+)\//.exec(best.rel)[1];
-        loads.push({ ts: use.ts, key: use.key, skill, root: null, baseDir: null, tags: best.tags, packRoot: false, audit: false, mono: true, partial: true, matchedLines: best.matchedLines, via: "codex-read", pathHint: null });
+      planned.push({ ...read, type: "skill", root, skill, packRoot, rels: [`skills/${skill}/SKILL.md`] });
+    } else if (read.interpolated && /\/SKILL\.md$/.test(read.path)) {
+      planned.push({ ...read, type: "interpolated", rels: [...skillNames].map((name) => `skills/${name}/SKILL.md`) });
+    } else {
+      for (const root of roots) {
+        if (read.path.startsWith(`${root}/`)) planned.push({ ...read, type: "stage", root, rels: [read.path.slice(root.length + 1)] });
       }
-      continue;
-    }
-    for (const root of roots) {
-      if (!read.path.startsWith(`${root}/`)) continue;
-      const rel = read.path.slice(root.length + 1);
-      const best = bestSegment(index, [rel], segments, read.full);
-      // A full read that equals no tag is evidence; a partial read whose lines
-      // are not in the output at all (output not printed) is not.
-      if (!best.tags.length && !read.full) continue;
-      stageReads.push({ ts: use.ts, key: use.key, root, rel, tags: best.tags });
     }
   }
+  const assigned = assignOutputs(index, planned, segments);
+  planned.forEach((read, i) => {
+    const match = assigned[i];
+    if (read.type === "skill") {
+      // A cat whose output was cut is partial; a full one that equals no tag stays full.
+      const partial = !read.full || (match ? !match.whole : segments.some((segment) => segment.truncated));
+      const tags = match ? match.tags : [];
+      const matchedLines = match ? match.matchedLines : 0;
+      const mono = read.packRoot || (!partial && tags.length > 0) || (partial && matchedLines >= 10);
+      loads.push({ ts: use.ts, key: use.key, skill: read.skill, root: read.root, baseDir: `${read.root}/skills/${read.skill}`, tags: mono ? tags : [], packRoot: read.packRoot, audit: false, mono, partial, matchedLines, via: "codex-read", pathHint: pathVersionHint(`${read.root}/skills/`) });
+      if (mono) roots.add(read.root);
+    } else if (read.type === "interpolated") {
+      if (match && match.matchedLines >= 10) {
+        const skill = /^skills\/([^/]+)\//.exec(match.rel)[1];
+        loads.push({ ts: use.ts, key: use.key, skill, root: null, baseDir: null, tags: match.tags, packRoot: false, audit: false, mono: true, partial: true, matchedLines: match.matchedLines, via: "codex-read", pathHint: null });
+      }
+    } else if (match) {
+      stageReads.push({ ts: use.ts, key: use.key, root: read.root, rel: read.rels[0], tags: match.tags });
+    } else if (read.full && segments.length === 1 && !segments[0].truncated) {
+      // A sole full output that equals no tag file is evidence of a changed file.
+      stageReads.push({ ts: use.ts, key: use.key, root: read.root, rel: read.rels[0], tags: [] });
+    }
+  });
   return { loads, stageReads };
 }
 
 export function parseFile(entry, host, index, config, problems) {
   const info = {
-    path: entry.file, host, events: [], loads: [], stageReads: [], outputIds: new Set(), cwd: null,
+    path: entry.file, host, events: [], loads: [], stageReads: [], outputIds: new Set(), cwd: null, tails: [], metaTs: null,
     entrypoint: null, originator: null, source: null, forkedFrom: null, parentThread: null,
     profile: host === "claude" ? entry.profile : null, home: host === "codex" ? entry.home : null,
     subagent: null, fileId: null, recordSessionIds: new Set(),
@@ -170,9 +192,9 @@ export function parseFile(entry, host, index, config, problems) {
     const identity = claudeFileIdentity(entry.file);
     info.fileId = identity.fileId;
     info.subagent = identity.subagent;
-    for (const item of claudeItems(entry.file, problems, config)) {
+    for (const item of claudeItems(entry.file, problems, config, info.tails)) {
       if (item.kind === "event") {
-        info.events.push({ key: item.key, ts: item.ts });
+        info.events.push({ key: item.key, copyKey: item.key, ts: item.ts, file: entry.file, offset: item.offset });
         if (item.cwd && !info.cwd) info.cwd = item.cwd;
         if (item.entrypoint && !info.entrypoint) info.entrypoint = item.entrypoint;
         if (item.sessionId) info.recordSessionIds.add(item.sessionId);
@@ -201,9 +223,12 @@ export function parseFile(entry, host, index, config, problems) {
     }
   } else {
     info.fileId = codexFileId(entry.file);
-    for (const item of codexItems(entry.file, problems, config)) {
+    let currentCwd = null;
+    for (const item of codexItems(entry.file, problems, config, info.tails)) {
       if (item.kind === "session") {
         info.fileId = item.id;
+        info.metaTs = item.ts;
+        currentCwd = item.cwd;
         info.forkedFrom = item.forkedFrom;
         info.originator = item.originator;
         info.source = item.source;
@@ -211,15 +236,16 @@ export function parseFile(entry, host, index, config, problems) {
         info.parentThread = item.source?.subagent?.thread_spawn?.parent_thread_id || null;
       } else if (item.kind === "cwd") {
         if (!info.cwd) info.cwd = item.cwd;
+        currentCwd = item.cwd;
       } else if (item.kind === "event") {
-        info.events.push({ key: item.key, ts: item.ts });
+        info.events.push({ key: item.key, copyKey: item.copyKey, ts: item.ts, file: entry.file, offset: item.offset });
       } else if (item.kind === "tool-use") {
         uses.set(item.id, item);
       } else if (item.kind === "tool-result") {
         for (const id of uuidsIn(item.text)) info.outputIds.add(id);
         const use = uses.get(item.toolUseId);
         if (!use) continue;
-        const found = codexReads(use, item, index, roots);
+        const found = codexReads(use, item, index, roots, currentCwd || info.cwd);
         info.loads.push(...found.loads);
         info.stageReads.push(...found.stageReads);
       }
@@ -299,7 +325,7 @@ export function groupSessions(infos) {
     const once = (list) => {
       const keys = new Set();
       return list.filter((item) => {
-        const key = `${item.key}|${item.skill || ""}|${item.rel || ""}`;
+        const key = `${item.key}|${item.skill || ""}|${item.root || ""}|${item.rel || ""}`;
         if (keys.has(key)) return false;
         keys.add(key);
         return true;
@@ -320,9 +346,11 @@ export function groupSessions(infos) {
       originator: first.originator,
       source: first.source,
       forkedFrom: first.forkedFrom,
+      forkTime: first.metaTs,
       parentThread: first.parentThread,
       subagent: first.subagent,
       recordSessionIds: new Set(files.flatMap((info) => [...info.recordSessionIds])),
+      tails: files.flatMap((info) => info.tails),
       events, loads, stageReads, outputIds,
     };
   });
@@ -429,24 +457,55 @@ export function orchestratorMentions(orchRoot, ids, config) {
   return found;
 }
 
-export function describeSessions({ sessions, window, config, env, orchRoot, forkParentKeys }) {
+// A fork copies its parent's items at the moment of forking: an item counts as
+// a copy when its content (copyKey) is the parent's and its time is within the
+// copy burst after the fork's own start; later repeats stay new.
+const FORK_COPY_MS = 5000;
+export function isForkCopy(session, event, parentKeys) {
+  if (!session.forkedFrom || !parentKeys || !parentKeys.has(event.copyKey)) return false;
+  const forkTime = Date.parse(session.forkTime);
+  return !Number.isFinite(forkTime) || Date.parse(event.ts) <= forkTime + FORK_COPY_MS;
+}
+
+// The headless child whose id is printed in exactly one other session's output.
+function outputParent(session, sessions) {
+  const parents = sessions.filter((other) => other !== session && session.ids.some((id) => other.outputIds.has(id.toLowerCase())));
+  return parents.length === 1 ? parents[0] : null;
+}
+
+export function describeSessions({ sessions, window, config, env, orchRoot, forkParentKeys, revisit = new Set() }) {
   const excluded = { noMonoLoad: 0, audit: 0, configured: 0, noNewEvents: 0 };
   const auditIds = new Set();
   for (const session of sessions) {
     if (session.loads.some((load) => load.audit)) session.ids.forEach((id) => auditIds.add(id));
   }
-  // Subagents and Codex children of an audit session are part of it.
-  for (const session of sessions) {
-    const parentId = session.subagent?.parentId || session.parentThread;
-    if (parentId && auditIds.has(parentId)) session.ids.forEach((id) => auditIds.add(id));
+  // Subagents, Codex children and headless runs started by an audit session
+  // (linked as below) are part of it, to any depth.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const session of sessions) {
+      if (session.ids.some((id) => auditIds.has(id))) continue;
+      let parentId = session.subagent?.parentId || session.parentThread || session.forkedFrom || null;
+      if (!parentId && isHeadless(session, config)) parentId = outputParent(session, sessions)?.id ?? null;
+      const parent = parentId ? sessions.find((other) => other.ids.includes(parentId)) : null;
+      if (parentId && (auditIds.has(parentId) || parent?.ids.some((id) => auditIds.has(id)))) {
+        session.ids.forEach((id) => auditIds.add(id));
+        changed = true;
+      }
+    }
   }
   const configured = new Set(config.excludedSessions || []);
   const kept = [];
   for (const session of sessions) {
-    const copies = session.forkedFrom ? forkParentKeys.get(session.forkedFrom) || new Set() : new Set();
-    const fresh = session.events.filter((event) => inWindow(event.ts, window) && !copies.has(event.key));
+    const parentKeys = session.forkedFrom ? forkParentKeys.get(session.forkedFrom) : null;
+    const end = Date.parse(window.end);
+    // Events of a record that was still being written at the last pass are
+    // read now whatever their own time.
+    const revisited = (event) => revisit.has(`${event.file}|${event.offset}`) && Date.parse(event.ts) <= end;
+    const fresh = session.events.filter((event) => (inWindow(event.ts, window) || revisited(event)) && !isForkCopy(session, event, parentKeys));
     session.newEvents = fresh;
-    session.forkCopies = session.events.filter((event) => copies.has(event.key)).length;
+    session.revisitKeys = session.events.filter(revisited).map((event) => event.key);
+    session.forkCopies = session.events.filter((event) => isForkCopy(session, event, parentKeys)).length;
     if (session.ids.some((id) => auditIds.has(id))) { if (fresh.length) excluded.audit += 1; continue; }
     if (session.ids.some((id) => configured.has(id))) { if (fresh.length) excluded.configured += 1; continue; }
     if (!session.loads.some((load) => load.mono)) { if (fresh.length) excluded.noMonoLoad += 1; continue; }
@@ -468,8 +527,8 @@ export function describeSessions({ sessions, window, config, env, orchRoot, fork
     } else if (session.forkedFrom) {
       parent = { id: session.forkedFrom, via: "codex-fork" };
     } else if (isHeadless(session, config)) {
-      const parents = sessions.filter((other) => other !== session && session.ids.some((id) => other.outputIds.has(id.toLowerCase())));
-      if (parents.length === 1) parent = { id: parents[0].id, via: "parent-output" };
+      const found = outputParent(session, sessions);
+      if (found) parent = { id: found.id, via: "parent-output" };
     }
     let orchestrator = null;
     if (isHeadless(session, config)) {
@@ -497,7 +556,9 @@ export function describeSessions({ sessions, window, config, env, orchRoot, fork
       linkStatus: parent || orchestrator || task ? "linked" : "none",
       newEvents: session.newEvents.length,
       forkedFrom: session.forkedFrom,
+      forkTime: session.forkTime,
       forkCopiesSkipped: session.forkCopies,
+      revisitKeys: session.revisitKeys,
       firstNewEvent: { key: session.newEvents[0].key, ts: session.newEvents[0].ts },
       lastNewEvent: { key: session.newEvents.at(-1).key, ts: session.newEvents.at(-1).ts },
     };
@@ -520,7 +581,8 @@ export function loadAllSessions({ config, env, index, window, problems }) {
     if (!session.forkedFrom || parentKeys.has(session.forkedFrom)) continue;
     parentKeys.set(session.forkedFrom, forkParentKeys(session.forkedFrom, config, env, index, problems, idIndex));
   }
-  return { sessions, forkParentKeys: parentKeys };
+  const tails = sessions.flatMap((session) => session.tails.map(({ file, offset, line }) => ({ session: session.id, file, offset, line })));
+  return { sessions, forkParentKeys: parentKeys, tails };
 }
 
 // Event keys of a fork's parent, found by id in every Codex root regardless of file time.
@@ -528,7 +590,7 @@ export function forkParentKeys(parentId, config, env, index, problems, idIndex =
   const keys = new Set();
   for (const entry of idIndex.get(parentId) || []) {
     const info = parseFile(entry, "codex", index, config, problems);
-    info.events.forEach((event) => keys.add(event.key));
+    info.events.forEach((event) => keys.add(event.copyKey));
   }
   return keys;
 }

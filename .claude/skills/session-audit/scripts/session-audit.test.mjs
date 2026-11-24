@@ -138,11 +138,11 @@ test("map.json fields are fixed for the next task", (t) => {
   const w = world(t);
   const result = collectOk(w.env);
   const map = readMap(w.data, result.passUuid);
-  assert.deepEqual(Object.keys(map).sort(), ["counters", "passUuid", "queueLength", "schema", "sessions", "sources", "startedAt", "tags", "window"].sort());
+  assert.deepEqual(Object.keys(map).sort(), ["counters", "deferredTails", "passUuid", "queueLength", "schema", "sessions", "sources", "startedAt", "tags", "window"].sort());
   assert.deepEqual(Object.keys(map.window).sort(), ["end", "start"]);
   assert.deepEqual(Object.keys(map.sessions[0]).sort(), [
-    "cwd", "files", "firstNewEvent", "forkCopiesSkipped", "forkedFrom", "host", "id", "ids", "kind", "lastNewEvent",
-    "linkStatus", "links", "loads", "newEvents", "product", "profile", "run",
+    "cwd", "files", "firstNewEvent", "forkCopiesSkipped", "forkTime", "forkedFrom", "host", "id", "ids", "kind", "lastNewEvent",
+    "linkStatus", "links", "loads", "newEvents", "product", "profile", "revisitKeys", "run",
   ].sort());
   assert.deepEqual(Object.keys(map.sessions[0].links).sort(), ["orchestrator", "parent", "stages", "task"]);
   assert.deepEqual(Object.keys(map.sessions[0].loads[0]).sort(), ["at", "partial", "path", "skill", "version"]);
@@ -208,7 +208,7 @@ test("extract gives the U5 digest: owner words, questions, ops by name, second m
   const codex = run(w.env, ["extract", IDS.codexBatched, "--session", AUDIT_SESSION]);
   assert.equal(codex.status, 0, codex.stderr);
   const codexText = fs.readFileSync(codex.out.chunks[0].file, "utf8");
-  assert.ok(codexText.includes("question: Which plan?\n  answer (answered): The short one"));
+  assert.ok(codexText.includes("answer: Which plan?\n  answer (answered): The short one"));
   assert.ok(codexText.includes("load: orchestrate v0.1.0..v0.2.0"));
 
   const fork = run(w.env, ["extract", IDS.codexFork, "--session", AUDIT_SESSION]);

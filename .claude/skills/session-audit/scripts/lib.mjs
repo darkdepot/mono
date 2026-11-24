@@ -62,22 +62,118 @@ function exists(candidate) {
   try { fs.lstatSync(candidate); return true; } catch { return false; }
 }
 
+// The existing part of a path with the file system's own letter case.
+function canonical(dir) {
+  try { return fs.realpathSync.native(dir); } catch { return dir; }
+}
+
 // Resolve every symlink on the path, including a link whose target does not
-// exist yet; the part that does not exist is kept literally.
+// exist yet, and the real letter case of existing parts (a case-insensitive
+// file system accepts ".CLAUDE" for ".claude"); the missing tail stays literal.
 export function realpathDeep(candidate, depth = 0) {
   const parts = path.resolve(candidate).split(path.sep).filter(Boolean);
   let current = path.sep;
   for (let i = 0; i < parts.length; i += 1) {
     const next = path.join(current, parts[i]);
     let stat;
-    try { stat = fs.lstatSync(next); } catch { return path.join(next, ...parts.slice(i + 1)); }
+    try { stat = fs.lstatSync(next); } catch { return path.join(canonical(current), ...parts.slice(i)); }
     if (stat.isSymbolicLink() && depth < 40) {
       const target = path.resolve(current, fs.readlinkSync(next));
       return realpathDeep(path.join(target, ...parts.slice(i + 1)), depth + 1);
     }
     current = next;
   }
+  return canonical(current);
+}
+
+// ---------------------------------------------------------------- safe writes
+
+const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
+
+// Session ids, pass uuids and file names that become path segments.
+export function checkName(value, what = "name") {
+  if (typeof value !== "string" || !SAFE_NAME.test(value) || value.includes("..")) {
+    throw new AuditError(`${what} is not a safe id: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+// A directory under the data root, created one level at a time; every level
+// must be a real directory (no symlink) whose resolved path stays the same.
+export function safeDir(root, segments, { create = true } = {}) {
+  let current = root;
+  const check = (dir) => {
+    const stat = fs.lstatSync(dir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new AuditError(`refusing to write through ${dir}: not a plain directory`);
+    if (canonical(dir) !== dir) throw new AuditError(`refusing to write through ${dir}: resolves elsewhere`);
+  };
+  if (!exists(root)) {
+    if (!create) return null;
+    fs.mkdirSync(root, { recursive: true });
+  }
+  check(root);
+  for (const segment of segments) {
+    checkName(segment, "path segment");
+    current = path.join(current, segment);
+    if (!exists(current)) {
+      if (!create) return null;
+      fs.mkdirSync(current);
+    }
+    check(current);
+  }
   return current;
+}
+
+export function safeFile(root, segments) {
+  const name = checkName(segments.at(-1), "file name");
+  const dir = safeDir(root, segments.slice(0, -1));
+  const file = path.join(dir, name);
+  if (exists(file) && !fs.lstatSync(file).isFile()) throw new AuditError(`refusing to write ${file}: not a plain file`);
+  return file;
+}
+
+export function safeRemoveDir(root, segments) {
+  const dir = safeDir(root, segments, { create: false });
+  if (dir) fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------- lock
+
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; }
+}
+
+// One command at a time changes the data root: an exclusive lock file with
+// the holder's pid; a lock of a dead process is taken over.
+export function withLock(root, sessionId, action) {
+  const file = safeFile(root, ["lock"]);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const fd = fs.openSync(file, "wx");
+      fs.writeSync(fd, JSON.stringify({ pid: process.pid, sessionId, at: new Date().toISOString() }));
+      fs.closeSync(fd);
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST" || attempt > 0) throw error.code === "EEXIST" ? new AuditError("another session-audit command holds the lock", { lock: file }, 3) : error;
+      let holder = null;
+      try { holder = readJson(file); } catch { holder = null; }
+      // A lock still being written (no pid yet) is held unless it is old.
+      let age = 0;
+      try { age = Date.now() - fs.statSync(file).mtimeMs; } catch { age = 0; }
+      const fresh = !holder && age < 60_000;
+      if (fresh || (Number.isInteger(holder?.pid) && alive(holder.pid))) {
+        throw new AuditError("another session-audit command is running", { holderPid: holder?.pid ?? null, holderSession: holder?.sessionId ?? null }, 3);
+      }
+      fs.rmSync(file, { force: true });
+    }
+  }
+  try {
+    return action();
+  } finally {
+    try {
+      if (readJson(file).pid === process.pid) fs.rmSync(file, { force: true });
+    } catch { /* already gone */ }
+  }
 }
 
 export function isInside(child, parent) {
@@ -168,11 +264,12 @@ export function guardDataRoot(dataRoot, { config, env = process.env, repo } = {}
 
 // ---------------------------------------------------------------- state
 
-export function writeJsonAtomic(file, value) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+export function writeJsonAtomic(root, segments, value) {
+  const file = safeFile(root, segments);
   const temp = `${file}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`;
-  fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`);
+  fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
   fs.renameSync(temp, file);
+  return file;
 }
 
 export function readState(dataRoot) {
@@ -183,7 +280,19 @@ export function readState(dataRoot) {
 }
 
 export function writeState(dataRoot, state) {
-  writeJsonAtomic(path.join(dataRoot, "state.json"), state);
+  writeJsonAtomic(dataRoot, ["state.json"], state);
+}
+
+// Writes of a pass happen only while state.json still names this pass and
+// this session as its holder (checked under the lock, right before writing).
+export function assertFence(dataRoot, passUuid, sessionId) {
+  const state = readState(dataRoot);
+  if (!state.pending || state.pending.uuid !== passUuid || state.pending.sessionId !== sessionId) {
+    throw new AuditError("the pass changed hands; nothing written", {
+      passUuid, callerSession: sessionId,
+      currentPass: state.pending?.uuid ?? null, holderSession: state.pending?.sessionId ?? null,
+    }, 3);
+  }
 }
 
 export function readQueue(dataRoot) {
@@ -194,8 +303,7 @@ export function readQueue(dataRoot) {
 }
 
 export function appendRunLog(dataRoot, passUuid, line) {
-  const file = path.join(dataRoot, "runs", passUuid, "log");
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const file = safeFile(dataRoot, ["runs", passUuid, "log"]);
   fs.appendFileSync(file, `${line}\n`);
 }
 
@@ -219,6 +327,7 @@ export function* readLines(file) {
   const buffer = Buffer.allocUnsafe(1 << 22);
   let rest = Buffer.alloc(0);
   let lineNo = 0;
+  let base = 0; // file offset of chunk[0]
   try {
     for (;;) {
       const count = fs.readSync(fd, buffer, 0, buffer.length, null);
@@ -228,26 +337,33 @@ export function* readLines(file) {
       let index;
       while ((index = chunk.indexOf(10, start)) !== -1) {
         lineNo += 1;
-        yield { text: chunk.toString("utf8", start, index), lineNo, complete: true };
+        yield { text: chunk.toString("utf8", start, index), lineNo, offset: base + start, complete: true };
         start = index + 1;
       }
+      base += start;
       rest = Buffer.from(chunk.subarray(start));
     }
     if (rest.length) {
       lineNo += 1;
-      yield { text: rest.toString("utf8"), lineNo, complete: false };
+      yield { text: rest.toString("utf8"), lineNo, offset: base, complete: false };
     }
   } finally {
     fs.closeSync(fd);
   }
 }
 
-export function* readRecords(file, problems) {
-  for (const { text, lineNo, complete } of readLines(file)) {
+// A last line without its newline is a record still being written: it is not
+// read now but reported in `tails` (file and byte offset), so the next pass can
+// take it as new even if its own time is before the boundary.
+export function* readRecords(file, problems, tails = null) {
+  for (const { text, lineNo, offset, complete } of readLines(file)) {
     if (!text.trim()) continue;
+    if (!complete) {
+      if (tails) tails.push({ file, offset, line: lineNo });
+      continue;
+    }
     let record;
     try { record = JSON.parse(text); } catch {
-      if (!complete) continue; // a record still being written
       problems.push({ file, line: lineNo, kind: "unparsable line" });
       continue;
     }
@@ -255,7 +371,7 @@ export function* readRecords(file, problems) {
       problems.push({ file, line: lineNo, kind: "not an object" });
       continue;
     }
-    yield { record, lineNo };
+    yield { record, lineNo, offset };
   }
 }
 
@@ -394,39 +510,33 @@ export class TagIndex {
     return { tags, matchedLines: nonEmptyBody(relative, wanted, startLine, this, tags) };
   }
 
-  // A read without known position (Codex output): the tags that explain the
-  // longest contiguous run of the read; `whole` requires the entire file.
-  runTags(relative, readText, whole) {
-    const readLines = splitLines(readText);
-    let bestLength = 0;
-    let bestTags = [];
-    let bestStart = 0;
+  // A read without known position (Codex output of one command). The whole
+  // observed text must equal the tag file (`whole`) or one contiguous range
+  // of it; a cut output loses its last, possibly partial line first.
+  sliceTags(relative, readText, { whole = false, truncated = false } = {}) {
+    const lines = splitLines(readText);
+    if (truncated && lines.length) lines.pop();
+    while (lines.length && lines[0] === "") lines.shift();
+    if (!lines.length) return { tags: [], matchedLines: 0 };
+    const tags = [];
+    let position = -1;
     for (const tag of this.tags) {
       const text = this.file(tag, relative);
       if (text === null) continue;
       const fileLines = splitLines(text);
+      let at = -1;
       if (whole) {
-        const run = longestRun(readLines, fileLines);
-        if (run.length === fileLines.length && fileLines.length > 0) {
-          if (run.length > bestLength) { bestLength = run.length; bestTags = []; bestStart = 1; }
-          if (run.length === bestLength) bestTags.push(tag);
+        if (fileLines.length === lines.length && fileLines.every((line, i) => line === lines[i])) at = 0;
+      } else {
+        for (let j = 0; j + lines.length <= fileLines.length && at === -1; j += 1) {
+          if (fileLines[j] === lines[0] && lines.every((line, i) => fileLines[j + i] === line)) at = j;
         }
-        continue;
       }
-      const run = longestRun(readLines, fileLines);
-      if (run.length === 0) continue;
-      if (run.length > bestLength) { bestLength = run.length; bestTags = []; bestStart = run.fileEnd - run.length + 2; }
-      if (run.length === bestLength) bestTags.push(tag);
+      if (at === -1) continue;
+      if (!tags.length) position = at;
+      tags.push(tag);
     }
-    let matchedLines = 0;
-    if (bestTags.length) {
-      const fileLines = splitLines(this.file(bestTags[0], relative));
-      const skip = frontmatterLineCount(this.file(bestTags[0], relative));
-      for (let i = bestStart - 1; i < bestStart - 1 + bestLength; i += 1) {
-        if (i >= skip && fileLines[i] && fileLines[i].trim()) matchedLines += 1;
-      }
-    }
-    return { tags: bestTags, matchedLines };
+    return { tags, matchedLines: tags.length ? nonEmptyBody(relative, lines, position + 1, this, tags) : 0 };
   }
 }
 

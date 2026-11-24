@@ -28,7 +28,6 @@
   "sources": [
     { "kind": "phase-report", "dir": "reports" },
     { "kind": "candidate-report", "dir": "candidates" },
-    { "kind": "review-receipt", "dir": "receipts" },
     { "kind": "qa-report", "dir": "qa" }
   ],
   "sourceSkipPattern": "(^|/)(archive|stale)(/|$)|\\.bak|\\.pre-|\\.tmp$",

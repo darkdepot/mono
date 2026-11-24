@@ -6,12 +6,13 @@ import path from "node:path";
 
 import { addUsage, finalizeUsage, zeroUsage } from "../../../../scripts/token-usage.mjs";
 import {
-  AuditError, appendRunLog, assertOwner, guardDataRoot, defaultDataRoot, isDirectory, isFile, isoNow, loadConfig,
-  monoRepo, orchestratorRoot, readJson, readLines, readQueue, readState, TagIndex, writeJsonAtomic, writeState,
+  AuditError, appendRunLog, assertFence, assertOwner, checkName, guardDataRoot, defaultDataRoot, isDirectory, isFile,
+  isoNow, loadConfig, monoRepo, orchestratorRoot, readJson, readLines, readQueue, readState, safeFile, safeRemoveDir,
+  stateRoot, TagIndex, withLock, writeJsonAtomic, writeState,
 } from "./lib.mjs";
 import { claudeItems, codexItems, commandStrings } from "./records.mjs";
 import {
-  claudeProjectRoots, describeSessions, failOnProblems, forkParentKeys, listClaudeFiles, loadAllSessions,
+  claudeProjectRoots, describeSessions, failOnProblems, forkParentKeys, isForkCopy, listClaudeFiles, loadAllSessions,
 } from "./sessions.mjs";
 
 export const MAP_SCHEMA = 1;
@@ -41,9 +42,54 @@ function walkFiles(dir, visit) {
   }
 }
 
+// Review receipts live under an evidence root, not in the orchestrator
+// folder: <state root>/evidence/<product> by default, or the evidenceRoot a
+// dispatch record names. A receipt is history/<run>.json with {receipt}
+// whose recordedAt is its time.
+export function evidenceRoots(orchRoot, product, env, config) {
+  const roots = new Set([path.join(stateRoot(env), "evidence", product)]);
+  const skip = new RegExp(config.sourceSkipPattern);
+  const productDir = path.join(orchRoot, product);
+  walkFiles(path.join(productDir, "dispatch"), (file) => {
+    if (skip.test(path.relative(productDir, file)) || !file.endsWith(".json")) return;
+    let text;
+    try {
+      if (fs.statSync(file).size > 16 << 20) return;
+      text = fs.readFileSync(file, "utf8");
+    } catch { return; }
+    for (const match of text.matchAll(/"evidenceRoot"\s*:\s*("(?:[^"\\]|\\.)*")/g)) {
+      try {
+        const value = JSON.parse(match[1]);
+        if (path.isAbsolute(value)) roots.add(path.normalize(value));
+      } catch { /* not a string */ }
+    }
+  });
+  return [...roots].sort();
+}
+
+export function collectReceipts(orchRoot, product, window, env, config) {
+  const receipts = [];
+  for (const root of evidenceRoots(orchRoot, product, env, config)) {
+    const history = path.join(root, "history");
+    let names = [];
+    try { names = fs.readdirSync(history).filter((name) => name.endsWith(".json")).sort(); } catch { continue; }
+    for (const name of names) {
+      const file = path.join(history, name);
+      let recordedAt;
+      try {
+        if (!fs.lstatSync(file).isFile() || fs.statSync(file).size > 16 << 20) continue;
+        recordedAt = readJson(file).receipt?.recordedAt;
+      } catch { continue; }
+      const time = Date.parse(recordedAt);
+      if (inWindowMs(time, window)) receipts.push({ kind: "review-receipt", product, path: file, ts: new Date(time).toISOString() });
+    }
+  }
+  return receipts;
+}
+
 // U13 mandatory layer: ledger lines, phase and candidate reports, review
 // receipts and tester reports whose own time is in the window.
-export function collectSources(orchRoot, window, config) {
+export function collectSources(orchRoot, window, config, env = process.env) {
   const sources = { ledger: [], reports: [] };
   if (!isDirectory(orchRoot)) return sources;
   const skip = new RegExp(config.sourceSkipPattern);
@@ -73,6 +119,7 @@ export function collectSources(orchRoot, window, config) {
         if (inWindowMs(time, window)) sources.reports.push({ kind: source.kind, product, path: file, ts: new Date(time).toISOString() });
       });
     }
+    sources.reports.push(...collectReceipts(orchRoot, product, window, env, config));
   }
   return sources;
 }
@@ -126,14 +173,15 @@ export function silentMinutes(sessionId, config, env, now) {
   return last === null ? null : Math.floor((Date.parse(now) - last) / 60000);
 }
 
-export function buildMap({ config, env, repo, window, passUuid, startedAt, dataRoot }) {
+export function buildMap({ config, env, repo, window, passUuid, startedAt, dataRoot, revisitTails = [] }) {
   const index = new TagIndex(repo);
   const problems = [];
-  const { sessions, forkParentKeys } = loadAllSessions({ config, env, index, window, problems });
+  const { sessions, forkParentKeys, tails } = loadAllSessions({ config, env, index, window, problems });
   failOnProblems(problems);
   const orchRoot = orchestratorRoot(env);
-  const { sessions: described, excluded } = describeSessions({ sessions, window, config, env, orchRoot, forkParentKeys });
-  const sources = collectSources(orchRoot, window, config);
+  const revisit = new Set(revisitTails.map((tail) => `${tail.file}|${tail.offset}`));
+  const { sessions: described, excluded } = describeSessions({ sessions, window, config, env, orchRoot, forkParentKeys, revisit });
+  const sources = collectSources(orchRoot, window, config, env);
   const queueLength = readQueue(dataRoot).length;
   return {
     schema: MAP_SCHEMA,
@@ -144,66 +192,78 @@ export function buildMap({ config, env, repo, window, passUuid, startedAt, dataR
     sessions: described,
     sources,
     counters: counters(described, sources, excluded),
+    deferredTails: tails,
     queueLength,
   };
 }
 
 export function collect({ env = process.env, sessionId, now, takeOver = false } = {}) {
   if (!sessionId) throw new AuditError("collect needs --session <id of the calling session>");
+  checkName(sessionId, "session id");
   const { dataRoot, repo, config } = setup(env);
   const at = isoNow(now);
-  const state = readState(dataRoot);
-  let pass = state.pending;
-  let resumed = false;
-  if (pass) {
-    if (pass.sessionId !== sessionId) {
-      if (!takeOver) {
-        throw new AuditError("an unfinished pass is held by another session; ask the owner to close it and say «забери проход»", {
-          passUuid: pass.uuid,
-          window: { start: pass.windowStart, end: pass.windowEnd },
-          holderSession: pass.sessionId,
-          silentMinutes: silentMinutes(pass.sessionId, config, env, at),
-        }, 3);
+  // The whole run holds the lock: two collectors cannot both see no pass and
+  // both start one, and a former holder cannot write after a takeover.
+  return withLock(dataRoot, sessionId, () => {
+    const state = readState(dataRoot);
+    let pass = state.pending;
+    let resumed = false;
+    if (pass) {
+      if (pass.sessionId !== sessionId) {
+        if (!takeOver) {
+          throw new AuditError("an unfinished pass is held by another session; ask the owner to close it and say «забери проход»", {
+            passUuid: pass.uuid,
+            window: { start: pass.windowStart, end: pass.windowEnd },
+            holderSession: pass.sessionId,
+            silentMinutes: silentMinutes(pass.sessionId, config, env, at),
+          }, 3);
+        }
+        const previous = pass.sessionId;
+        pass = { ...pass, sessionId, takenOverAt: at, takenOverFrom: previous };
+        writeState(dataRoot, { ...state, pending: pass });
+        appendRunLog(dataRoot, pass.uuid, `${at} takeover from ${previous} by ${sessionId} on the owner's words`);
       }
-      const previous = pass.sessionId;
-      pass = { ...pass, sessionId, takenOverAt: at, takenOverFrom: previous };
-      writeState(dataRoot, { ...state, pending: pass });
-      appendRunLog(dataRoot, pass.uuid, `${at} takeover from ${previous} by ${sessionId} on the owner's words`);
+      resumed = true;
+    } else if (takeOver) {
+      throw new AuditError("--take-over given but there is no unfinished pass");
     }
-    resumed = true;
-  } else if (takeOver) {
-    throw new AuditError("--take-over given but there is no unfinished pass");
-  }
-  const window = pass
-    ? { start: pass.windowStart, end: pass.windowEnd }
-    : { start: state.boundary || new Date(Date.parse(at) - config.firstPassDays * 86400000).toISOString(), end: at };
-  const passUuid = pass ? pass.uuid : crypto.randomUUID();
-  const startedAt = pass ? pass.startedAt : at;
-  const map = buildMap({ config, env, repo, window, passUuid, startedAt, dataRoot });
-  const sourceCount = map.sources.ledger.length + map.sources.reports.length;
-  if (!pass && map.sessions.length === 0 && sourceCount === 0 && map.queueLength === 0) {
-    return { nothingNew: true, window, written: false };
-  }
-  if (!pass) {
-    pass = { uuid: passUuid, windowStart: window.start, windowEnd: window.end, startedAt, sessionId };
-    writeState(dataRoot, { ...state, boundary: state.boundary ?? null, pending: pass });
-    appendRunLog(dataRoot, passUuid, `${at} start by ${sessionId} window ${window.start}..${window.end}`);
-  } else {
-    appendRunLog(dataRoot, passUuid, `${at} collect again by ${sessionId}`);
-  }
-  const mapFile = path.join(dataRoot, "runs", passUuid, "map.json");
-  writeJsonAtomic(mapFile, map);
-  return {
-    passUuid,
-    resumed,
-    window,
-    map: mapFile,
-    sessions: map.sessions.length,
-    newEvents: map.counters.newEvents,
-    sources: { ledger: map.sources.ledger.length, reports: map.sources.reports.length },
-    queueLength: map.queueLength,
-    counters: map.counters,
-  };
+    const window = pass
+      ? { start: pass.windowStart, end: pass.windowEnd }
+      : { start: state.boundary || new Date(Date.parse(at) - config.firstPassDays * 86400000).toISOString(), end: at };
+    const passUuid = pass ? pass.uuid : crypto.randomUUID();
+    const startedAt = pass ? pass.startedAt : at;
+    const revisitTails = Array.isArray(state.deferredTails) ? state.deferredTails : [];
+    const map = buildMap({ config, env, repo, window, passUuid, startedAt, dataRoot, revisitTails });
+    const sourceCount = map.sources.ledger.length + map.sources.reports.length;
+    if (!pass && map.sessions.length === 0 && sourceCount === 0 && map.queueLength === 0) {
+      return { nothingNew: true, window, written: false, deferredTails: map.deferredTails.length };
+    }
+    if (!pass) {
+      // Compare-and-write: still no pass when the new one is written.
+      if (readState(dataRoot).pending) throw new AuditError("a pass appeared while collecting; run collect again", {}, 3);
+      pass = { uuid: passUuid, windowStart: window.start, windowEnd: window.end, startedAt, sessionId, deferredTails: map.deferredTails };
+      writeState(dataRoot, { ...state, boundary: state.boundary ?? null, pending: pass });
+      appendRunLog(dataRoot, passUuid, `${at} start by ${sessionId} window ${window.start}..${window.end}`);
+    } else {
+      assertFence(dataRoot, passUuid, sessionId);
+      writeState(dataRoot, { ...readState(dataRoot), pending: { ...pass, deferredTails: map.deferredTails } });
+      appendRunLog(dataRoot, passUuid, `${at} collect again by ${sessionId}`);
+    }
+    assertFence(dataRoot, passUuid, sessionId);
+    const mapFile = writeJsonAtomic(dataRoot, ["runs", passUuid, "map.json"], map);
+    return {
+      passUuid,
+      resumed,
+      window,
+      map: mapFile,
+      sessions: map.sessions.length,
+      newEvents: map.counters.newEvents,
+      sources: { ledger: map.sources.ledger.length, reports: map.sources.reports.length },
+      deferredTails: map.deferredTails.length,
+      queueLength: map.queueLength,
+      counters: map.counters,
+    };
+  });
 }
 
 // ---------------------------------------------------------------- extract
@@ -236,7 +296,29 @@ function codexToolNames(input) {
   return [...String(typeof input === "string" ? input : JSON.stringify(input)).matchAll(/tools\.([A-Za-z0-9_]+)\s*\(/g)].map((match) => match[1]);
 }
 
-// U5 digest items of a session, in order, deduplicated by event key.
+function parseArgs(input) {
+  if (input && typeof input === "object") return input;
+  try { return JSON.parse(String(input || "")); } catch { return null; }
+}
+
+// Questions of a native question tool: Claude AskUserQuestion input or Codex
+// request_user_input_async JSON arguments.
+export function questionText(args) {
+  const list = Array.isArray(args?.questions) ? args.questions : args?.question ? [args] : [];
+  return list.map((question) => {
+    const text = question.question ?? question.prompt ?? question.text ?? "";
+    const options = (question.options || []).map((option) => (typeof option === "string" ? option : option?.label ?? option?.text ?? "")).filter(Boolean);
+    return options.length ? `${text} [options: ${options.join("; ")}]` : text;
+  }).join("\n");
+}
+
+const QUESTION_TOOLS = new Set(["AskUserQuestion", "request_user_input_async", "request_user_input"]);
+
+// U5 digest items of a session, in order, deduplicated by event key. A
+// question is shown when asked (status unanswered, updated on reply) and its
+// reply is a separate item with the reply's own time; a second-model call is
+// shown with its output at the time of the output. Calls still open at the
+// end of the files are shown with the request.
 export function digestItems(sessionEntry, mapSession, config) {
   const entries = [];
   const seen = new Set();
@@ -251,10 +333,15 @@ export function digestItems(sessionEntry, mapSession, config) {
     return null;
   };
   const problems = [];
+  const pending = new Map(); // call id -> open call, across files
+  const askQuestion = (id, base, text) => {
+    const entry = { ...base, kind: "question", text: `${text}\n  status: unanswered`, question: text };
+    entries.push(entry);
+    pending.set(id, { type: "question", base, text, entry });
+  };
   for (const file of sessionEntry.files) {
     const host = sessionEntry.host;
     const items = host === "claude" ? claudeItems(file, problems, config) : codexItems(file, problems, config);
-    const pending = new Map();
     let duplicate = false;
     for (const item of items) {
       if (item.kind === "event") {
@@ -263,7 +350,7 @@ export function digestItems(sessionEntry, mapSession, config) {
         continue;
       }
       if (duplicate || !("key" in item)) continue;
-      const base = { key: item.key, ts: item.ts };
+      const base = { key: item.key, ts: item.ts, copyKey: item.copyKey ?? item.key };
       if (item.kind === "user-text") {
         const text = item.text || "";
         const reply = /<send_user_message_question_reply>\s*([\s\S]*?)\s*<\/send_user_message_question_reply>/.exec(text);
@@ -271,7 +358,14 @@ export function digestItems(sessionEntry, mapSession, config) {
           let parsed = [];
           try { parsed = JSON.parse(reply[1]); } catch { parsed = []; }
           for (const answer of Array.isArray(parsed) ? parsed : []) {
-            entries.push({ ...base, kind: "question", text: `${answer.question}\n  answer (answered): ${answer.answer}` });
+            let callId = null;
+            try { callId = JSON.parse(answer.questionItemId)?.[1] ?? null; } catch { callId = null; }
+            const open = callId ? pending.get(callId) : null;
+            if (open) {
+              open.entry.text = `${open.text}\n  status: answered`;
+              pending.delete(callId);
+            }
+            entries.push({ ...base, kind: "answer", text: `${open ? open.text : answer.question}\n  answer (answered): ${answer.answer}` });
           }
           continue;
         }
@@ -287,9 +381,8 @@ export function digestItems(sessionEntry, mapSession, config) {
         if (item.text && item.text.trim()) entries.push({ ...base, kind: "assistant", text: item.text });
       } else if (item.kind === "tool-use") {
         const name = item.name || "";
-        if (name === "AskUserQuestion") {
-          const questions = (item.input?.questions || []).map((question) => `${question.question} [options: ${(question.options || []).map((option) => option.label).join("; ")}]`);
-          pending.set(item.id, { type: "question", base, text: questions.join("\n") });
+        if (QUESTION_TOOLS.has(name)) {
+          askQuestion(item.id, base, questionText(parseArgs(item.input)));
           continue;
         }
         const kind = opKind(name);
@@ -299,9 +392,8 @@ export function digestItems(sessionEntry, mapSession, config) {
             const toolKind = opKind(tool);
             if (toolKind) entries.push({ ...base, kind: "op", text: `${toolKind}: ${tool}` });
           }
-          const asked = /request_user_input_async\s*\(([\s\S]{0,4000})/.exec(String(item.input || ""));
-          if (asked) entries.push({ ...base, kind: "question", text: `asked: ${asked[1]}` });
-          // A later loaded skill of the session is shown by its load entry.
+          const asked = /request_user_input_async\s*\(([\s\S]{0,4000})/.exec(typeof item.input === "string" ? item.input : "");
+          if (asked) askQuestion(item.id, base, `asked: ${asked[1]}`);
           const load = (mapSession?.loads || []).find((candidate) => candidate.at === item.ts);
           if (load) entries.push({ ...base, kind: "load", text: `${load.skill} ${load.version.status === "confirmed" ? load.version.range : "unconfirmed"}` });
         }
@@ -311,15 +403,22 @@ export function digestItems(sessionEntry, mapSession, config) {
       } else if (item.kind === "tool-result") {
         const open = pending.get(item.toolUseId);
         if (!open) continue;
-        pending.delete(item.toolUseId);
         if (open.type === "question") {
+          // A Codex async question returns at once; its answer comes as a reply message.
+          if (host === "codex" && !item.toolUseResult) continue;
+          pending.delete(item.toolUseId);
           const { status, answer } = questionAnswer(item);
-          entries.push({ ...open.base, kind: "question", text: `${open.text}\n  answer (${status}): ${answer}` });
+          open.entry.text = `${open.text}\n  status: ${status}`;
+          entries.push({ ...base, kind: "answer", text: `${open.text}\n  answer (${status}): ${answer}` });
         } else {
-          entries.push({ ...open.base, kind: "second-model", text: `${open.text}\n--- output ---\n${clip(item.text || "", config.extract.secondModelBytes)}` });
+          pending.delete(item.toolUseId);
+          entries.push({ ...base, kind: "second-model", text: `${open.text}\n--- output ---\n${clip(item.text || "", config.extract.secondModelBytes)}` });
         }
       }
     }
+  }
+  for (const open of pending.values()) {
+    if (open.type === "second-model") entries.push({ ...open.base, kind: "second-model", text: `${open.text}\n--- output ---\n(no output in the files yet)` });
   }
   failOnProblems(problems);
   entries.forEach((entry, order) => { entry.order = order; });
@@ -347,8 +446,23 @@ function contextFor(entries, startIndex, limit) {
   return clip(lines, limit);
 }
 
+// Byte-size pieces of a text, cut on UTF-8 character boundaries.
+export function splitBytes(text, limit) {
+  const buffer = Buffer.from(text, "utf8");
+  const pieces = [];
+  let start = 0;
+  while (start < buffer.length) {
+    let end = Math.min(start + limit, buffer.length);
+    while (end < buffer.length && end > start && (buffer[end] & 0xc0) === 0x80) end -= 1;
+    pieces.push(buffer.subarray(start, end).toString("utf8"));
+    start = end;
+  }
+  return pieces;
+}
+
 // Pieces of the selected entries: one when small, else by stage loads with a
-// hard size cap inside a long stage.
+// hard size cap inside a long stage. An entry above the cap continues over
+// several pieces; nothing is dropped.
 export function chunkEntries(entries, selected, config) {
   const chunkBytes = config.extract.chunkBytes;
   const picked = entries.map((entry, index) => ({ entry, index })).filter(({ entry }) => selected(entry));
@@ -368,18 +482,22 @@ export function chunkEntries(entries, selected, config) {
   for (const group of groups) {
     let current = [];
     let size = 0;
+    const flush = () => { if (current.length) chunks.push(current); current = []; size = 0; };
     for (const item of group) {
-      let line = renderEntry(item.entry);
-      if (byteLength(line) > chunkBytes) line = `${clip(line, chunkBytes - 64)}\n`;
-      if (size + byteLength(line) > chunkBytes && current.length) {
-        chunks.push(current);
-        current = [];
-        size = 0;
+      const line = renderEntry(item.entry);
+      const lines = [];
+      if (byteLength(line) <= chunkBytes) lines.push(line);
+      else {
+        const pieces = splitBytes(line, chunkBytes - 64);
+        pieces.forEach((piece, i) => lines.push(`[part ${i + 1}/${pieces.length}] ${piece}${piece.endsWith("\n") ? "" : "\n"}`));
       }
-      current.push({ ...item, line });
-      size += byteLength(line);
+      for (const text of lines) {
+        if (size + byteLength(text) > chunkBytes) flush();
+        current.push({ ...item, line: text });
+        size += byteLength(text);
+      }
     }
-    if (current.length) chunks.push(current);
+    flush();
   }
   return chunks.map((items) => ({
     items,
@@ -389,7 +507,7 @@ export function chunkEntries(entries, selected, config) {
 }
 
 export function readMap(dataRoot, passUuid) {
-  const file = path.join(dataRoot, "runs", passUuid, "map.json");
+  const file = path.join(dataRoot, "runs", checkName(passUuid, "pass uuid"), "map.json");
   if (!isFile(file)) throw new AuditError(`no map for pass ${passUuid}: run collect first`);
   return readJson(file);
 }
@@ -397,61 +515,69 @@ export function readMap(dataRoot, passUuid) {
 export function extract({ env = process.env, sessionId, target, from, to } = {}) {
   if (!sessionId) throw new AuditError("extract needs --session <id of the calling session>");
   if (!target) throw new AuditError("extract needs the id of a session of the map");
+  checkName(sessionId, "session id");
+  checkName(target, "session id");
   const { dataRoot, config } = setup(env);
-  const state = readState(dataRoot);
-  if (!state.pending) throw new AuditError("no unfinished pass: run collect first");
-  assertOwner(state, sessionId);
-  const map = readMap(dataRoot, state.pending.uuid);
-  const mapSession = map.sessions.find((session) => session.id === target || session.ids.includes(target));
-  if (!mapSession) throw new AuditError(`session ${target} is not in the map of pass ${state.pending.uuid}`);
-  const entries = digestItems(mapSession, mapSession, config);
-  const window = map.window;
-  let selected;
-  let range;
-  if (from || to) {
-    const position = (value, fallback) => {
-      if (!value) return fallback;
-      const byKey = entries.findIndex((entry) => entry.key === value);
-      if (byKey !== -1) return Date.parse(entries[byKey].ts);
-      const time = Date.parse(value);
-      if (!Number.isFinite(time)) throw new AuditError(`range bound is neither an event of the session nor a time: ${value}`);
-      return time;
-    };
-    const start = position(from, -Infinity);
-    const end = position(to, Infinity);
-    selected = (entry) => Date.parse(entry.ts) >= start && Date.parse(entry.ts) <= end;
-    range = { from: from || null, to: to || null };
-  } else {
-    const copies = forkCopyKeys(mapSession, config, env);
-    const start = Date.parse(window.start);
-    const end = Date.parse(window.end);
-    selected = (entry) => Date.parse(entry.ts) > start && Date.parse(entry.ts) <= end && !copies.has(entry.key);
-    range = { window };
-  }
-  const chunks = chunkEntries(entries, selected, config);
-  const dir = path.join(dataRoot, "runs", state.pending.uuid, "extract", mapSession.id);
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.mkdirSync(dir, { recursive: true });
-  const written = chunks.map((chunk, i) => {
-    const file = path.join(dir, `chunk-${String(i + 1).padStart(2, "0")}.md`);
-    const text = `# session ${mapSession.id} chunk ${i + 1}/${chunks.length}\n\n## context (already read, not new)\n\n${chunk.context}\n## events\n\n${chunk.body}`;
-    fs.writeFileSync(file, text);
-    return {
-      file,
-      bytes: byteLength(chunk.body),
-      contextBytes: byteLength(chunk.context),
-      entries: chunk.items.length,
-      first: { key: chunk.items[0].entry.key, ts: chunk.items[0].entry.ts },
-      last: { key: chunk.items.at(-1).entry.key, ts: chunk.items.at(-1).entry.ts },
-    };
+  return withLock(dataRoot, sessionId, () => {
+    const state = readState(dataRoot);
+    if (!state.pending) throw new AuditError("no unfinished pass: run collect first");
+    assertOwner(state, sessionId);
+    const passUuid = checkName(state.pending.uuid, "pass uuid");
+    const map = readMap(dataRoot, passUuid);
+    const mapSession = map.sessions.find((session) => session.id === target || session.ids.includes(target));
+    if (!mapSession) throw new AuditError(`session ${target} is not in the map of pass ${passUuid}`);
+    checkName(mapSession.id, "session id");
+    const entries = digestItems(mapSession, mapSession, config);
+    const window = map.window;
+    let selected;
+    let range;
+    if (from || to) {
+      const position = (value, fallback) => {
+        if (!value) return fallback;
+        const byKey = entries.findIndex((entry) => entry.key === value);
+        if (byKey !== -1) return Date.parse(entries[byKey].ts);
+        const time = Date.parse(value);
+        if (!Number.isFinite(time)) throw new AuditError(`range bound is neither an event of the session nor a time: ${value}`);
+        return time;
+      };
+      const start = position(from, -Infinity);
+      const end = position(to, Infinity);
+      selected = (entry) => Date.parse(entry.ts) >= start && Date.parse(entry.ts) <= end;
+      range = { from: from || null, to: to || null };
+    } else {
+      const parentKeys = forkCopyKeys(mapSession, config, env);
+      const fork = { forkedFrom: mapSession.forkedFrom, forkTime: mapSession.forkTime };
+      const start = Date.parse(window.start);
+      const end = Date.parse(window.end);
+      const revisit = new Set(mapSession.revisitKeys || []);
+      selected = (entry) => ((Date.parse(entry.ts) > start && Date.parse(entry.ts) <= end) || revisit.has(entry.key))
+        && !isForkCopy(fork, entry, parentKeys);
+      range = { window };
+    }
+    const chunks = chunkEntries(entries, selected, config);
+    assertFence(dataRoot, passUuid, sessionId);
+    safeRemoveDir(dataRoot, ["runs", passUuid, "extract", mapSession.id]);
+    const written = chunks.map((chunk, i) => {
+      const file = safeFile(dataRoot, ["runs", passUuid, "extract", mapSession.id, `chunk-${String(i + 1).padStart(2, "0")}.md`]);
+      const text = `# session ${mapSession.id} chunk ${i + 1}/${chunks.length}\n\n## context (already read, not new)\n\n${chunk.context}\n## events\n\n${chunk.body}`;
+      fs.writeFileSync(file, text, { flag: "wx" });
+      return {
+        file,
+        bytes: byteLength(chunk.body),
+        contextBytes: byteLength(chunk.context),
+        entries: chunk.items.length,
+        first: { key: chunk.items[0].entry.key, ts: chunk.items[0].entry.ts },
+        last: { key: chunk.items.at(-1).entry.key, ts: chunk.items.at(-1).entry.ts },
+      };
+    });
+    appendRunLog(dataRoot, passUuid, `${isoNow()} extract ${mapSession.id} chunks ${written.length}`);
+    return { passUuid, session: mapSession.id, range, chunks: written };
   });
-  appendRunLog(dataRoot, state.pending.uuid, `${isoNow()} extract ${mapSession.id} chunks ${written.length}`);
-  return { passUuid: state.pending.uuid, session: mapSession.id, range, chunks: written };
 }
 
-// Keys copied from the parent of a Codex fork are not new events.
+// Content keys of the parent of a Codex fork, to find its copied items.
 function forkCopyKeys(mapSession, config, env) {
-  if (!mapSession.forkedFrom) return new Set();
+  if (!mapSession.forkedFrom) return null;
   const index = new TagIndex(monoRepo(env));
   const problems = [];
   const keys = forkParentKeys(mapSession.forkedFrom, config, env, index, problems);
@@ -475,6 +601,8 @@ function usageTotal(usage) {
 export function cost({ env = process.env, passUuid, ids = [] } = {}) {
   const { dataRoot, config } = setup(env);
   if (!passUuid && !ids.length) throw new AuditError("cost needs --pass <uuid> or session ids");
+  if (passUuid) checkName(passUuid, "pass uuid");
+  ids.forEach((id) => checkName(id, "session id"));
   const all = listClaudeFiles(config, env);
   const topLevel = all.filter((entry) => path.basename(path.dirname(entry.file)) !== "subagents");
   let sessionIds = [...ids];

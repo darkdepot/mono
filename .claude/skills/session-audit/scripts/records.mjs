@@ -46,9 +46,9 @@ export function claudeFileIdentity(file) {
   return { fileId: base, subagent: null };
 }
 
-export function* claudeItems(file, problems, config) {
+export function* claudeItems(file, problems, config, tails = null) {
   const known = new Set(config.claude.knownRecordTypes);
-  for (const { record, lineNo } of readRecords(file, problems)) {
+  for (const { record, lineNo, offset } of readRecords(file, problems, tails)) {
     const type = record.type;
     if (!known.has(type)) {
       problems.push({ file, line: lineNo, kind: `unknown Claude record type ${JSON.stringify(type ?? null)}` });
@@ -56,9 +56,10 @@ export function* claudeItems(file, problems, config) {
     }
     if (type !== "user" && type !== "assistant") continue;
     const base = {
-      key: record.uuid || hashKey(record),
+      key: record.uuid || `${hashKey(record)}@${offset}`,
       ts: record.timestamp || null,
       line: lineNo,
+      offset,
       sessionId: record.sessionId || null,
       cwd: record.cwd || null,
       entrypoint: record.entrypoint || null,
@@ -118,10 +119,10 @@ export function codexOutputText(output) {
   return "";
 }
 
-export function* codexItems(file, problems, config) {
+export function* codexItems(file, problems, config, tails = null) {
   const known = new Set(config.codex.knownRecordTypes);
   let sawMeta = false;
-  for (const { record, lineNo } of readRecords(file, problems)) {
+  for (const { record, lineNo, offset } of readRecords(file, problems, tails)) {
     const type = record.type;
     if (!known.has(type)) {
       problems.push({ file, line: lineNo, kind: `unknown Codex record type ${JSON.stringify(type ?? null)}` });
@@ -149,7 +150,12 @@ export function* codexItems(file, problems, config) {
       continue;
     }
     if (type !== "response_item") continue;
-    const base = { key: payload.id || hashKey(payload), ts: record.timestamp || null, line: lineNo };
+    // Identity: the item id, else content with time and position, so a repeated
+    // message stays a separate event. copyKey (id or content) only finds the
+    // parent's items copied into a fork.
+    const copyKey = payload.id || hashKey(payload);
+    const key = payload.id || `${copyKey}@${record.timestamp || ""}#${record.ordinal ?? lineNo}`;
+    const base = { key, copyKey, ts: record.timestamp || null, line: lineNo, offset };
     yield { kind: "event", role: payload.type, ...base };
     if (payload.type === "message") {
       const text = codexContentText(payload.content);
@@ -174,28 +180,43 @@ function unquote(literal) {
   return body.replace(/\\(.)/g, (_match, char) => (char === "n" ? "\n" : char === "t" ? "\t" : char));
 }
 
-// Shell command strings inside a Codex tool call: JS `cmd:` literals of the
-// exec tool, JSON arguments of exec_command/shell, or the raw input.
-export function commandStrings(input) {
+const LITERAL = "(\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'|`(?:[^`\\\\]|\\\\.)*`)";
+
+// Shell commands inside a Codex tool call with their working folder: JS
+// `cmd:` literals of the exec tool (workdir from the same object), JSON
+// arguments of exec_command/shell, or the raw input.
+export function commandCalls(input) {
   if (input && typeof input === "object") {
-    if (typeof input.cmd === "string") return [input.cmd];
-    if (Array.isArray(input.command)) return [input.command.join(" ")];
-    if (typeof input.command === "string") return [input.command];
+    const workdir = typeof input.workdir === "string" ? input.workdir : typeof input.cwd === "string" ? input.cwd : null;
+    if (typeof input.cmd === "string") return [{ cmd: input.cmd, workdir }];
+    if (Array.isArray(input.command)) return [{ cmd: input.command.join(" "), workdir }];
+    if (typeof input.command === "string") return [{ cmd: input.command, workdir }];
     return [];
   }
   const text = String(input || "");
   try {
     const parsed = JSON.parse(text);
-    if (parsed && typeof parsed === "object") return commandStrings(parsed);
+    if (parsed && typeof parsed === "object") return commandCalls(parsed);
   } catch { /* not JSON */ }
   const found = [];
-  const pattern = /\bcmd"?\s*:\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)/g;
-  for (const match of text.matchAll(pattern)) found.push(unquote(match[1]));
-  return found.length ? found : [text];
+  for (const match of text.matchAll(new RegExp(`\\bcmd"?\\s*:\\s*${LITERAL}`, "g"))) {
+    const open = text.lastIndexOf("{", match.index);
+    const close = text.indexOf("}", match.index + match[0].length);
+    const object = text.slice(open === -1 ? match.index : open, close === -1 ? text.length : close);
+    const workdir = new RegExp(`\\bworkdir"?\\s*:\\s*${LITERAL}`).exec(object);
+    found.push({ cmd: unquote(match[1]), workdir: workdir ? unquote(workdir[1]) : null });
+  }
+  return found.length ? found : [{ cmd: text, workdir: null }];
 }
 
-// Simple pipelines of a command string, with the files they name.
-export function fileReads(command) {
+export function commandStrings(input) {
+  return commandCalls(input).map((call) => call.cmd);
+}
+
+// Simple pipelines of a command string, with the files they name. Relative
+// paths are resolved against the folder the command ran in (never against the
+// auditor's own folder); without one they are skipped.
+export function fileReads(command, cwd = null) {
   const reads = [];
   for (const pipeline of command.split(/\n|;|&&|\|\|/)) {
     const trimmed = pipeline.trim();
@@ -204,8 +225,14 @@ export function fileReads(command) {
     if (!/^(?:cat|sed|head|tail)\s/.test(trimmed)) continue;
     const full = /^cat\s/.test(trimmed) && !trimmed.includes("|");
     for (const match of trimmed.matchAll(/(?:^|[\s'"`=(])((?:\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*|[^\s'"`;|&()$]*)\/[^\s'"`;|&()]*\.md)\b/g)) {
-      const filePath = match[1];
-      reads.push({ path: filePath, interpolated: filePath.includes("$"), full, pipeline: trimmed });
+      const named = match[1];
+      const interpolated = named.includes("$");
+      let filePath = named;
+      if (!interpolated && !path.isAbsolute(named)) {
+        if (!cwd || !path.isAbsolute(cwd) || named.startsWith("~")) continue;
+        filePath = path.resolve(cwd, named);
+      }
+      reads.push({ path: filePath, interpolated, full, pipeline: trimmed });
     }
   }
   return reads;
@@ -254,14 +281,12 @@ export function outputSegments(text) {
     } else if (Array.isArray(value)) value.forEach(strings);
     else if (value && typeof value === "object") Object.values(value).forEach(strings);
   };
-  for (const line of body.split("\n")) {
-    const trimmed = line.trim();
-    if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length > 1) {
-      const values = parseJsonSequence(trimmed);
-      if (values) { values.forEach(strings); continue; }
-    }
-    raw.push(line);
-  }
+  // JSON wrappers are unpacked only when every line is JSON; otherwise the
+  // output is one plain text (a file may itself hold JSON lines).
+  const lines = body.split("\n").filter((line) => line.trim());
+  const parsed = lines.map((line) => parseJsonSequence(line.trim()));
+  if (lines.length && parsed.every(Boolean)) parsed.forEach((values) => values.forEach(strings));
+  else raw.push(body);
   if (raw.join("").trim()) segments.push(raw.join("\n"));
   return segments.map((segment) => {
     const match = /^Warning: truncated output \(original token count: \d+\)\nTotal output lines: \d+\n\n/.exec(segment);
