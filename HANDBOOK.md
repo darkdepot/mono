@@ -1578,6 +1578,7 @@ node scripts/verify.mjs
 ```
 
 The entry point includes `git diff --check`, syntax checks, artifact/workflow checks and isolated plugin runtime fixtures.
+Its session-audit step runs every `*.test.mjs` of the project skill `.claude/skills/session-audit/scripts/` (not part of the pack) on synthetic fixtures without listing the files.
 It also runs the recorded code-review round and evaluation fixtures:
 `node --test scripts/code-review.test.mjs scripts/code-review-eval.test.mjs scripts/code-review-real.test.mjs scripts/code-review-login.test.mjs scripts/claude-login.test.mjs`.
 These prove parsing, coverage, launch boundaries and result calculation; host
