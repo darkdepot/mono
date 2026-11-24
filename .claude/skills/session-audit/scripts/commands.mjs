@@ -224,8 +224,6 @@ export function collect({ env = process.env, sessionId, now, takeOver = false } 
         appendRunLog(dataRoot, pass.uuid, `${at} takeover from ${previous} by ${sessionId} on the owner's words`);
       }
       resumed = true;
-    } else if (takeOver) {
-      throw new AuditError("--take-over given but there is no unfinished pass");
     }
     const window = pass
       ? { start: pass.windowStart, end: pass.windowEnd }
@@ -263,7 +261,7 @@ export function collect({ env = process.env, sessionId, now, takeOver = false } 
       queueLength: map.queueLength,
       counters: map.counters,
     };
-  });
+  }, { takeOver, now: at });
 }
 
 // ---------------------------------------------------------------- extract

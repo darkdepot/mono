@@ -99,8 +99,9 @@ function claudeLoad(item, index) {
 // is its file (cat) or one contiguous range of it (partial). An output that
 // fits more than one read is ambiguous and given to none; a read that fits
 // more than one output with different tags is ambiguous too.
-function assignOutputs(index, reads, segments) {
-  const matches = reads.map((read) => segments.map((segment) => {
+function assignOutputs(index, reads, segments, allowed = () => true) {
+  const matches = reads.map((read) => segments.map((segment, s) => {
+    if (!allowed(read, s)) return null;
     let best = null;
     for (const rel of read.rels) {
       const whole = read.full && !segment.truncated;
@@ -176,7 +177,11 @@ function codexReads(use, result, index, roots, cwd) {
     }
     return best ?? { tags: [], matchedLines: 0, rel: read.rels[0], whole: false, contradiction: true, truncated: segment.truncated };
   });
-  const shared = assignOutputs(index, planned.filter((_read, i) => direct[i] === undefined), segments);
+  // Outputs already judged for a direct read are not shared; with results one
+  // per call, a read may only take its own call's output.
+  const taken = new Set(planned.map((read, i) => (direct[i] === undefined ? null : segments.indexOf(ownSegment(read)))).filter((s) => s !== null && s >= 0));
+  const allowed = (read, s) => !taken.has(s) && (!(segments.byCall && segments.length === calls.length) || s === read.callIndex);
+  const shared = assignOutputs(index, planned.filter((_read, i) => direct[i] === undefined), segments, allowed);
   let next = 0;
   const assigned = planned.map((_read, i) => (direct[i] === undefined ? shared[next++] : direct[i]));
   planned.forEach((read, i) => {

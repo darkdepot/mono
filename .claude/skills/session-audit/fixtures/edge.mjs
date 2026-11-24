@@ -23,6 +23,7 @@ export const EDGE = {
   syncQuestion: "a3333333-2222-4111-8111-111111111111",
   stageMismatch: "acacacac-1111-4111-8111-111111111111",
   batchedMismatch: "acacacac-2222-4111-8111-111111111111",
+  sharedContradict: "acacacac-3333-4111-8111-111111111111",
 };
 
 export const LONG_OWNER = `Long owner note. ${"word ".repeat(70_000)}END-OF-OWNER-NOTE`;
@@ -101,6 +102,24 @@ export function buildEdgeWorld(root, { repo }) {
     bm.output(at(BOUNDARY, 37), "call_bm", [
       JSON.stringify({ status: "fulfilled", value: { output: "Guide rule 1 of the invented pack.\nA rule that no release has." } }) +
       JSON.stringify({ status: "fulfilled", value: { output: "a.txt\nb.txt" } }),
+    ]),
+  ]);
+
+  // Results per call: call 1 cats the review of the clone (matches); call 2
+  // reads the review of a second copy and a note, and its own output
+  // contradicts the tag. The second read must not borrow call 1's output.
+  const copy2 = path.join(home, "packs", "mono-copy-2");
+  writeTree(copy2, PACK["v0.2.0"]);
+  const sc = codex(EDGE.sharedContradict, { cwd: alpha });
+  const reviewLines = review.split("\n");
+  const contradicted = [...reviewLines.slice(7, 17)];
+  contradicted[4] = "Step 5: a step that no release has";
+  put(rollout(EDGE.sharedContradict), [
+    ...sc.meta(at(BOUNDARY, 38)),
+    sc.exec(at(BOUNDARY, 39), "call_sc", `const rs = await Promise.allSettled([tools.exec_command({cmd:"cat ${path.join(clone, "skills", "review", "SKILL.md")}"}),tools.exec_command({cmd:"sed -n '8,17p' ${path.join(copy2, "skills", "review", "SKILL.md")}; sed -n '1,2p' ${path.join(home, "notes.md")}"})]);\nrs.forEach((r) => text(JSON.stringify(r)))\n`),
+    sc.output(at(BOUNDARY, 39), "call_sc", [
+      JSON.stringify({ status: "fulfilled", value: { output: review } }) +
+      JSON.stringify({ status: "fulfilled", value: { output: `${contradicted.join("\n")}\nnote one\nnote two` } }),
     ]),
   ]);
 

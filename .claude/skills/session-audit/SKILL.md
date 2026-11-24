@@ -32,10 +32,13 @@ real letter case of existing folders. Ids and file names that become paths
 must be plain (`[A-Za-z0-9._-]`, no `..`); every write and delete goes through
 plain directories of the root, never through a symlink or into a file with a
 second hard link. `collect` and `extract` hold `<data root>/lock` (created
-whole in one step with the holder's pid and a unique token; a lock of a dead
-process is reclaimed by renaming it to a tombstone and checking its token,
-and released only when the token is ours) and write only while `state.json`
-still names their pass and session.
+whole in one step with the holder's pid and a unique token) and write only
+while `state.json` still names their pass and session. An existing lock is
+never reclaimed on its own: the command stops with `holderPid`,
+`holderSession`, `lockAgeMinutes` and `holderAlive`. Tell the owner; only
+after the owner's words «забери проход» run `collect --take-over`, which also
+takes the lock and writes a line to `<data root>/lock.log`. The holder removes
+its lock on release.
 
 - `config.json` here holds shared values only. `<data root>/config.json`
   overrides them key by key: `runPrefixes`, `standCodexHomes`,

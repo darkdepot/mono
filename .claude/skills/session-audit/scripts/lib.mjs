@@ -177,12 +177,11 @@ function restoreLock(moved, file) {
 
 // One command at a time changes the data root. The lock file appears
 // complete in one step (link of a written temp file) and carries a unique
-// token. A lock of a dead process is reclaimed by renaming it to a unique
-// tombstone (only one contender's rename succeeds) and checking that the
-// tombstone holds the token read as stale; anything else is put back. Release
-// renames the lock away the same way and removes it only when the token is ours.
-export function withLock(root, sessionId, action) {
-  // Not safeFile: while a contender links its temp file the lock has two names.
+// token. An existing lock is never reclaimed automatically: the command
+// refuses and names the holder. Only its holder removes it on release, or a
+// run with takeOver (the owner's words «забери проход»), which is logged.
+export function withLock(root, sessionId, action, { takeOver = false, now = new Date().toISOString() } = {}) {
+  // Not safeFile: while a lock is being linked it has two names.
   const file = path.join(safeDir(root, []), "lock");
   if (exists(file) && !fs.lstatSync(file).isFile()) throw new AuditError(`refusing to use ${file}: not a plain file`);
   const token = crypto.randomUUID();
@@ -195,26 +194,26 @@ export function withLock(root, sessionId, action) {
       throw error;
     } finally { fs.rmSync(temp, { force: true }); }
   };
-  for (let attempt = 0; ; attempt += 1) {
-    if (acquire()) break;
+  if (!acquire()) {
     const holder = readLock(file);
-    let age = 0;
-    try { age = Date.now() - fs.statSync(file).mtimeMs; } catch { continue; } // gone meanwhile: try again
-    const stale = holder ? Number.isInteger(holder.pid) && !alive(holder.pid) : age >= 60_000;
-    if (!stale || attempt > 2) {
-      throw new AuditError("another session-audit command is running", { holderPid: holder?.pid ?? null, holderSession: holder?.sessionId ?? null }, 3);
+    let since = Date.parse(holder?.at);
+    if (!Number.isFinite(since)) {
+      try { since = fs.statSync(file).mtimeMs; } catch { since = NaN; }
     }
-    const tombstone = `${file}.${token}.stale`;
-    try { fs.renameSync(file, tombstone); } catch (error) {
-      if (error.code === "ENOENT") continue; // another contender moved it first
-      throw error;
+    const details = {
+      holderPid: holder?.pid ?? null,
+      holderSession: holder?.sessionId ?? null,
+      lockAgeMinutes: Number.isFinite(since) ? Math.floor((Date.now() - since) / 60000) : null,
+      holderAlive: Number.isInteger(holder?.pid) ? alive(holder.pid) : null,
+    };
+    if (!takeOver) {
+      throw new AuditError("another session-audit command holds the lock; if that session is closed, the owner may say «забери проход» (--take-over)", details, 3);
     }
-    const moved = readLock(tombstone);
-    if ((moved?.token ?? null) !== (holder?.token ?? null) || (moved?.pid ?? null) !== (holder?.pid ?? null)) {
-      restoreLock(tombstone, file); // not the lock we judged stale
-      throw new AuditError("another session-audit command is running", { holderPid: moved?.pid ?? null, holderSession: moved?.sessionId ?? null }, 3);
-    }
-    fs.rmSync(tombstone, { force: true });
+    const moved = `${file}.${token}.taken`;
+    try { fs.renameSync(file, moved); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    fs.rmSync(moved, { force: true });
+    if (!acquire()) throw new AuditError("another session-audit command took the lock at the same time", {}, 3);
+    safeAppend(root, ["lock.log"], `${now} lock taken over by ${sessionId} from ${JSON.stringify(details)} on the owner's words\n`);
   }
   if (readLock(file)?.token !== token) throw new AuditError("lost the lock while taking it", {}, 3);
   try {

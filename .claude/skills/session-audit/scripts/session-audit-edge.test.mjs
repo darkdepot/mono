@@ -104,15 +104,24 @@ test("two collectors at once create one pass; a live lock refuses, a dead one is
   assert.equal(fs.readdirSync(path.join(w.data, "runs")).length, 1, "one pass only");
   assert.equal(fs.existsSync(path.join(w.data, "lock")), false, "lock released");
 
-  fs.writeFileSync(path.join(w.data, "lock"), JSON.stringify({ pid: process.pid, sessionId: "someone" }));
+  fs.writeFileSync(path.join(w.data, "lock"), JSON.stringify({ pid: process.pid, sessionId: "someone", at: NOW }));
   const locked = run(w.env, ["collect", "--session", winner, "--now", NOW]);
   assert.equal(locked.status, 3);
   assert.equal(locked.err.holderPid, process.pid);
+  assert.equal(locked.err.holderAlive, true);
 
   const dead = spawnSync(process.execPath, ["-e", "process.exit(0)"]).pid;
-  fs.writeFileSync(path.join(w.data, "lock"), JSON.stringify({ pid: dead, sessionId: "gone" }));
-  const taken = run(w.env, ["collect", "--session", winner, "--now", NOW]);
+  fs.writeFileSync(path.join(w.data, "lock"), JSON.stringify({ pid: dead, sessionId: "gone", token: "old", at: new Date(Date.now() - 30 * 60000).toISOString() }));
+  const refused = run(w.env, ["collect", "--session", winner, "--now", NOW]);
+  assert.equal(refused.status, 3, "a dead holder's lock is not taken without the owner's words");
+  assert.equal(refused.err.holderAlive, false);
+  assert.equal(refused.err.lockAgeMinutes >= 29, true);
+  assert.match(refused.err.error, /забери проход/);
+
+  const taken = run(w.env, ["collect", "--session", winner, "--now", NOW, "--take-over"]);
   assert.equal(taken.status, 0, taken.stderr);
+  assert.match(fs.readFileSync(path.join(w.data, "lock.log"), "utf8"), new RegExp(`lock taken over by ${winner}`));
+  assert.equal(fs.existsSync(path.join(w.data, "lock")), false, "released by the new holder");
 });
 
 test("a case alias of a pack install directory is refused", (t) => {
@@ -184,6 +193,12 @@ test("reads: contradicting partial, batched foreign beside Mono, relative path, 
   assert.equal(byId(map, EDGE.stageMismatch).loads[0].version.status, "unconfirmed", "a stage read that fits no tag invalidates the version");
   assert.equal(byId(map, EDGE.batchedMismatch).loads[0].version.status, "unconfirmed", "the same inside a batch");
 
+  const sharedLoads = byId(map, EDGE.sharedContradict).loads;
+  assert.deepEqual(sharedLoads.map((load) => [path.basename(path.dirname(path.dirname(load.path))), load.version.status]), [
+    ["mono-clone", "confirmed"],
+    ["mono-copy-2", "unconfirmed"],
+  ], "a contradicting read stays unconfirmed though another call's output fits its file");
+
   const relative = byId(map, EDGE.relative);
   assert.equal(relative.loads[0].path, path.join(w.clone, "skills", "implement"), "resolved against the session folder");
   assert.equal(relative.loads[0].version.range, "v0.1.0..v0.2.0");
@@ -215,16 +230,16 @@ test("a hard-linked log is not appended to", (t) => {
   assert.equal(fs.readFileSync(outside, "utf8"), "outside\n");
 });
 
-test("several contenders for a dead holder's lock: one pass, the winner's lock is never removed by another", async (t) => {
+test("contenders facing a dead holder's lock are all refused and nothing is removed", async (t) => {
   const w = setupWorld(t, buildWorld);
   const dead = spawnSync(process.execPath, ["-e", "process.exit(0)"]).pid;
-  fs.writeFileSync(path.join(w.data, "lock"), JSON.stringify({ pid: dead, sessionId: "gone", token: "old" }));
+  const lock = JSON.stringify({ pid: dead, sessionId: "gone", token: "old", at: NOW });
+  fs.writeFileSync(path.join(w.data, "lock"), lock);
   const sessions = [0, 1, 2, 3].map((i) => `b0000000-333${i}-4111-8111-111111111111`);
   const results = await Promise.all(sessions.map((session) => runAsync(w.env, ["collect", "--session", session, "--now", NOW])));
-  assert.equal(results.filter((result) => result.status === 0).length, 1, results.map((result) => result.stderr).join("\n"));
-  assert.ok(results.every((result) => result.status === 0 || result.status === 3));
-  assert.equal(fs.readdirSync(path.join(w.data, "runs")).length, 1);
-  assert.deepEqual(fs.readdirSync(w.data).filter((name) => name.startsWith("lock")), [], "no lock or tombstone left");
+  assert.ok(results.every((result) => result.status === 3), results.map((result) => result.stderr).join("\n"));
+  assert.equal(fs.readFileSync(path.join(w.data, "lock"), "utf8"), lock, "the lock is untouched");
+  assert.equal(fs.existsSync(path.join(w.data, "runs")), false);
 });
 
 test("a codex exec child of the audit is part of the audit", (t) => {
