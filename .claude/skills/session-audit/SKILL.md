@@ -30,10 +30,12 @@ checkout, the mono repository or a pack install directory (`packInstallDirs`
 of `config.json`, or any directory with a Mono plugin manifest), with the
 real letter case of existing folders. Ids and file names that become paths
 must be plain (`[A-Za-z0-9._-]`, no `..`); every write and delete goes through
-plain directories of the root, never through a symlink. `collect` and
-`extract` hold `<data root>/lock` (exclusive, with the holder's pid; a lock of
-a dead process is taken) and write only while `state.json` still names their
-pass and session.
+plain directories of the root, never through a symlink or into a file with a
+second hard link. `collect` and `extract` hold `<data root>/lock` (created
+whole in one step with the holder's pid and a unique token; a lock of a dead
+process is reclaimed by renaming it to a tombstone and checking its token,
+and released only when the token is ours) and write only while `state.json`
+still names their pass and session.
 
 - `config.json` here holds shared values only. `<data root>/config.json`
   overrides them key by key: `runPrefixes`, `standCodexHomes`,
@@ -74,8 +76,10 @@ with a pack root path or at least 10 non-empty body lines. A full read matches
 a tag only when its whole text equals the tag file; a partial read only when
 every line it shows is one contiguous range of the tag file. Search output
 (`rg`, `grep`) is not a read. Codex outputs printed as JSON (one per line or
-several on one line) are unpacked first; each read takes only an output that
-fits it and no other read of the call, else it stays unconfirmed. Relative
+several on one line) are unpacked first. A read whose output is known (one
+result per call, or one call with one read) is judged on that output, and a
+mismatch makes the version unconfirmed; other reads take only an output that
+fits them and no other read of the call, else they stay unconfirmed. Relative
 paths are resolved against the folder the command ran in.
 Quotes of the load line, `invoked_skills` attachments, foreign skills with Mono
 names, sessions without a load and sessions of this audit (any session that
@@ -126,8 +130,10 @@ or ISO time, for a queued signal), written to `runs/<uuid>/extract/<session>/`
 and listed as `chunks[]` (`file`, `bytes`, `contextBytes`, `entries`, `first`,
 `last`). Lines are `[time] kind: text`: `owner` (or `prompt` in subagents and
 headless runs) verbatim with commands, `assistant` visible text, `question`
-(when asked, with options and `status`: unanswered until a reply), `answer`
-(at the reply's own time), `load` with version, `op` (plan, helper and write
+(when asked, with options and `status`: unanswered until a reply; Claude
+`AskUserQuestion`, Codex `request_user_input_async` with its reply message and
+`request_user_input` with answers in its output), `answer` (at the reply's own
+time), `load` with version, `op` (plan, helper and write
 tools by name only), `second-model` (`codex exec` or `claude -p` command and
 output at the output's own time, at most 20 KB). No other tool results and no
 reasoning. Above 200 KB the digest is cut at stage loads and at 200 KB inside a

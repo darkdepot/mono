@@ -179,7 +179,10 @@ test("reads: contradicting partial, batched foreign beside Mono, relative path, 
   const batched = byId(map, EDGE.batched);
   assert.equal(batched.loads.length, 1, "the foreign head is not a load");
   assert.equal(batched.loads[0].path, path.join(w.clone, "skills", "review"));
-  assert.equal(batched.loads[0].version.status, "unconfirmed", "an output claimed by two reads is ambiguous");
+  assert.equal(batched.loads[0].version.range, "v0.2.0", "results one per call go to their own read");
+
+  assert.equal(byId(map, EDGE.stageMismatch).loads[0].version.status, "unconfirmed", "a stage read that fits no tag invalidates the version");
+  assert.equal(byId(map, EDGE.batchedMismatch).loads[0].version.status, "unconfirmed", "the same inside a batch");
 
   const relative = byId(map, EDGE.relative);
   assert.equal(relative.loads[0].path, path.join(w.clone, "skills", "implement"), "resolved against the session folder");
@@ -188,6 +191,40 @@ test("reads: contradicting partial, batched foreign beside Mono, relative path, 
   const changed = byId(map, EDGE.changedFull);
   assert.equal(changed.loads[0].partial, false);
   assert.equal(changed.loads[0].version.status, "unconfirmed", "a full read with an added line equals no tag");
+});
+
+test("the synchronous Codex question tool keeps its answer from the output", (t) => {
+  const w = setupWorld(t, buildEdgeWorld);
+  collect(w);
+  const text = eventsOnly(extractText(w, EDGE.syncQuestion));
+  assert.ok(text.includes("question: Which day? [options: Monday; Tuesday]\n  status: answered"));
+  assert.ok(text.includes(`[${at(BOUNDARY, 22)}] answer: Which day? [options: Monday; Tuesday]\n  answer (answered): Tuesday`));
+});
+
+test("a hard-linked log is not appended to", (t) => {
+  const w = setupWorld(t, buildWorld);
+  const pass = collect(w).passUuid;
+  const outside = path.join(w.root, "outside.log");
+  fs.writeFileSync(outside, "outside\n");
+  const log = path.join(w.data, "runs", pass, "log");
+  fs.rmSync(log);
+  fs.linkSync(outside, log);
+  const result = run(w.env, ["collect", "--session", AUDITOR, "--now", NOW]);
+  assert.equal(result.status, 2);
+  assert.match(result.err.error, /hard-linked/);
+  assert.equal(fs.readFileSync(outside, "utf8"), "outside\n");
+});
+
+test("several contenders for a dead holder's lock: one pass, the winner's lock is never removed by another", async (t) => {
+  const w = setupWorld(t, buildWorld);
+  const dead = spawnSync(process.execPath, ["-e", "process.exit(0)"]).pid;
+  fs.writeFileSync(path.join(w.data, "lock"), JSON.stringify({ pid: dead, sessionId: "gone", token: "old" }));
+  const sessions = [0, 1, 2, 3].map((i) => `b0000000-333${i}-4111-8111-111111111111`);
+  const results = await Promise.all(sessions.map((session) => runAsync(w.env, ["collect", "--session", session, "--now", NOW])));
+  assert.equal(results.filter((result) => result.status === 0).length, 1, results.map((result) => result.stderr).join("\n"));
+  assert.ok(results.every((result) => result.status === 0 || result.status === 3));
+  assert.equal(fs.readdirSync(path.join(w.data, "runs")).length, 1);
+  assert.deepEqual(fs.readdirSync(w.data).filter((name) => name.startsWith("lock")), [], "no lock or tombstone left");
 });
 
 test("a codex exec child of the audit is part of the audit", (t) => {

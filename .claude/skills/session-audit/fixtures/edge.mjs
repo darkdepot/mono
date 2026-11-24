@@ -20,6 +20,9 @@ export const EDGE = {
   audit: "a8888888-1111-4111-8111-111111111111",
   auditChild: "a8888888-2222-4111-8111-111111111111",
   revisit: "a9999999-1111-4111-8111-111111111111",
+  syncQuestion: "a3333333-2222-4111-8111-111111111111",
+  stageMismatch: "acacacac-1111-4111-8111-111111111111",
+  batchedMismatch: "acacacac-2222-4111-8111-111111111111",
 };
 
 export const LONG_OWNER = `Long owner note. ${"word ".repeat(70_000)}END-OF-OWNER-NOTE`;
@@ -66,9 +69,39 @@ export function buildEdgeWorld(root, { repo }) {
   put(rollout(EDGE.nativeQuestion), [
     ...nq.meta(at(BEFORE, 0)),
     ...reviewCat(nq, 1, "call_nq_read"),
-    nq.raw(at(BOUNDARY, 20), "response_item", { type: "function_call", id: "fc_q", call_id: "call_q", name: "request_user_input_async", arguments: JSON.stringify({ questions: [{ question: "Which colour?", options: [{ label: "Blue" }, { label: "Green" }] }] }) }),
+    nq.raw(at(BOUNDARY, 20), "response_item", { type: "function_call", id: "fc_q", call_id: "call_q", name: "request_user_input_async", arguments: JSON.stringify({ questions: [{ title: "Which colour?", options: ["Blue", "Green"] }] }) }),
     nq.raw(at(BOUNDARY, 20), "response_item", { type: "function_call_output", id: "fco_q", call_id: "call_q", output: "{\"status\":\"queued\"}" }),
     nq.user(at(BOUNDARY, 25), `<send_user_message_question_reply>\n${JSON.stringify([{ questionItemId: JSON.stringify(["request_user_input_async", "call_q", 0]), question: "Which colour?", answer: "Green" }])}\n</send_user_message_question_reply>`),
+  ]);
+
+  // The synchronous question tool returns the answers in its output.
+  const sq = codex(EDGE.syncQuestion, { cwd: alpha, originator: "Codex Desktop", source: "vscode" });
+  put(rollout(EDGE.syncQuestion), [
+    ...sq.meta(at(BEFORE, 0)),
+    ...reviewCat(sq, 1, "call_sq_read"),
+    sq.raw(at(BOUNDARY, 21), "response_item", { type: "function_call", id: "fc_sq", call_id: "call_sq", name: "request_user_input", arguments: JSON.stringify({ questions: [{ title: "Which day?", options: ["Monday", "Tuesday"] }] }) }),
+    sq.raw(at(BOUNDARY, 22), "response_item", { type: "function_call_output", id: "fco_sq", call_id: "call_sq", output: JSON.stringify({ answers: [{ title: "Which day?", answer: "Tuesday" }] }) }),
+  ]);
+
+  // Stage reads after a confirmed load whose shown lines fit no tag: one
+  // call alone, and one call of a batch with results per call.
+  const guide = path.join(clone, "references", "guide.md");
+  const sm = codex(EDGE.stageMismatch, { cwd: alpha });
+  put(rollout(EDGE.stageMismatch), [
+    ...sm.meta(at(BOUNDARY, 32)),
+    ...reviewCat(sm, 0, "call_sm_load").map((record) => ({ ...record, timestamp: at(BOUNDARY, 33) })),
+    sm.exec(at(BOUNDARY, 34), "call_sm", execCmd(`sed -n '3,5p' ${guide}`)),
+    sm.output(at(BOUNDARY, 34), "call_sm", ["Guide rule 1 of the invented pack.\nGuide rule two, edited locally.\nGuide rule 3 of the invented pack."]),
+  ]);
+  const bm = codex(EDGE.batchedMismatch, { cwd: alpha });
+  put(rollout(EDGE.batchedMismatch), [
+    ...bm.meta(at(BOUNDARY, 35)),
+    ...reviewCat(bm, 0, "call_bm_load").map((record) => ({ ...record, timestamp: at(BOUNDARY, 36) })),
+    bm.exec(at(BOUNDARY, 37), "call_bm", `const rs = await Promise.allSettled([tools.exec_command({cmd:"sed -n '3,4p' ${guide}"}),tools.exec_command({cmd:"ls -1"})]);\nrs.forEach((r) => text(JSON.stringify(r)))\n`),
+    bm.output(at(BOUNDARY, 37), "call_bm", [
+      JSON.stringify({ status: "fulfilled", value: { output: "Guide rule 1 of the invented pack.\nA rule that no release has." } }) +
+      JSON.stringify({ status: "fulfilled", value: { output: "a.txt\nb.txt" } }),
+    ]),
   ]);
 
   // A partial read whose lines contradict the tag in the middle.

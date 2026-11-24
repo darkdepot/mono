@@ -292,6 +292,26 @@ function questionAnswer(item) {
   return { status: "unknown", answer: clip(text, 2048) };
 }
 
+// Output of the synchronous Codex question tool: answers as JSON
+// (`answers` list or map, or a list of {answer}), else plain text; empty
+// means no answer.
+export function codexAnswer(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return { status: "no-answer", answer: "" };
+  let parsed = null;
+  try { parsed = JSON.parse(raw); } catch { parsed = null; }
+  const answers = parsed?.answers ?? (Array.isArray(parsed) ? parsed : null);
+  if (Array.isArray(answers)) {
+    const list = answers.map((item) => (typeof item === "string" ? item : item?.answer ?? item?.text ?? "")).filter((item) => String(item).trim());
+    return list.length ? { status: "answered", answer: list.join("; ") } : { status: "no-answer", answer: "" };
+  }
+  if (answers && typeof answers === "object") {
+    const values = Object.values(answers).map((value) => (typeof value === "string" ? value : value?.answer ?? JSON.stringify(value)));
+    return values.length ? { status: "answered", answer: values.join("; ") } : { status: "no-answer", answer: "" };
+  }
+  return { status: "answered", answer: clip(raw, 2048) };
+}
+
 function codexToolNames(input) {
   return [...String(typeof input === "string" ? input : JSON.stringify(input)).matchAll(/tools\.([A-Za-z0-9_]+)\s*\(/g)].map((match) => match[1]);
 }
@@ -306,7 +326,7 @@ function parseArgs(input) {
 export function questionText(args) {
   const list = Array.isArray(args?.questions) ? args.questions : args?.question ? [args] : [];
   return list.map((question) => {
-    const text = question.question ?? question.prompt ?? question.text ?? "";
+    const text = question.title ?? question.question ?? question.prompt ?? question.text ?? "";
     const options = (question.options || []).map((option) => (typeof option === "string" ? option : option?.label ?? option?.text ?? "")).filter(Boolean);
     return options.length ? `${text} [options: ${options.join("; ")}]` : text;
   }).join("\n");
@@ -334,10 +354,10 @@ export function digestItems(sessionEntry, mapSession, config) {
   };
   const problems = [];
   const pending = new Map(); // call id -> open call, across files
-  const askQuestion = (id, base, text) => {
+  const askQuestion = (id, base, text, tool = "") => {
     const entry = { ...base, kind: "question", text: `${text}\n  status: unanswered`, question: text };
     entries.push(entry);
-    pending.set(id, { type: "question", base, text, entry });
+    pending.set(id, { type: "question", base, text, entry, tool });
   };
   for (const file of sessionEntry.files) {
     const host = sessionEntry.host;
@@ -382,7 +402,7 @@ export function digestItems(sessionEntry, mapSession, config) {
       } else if (item.kind === "tool-use") {
         const name = item.name || "";
         if (QUESTION_TOOLS.has(name)) {
-          askQuestion(item.id, base, questionText(parseArgs(item.input)));
+          askQuestion(item.id, base, questionText(parseArgs(item.input)), name);
           continue;
         }
         const kind = opKind(name);
@@ -404,10 +424,11 @@ export function digestItems(sessionEntry, mapSession, config) {
         const open = pending.get(item.toolUseId);
         if (!open) continue;
         if (open.type === "question") {
-          // A Codex async question returns at once; its answer comes as a reply message.
-          if (host === "codex" && !item.toolUseResult) continue;
+          // A Codex async question returns at once; its answer comes as a reply
+          // message. The synchronous tool returns the answers in its output.
+          if (host === "codex" && open.tool !== "request_user_input") continue;
           pending.delete(item.toolUseId);
-          const { status, answer } = questionAnswer(item);
+          const { status, answer } = host === "codex" ? codexAnswer(item.text) : questionAnswer(item);
           open.entry.text = `${open.text}\n  status: ${status}`;
           entries.push({ ...base, kind: "answer", text: `${open.text}\n  answer (${status}): ${answer}` });
         } else {

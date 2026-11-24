@@ -126,12 +126,22 @@ function assignOutputs(index, reads, segments) {
 function codexReads(use, result, index, roots, cwd) {
   const loads = [];
   const stageReads = [];
-  const reads = commandCalls(use.input).flatMap(({ cmd, workdir }) => {
+  const calls = commandCalls(use.input);
+  const reads = calls.flatMap(({ cmd, workdir }, callIndex) => {
     const folder = workdir ? (path.isAbsolute(workdir) ? workdir : cwd ? path.resolve(cwd, workdir) : null) : cwd;
-    return fileReads(cmd, folder);
+    return fileReads(cmd, folder).map((read) => ({ ...read, callIndex }));
   });
   if (!reads.length) return { loads, stageReads };
   const segments = outputSegments(result.text);
+  // The output of a read is known when results come one per call (and the
+  // call has this read only), or when one call with one read printed one text.
+  const readsInCall = (callIndex) => reads.filter((read) => read.callIndex === callIndex).length;
+  const ownSegment = (read) => {
+    if (readsInCall(read.callIndex) !== 1) return null;
+    if (segments.byCall && segments.length === calls.length) return segments[read.callIndex];
+    if (calls.length === 1 && segments.length === 1) return segments[0];
+    return null;
+  };
   const skillNames = new Set(index.skillNames());
   const planned = [];
   for (const read of reads) {
@@ -153,12 +163,27 @@ function codexReads(use, result, index, roots, cwd) {
       }
     }
   }
-  const assigned = assignOutputs(index, planned, segments);
+  // Attributable reads are matched against their own output only; a mismatch
+  // there is evidence (no tag fits). The rest share outputs by fit.
+  const direct = planned.map((read) => {
+    const segment = ownSegment(read);
+    if (!segment) return undefined;
+    let best = null;
+    for (const rel of read.rels) {
+      const whole = read.full && !segment.truncated;
+      const found = index.sliceTags(rel, segment.text, { whole, truncated: segment.truncated });
+      if (found.tags.length && (!best || found.matchedLines > best.matchedLines)) best = { ...found, rel, whole };
+    }
+    return best ?? { tags: [], matchedLines: 0, rel: read.rels[0], whole: false, contradiction: true, truncated: segment.truncated };
+  });
+  const shared = assignOutputs(index, planned.filter((_read, i) => direct[i] === undefined), segments);
+  let next = 0;
+  const assigned = planned.map((_read, i) => (direct[i] === undefined ? shared[next++] : direct[i]));
   planned.forEach((read, i) => {
     const match = assigned[i];
     if (read.type === "skill") {
       // A cat whose output was cut is partial; a full one that equals no tag stays full.
-      const partial = !read.full || (match ? !match.whole : segments.some((segment) => segment.truncated));
+      const partial = !read.full || (match && !match.contradiction ? !match.whole : match?.contradiction ? Boolean(match.truncated) : segments.some((segment) => segment.truncated));
       const tags = match ? match.tags : [];
       const matchedLines = match ? match.matchedLines : 0;
       const mono = read.packRoot || (!partial && tags.length > 0) || (partial && matchedLines >= 10);
@@ -170,10 +195,8 @@ function codexReads(use, result, index, roots, cwd) {
         loads.push({ ts: use.ts, key: use.key, skill, root: null, baseDir: null, tags: match.tags, packRoot: false, audit: false, mono: true, partial: true, matchedLines: match.matchedLines, via: "codex-read", pathHint: null });
       }
     } else if (match) {
+      // Includes an attributable mismatch: tags [] makes the version unconfirmed.
       stageReads.push({ ts: use.ts, key: use.key, root: read.root, rel: read.rels[0], tags: match.tags });
-    } else if (read.full && segments.length === 1 && !segments[0].truncated) {
-      // A sole full output that equals no tag file is evidence of a changed file.
-      stageReads.push({ ts: use.ts, key: use.key, root: read.root, rel: read.rels[0], tags: [] });
     }
   });
   return { loads, stageReads };

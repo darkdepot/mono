@@ -128,8 +128,29 @@ export function safeFile(root, segments) {
   const name = checkName(segments.at(-1), "file name");
   const dir = safeDir(root, segments.slice(0, -1));
   const file = path.join(dir, name);
-  if (exists(file) && !fs.lstatSync(file).isFile()) throw new AuditError(`refusing to write ${file}: not a plain file`);
+  if (exists(file)) {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile()) throw new AuditError(`refusing to write ${file}: not a plain file`);
+    if (stat.nlink > 1) throw new AuditError(`refusing to write ${file}: hard-linked elsewhere`);
+  }
   return file;
+}
+
+// Append through a descriptor that is checked to be this plain, single-link
+// file (no symlink followed, no other name for the same inode).
+export function safeAppend(root, segments, text) {
+  const file = safeFile(root, segments);
+  const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | (fs.constants.O_NOFOLLOW || 0), 0o600);
+  try {
+    const opened = fs.fstatSync(fd);
+    const named = fs.lstatSync(file);
+    if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== named.dev || opened.ino !== named.ino) {
+      throw new AuditError(`refusing to write ${file}: not the plain file that was checked`);
+    }
+    fs.writeSync(fd, text);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 export function safeRemoveDir(root, segments) {
@@ -143,35 +164,67 @@ function alive(pid) {
   try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; }
 }
 
-// One command at a time changes the data root: an exclusive lock file with
-// the holder's pid; a lock of a dead process is taken over.
+function readLock(file) {
+  try { return readJson(file); } catch { return null; }
+}
+
+// Put a file back as the lock only if no lock exists now (link is atomic and
+// fails when the name is taken), then drop the moved copy.
+function restoreLock(moved, file) {
+  try { fs.linkSync(moved, file); } catch { /* a newer lock is in place */ }
+  fs.rmSync(moved, { force: true });
+}
+
+// One command at a time changes the data root. The lock file appears
+// complete in one step (link of a written temp file) and carries a unique
+// token. A lock of a dead process is reclaimed by renaming it to a unique
+// tombstone (only one contender's rename succeeds) and checking that the
+// tombstone holds the token read as stale; anything else is put back. Release
+// renames the lock away the same way and removes it only when the token is ours.
 export function withLock(root, sessionId, action) {
-  const file = safeFile(root, ["lock"]);
+  // Not safeFile: while a contender links its temp file the lock has two names.
+  const file = path.join(safeDir(root, []), "lock");
+  if (exists(file) && !fs.lstatSync(file).isFile()) throw new AuditError(`refusing to use ${file}: not a plain file`);
+  const token = crypto.randomUUID();
+  const body = JSON.stringify({ pid: process.pid, sessionId, token, at: new Date().toISOString() });
+  const acquire = () => {
+    const temp = `${file}.${token}.new`;
+    fs.writeFileSync(temp, body, { flag: "wx" });
+    try { fs.linkSync(temp, file); return true; } catch (error) {
+      if (error.code === "EEXIST") return false;
+      throw error;
+    } finally { fs.rmSync(temp, { force: true }); }
+  };
   for (let attempt = 0; ; attempt += 1) {
-    try {
-      const fd = fs.openSync(file, "wx");
-      fs.writeSync(fd, JSON.stringify({ pid: process.pid, sessionId, at: new Date().toISOString() }));
-      fs.closeSync(fd);
-      break;
-    } catch (error) {
-      if (error.code !== "EEXIST" || attempt > 0) throw error.code === "EEXIST" ? new AuditError("another session-audit command holds the lock", { lock: file }, 3) : error;
-      let holder = null;
-      try { holder = readJson(file); } catch { holder = null; }
-      // A lock still being written (no pid yet) is held unless it is old.
-      let age = 0;
-      try { age = Date.now() - fs.statSync(file).mtimeMs; } catch { age = 0; }
-      const fresh = !holder && age < 60_000;
-      if (fresh || (Number.isInteger(holder?.pid) && alive(holder.pid))) {
-        throw new AuditError("another session-audit command is running", { holderPid: holder?.pid ?? null, holderSession: holder?.sessionId ?? null }, 3);
-      }
-      fs.rmSync(file, { force: true });
+    if (acquire()) break;
+    const holder = readLock(file);
+    let age = 0;
+    try { age = Date.now() - fs.statSync(file).mtimeMs; } catch { continue; } // gone meanwhile: try again
+    const stale = holder ? Number.isInteger(holder.pid) && !alive(holder.pid) : age >= 60_000;
+    if (!stale || attempt > 2) {
+      throw new AuditError("another session-audit command is running", { holderPid: holder?.pid ?? null, holderSession: holder?.sessionId ?? null }, 3);
     }
+    const tombstone = `${file}.${token}.stale`;
+    try { fs.renameSync(file, tombstone); } catch (error) {
+      if (error.code === "ENOENT") continue; // another contender moved it first
+      throw error;
+    }
+    const moved = readLock(tombstone);
+    if ((moved?.token ?? null) !== (holder?.token ?? null) || (moved?.pid ?? null) !== (holder?.pid ?? null)) {
+      restoreLock(tombstone, file); // not the lock we judged stale
+      throw new AuditError("another session-audit command is running", { holderPid: moved?.pid ?? null, holderSession: moved?.sessionId ?? null }, 3);
+    }
+    fs.rmSync(tombstone, { force: true });
   }
+  if (readLock(file)?.token !== token) throw new AuditError("lost the lock while taking it", {}, 3);
   try {
     return action();
   } finally {
+    const released = `${file}.${token}.released`;
     try {
-      if (readJson(file).pid === process.pid) fs.rmSync(file, { force: true });
+      fs.renameSync(file, released);
+      if (readLock(released)?.token === token) fs.rmSync(released, { force: true });
+      else restoreLock(released, file);
     } catch { /* already gone */ }
   }
 }
@@ -303,8 +356,7 @@ export function readQueue(dataRoot) {
 }
 
 export function appendRunLog(dataRoot, passUuid, line) {
-  const file = safeFile(dataRoot, ["runs", passUuid, "log"]);
-  fs.appendFileSync(file, `${line}\n`);
+  safeAppend(dataRoot, ["runs", passUuid, "log"], `${line}\n`);
 }
 
 // Only the session that holds the unfinished pass may continue it.

@@ -285,13 +285,24 @@ export function outputSegments(text) {
   // output is one plain text (a file may itself hold JSON lines).
   const lines = body.split("\n").filter((line) => line.trim());
   const parsed = lines.map((line) => parseJsonSequence(line.trim()));
-  if (lines.length && parsed.every(Boolean)) parsed.forEach((values) => values.forEach(strings));
-  else raw.push(body);
-  if (raw.join("").trim()) segments.push(raw.join("\n"));
-  return segments.map((segment) => {
+  const unwrap = (segment) => {
     const match = /^Warning: truncated output \(original token count: \d+\)\nTotal output lines: \d+\n\n/.exec(segment);
     return match ? { text: segment.slice(match[0].length), truncated: true } : { text: segment, truncated: false };
-  });
+  };
+  if (lines.length && parsed.every(Boolean)) {
+    const values = parsed.flat();
+    // Results of exec_command printed one per call ({output} or
+    // {status, value: {output}}) keep the order of the calls.
+    const outputs = values.map((value) => (typeof value?.output === "string" ? value.output : typeof value?.value?.output === "string" ? value.value.output : null));
+    if (outputs.every((output) => output !== null)) {
+      const result = outputs.map(unwrap);
+      result.byCall = true;
+      return result;
+    }
+    values.forEach(strings);
+  } else raw.push(body);
+  if (raw.join("").trim()) segments.push(raw.join("\n"));
+  return segments.map(unwrap);
 }
 
 export function uuidsIn(text) {
