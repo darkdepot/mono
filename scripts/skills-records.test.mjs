@@ -2738,7 +2738,8 @@ for(const host of ['claude','codex'])test(`${host}: continued stage records dump
 // MONO-485: a record under an inherited step binds to the owner's forward consent,
 // recorded earlier in the same chain and bound there to the actual owner reply.
 const forwardWords='утверждаю; дальше готовь, проверяй и передавай в работу';
-async function forwardFixture(t,{kind='start',scope='start',issues=3,words=forwardWords,grantProject,grantPrdUpdatedAt,grantDesign='none',grantStep={},between,revoked=false,consentRef,consentLine=true,anchoredStep=false}={}){
+async function forwardFixture(t,{kind='start',scope='start',issues=3,words=forwardWords,grantProject,grantPrdUpdatedAt,grantDesign,grantStep={},between,revoked=false,consentRef,consentLine=true,anchoredStep=false,grantIn='prd'}={}){
+ grantDesign??=grantIn==='design'?'self':'none';
  const {createHash}=await import('node:crypto'),{unwrap}=await import('./skills-proof.mjs'),f=textPrdFixture(t),id=f.request.project.id,sha=value=>createHash('sha256').update(value).digest('hex');
  const assistant=text=>({type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}}),user=text=>({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}}),terminal={type:'event_msg',payload:{type:'task_complete'}};
  const call=(callId,name,args)=>({type:'response_item',payload:{type:'function_call',name,call_id:callId,arguments:JSON.stringify(args)}}),output=(callId,value)=>({type:'response_item',payload:{type:'function_call_output',call_id:callId,output:JSON.stringify(value)}});
@@ -2747,12 +2748,16 @@ async function forwardFixture(t,{kind='start',scope='start',issues=3,words=forwa
  // The grant lives in the approval comment of the stage where the owner said the words.
  const prd=comments.comments.find(c=>c.body.includes('mono-prd: approved')),prdLine=prd.body.match(/mono-prd: approved [^\n]+/)[0];
  const [,document,updatedAt]=prdLine.match(/document=(\S+) updatedAt=(\S+)/);
- prd.body='```text\n'+prdLine+'\nmono-forward: granted project='+(grantProject??id)+' scope='+scope+' prd='+document+' prd-updatedAt='+(grantPrdUpdatedAt??updatedAt)+' design='+grantDesign+' by=owner\n```\n\nВладелец: ответил «'+forwardWords+'»';
- const step={id:'prd-forward',stage:'discovery',role:'approval',asksStart:false,summary:['PRD:'],question:'Принимаем PRD?',reply:forwardWords,intent:'agree',outcome:{approval:true,startNext:false},forward:scope,response:['PRD утверждён.'],...grantStep};
+ const grantLine='mono-forward: granted project='+(grantProject??id)+' scope='+scope+' prd='+document+' prd-updatedAt='+(grantPrdUpdatedAt??updatedAt)+' design='+grantDesign+' by=owner';
+ // In the live chain the words come at Design: the grant sits in the mono-design comment as design=self.
+ const design=grantIn==='design'?{id:'00000000-0000-4000-8000-0000000000d5',createdAt:'2026-11-02T03:30:00Z',updatedAt:'2026-11-02T03:30:00Z',body:'```text\nmono-design: approved project='+id+' prd='+document+' prd-updatedAt='+updatedAt+' canvas=https://example.test/design tool=paper images='+'a'.repeat(64)+' next=tech-evaluation by=owner\n'+grantLine+'\n```\n\nВладелец: ответил «'+forwardWords+'»'}:null;
+ if(!design)prd.body='```text\n'+prdLine+'\n'+grantLine+'\n```\n\nВладелец: ответил «'+forwardWords+'»';
+ const grantRow=design??prd;
+ const step={id:'grant-forward',stage:design?'design':'discovery',role:'approval',asksStart:false,summary:['Источник'],question:'Утверждаем?',reply:forwardWords,intent:'agree',outcome:{approval:true,startNext:false},forward:scope,response:['Утверждение записал.'],...grantStep};
  const grantTrace=path.join(f.dir,'grant.jsonl');
- fs.writeFileSync(grantTrace,timed([assistant('PRD: колонка Источник после имени.\nПринимаем PRD?'),terminal,user(step.reply),call('grant','mcp__monotest__save_comment',{projectId:id,body:prd.body}),output('grant',prd),assistant('PRD утверждён.'),terminal],'2026-11-02T03:50:00Z').map(JSON.stringify).join('\n')+'\n');
+ fs.writeFileSync(grantTrace,timed([assistant('Источник после имени.\nУтверждаем?'),terminal,user(step.reply),call('grant','mcp__monotest__save_comment',{projectId:id,body:grantRow.body}),output('grant',grantRow),assistant('Утверждение записал.'),terminal],'2026-11-02T03:50:00Z').map(JSON.stringify).join('\n')+'\n');
  f.request.forwardEvidence=[{host:'codex',trace:grantTrace,expectedReplies:[step]}];
- const consent='\nСогласие наперёд: '+(consentRef??prd.id),owner='\n\nВладелец: ответил «'+words+'»'+(consentLine?consent:'');
+ const consent='\nСогласие наперёд: '+(consentRef??grantRow.id),owner='\n\nВладелец: ответил «'+words+'»'+(consentLine?consent:'');
  let record,packet,spec,stageText;
  if(kind==='start'){
   const body='Пакет: три задачи для колонки Источник.';
@@ -2763,12 +2768,12 @@ async function forwardFixture(t,{kind='start',scope='start',issues=3,words=forwa
  }else{
   const page='Источник одной колонкой после имени.';
   spec={id:'00000000-0000-4000-8000-0000000000e2',title:'Tech Spec: колонка Источник',content:'## Решение\nКолонка Источник после имени.',createdAt:'2026-11-02T03:58:00Z',updatedAt:'2026-11-02T03:58:00Z',project:{id,name:f.request.project.name}};
-  record={id:'00000000-0000-4000-8000-000000000094',createdAt:'2026-11-02T03:59:01Z',updatedAt:'2026-11-02T03:59:01Z',body:'```text\nmono-tech: approved project='+id+' prd='+document+' prd-updatedAt='+updatedAt+' spec='+spec.id+' spec-sha256='+sha(spec.content)+' page-sha256='+sha(page+'\n')+' by=owner design=none\n```\n\n```mono-tech-page\n'+page+'\n```'+owner};
+  record={id:'00000000-0000-4000-8000-000000000094',createdAt:'2026-11-02T03:59:01Z',updatedAt:'2026-11-02T03:59:01Z',body:'```text\nmono-tech: approved project='+id+' prd='+document+' prd-updatedAt='+updatedAt+' spec='+spec.id+' spec-sha256='+sha(spec.content)+' page-sha256='+sha(page+'\n')+' by=owner design='+(design?design.id:'none')+'\n```\n\n```mono-tech-page\n'+page+'\n```'+owner};
   stageText='Решение по колонке Источник записано по согласию наперёд.';
   documents.documents.unshift(spec);fs.writeFileSync(documentsFile,JSON.stringify(documents));fs.writeFileSync(path.join(f.request.dumpDir,'documents',spec.id+'.json'),JSON.stringify(spec));
  }
- const revoke={id:'00000000-0000-4000-8000-000000000093',createdAt:'2026-11-02T03:00:00Z',updatedAt:'2026-11-02T03:00:00Z',body:'```text\nmono-forward: revoked project='+id+' consent='+prd.id+'\n```\n\nПричина: владелец поправил пакет.'};
- comments.comments.unshift(...[record,packet,revoked?revoke:null].filter(Boolean));fs.writeFileSync(commentsFile,JSON.stringify(comments));
+ const revoke={id:'00000000-0000-4000-8000-000000000093',createdAt:'2026-11-02T03:00:00Z',updatedAt:'2026-11-02T03:00:00Z',body:'```text\nmono-forward: revoked project='+id+' consent='+grantRow.id+'\n```\n\nПричина: владелец поправил пакет.'};
+ comments.comments.unshift(...[record,packet,design,revoked?revoke:null].filter(Boolean));fs.writeFileSync(commentsFile,JSON.stringify(comments));
  const dumpRows=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse);
  for(const row of dumpRows){const item=row.payload?.item;if(item?.tool==='list_comments'&&item.arguments.projectId===id)item.result=comments;if(item?.tool==='list_documents')item.result=documents;}
  if(spec){const read=dumpRows.find(row=>row.payload?.item?.tool==='get_document');dumpRows.splice(dumpRows.length-1,0,{...read,payload:{...read.payload,item:{...read.payload.item,id:'spec-read',arguments:{id:spec.id},result:spec}}});}
@@ -2776,14 +2781,18 @@ async function forwardFixture(t,{kind='start',scope='start',issues=3,words=forwa
  const rows=[];
  const expected=kind==='start'?{id:'handoff-forward',stage:'handoff',role:'transition',intent:'inherited',asksStart:false,summary:['Пакет:'],outcome:{approval:false,startNext:true},response:[stageText]}
   :{id:'tech-forward',stage:'tech-evaluation',role:'approval',intent:'inherited',asksStart:false,summary:['Источник'],outcome:{approval:true,startNext:false},response:[stageText]};
- if(anchoredStep)Object.assign(expected,{response:{anchors:[['записан']],forbidden:[],question:false},presentation:'inline',driverStart:kind==='start'?['delivery']:null});
+ if(anchoredStep)Object.assign(expected,{response:{anchors:[['записан']],forbidden:[],question:false},presentation:'inline',driverStart:kind==='start'?['delivery']:['handoff']},kind==='start'?{}:{outcome:{approval:true,startNext:true}});
+ const startHandoff=anchoredStep&&kind!=='start';
  f.request.expectedReplies=[expected];
  if(between){
   rows.push(assistant('Пакет: готов к старту.'),terminal,user(between.reply));
   f.request.expectedReplies.unshift({id:'owner-between',stage:expected.stage,role:'clarification',intent:'interject',asksStart:false,summary:['Пакет:'],reply:between.reply,outcome:{approval:false,startNext:false},...(between.continues?{continues:true}:{})});
  }
  if(packet)rows.push(call('read','mcp__monotest__list_comments',{projectId:id}),output('read',{comments:[packet],hasNextPage:false}));
- rows.push(call('write','mcp__monotest__save_comment',{projectId:id,body:record.body}),output('write',record),assistant(stageText),terminal);
+ rows.push(call('write','mcp__monotest__save_comment',{projectId:id,body:record.body}),output('write',record));
+ // Under package/start scope Tech Evaluation starts Handoff (intercepted) before its last message.
+ if(startHandoff)rows.push(call('start','mcp__stage_driver__start_stage',{stage:'handoff',projectId:id}),output('start',{driverIntercepted:true,stage:'handoff',projectId:id}));
+ rows.push(assistant(stageText),terminal);
  f.request.expectedRecords=[{type:kind==='start'?'mono-package: start':'mono-tech: approved',count:1}];f.request.approvalBindings=[];
  for(const key of ['seedExpected','seedEndLine','seedProjectId','stageStartLine'])delete f.request[key]; // This replacement trace starts directly with the inherited stage.
  fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
@@ -2791,6 +2800,22 @@ async function forwardFixture(t,{kind='start',scope='start',issues=3,words=forwa
 }
 for(const kind of ['tech','start'])test(`MONO-485 ${kind} record under an inherited step passes under a valid forward consent`,async t=>{
  const r=(await forwardFixture(t,{kind})).check();assert.equal(r.status,'passed',r.reason);
+});
+// Live shape: the words come at Design, the grant is design=self in the mono-design
+// comment, the Tech record names that Design, and Tech starts Handoff by the driver.
+for(const kind of ['tech','start'])test(`MONO-485 ${kind} record under a Design grant (design=self) passes`,async t=>{
+ const r=(await forwardFixture(t,{kind,grantIn:'design'})).check();assert.equal(r.status,'passed',r.reason);
+});
+test('MONO-485 an anchored inherited Tech step under a Design grant records and starts Handoff',async t=>{
+ const r=(await forwardFixture(t,{kind:'tech',grantIn:'design',anchoredStep:true})).check();
+ assert.equal(r.requiredChecks?.find(c=>c.id==='records')?.status,'passed',JSON.stringify(r));
+ assert.notEqual(r.status,'failed',r.reason);
+ assert.deepEqual(r.starts.map(s=>[s.replyId,s.stage,s.kind]),[['tech-forward','handoff','intercepted']]);
+ assert.equal(r.gateResults.find(g=>g.command==='tech')?.result.ok,true,'the tech gate sees the same Design');
+});
+test('MONO-485 a Design grant must name itself or the latest Design',async t=>{
+ const r=(await forwardFixture(t,{kind:'tech',grantIn:'design',grantDesign:'none'})).check();
+ assert.equal(r.status,'failed',JSON.stringify(r));assert.match(r.reason,/consent Design differs/);
 });
 test('MONO-485 an owner «продолжай» marked as continuation keeps the consent',async t=>{
  const r=(await forwardFixture(t,{between:{reply:'продолжай',continues:true}})).check();assert.equal(r.status,'passed',r.reason);
