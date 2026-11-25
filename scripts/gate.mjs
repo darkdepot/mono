@@ -9,7 +9,7 @@ import { atomicJson, canonical, digest, readJson, flags, identity, isMain, proce
 import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges, reviewRetries, extraRounds } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
-import { hostRunMarker, hostRunCheckout, removeHostCheckout, openHostRun, evidenceTouched, stopHostGroup, screenCheckHold, readScreenCheck } from './review-rounds.mjs';
+import { hostRunMarker, hostRunCheckout, removeHostCheckout, openHostRun, settleHostRun, stopHostGroup, screenCheckHold, readScreenCheck } from './review-rounds.mjs';
 
 export { reviewEnvironment } from "./model-environment.mjs";
 
@@ -419,11 +419,16 @@ function reviewBaseTip(repo, baseRef, liveTip) {
 export function reviewContext(request, pins, liveTip = null) {
   const repo = fs.realpathSync(request.worktree), head = git(repo, "rev-parse", "HEAD");
   const base = git(repo, "merge-base", head, reviewBaseTip(repo, request.baseRef, liveTip));
+  return { head, base, ...attemptContext(request, pins, head, base) };
+}
+// The attempt's contract (with its task changes) and round history (with review retries and the extra round): every
+// decision taken from a control file beside the pins. A collection with a host run reads it again once its run opened.
+function attemptContext(request, pins, head, base) {
   let contract = null, contractDigest = null;
-  if (!pins || !request.pins) return { head, base, contract, contractDigest, history: null };
+  if (!pins || !request.pins) return { contract, contractDigest, history: null };
   const pinnedIssue = /^([A-Z][A-Z0-9]*-[1-9][0-9]*)-a[1-9][0-9]*$/.exec(path.basename(path.dirname(request.pins.file)))?.[1];
   const file = path.join(pins.fullSnapshot?.directory ?? path.join(path.dirname(request.pins.file), "snapshot"), `issue-${pinnedIssue}.md`);
-  if (!pinnedIssue || !fs.existsSync(file)) return { head, base, contract, contractDigest, history: null };
+  if (!pinnedIssue || !fs.existsSync(file)) return { contract, contractDigest, history: null };
   contract = fs.readFileSync(file, "utf8");
   // Delivered task changes («Изменение задачи» comment plus resume) narrow or correct the task:
   // the reviewer reads them with the Issue. Resume records them append-only beside the launch pins.
@@ -435,7 +440,7 @@ export function reviewContext(request, pins, liveTip = null) {
   const history = reviewHistory(receipts, { pins: request.pins, head, base, contractDigest, retries: reviewRetries(path.dirname(request.pins.file)), now });
   // MONO-482: the extra round granted by resume lives beside the launch pins too; it raises only the strict path's limit.
   history.extra = extraRoundGranted(receipts, { pins: request.pins, grants: extraRounds(path.dirname(request.pins.file)), now });
-  return { head, base, contract, contractDigest, history };
+  return { contract, contractDigest, history };
 }
 async function verifyPreflight(request, live = null, allowPending = false) {
   const pins = checkCollectionRequest(request);
@@ -476,7 +481,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   validateEvidenceGrants(request.skillsRoot, request.workerWritableRoots, 'installed skillsRoot');
   const repo = fs.realpathSync(request.worktree);
   cleanTree(repo);
-  const { head, base, contract, contractDigest, history } = reviewContext(request, pins, live?.baseRefOid);
+  let { head, base, contract, contractDigest, history } = reviewContext(request, pins, live?.baseRefOid);
   if (strict && history?.extra) limit = ROUND_LIMIT + 1;
   if (pins && head !== request.head) throw new Error(`collection request mismatch: head; expected ${canonical(head)}`);
   if (pins && !new RegExp(`^preflight-collect:${head}:[1-9][0-9]*$`).test(request.collectionId ?? ""))
@@ -569,7 +574,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   };
   if (request.collect === true) {
     const recordedAt = new Date().toISOString();
-    const prior = history;
+    let prior = history;
     requireThat(prior, "review contract missing in the pinned dispatch snapshot (issue-<KEY>.md)");
     const consistency = { passed: true, error: null };
     const checkConsistency = () => {
@@ -581,7 +586,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     // Host verification runs first, on every collection (a same-head retry reruns it): a red head spends no
     // round and no reviewer call, and the refusal never counts toward not-reviewed.
     // New PR remarks on the same head are not covered by the stored round: they need a round of their own.
-    if (prior.reuse && canonical(prior.reuse.prRemarks ?? null) !== canonical(request.prRemarks?.length ? request.prRemarks : null)) prior.reuse = null;
+    const remarkReuse = () => { if (prior.reuse && canonical(prior.reuse.prRemarks ?? null) !== canonical(request.prRemarks?.length ? request.prRemarks : null)) prior.reuse = null; };
+    remarkReuse();
     let verification = { command: request.verification.command, args: request.verification.args, exitCode: null };
     // MONO-481 pinned screenCheck: until the attempt's first spent round the round waits for the host's screen check of
     // this head. Waiting and mismatches are refusals: no round, no reviewer, no host run, never a not-reviewed.
@@ -592,10 +598,17 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       verification = await runHostVerification(request.verification, repo, head, evidenceRoot, request.collectionId, request.pins.file);
     }
     if (hostVerify && verification.busy === undefined && verification.host === true) {
-      const touched = evidenceTouched(readJson(hostRunMarker(evidenceRoot, request.collectionId)).snapshot, evidenceRoot, request.pins.file) ?? verification.descendants ?? null;
+      // Settled under launch.lock while the marker still exists: touched evidence is put back or quarantined, then the
+      // contract and history are read again with the root's only host-run slot still held (MONO-482 review: no decision
+      // from a control file read before this run opened); a group that may still live keeps the marker.
+      const settled = settleHostRun(evidenceRoot, request.collectionId, request.pins.file, { keepMarker: !!verification.descendants,
+        reread: () => { try { return { value: attemptContext(request, pins, head, base) }; } catch (error) { return { error: error.message }; } } });
+      const touched = settled.gone ? 'host verification was settled by recovery before this collection ended' : settled.touched ?? verification.descendants ?? settled.read.error ?? null;
       if (touched) { consistency.passed = false; consistency.error = touched; }
-      // Touched evidence is already put back or quarantined; a group that may still live keeps the marker.
-      if (!verification.descendants) fs.rmSync(hostRunMarker(evidenceRoot, request.collectionId), { force: true });
+      else {
+        ({ contract, contractDigest, history } = settled.read.value); prior = history; remarkReuse();
+        limit = roundLimit(request.risk) + (strict && history?.extra ? 1 : 0);
+      }
       checkConsistency();
     }
     // Re-validated fresh after any host run, right before the round: a run that changed the approved design (or the

@@ -127,8 +127,12 @@ export function settleRetiredHostRunsSync(root) {
     const named = typeof state.pinsFile === "string" && /^([A-Z][A-Z0-9]*-\d+)-a([1-9][0-9]*)$/u.exec(path.basename(path.dirname(state.pinsFile)));
     if (!named || path.dirname(path.dirname(path.dirname(state.pinsFile))) !== root || registry[named[1]]?.attempt === Number(named[2])) continue;
     if (state.group !== null) {
+      // Like stopHostGroup: a live leader with another start identity means the run's group ended and its id was reused.
       let live = true;
-      try { live = processTable().some(row => row.group === state.group && !row.state.startsWith("Z")); } catch { continue; }
+      try {
+        const members = processTable().filter(row => row.group === state.group && !row.state.startsWith("Z")), leader = members.find(row => row.pid === state.group);
+        live = members.length > 0 && !(state.procStart && leader && leader.procStart !== state.procStart);
+      } catch { continue; }
       if (live) continue;
     }
     const evidenceRoot = path.dirname(path.dirname(marker));
@@ -167,7 +171,7 @@ export async function stopHostGroup(group, procStart = null) {
 // Collector recovery after a gate that died during its host run: stop the group (or refuse while it may live),
 // remove the head checkout, settle the evidence against the stored snapshot, quarantine anything left for this
 // collection, drop the marker.
-export async function recoverHostRun(evidenceRoot, collectionId, pinsFile) {
+export async function recoverHostRun(evidenceRoot, collectionId, pinsFile, { afterStop } = {}) {
   if (!fs.existsSync(hostRunMarker(evidenceRoot, collectionId))) return null;
   // The gate snapshots the resolved evidence root: a request path through a symlink must compare the same files.
   evidenceRoot = fs.realpathSync(evidenceRoot);
@@ -179,15 +183,41 @@ export async function recoverHostRun(evidenceRoot, collectionId, pinsFile) {
     const failure = Number.isInteger(state.group) && state.group > 0 && state.procStart ? await stopHostGroup(state.group, state.procStart) : "verification group without a start identity";
     if (failure) throw new Error(`host verification group of ${collectionId} not confirmed stopped: ${failure}`);
   }
-  removeHostCheckout(evidenceRoot, collectionId);
-  const touched = evidenceTouched(state.snapshot ?? [], evidenceRoot, pinsFile);
-  for (const directory of [evidenceRoot, path.join(evidenceRoot, "history")]) if (fs.existsSync(directory))
-    for (const name of fs.readdirSync(directory).filter(name => name.endsWith(".json"))) {
-      let id = null; try { id = readJson(path.join(directory, name)).receipt?.collectionId; } catch {}
-      if (id === collectionId) quarantineEvidence(evidenceRoot, path.join(directory, name));
-    }
-  fs.rmSync(marker, { force: true });
-  return touched ?? "host run interrupted";
+  afterStop?.();
+  // MONO-482 review: every settlement of a marker (the gate's own end, this recovery, a retired attempt's) holds the
+  // root's launch.lock and re-reads the marker: one settled meanwhile is never settled again from a stale snapshot.
+  return settleUnderLock(hostRunRoot(pinsFile), marker, current => {
+    if (canonical(current) !== canonical(state)) return null;
+    removeHostCheckout(evidenceRoot, collectionId);
+    const touched = evidenceTouched(state.snapshot ?? [], evidenceRoot, pinsFile);
+    for (const directory of [evidenceRoot, path.join(evidenceRoot, "history")]) if (fs.existsSync(directory))
+      for (const name of fs.readdirSync(directory).filter(name => name.endsWith(".json"))) {
+        let id = null; try { id = readJson(path.join(directory, name)).receipt?.collectionId; } catch {}
+        if (id === collectionId) quarantineEvidence(evidenceRoot, path.join(directory, name));
+      }
+    fs.rmSync(marker, { force: true });
+    return touched ?? "host run interrupted";
+  });
+}
+const hostRunRoot = pinsFile => path.dirname(path.dirname(path.dirname(pinsFile)));
+// Runs action(marker state) under the root's launch.lock only while the marker still exists; null when it is gone.
+function settleUnderLock(root, marker, action) {
+  return withLockSync(path.join(root, "launch.lock"), () => {
+    let current; try { current = readJson(marker); } catch { return null; }
+    return action(current);
+  });
+}
+// The gate's own end of its host run: under launch.lock, while its marker still exists, put back touched evidence,
+// let the caller re-read what it decides from (with the run's single slot still held), then drop the marker unless
+// a group may still live. {gone: true} when the marker was settled by someone else.
+export function settleHostRun(evidenceRoot, collectionId, pinsFile, { keepMarker = false, reread } = {}) {
+  const marker = hostRunMarker(evidenceRoot, collectionId);
+  return settleUnderLock(hostRunRoot(pinsFile), marker, state => {
+    const touched = evidenceTouched(state.snapshot ?? [], evidenceRoot, pinsFile);
+    const read = reread?.();
+    if (!keepMarker) fs.rmSync(marker, { force: true });
+    return { touched, read };
+  }) ?? { gone: true };
 }
 
 // MONO-481 pinned screenCheck: before the attempt's first spent review round the host compares the screens of

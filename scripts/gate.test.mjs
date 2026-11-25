@@ -456,7 +456,7 @@ test('review environment is built from the route', async () => {
 
 test("named collection fixtures through the gate CLI", async t => {
   const fs = await import("node:fs"), path = await import("node:path"), os = await import("node:os"), crypto = await import("node:crypto");
-  const { spawnSync } = await import("node:child_process");
+  const { spawnSync, spawn } = await import("node:child_process");
   const { atomicJson, canonical, digest } = await import("./runtime.mjs");
   const { sha256File, recordTaskChange, recordReviewRetry } = await import("./orchestrator/command-state.mjs");
   const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collection-idea|collection-review)-.*\.json$/u.test(name));
@@ -492,7 +492,7 @@ test("named collection fixtures through the gate CLI", async t => {
         if (fixture.mode === "review-rounds" || fixture.mode.startsWith("review-extra")) pins.risk = "risky";
         pins.verification.args = ["-e", `const fs=require('node:fs');fs.mkdirSync('.orchestrator',{recursive:true});fs.writeFileSync('.orchestrator/verify-saw',fs.readFileSync(${JSON.stringify(path.join(bin, "review.log"))},'utf8'))`];
       }
-      if (fixture.mode.startsWith("review-host")) {
+      if (fixture.mode.startsWith("review-host") || fixture.mode === "review-extra-host") {
         // MONO-462: Git routing inherited by the collection never reaches the command (it would read the worker's copy).
         Object.assign(env, { GIT_DIR: path.join(repo, ".git"), GIT_WORK_TREE: repo });
         // MONO-457: the verification exits with the code in verify-exit, logs where and how it ran, and on verify-tamper
@@ -1012,6 +1012,33 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         const limit3 = /fail: needs-decision: review round limit reached \(3 of 3 on this task attempt\); the orchestrator may resume with extraRound/;
         // The collector's ledger of this attempt: contiguous ordinals, one admission per collectionId.
         const ordinals = async () => (await import('./review-rounds.mjs')).readLedger(root, 'MONO-999', 1).map(item => item.admission?.collectionId ?? item.collectionId);
+        if (fixture.mode === 'review-extra-host') {
+          // MONO-482 review round 3 (P1): another root's host run A plants this attempt's grant and is still open while this
+          // collection starts; A settles (the plant removed) while this collection waits to open its own host run. No decision
+          // may come from a control file read before its own run opened: it reads the grant again after opening and finds none.
+          const { workerVerification: _, ...noWorker } = request;
+          const hostAt = (tip, n = 1) => ({ ...noWorker, head: tip, collectionId: `preflight-collect:${tip}:${n}` });
+          setReview(bin, { findings: leftover, verdict: dangerous });
+          await round(hostAt(commit('export const one = 1;\n')), 1, /fail: review not-converged \(round 1 of 3\)/);
+          await round(hostAt(commit('export const two = 2;\n')), 1, /fail: review not-converged \(round 2 of 3\)/);
+          const third = await round(hostAt(commit('export const three = 3;\n')), 1, /fail: needs-decision: review not-converged after round 3 of 3/);
+          const fourth = commit('export const four = 4;\n'), value = hostAt(fourth);
+          const grants = path.join(attempt, 'extra-round.json'), markerA = path.join(evidence, 'verification', `preflight-collect-${'e'.repeat(40)}-1.running`), lock = path.join(root, 'launch.lock');
+          write(grants, JSON.stringify([{ number: 1, reason: 'planted by run A', receipt: third.runId, recordedAt: new Date().toISOString() }]));
+          write(markerA, JSON.stringify({ collectionId: `preflight-collect:${'e'.repeat(40)}:1`, group: null, snapshot: [] }));
+          write(lock, JSON.stringify({ pid: process.pid, lockId: 'run A settling' }));
+          await admit(value); atomicJson(file, { ...value, collect: true });
+          const calls = reviewers();
+          const gate = spawn(process.execPath, ['scripts/gate.mjs', 'preflight', '--request', file], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+          let out = ''; gate.stdout.on('data', chunk => out += chunk); gate.stderr.on('data', chunk => out += chunk);
+          // The collection has read its context and waits on launch.lock to open its host run; run A settles meanwhile.
+          await new Promise(resolve => setTimeout(resolve, 4000));
+          fs.rmSync(grants); fs.rmSync(markerA); fs.rmSync(lock);
+          const status = await new Promise(resolve => gate.once('exit', resolve));
+          assert.equal(status, 1, out); assert.match(out, limit3);
+          assert.equal(reviewers(), calls, 'no fourth round on a grant read before the host run opened');
+          return;
+        }
         if (fixture.mode === 'review-extra') {
           // A narrow remainder: one dangerous finding open after round 3, no task change. The fourth round reads the fixes and
           // open findings; when it does not converge either it needs a decision and there is no second extra round.

@@ -955,7 +955,10 @@ bound to the attempt's third spent receipt; dropped on a refused spawn, voided o
 a refused startup, guarded by the host-run evidence snapshot, which covers the
 control files of every attempt of the root, with one host run per root at a time
 (another collection's run refuses this one before anything runs, no round spent;
-a retired attempt's marker is settled by the next opening); a resume writing one waits for every
+a retired attempt's marker, its group ended or its id reused, is settled by the next
+opening; every settlement holds launch.lock and re-reads the marker; a collection
+with a host run reads the contract, retries and grant again only after its run
+opened); a resume writing one waits for every
 host run and, with a retry or extra round, for the attempt's round in flight); the gate's strict
 limit becomes 4 and the review round accepts a fourth (`round 4 of 4 (extra)`),
 which judges like round 3. A not-converged extra round parks

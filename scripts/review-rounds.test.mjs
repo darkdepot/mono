@@ -78,7 +78,7 @@ test("wait-round: returns the result bound to this request, refuses a foreign on
 // removes it once the group is confirmed stopped, and keeps it while the group may live.
 test("host run recovery removes the head checkout only after the group is stopped", async () => {
   const evidence = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-checkout-")));
-  const pinsFile = "/orchestrator/dispatch/MONO-999-a1/pins.json", id = `preflight-collect:${head}:1`;
+  const pinsFile = path.join(evidence, "orchestrator/dispatch/MONO-999-a1/pins.json"), id = `preflight-collect:${head}:1`;
   const marker = hostRunMarker(evidence, id), checkout = hostRunCheckout(evidence, id);
   try {
     assert.equal(checkout, marker.replace(/\.running$/, ".checkout"));
@@ -94,7 +94,7 @@ test("host run recovery removes the head checkout only after the group is stoppe
 
 test("host run recovery: a gate that died mid-run leaves no planted or edited receipt and no live group", async () => {
   const evidence = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-recovery-")));
-  const pinsFile = "/orchestrator/dispatch/MONO-999-a1/pins.json", id = `preflight-collect:${head}:1`;
+  const pinsFile = path.join(evidence, "orchestrator/dispatch/MONO-999-a1/pins.json"), id = `preflight-collect:${head}:1`;
   const receipt = (collectionId, extra = {}) => JSON.stringify({ receipt: { producer: "gate-review-v3", pins: { file: pinsFile }, collectionId, ...extra } });
   let writer;
   try {
@@ -381,6 +381,53 @@ test("MONO-482 host runs are serialized per root: B neither snapshots nor runs w
     assert.equal(fs.existsSync(path.join(dirB, "task-changes.json")), false, "its run's plant was put back");
     assert.ok(fs.existsSync(reopened));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// MONO-482 review round 3 (P2): a collector that wakes after stopping the group must not reapply a snapshot whose marker
+// the retired-attempt settlement already settled (every settle takes launch.lock and re-checks the marker).
+test("MONO-482 a marker settled meanwhile is never settled twice: recovery re-checks it under launch.lock", async () => {
+  const { openHostRun, settleRetiredHostRunsSync } = await import("./review-rounds.mjs");
+  const { recordExtraRound, extraRounds } = await import("./orchestrator/command-state.mjs");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-settle-")), evidence = path.join(root, "evidence");
+  try {
+    const dirA = path.join(root, "dispatch", "MONO-1-a1"), dirB = path.join(root, "dispatch", "MONO-2-a1"), pinsA = path.join(dirA, "pins.json");
+    for (const dir of [dirA, dirB]) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, "pins.json"), JSON.stringify({ evidenceRoot: evidence })); }
+    fs.writeFileSync(path.join(root, "workers.json"), JSON.stringify({ "MONO-2": { issue: "MONO-2", attempt: 1 } }));
+    const id = `preflight-collect:${"a".repeat(40)}:1`;
+    openHostRun(evidence, id, pinsA);
+    let grant = null;
+    const result = await recoverHostRun(evidence, id, pinsA, { afterStop() {
+      // Meanwhile: the retired attempt's marker is settled by the next opening, then B's resume records a real grant.
+      settleRetiredHostRunsSync(root);
+      grant = recordExtraRound(dirB, "QA fix", "run-3");
+    } });
+    assert.equal(result, null, "the marker was already settled");
+    assert.deepEqual(extraRounds(dirB), [grant], "the stale snapshot was not reapplied over the real grant");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// MONO-482 review round 3 (P2): a group id reused by another process (another start identity) does not keep a retired
+// attempt's marker busy; the run's own live group does.
+test("MONO-482 retired-attempt settlement compares the group's start identity", async () => {
+  const { openHostRun } = await import("./review-rounds.mjs");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-reuse-")), evidence = path.join(root, "evidence");
+  const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { detached: true, stdio: "ignore" });
+  try {
+    await new Promise(resolve => child.once("spawn", resolve));
+    const dirA = path.join(root, "dispatch", "MONO-1-a1"), dirB = path.join(root, "dispatch", "MONO-2-a1"), pinsA = path.join(dirA, "pins.json"), pinsB = path.join(dirB, "pins.json");
+    for (const dir of [dirA, dirB]) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, "pins.json"), JSON.stringify({ evidenceRoot: evidence })); }
+    fs.writeFileSync(path.join(root, "workers.json"), JSON.stringify({ "MONO-2": { issue: "MONO-2", attempt: 1 } }));
+    const idA = `preflight-collect:${"a".repeat(40)}:1`, idB = `preflight-collect:${"b".repeat(40)}:1`, marker = hostRunMarker(evidence, idA);
+    openHostRun(evidence, idA, pinsA);
+    let start = null; for (let n = 0; n < 50 && !start; n++) { start = processStart(child.pid); if (!start) await new Promise(resolve => setTimeout(resolve, 20)); }
+    const mark = procStart => fs.writeFileSync(marker, JSON.stringify({ ...JSON.parse(fs.readFileSync(marker, "utf8")), group: child.pid, procStart }));
+    mark(start);
+    assert.throws(() => openHostRun(evidence, idB, pinsB), error => error.code === "EHOSTRUN", "the run's own live group keeps it busy");
+    mark("another process incarnation");
+    const opened = openHostRun(evidence, idB, pinsB);
+    assert.equal(fs.existsSync(marker), false, "a reused group id counts as ended");
+    assert.ok(fs.existsSync(opened));
+  } finally { try { process.kill(child.pid, "SIGKILL"); } catch {} fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 // Codex review round 2 on MONO-481: a symlink anywhere in consumed/KEY-aN/screen-check/<head>.json is refused,
