@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readJson, isMain } from '../runtime.mjs';
 import { commandFlags, allowedFlags } from './command-state.mjs';
-import { qaRecipeSource, qaDeliveryState, requireQaPassed } from '../qa-gate.mjs';
+import { qaRecipeSource, qaDeliveryState, qaRecipeDigest, requireQaPassed } from '../qa-gate.mjs';
 import { validateShipCertificate } from '../ship-certificate.mjs';
 
 // Read-only deploy preparation; the caller supplies the freshly read PR head.
@@ -16,19 +16,25 @@ export function prepareQa({ root, config, issue, head, shipReport }) {
 if (isMain(import.meta.url)) {
   try {
     const [command, ...argv] = process.argv.slice(2), args = commandFlags(argv);
-    const usage = 'Usage: qa.mjs prepare --config <file> [--root <root> --issue <KEY> --head <SHA> --ship-report <file>]';
-    if (command !== 'prepare') throw new Error(usage);
-    allowedFlags(args, ['root', 'config', 'issue', 'head', 'ship-report']);
-    if (!args.config) throw new Error(`${usage}\nmissing --config`);
-    let config;
-    try { config = readJson(args.config); }
-    catch (error) {
-      if (error.code === 'ENOENT') throw new Error(`QA: config file not found: ${args.config}`);
-      throw error;
+    const usage = 'Usage: qa.mjs prepare --config <file> [--root <root> --issue <KEY> --head <SHA> --ship-report <file>] | digest --config <file>';
+    if (command === 'digest') {
+      allowedFlags(args, ['config']);
+      if (!args.config) throw new Error(`${usage}\nmissing --config`);
+      console.log(JSON.stringify({ recipeDigest: qaRecipeDigest(readJson(args.config)) }));
+    } else {
+      if (command !== 'prepare') throw new Error(usage);
+      allowedFlags(args, ['root', 'config', 'issue', 'head', 'ship-report']);
+      if (!args.config) throw new Error(`${usage}\nmissing --config`);
+      let config;
+      try { config = readJson(args.config); }
+      catch (error) {
+        if (error.code === 'ENOENT') throw new Error(`QA: config file not found: ${args.config}`);
+        throw error;
+      }
+      if (qaRecipeSource(config)) for (const key of ['root', 'issue', 'head', 'ship-report'])
+        if (!args[key]) throw new Error(`${usage}\nmissing --${key}`);
+      const qa = prepareQa({ ...args, config, shipReport: args['ship-report'] });
+      console.log(JSON.stringify(qa));
     }
-    if (qaRecipeSource(config)) for (const key of ['root', 'issue', 'head', 'ship-report'])
-      if (!args[key]) throw new Error(`${usage}\nmissing --${key}`);
-    const qa = prepareQa({ ...args, config, shipReport: args['ship-report'] });
-    console.log(JSON.stringify(qa));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

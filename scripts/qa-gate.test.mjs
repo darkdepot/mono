@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { qaDeliveryState, qaRecipeSource, requireQaPassed } from './qa-gate.mjs';
+import { qaDeliveryState, qaRecipeDigest, qaRecipeSource, requireQaPassed } from './qa-gate.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-qa-gate-'));
@@ -364,7 +364,7 @@ function recheckGate(t) {
     fs.writeFileSync(path.join(dir(sha), 'task-report.json'), JSON.stringify({ certificate: 'mono-qa certificate\n' + JSON.stringify(cert) }));
   };
   const common = { scope: 'task', issue: f.issue, base, kind: 'behavior', mode: 'ship', recipeSource: 'config',
-    expectedItems: items, taskCriteria: ['C1'], purpose: 'change' };
+    expectedItems: items, taskCriteria: ['C1'], purpose: 'change', recipeDigest: qaRecipeDigest(f.config) };
   const prevCert = { ...common, head: prevHead, verdict: 'failed', gateEligible: true, items: [
     { ...items[0], outcome: 'passed', evidence: [proof(prevHead, 'c1.cast')] },
     { ...items[1], outcome: 'failed', reason: 'Hint missing', evidence: [proof(prevHead, 'c2.cast')] }] };
@@ -374,7 +374,7 @@ function recheckGate(t) {
   const cert = { ...common, head: f.head, verdict: 'passed', gateEligible: true, items: [
     { ...prevCert.items[0], carriedFrom: prevHead },
     { ...items[1], outcome: 'passed', evidence: [proof(f.head, 'c2.cast')] }] };
-  delete cert.expectedItems; delete cert.taskCriteria; delete cert.purpose;
+  delete cert.expectedItems; delete cert.taskCriteria; delete cert.purpose; delete cert.recipeDigest;
   write(f.head, expected, cert); f.saveState();
   return { ...f, prevHead, dir, ship, prevCert };
 }
@@ -417,4 +417,29 @@ test('MONO-484 qa.earlyStart is an optional boolean and never changes the merge 
   }
   for (const earlyStart of ['true', 1, null])
     assert.throws(() => qaRecipeSource({ ...f.config, qa: { ...f.config.qa, earlyStart } }), /earlyStart must be boolean/);
+});
+
+test('MONO-484 review: switching the product recipe refuses carried items', t => {
+  const f = recheckGate(t);
+  assert.equal(qaDeliveryState(f.input).state, 'passed');
+  const mobile = { ...f.config, qa: { ...f.config.qa, mode: 'mobile', start: 'run --port $QA_PORT' } };
+  const result = qaDeliveryState({ ...f.input, config: mobile });
+  assert.equal(result.state, 'failed'); assert.match(result.reason, /recipe changed/);
+  assert.notEqual(qaRecipeDigest(mobile), qaRecipeDigest(f.config));
+  assert.equal(qaRecipeDigest({ ...f.config, qa: { ...f.config.qa, earlyStart: true, beforeMerge: true } }), qaRecipeDigest(f.config));
+  assert.match(qaRecipeDigest({ projectName: 'Mono Agent Workflow' }), /^[a-f0-9]{64}$/);
+});
+
+test('MONO-484 review: an early pass on a head that never got green Ship carries but never opens the gate', t => {
+  const f = recheckGate(t);
+  // Head A was tested early, failed, and was replaced by B before its Ship went green: B carries from it.
+  assert.equal(qaDeliveryState(f.input).state, 'passed');
+  // A alone never opens merge: without A's own green ship certificate the gate refuses.
+  f.state.tasks[f.issue].head = f.prevHead; f.saveState();
+  for (const shipCertificate of [undefined, f.ship(f.head)]) {
+    const result = qaDeliveryState({ ...f.input, head: f.prevHead, shipCertificate });
+    assert.equal(result.state, 'failed'); assert.match(result.reason, /ship certificate|Head SHA|head/i);
+  }
+  // Even with A's ship certificate, A's own verdict is failed.
+  assert.match(qaDeliveryState({ ...f.input, head: f.prevHead, shipCertificate: f.ship(f.prevHead) }).reason, /task QA failed/);
 });

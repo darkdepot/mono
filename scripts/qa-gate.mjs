@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,28 @@ export function qaRecipeSource(config) {
   const name = config.projectName;
   return typeof name === 'string' && name.trim() && !/[\r\n<>]/.test(name)
     && fs.readFileSync(registry, 'utf8').split('\n').includes(`<!-- mono-qa product: ${name} -->`) ? 'registry' : null;
+}
+
+const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(',')}]`
+  : value !== null && typeof value === 'object'
+    ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}` : JSON.stringify(value);
+
+// MONO-484: carried QA items are bound to the effective recipe, not only to its source category.
+// Gate switches (beforeMerge, earlyStart) are not part of the recipe.
+export function qaRecipeDigest(config) {
+  const source = qaRecipeSource(config);
+  if (!source) throw new Error('QA: no recipe to fingerprint');
+  let recipe;
+  if (source === 'config') {
+    const { beforeMerge, earlyStart, ...rest } = config.qa;
+    recipe = canonical(rest);
+  } else {
+    const lines = fs.readFileSync(registry, 'utf8').split('\n');
+    const start = lines.indexOf(`<!-- mono-qa product: ${config.projectName} -->`);
+    let end = lines.findIndex((line, index) => index > start && /^## /.test(line));
+    recipe = lines.slice(start, end === -1 ? undefined : end).join('\n');
+  }
+  return crypto.createHash('sha256').update(`${source}\n${recipe}`).digest('hex');
 }
 
 // This host-owned state is refreshed from Linear/GitHub before merge and install.
@@ -72,7 +95,7 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
     const check = (scope, target, overrides) => {
       const dir = path.join(root, 'qa', target.issue, target.head);
       const expected = { ...read(path.join(dir, `${scope}-expected.json`)), ...overrides,
-        issue: target.issue, head: target.head, scope, mode: 'ship', recipeSource };
+        issue: target.issue, head: target.head, scope, mode: 'ship', recipeSource, recipeDigest: qaRecipeDigest(config) };
       // A scoped recheck (MONO-484) reads its prior pass only from this task's qa/<KEY>/ folder.
       const cert = validateQaCertificate(read(path.join(dir, `${scope}-report.json`)), expected,
         { taskDir: path.join(root, 'qa', target.issue) });

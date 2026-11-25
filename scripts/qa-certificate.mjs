@@ -40,6 +40,12 @@ function carryStep(message, fn) {
   catch (error) { throw new Error(`qa certificate: ${message}: ${error.message.replace(/^qa certificate: /, '')}`); }
 }
 const real = file => fs.realpathSync(file);
+const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+function headFolder(taskDir, head, message) {
+  const folder = carryStep(message, () => real(path.join(taskDir, head)));
+  need(folder === path.join(real(taskDir), head), `head folder ${head} must be a real folder inside qa/<KEY>/`);
+  return folder;
+}
 
 // MONO-484: the host writes `purpose` and the `recheck` block before the pass. Items marked
 // `carriedFrom` keep the result and evidence of the head where they were last observed live.
@@ -54,15 +60,22 @@ function priorPass(cert, expected, ctx) {
     && path.basename(path.dirname(prevDir)) === expected.issue && path.basename(path.dirname(path.dirname(prevDir))) === 'qa',
   'previous report must be qa/<KEY>/<previousHead>/task-report.json of this task');
   const taskDir = path.dirname(prevDir);
+  // Head folders are bound by real path: a symlinked head folder cannot point elsewhere.
+  need(carryStep('previous QA folder missing', () => real(prevDir)) === path.join(real(taskDir), block.previousHead),
+    'previous head folder must be a real folder inside qa/<KEY>/');
   if (ctx.taskDir) need(carryStep('previous QA folder missing', () => real(taskDir)) === carryStep('task QA folder missing', () => real(ctx.taskDir)),
     'previous report is outside qa/<KEY>/ of this task');
   const prevReport = carryStep('previous QA report missing', () => JSON.parse(fs.readFileSync(block.previousReport, 'utf8')));
   const prevExpected = carryStep('previous QA expectations missing', () => JSON.parse(fs.readFileSync(block.previousExpected, 'utf8')));
   need(object(prevExpected), 'previous expectations must be an object');
+  // The prior pass keeps its own saved bindings; they must be this task, its head, ship and the same recipe.
+  need(prevExpected.scope === 'task' && prevExpected.issue === expected.issue && prevExpected.head === block.previousHead
+    && prevExpected.mode === 'ship' && prevExpected.recipeSource === expected.recipeSource && prevExpected.recipeSource !== 'file',
+  'previous expectations must be a ship pass of this task and head with the same recipe source');
+  need(digest(expected.recipeDigest) && prevExpected.recipeDigest === expected.recipeDigest, 'recipe changed since the previous pass');
   // The prior pass is checked by the same rules, without a ship certificate for its head.
-  const prevCert = carryStep('previous QA report invalid', () => validate(prevReport, { ...prevExpected, scope: 'task', issue: expected.issue,
-    head: block.previousHead, mode: 'ship', recipeSource: expected.recipeSource },
-  { skipShip: true, taskDir, seen: new Set([...ctx.seen, expected.head]) }));
+  const prevCert = carryStep('previous QA report invalid', () => validate(prevReport, prevExpected,
+    { skipShip: true, taskDir, seen: new Set([...ctx.seen, expected.head]) }));
   need(prevCert.kind === 'behavior', 'previous report has no item results');
   const prevExpectations = new Map(prevExpected.expectedItems.map(item => [item.id, item]));
   const live = new Set();
@@ -87,7 +100,7 @@ function carriedItem(item, prior) {
     && old.successor === item.successor && old.reason === item.reason)), `carried item ${item.id} was not green on the previous head`);
   need(item.carriedFrom === (old.carriedFrom ?? prior.previousHead), `carried item ${item.id} must name the head where it was observed`);
   need(JSON.stringify(item.evidence) === JSON.stringify(old.evidence) && item.evidence.length > 0, `carried item ${item.id} must keep its evidence`);
-  const origin = path.join(prior.taskDir, item.carriedFrom);
+  const origin = headFolder(prior.taskDir, item.carriedFrom, `carried evidence of ${item.id} missing`);
   for (const file of item.evidence) carryStep(`carried evidence of ${item.id} missing`, () => evidenceFile(file, origin, 'the observed head folder'));
 }
 
@@ -150,7 +163,10 @@ function validate(report, expected, ctx) {
       carriedItem(item, prior);
     } else {
       for (const file of item.evidence) evidenceFile(file, expected.evidenceRoot);
-      if (prior) for (const file of item.evidence) evidenceFile(file, path.join(prior.taskDir, expected.head), 'the current head folder');
+      if (prior) {
+        const current = headFolder(prior.taskDir, expected.head, 'current head folder missing');
+        for (const file of item.evidence) evidenceFile(file, current, 'the current head folder');
+      }
     }
     if (item.outcome === 'excluded') {
       need(item.evidence.length > 0, 'excluded requires evidence of instability on main');

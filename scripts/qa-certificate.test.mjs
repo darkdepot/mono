@@ -170,7 +170,7 @@ function recheckFixture(t) {
     const file = path.join(dir(head), name); fs.writeFileSync(file, `recording ${name}`); return file; };
   const expectedFor = (head, extra = {}) => ({ scope: 'task', issue, head, base, kind: 'behavior', mode: 'ship',
     recipeSource: 'config', evidenceRoot: dir(head), expectedItems: structuredClone(items), taskCriteria: ['C1', 'C3'],
-    shipCertificate: ship(head), ...extra });
+    shipCertificate: ship(head), recipeDigest: 'e'.repeat(64), ...extra });
   const report = cert => ({ certificate: QA_MARKER + '\n' + JSON.stringify(cert) });
   const save = (head, cert, expected) => {
     fs.mkdirSync(dir(head), { recursive: true });
@@ -249,7 +249,7 @@ test('MONO-484 previous report must be this task, ship mode, non-file recipe, wi
   // A given-version pass or a recipe file on the previous head cannot be carried.
   for (const [mode, recipeSource] of [['given-version', 'config'], ['ship', 'file']]) {
     f.save(f.heads.A, { ...f.certA, mode, recipeSource, gateEligible: false }, { ...f.expectedA, mode, recipeSource });
-    assert.throws(() => f.check(), /previous QA report invalid/);
+    assert.throws(() => f.check(), /previous expectations must be a ship pass/);
   }
   f.save(f.heads.A, f.certA, f.expectedA); assert.equal(f.check().verdict, 'passed');
   // Missing evidence or a missing report fails loudly, never as ENOENT «waiting».
@@ -301,4 +301,37 @@ test('MONO-484 a chain of two rechecks keeps the head where each item was observ
   fs.writeFileSync(path.join(f.dir(f.heads.B), 'task-expected.json'), JSON.stringify(storedB));
   f.save(f.heads.C, certC, expectedC);
   assert.throws(() => validateQaCertificate(f.report(certC), expectedC), /repeats a head/);
+});
+
+test('MONO-484 review: the previous pass keeps its own saved bindings and recipe fingerprint', t => {
+  const f = recheckFixture(t);
+  // A report relabelled ship/config cannot hide expectations saved as another mode, recipe, issue or head.
+  for (const change of [{ mode: 'given-version' }, { recipeSource: 'file' }, { recipeSource: 'registry' },
+    { issue: 'EXAMPLE-9' }, { head: f.heads.C }]) {
+    f.save(f.heads.A, f.certA, { ...f.expectedA, ...change });
+    assert.throws(() => f.check(), /previous expectations must be a ship pass/, JSON.stringify(change));
+  }
+  f.save(f.heads.A, f.certA, f.expectedA); assert.equal(f.check().verdict, 'passed');
+  // The effective recipe must be the same on both heads.
+  assert.throws(() => f.check(f.certB, { ...f.expectedB, recipeDigest: '0'.repeat(64) }), /recipe changed/);
+  const { recipeDigest, ...noDigest } = f.expectedB;
+  assert.throws(() => f.check(f.certB, noDigest), /recipe changed/);
+});
+
+test('MONO-484 review: a symlinked head folder cannot carry evidence from outside qa/<KEY>/', t => {
+  const f = recheckFixture(t);
+  const outside = path.join(f.root, 'elsewhere'); fs.renameSync(f.dir(f.heads.A), outside);
+  fs.symlinkSync(outside, f.dir(f.heads.A));
+  assert.throws(() => f.check(), /real folder inside qa/);
+  // Even with the previous report in place, carried evidence may not come from a symlinked origin folder.
+  fs.rmSync(f.dir(f.heads.A)); fs.renameSync(outside, f.dir(f.heads.A));
+  assert.equal(f.check().verdict, 'passed');
+  const certC = structuredClone(f.certB);
+  f.save(f.heads.B, certC, f.expectedB);
+  const expectedC = f.expectedFor(f.heads.C, { purpose: 'change', recheck: f.recheck(f.heads.B) });
+  const c3 = { ...f.items[2], outcome: 'passed', evidence: [f.proof(f.heads.C, 'c3.cast')] };
+  const certNext = { ...f.certB, head: f.heads.C, items: [certC.items[0], certC.items[1], c3] };
+  assert.equal(validateQaCertificate(f.report(certNext), expectedC).verdict, 'passed');
+  const moved = path.join(f.root, 'moved-a'); fs.renameSync(f.dir(f.heads.A), moved); fs.symlinkSync(moved, f.dir(f.heads.A));
+  assert.throws(() => validateQaCertificate(f.report(certNext), expectedC), /real folder inside qa/);
 });

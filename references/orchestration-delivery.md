@@ -24,13 +24,16 @@ and main recording in the task; the project pass also publishes its report in th
 Project. Worker self-assessment cannot replace this pass. With recipe
 `earlyStart: true` (off by default) launch as soon as the code phase report is
 confirmed and the PR head is published, before green ship; the certificate is
-built and checked only after the same head's ship certificate is read back.
+saved at once and checked with ship only after the same head's ship certificate is
+read back. If the head changes first, that saved report is the carry source for the
+new head (checked without ship, never a gate by itself).
 Merge still waits for green ship and green QA of one and the same head.
 
 Failed/unverified holds merge and wave installation. Send concrete bugs, steps,
 expected/actual and evidence through a ship-fix task change, preserving
 the task attempt and prior ship state. On the new head choose a scoped recheck
-or a full pass and, before the pass, write `purpose` and the `recheck` block
+or a full pass and, before the pass, write `purpose`, `recipeDigest` (`qa.mjs digest`,
+saved for every pass) and the `recheck` block
 (prior head, its report/expectations, live items with reasons) into
 `task-expected.json` per `mono:qa`: failed/unverified, new or changed and touched
 items run live, the rest carry with the prior head's evidence. Full pass when the
