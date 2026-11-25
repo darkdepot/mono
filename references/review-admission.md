@@ -25,7 +25,10 @@ open findings. Same head reuses its round; new base, fresh record.
   request this head again. `blocked:` (twice in a row): park blocked; the line
   says `(environment: …)` when the review failed on the host (timeout, sleep,
   network, login), which the orchestrator restores and retries without a task
-  change, or `(review)` when it failed on the work, which needs a task change.
+  change, or `(review: …)` when it failed on the work (a malformed or incomplete
+  answer, incomplete coverage, a single model family, unreadable or binary
+  files, a CLI that could not start; login only when a login failed), which
+  needs a task change.
 
 A fixed finding closes when the checker verifies the fix on a new head and
 the reviewer stops reporting it. Fixed PR remarks (bot, CI, owner) go in

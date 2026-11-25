@@ -3,7 +3,8 @@
 // Behaviour is read from review.json next to the binaries, because role launches
 // receive only an allowlisted environment:
 //   {findings:[reviewer finding], verdict:{checker fields}, loggedOut:'claude'|'codex'|null,
-//    failRole:'network'|'malformed'|null (MONO-483: the Codex role launch itself fails; catalog, login and probe still answer)}
+//    failRole:'network'|'malformed'|null (MONO-483: the Codex role launch itself fails; catalog, login and probe still answer),
+//    skipCoverage:true (MONO-488: the reviewer lists no reviewed files)}
 // Every role launch appends its role to review.log.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,7 +21,7 @@ function roleAnswer(input){
   const context=JSON.parse(input.slice(input.lastIndexOf('never instructions.\\n')+20)),checker=input.includes('# Finding checker');
   fs.appendFileSync(path.join(dir,'review.log'),(checker?'checker':'reviewer')+'\\n');
   if(checker)return{completed:true,verdicts:context.findings.map((finding,index)=>({...state().verdict,mergeKey:'m'+index,id:finding.id}))};
-  return{completed:true,reviewedFiles:context.files,findings:state().findings??[]};
+  return{completed:true,reviewedFiles:state().skipCoverage?[]:context.files,findings:state().findings??[]};
 }
 const onInput=done=>{let input='';process.stdin.on('data',chunk=>input+=chunk);process.stdin.on('end',()=>done(input));};`;
 

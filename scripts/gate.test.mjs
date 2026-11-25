@@ -207,7 +207,7 @@ test("review rounds are counted per task attempt from receipt history", () => {
   const receipt = (at, outcome, extra = {}) => ({ producer: REVIEW_PRODUCER, recordedAt: new Date(Date.UTC(2026, 10, 10, 0, clock++)).toISOString(), runId: `run-${clock}`, pins, head: at, base,
     ...extra, review: { outcome, spent: !['not-reviewed', 'refused'].includes(outcome), contractDigest, record: { run: clock }, ...extra.review } });
   const read = (receipts, at = heads[0], other = {}) => reviewHistory(receipts, { pins, head: at, base, contractDigest, ...other });
-  assert.deepEqual(read([]), { spent: 0, onContract: 0, notReviewed: 0, notReviewedCause: null, notReviewedCauses: [], reuse: null, record: null });
+  assert.deepEqual(read([]), { spent: 0, onContract: 0, notReviewed: 0, notReviewedCause: null, notReviewedCauses: [], notReviewedWork: [], notReviewedReason: null, reuse: null, record: null });
   const three = [receipt(heads[0], 'not-converged'), receipt(heads[1], 'not-converged'), receipt(heads[2], 'clean-with-successors')];
   assert.equal(read(three, heads[3]).spent, 3, 'a fourth head finds the limit spent');
   assert.equal(read(three, heads[3]).reuse, null);
@@ -221,11 +221,11 @@ test("review rounds are counted per task attempt from receipt history", () => {
   assert.equal(read([...failed, receipt(heads[0], 'refused')]).notReviewed, 2, 'a refusal is not a review attempt');
   const changedContract = 'f'.repeat(64);
   assert.equal(read(failed, heads[0], { contractDigest: changedContract }).notReviewed, 0, 'a task change clears the failure streak');
-  assert.deepEqual(read(three, heads[3], { contractDigest: changedContract }), { spent: 3, onContract: 0, notReviewed: 0, notReviewedCause: null, notReviewedCauses: [], reuse: null, record: three[2].review.record },
+  assert.deepEqual(read(three, heads[3], { contractDigest: changedContract }), { spent: 3, onContract: 0, notReviewed: 0, notReviewedCause: null, notReviewedCauses: [], notReviewedWork: [], notReviewedReason: null, reuse: null, record: three[2].review.record },
     'a task change keeps the count, starts the count on its contract and continues the record');
   assert.equal(read(three, heads[2], { contractDigest: changedContract }).reuse, null, 'a changed contract never reuses a round');
-  assert.deepEqual(read(three.slice(0, 2), heads[1], { contractDigest: changedContract }), { spent: 2, onContract: 0, notReviewed: 0, notReviewedCause: null, notReviewedCauses: [], reuse: null, record: three[1].review.record }, 'a new contract continues the record');
-  assert.deepEqual(read(three.slice(0, 2), heads[1], { base: 'e'.repeat(40) }), { spent: 2, onContract: 2, notReviewed: 0, notReviewedCause: null, notReviewedCauses: [], reuse: null, record: null }, 'a new base starts a fresh record and keeps the count');
+  assert.deepEqual(read(three.slice(0, 2), heads[1], { contractDigest: changedContract }), { spent: 2, onContract: 0, notReviewed: 0, notReviewedCause: null, notReviewedCauses: [], notReviewedWork: [], notReviewedReason: null, reuse: null, record: three[1].review.record }, 'a new contract continues the record');
+  assert.deepEqual(read(three.slice(0, 2), heads[1], { base: 'e'.repeat(40) }), { spent: 2, onContract: 2, notReviewed: 0, notReviewedCause: null, notReviewedCauses: [], notReviewedWork: [], notReviewedReason: null, reuse: null, record: null }, 'a new base starts a fresh record and keeps the count');
   const foreign = [{ ...three[0], producer: 'gate-autoreview-v2' }, { ...three[1], pins: { file: '/root/dispatch/MONO-2-a1/pins.json', digest: 'd' } },
     { ...three[2], pins: { file: '/root/dispatch/MONO-1-a2/pins.json', digest: 'd' } }, { producer: REVIEW_PRODUCER, pins }, null];
   assert.equal(read(foreign).spent, 0, 'old receipts, other tasks and other attempts are never counted');
@@ -251,6 +251,10 @@ test("a review retry clears only an environmental not-reviewed streak recorded b
   assert.equal(read(late, [before]).notReviewed, 2, 'a retry recorded before the last receipt of the streak does not cut it');
   const work = [receipt('not-reviewed', 'review'), receipt('not-reviewed', 'review')];
   assert.deepEqual([read(work, [retry(1)]).notReviewed, read(work).notReviewedCause], [2, 'review'], 'a streak caused by the work is not cleared');
+  // MONO-488: the streak names the work's causes from each receipt, or from an older receipt's reason.
+  const named = [receipt('not-reviewed', 'review', { workCauses: ['malformed or incomplete reviewer answer'] }),
+    receipt('not-reviewed', 'review', { reason: 'incomplete changed-file coverage after focused pass' })];
+  assert.deepEqual(read(named).notReviewedWork, ['malformed or incomplete reviewer answer', 'incomplete coverage of the changed files']);
   const mixed = [receipt('not-reviewed', 'environment'), receipt('not-reviewed', 'review')];
   assert.deepEqual([read(mixed, [retry(1)]).notReviewed, read(mixed).notReviewedCause], [2, 'review'], 'one work cause in the streak keeps it');
   const legacy = [receipt('not-reviewed', null), receipt('not-reviewed', null)];
@@ -392,7 +396,14 @@ test("preflight accepts only a v3 receipt with an accepted review, exact head/ba
     [{ review: { outcome: 'not-converged' } }, /^review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 a\.mjs:3 Leftover \(when: /],
     [{ review: { outcome: 'not-converged', round: 3 } }, /^needs-decision: review not-converged after round 3 of 3; 1 open/],
     [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed' } }, /^not-reviewed: role failed; no round spent, request this head once more$/],
-    [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed', repeated: true } }, /^blocked: not-reviewed twice in a row on this head \(review\); check that both review CLIs are logged in, then resume with a task change: role failed$/],
+    // MONO-488: the work's own cause is named from the receipt; login is mentioned only for a login failure.
+    [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed', repeated: true } }, /^blocked: not-reviewed twice in a row on this head \(review\); resume with a task change: role failed$/],
+    [{ review: { outcome: 'not-reviewed', round: null, reason: 'Codex did not complete', repeated: true } },
+      /^blocked: not-reviewed twice in a row on this head \(review: malformed or incomplete reviewer answer\); resume with a task change: Codex did not complete$/],
+    [{ review: { outcome: 'not-reviewed', round: null, reason: 'incomplete changed-file coverage after focused pass', repeated: true } },
+      /^blocked: not-reviewed twice in a row on this head \(review: incomplete coverage of the changed files\); resume with a task change: incomplete changed-file coverage after focused pass$/],
+    [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed (1); no response admitted', repeated: true, streakWork: ['CLI login', 'malformed or incomplete reviewer answer'] } },
+      /^blocked: not-reviewed twice in a row on this head \(review: CLI login, malformed or incomplete reviewer answer\); check that both review CLIs are logged in, then resume with a task change: role failed/],
     [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed (timeout)', repeated: true, cause: 'environment', causes: ['timeout', 'host-slept'] } },
       /^blocked: not-reviewed twice in a row on this head \(environment: timeout, host-slept\); restore the environment \(host awake, load down, network, CLI login\) and resume the worker with reviewRetry, without a task change: role failed \(timeout\)$/],
     [{ review: { outcome: 'refused', round: null, reason: 'needs-decision: review round limit reached' } }, /^needs-decision: review round limit reached$/],
@@ -716,12 +727,25 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         let receipt = await round(at(broken), 1, /fail: not-reviewed: /);
         assert.equal(receipt.review.cause, 'review');
         assert.ok(receipt.review.failures.filter(item => item.role).every(item => item.cause === 'other'));
-        await round(at(broken, 2), 1, /fail: blocked: not-reviewed twice in a row on this head \(review\);.*resume with a task change/);
+        assert.deepEqual(receipt.review.workCauses, ['malformed or incomplete reviewer answer']);
+        // MONO-488: the blocked line names the malformed answer, not a login, on the round's own line and on later requests.
+        const malformedLine = /fail: blocked: not-reviewed twice in a row on this head \(review: malformed or incomplete reviewer answer\); resume with a task change/;
+        receipt = await round(at(broken, 2), 1, malformedLine);
+        for (const text of [fs.readFileSync(path.join(evidence, `${broken}.json`), 'utf8'), call(at(broken, 2)).stdout]) assert.doesNotMatch(text, /logged in/);
         recordReviewRetry(attempt);
-        const still = call(at(broken, 3)); assert.equal(still.status, 1); assert.match(still.stdout, /fail: blocked: not-reviewed twice in a row on this head \(review\)/);
+        const still = call(at(broken, 3)); assert.equal(still.status, 1); assert.match(still.stdout, malformedLine); assert.doesNotMatch(still.stdout, /logged in/);
         const calls = reviewCalls(bin).length;
-        await round(at(broken, 3), 1, /fail: blocked: not-reviewed twice in a row on this head \(review\)/);
+        await round(at(broken, 3), 1, malformedLine);
         assert.equal(reviewCalls(bin).length, calls, 'no role runs on a blocked work streak');
+        // MONO-488: incomplete coverage of the changed files is named the same way.
+        setReview(bin, { failRole: null, skipCoverage: true });
+        const uncovered = commit('export const uncovered = 1;\n');
+        receipt = await round(at(uncovered), 1, /fail: not-reviewed: incomplete changed-file coverage after focused pass; no round spent/);
+        assert.deepEqual([receipt.review.cause, receipt.review.workCauses], ['review', ['incomplete coverage of the changed files']]);
+        const coverageLine = /fail: blocked: not-reviewed twice in a row on this head \(review: incomplete coverage of the changed files\); resume with a task change/;
+        await round(at(uncovered, 2), 1, coverageLine);
+        const parkedCoverage = call(at(uncovered, 3)); assert.match(parkedCoverage.stdout, coverageLine); assert.doesNotMatch(parkedCoverage.stdout, /logged in/);
+        setReview(bin, { skipCoverage: false });
         // The environment: the Codex role cannot resolve its host on a new head.
         setReview(bin, { failRole: 'network' });
         const offline = commit('export const offline = 0;\n');
