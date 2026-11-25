@@ -52,9 +52,11 @@
   },
   "publish": {
     "ownKeyPrefix": "MONO",
-    "allowedLinks": ["https://linear.app/", "https://github.com/*/mono"],
-    "overlapWords": 8,
-    "minQuoteChars": 12
+    "allowedLinks": [
+      "^https://linear\\.app/[A-Za-z0-9_-]+/(issue|document|project)/[A-Za-z0-9._~%-]+(/[A-Za-z0-9._~%-]+)*$",
+      "^https://github\\.com/[A-Za-z0-9_.-]+/mono(/[A-Za-z0-9._~%/-]*)?$"
+    ],
+    "overlapWords": 8
   },
   "reconcile": { "intervalSeconds": 60, "attempts": 3 },
   "claude": {

@@ -141,12 +141,14 @@ test("signals: linked by a written id only, ordered by cost, three random sessio
   assert.equal(bySource("ALPHA-23").length, 1, "blocked phase with attempt 2 is one signal");
   assert.deepEqual(bySource("ALPHA-23")[0].reasons.sort(), ["attempt", "blocked"]);
   assert.equal(bySource("ALPHA-20").length + bySource("ALPHA-21").length, 0, "ordinary phases give no signal");
+  assert.deepEqual(bySource("ALPHA-24").map((signal) => signal.reasons), [["qa-failed"]], "the verdict is read from the mono-qa certificate");
+  assert.equal(bySource("ALPHA-25").length, 0, "a passed tester report gives no signal");
 
   // Order: stops first (linked worker before unlinked by tie-break), then
   // the intervention, then extra rounds, attempt, length.
   const order = result.signals.map((signal) => signal.reasons.join("+"));
-  const firstNonStop = order.findIndex((reasons) => !/stop|blocked/.test(reasons));
-  assert.ok(order.slice(0, firstNonStop).every((reasons) => /stop|blocked/.test(reasons)));
+  const firstNonStop = order.findIndex((reasons) => !/stop|blocked|qa-failed/.test(reasons));
+  assert.ok(order.slice(0, firstNonStop).every((reasons) => /stop|blocked|qa-failed/.test(reasons)));
   assert.equal(order[firstNonStop], "intervention");
   assert.equal(order[firstNonStop + 1], "not-converged");
 

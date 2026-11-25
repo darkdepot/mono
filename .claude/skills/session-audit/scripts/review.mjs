@@ -177,10 +177,30 @@ function readReport(file) {
   } catch { return null; }
 }
 
-function phaseDuration(json) {
-  const start = Date.parse(json?.startedAt ?? json?.started_at);
-  const end = Date.parse(json?.finishedAt ?? json?.finished_at);
-  return Number.isFinite(start) && Number.isFinite(end) && end > start ? (end - start) / 60000 : null;
+// Verdict of a tester report: the JSON after the `mono-qa certificate` line
+// of its `certificate` string (scripts/qa-certificate.mjs).
+export function qaVerdict(json) {
+  const raw = json?.certificate;
+  if (typeof raw !== "string" || !raw.startsWith("mono-qa certificate\n")) return null;
+  try {
+    const verdict = JSON.parse(raw.slice("mono-qa certificate".length).trim())?.verdict;
+    return typeof verdict === "string" ? verdict : null;
+  } catch { return null; }
+}
+
+// Ledger times of `<KEY> DISPATCHED` / `DISPATCHED <KEY>` lines, per product and issue.
+function dispatchTimes(map, ledgerTexts) {
+  const times = new Map();
+  for (const line of map.sources.ledger) {
+    const text = ledgerTexts.get(line.path)?.get(line.line) || "";
+    const match = /\b([A-Z][A-Z0-9]*-\d+)\s+DISPATCHED\b|\bDISPATCHED:?\s+([A-Z][A-Z0-9]*-\d+)\b/.exec(text);
+    if (!match) continue;
+    const key = `${line.product}|${match[1] || match[2]}`;
+    if (!times.has(key)) times.set(key, []);
+    times.get(key).push(Date.parse(line.ts));
+  }
+  for (const list of times.values()) list.sort((a, b) => a - b);
+  return times;
 }
 
 function median(values) {
@@ -217,21 +237,38 @@ export function sourceSignals(map, config, passUuid) {
     if (report.kind === "review-receipt") {
       if (json?.receipt?.review?.outcome === "not-converged") { metrics.extraRounds = 1; reasons.push("not-converged"); }
     } else if (report.kind === "qa-report") {
-      const verdict = [json?.verdict, json?.result, json?.status, json?.outcome].find((value) => typeof value === "string");
+      const verdict = qaVerdict(json);
       if (verdict && rules.qaFailValues.includes(verdict.toLowerCase())) { metrics.stops = 1; reasons.push("qa-failed"); }
     } else {
       if (rules.stopPhaseResults.includes(json?.phase_result)) { metrics.stops = 1; reasons.push(String(json.phase_result)); }
       if (Number.isInteger(json?.attempt) && json.attempt >= 2) { metrics.attempt = json.attempt; reasons.push("attempt"); }
-      const minutes = phaseDuration(json);
-      if (minutes !== null) phases.push({ report, json, minutes, text: read.text });
+      if (json?.issue && json?.publishedAt) phases.push({ report, json, text: read.text });
     }
     if (!reasons.length) continue;
     signals.push(makeSignal({ map, passUuid, source: { kind: report.kind, product: report.product, path: report.path }, session: linkedSession(read.text, ids), reasons, cost: metrics, ts: report.ts }));
   }
   // Long phase: longer than two medians of phases of the same stage in the
-  // window and not shorter than 30 minutes.
-  const byStage = new Map();
+  // window and not shorter than 30 minutes. A phase lasts from the previous
+  // phase report of the same issue and attempt (publishedAt, by sequence),
+  // or for the first one from the issue's DISPATCHED ledger line.
+  const dispatched = dispatchTimes(map, ledgerTexts);
+  const byAttempt = new Map();
   for (const phase of phases) {
+    const key = `${phase.report.product}|${phase.json.issue}|${phase.json.attempt ?? 1}`;
+    if (!byAttempt.has(key)) byAttempt.set(key, []);
+    byAttempt.get(key).push(phase);
+  }
+  for (const [key, list] of byAttempt) {
+    list.sort((a, b) => (a.json.sequence ?? 0) - (b.json.sequence ?? 0) || Date.parse(a.json.publishedAt) - Date.parse(b.json.publishedAt));
+    const [product, issue] = key.split("|");
+    list.forEach((phase, i) => {
+      const end = Date.parse(phase.json.publishedAt);
+      const start = i > 0 ? Date.parse(list[i - 1].json.publishedAt) : (dispatched.get(`${product}|${issue}`) || []).filter((time) => time < end).at(-1);
+      phase.minutes = Number.isFinite(start) && Number.isFinite(end) && end > start ? (end - start) / 60000 : null;
+    });
+  }
+  const byStage = new Map();
+  for (const phase of phases.filter((one) => one.minutes !== null)) {
     const key = `${phase.json.stage ?? ""}|${phase.json.phase ?? ""}`;
     if (!byStage.has(key)) byStage.set(key, []);
     byStage.get(key).push(phase);
@@ -373,15 +410,18 @@ function sessionOfPass(dataRoot, map, id) {
 export function eventTexts(session, key, config) {
   const texts = [];
   const problems = [];
+  let ts = null;
   for (const file of session.files) {
     const items = session.host === "claude" ? claudeItems(file, problems, config) : codexItems(file, problems, config);
     for (const item of items) {
       if (item.key !== key) continue;
+      ts = ts || item.ts || null;
       if (typeof item.text === "string") texts.push(item.text);
       if (item.input !== undefined) texts.push(typeof item.input === "string" ? item.input : JSON.stringify(item.input));
       if (item.kind === "event") texts.push("");
     }
   }
+  texts.ts = ts;
   return texts;
 }
 
@@ -472,8 +512,17 @@ function validateProposal(proposal) {
 
 // U6: evidence in the source, the rule place in every tag of the range (or
 // in none for a guess), version handling and cost marks.
-export function checkProposal(proposal, { dataRoot, map, config, index }) {
-  validateProposal(proposal);
+export const OTHER_STAGE = "other";
+
+// A stage is kept and published only as a skill name of the pack; anything
+// else becomes the generic «other».
+export function knownStage(stage, stages) {
+  return typeof stage === "string" && stages.has(stage) ? stage : OTHER_STAGE;
+}
+
+export function checkProposal(raw, { dataRoot, map, config, index, stages = new Set(index.skillNames()) }) {
+  validateProposal(raw);
+  const proposal = { ...raw, stage: knownStage(raw.stage, stages) };
   const drop = (reason, extra = {}) => ({ status: "dropped", id: proposal.id, kind: proposal.kind, stage: proposal.stage, reason, ...extra });
   const pointer = proposal.pointer;
   let session = null;
@@ -488,7 +537,10 @@ export function checkProposal(proposal, { dataRoot, map, config, index }) {
     if (!texts.length) return drop("event-not-found");
   }
   if (!quoteIn(texts, proposal.quote)) return drop("no-evidence");
-  const version = session ? findingVersion(session, proposal.stage, pointer.ts, index) : { status: "unknown", tags: [], range: null, byPath: false };
+  // The version is that of the stage load before the event itself, by the
+  // event's own time in the file, not a time the subagent supplied.
+  const eventTs = session ? texts.ts : null;
+  const version = session ? findingVersion(session, proposal.stage, eventTs, index) : { status: "unknown", tags: [], range: null, byPath: false };
   const needsRule = proposal.kind === "guess" || (proposal.kind === "broken" && proposal.rule);
   if (needsRule && !version.tags.length) return drop("no-version");
   if (proposal.kind === "broken" && proposal.rule) {
@@ -513,11 +565,12 @@ export function checkProposal(proposal, { dataRoot, map, config, index }) {
     stage: proposal.stage,
     session: session?.id ?? null,
     product: session?.product ?? null,
-    pointer,
+    pointer: { ...pointer, ...(session ? { ts: eventTs } : {}) },
     quote: proposal.quote,
     mechanism: normalizeSpace(proposal.mechanism),
     proposal: normalizeSpace(proposal.proposal || ""),
     rule: proposal.rule || null,
+    places: { latest: proposal.latest || null, changed: proposal.changed || null },
     version,
     latest: { tag: latestTag, canHappen: latest, alreadyChanged: changed },
     cost: checkedCost,
@@ -532,6 +585,7 @@ export function check(options = {}) {
     const input = passInput(dataRoot, passUuid, options.file, "check");
     const proposals = Array.isArray(input) ? input : input.findings || [input];
     const index = new TagIndex(repo);
+    const stages = new Set(index.skillNames());
     const checks = runFile(dataRoot, passUuid, "checks.json", { kept: [], dropped: [] });
     const ids = proposals.map((proposal) => proposal?.id);
     if (new Set(ids).size !== ids.length) throw new AuditError("finding ids repeat inside one file; give every finding its own id");
@@ -543,7 +597,7 @@ export function check(options = {}) {
       }
     }
     const results = proposals.map((proposal) => {
-      const result = checkProposal(proposal, { dataRoot, map, config, index });
+      const result = checkProposal(proposal, { dataRoot, map, config, index, stages });
       checks.kept = checks.kept.filter((id) => id !== result.id);
       checks.dropped = checks.dropped.filter((entry) => entry.id !== result.id);
       if (result.status === "dropped") {
@@ -656,10 +710,15 @@ function linearState(issueId, issues, seen = new Set()) {
     seen.add(issueId);
     return { ...linearState(duplicate, issues, seen), via: issueId };
   }
+  // The canonical name is the team key (MONO-…), which CHANGELOG fragments
+  // use; a uuid id is kept apart.
+  const KEY = /^[A-Z][A-Z0-9]*-\d+$/;
+  const canonical = [issue.identifier, issue.id, issueId].find((value) => KEY.test(String(value || ""))) || issue.id || issueId;
+  const base = { issue: canonical, uuid: issue.uuid || (KEY.test(String(issue.id)) ? null : issue.id) || null, url: issue.url ?? null, status: issue.status };
   const type = issue.statusType;
-  if (type === "canceled") return { state: "rejected", issue: issue.id ?? issueId, url: issue.url ?? null, status: issue.status, mechanismRemoved: Boolean(issue.mechanismRemoved) };
-  if (type === "completed") return { state: "done", issue: issue.id ?? issueId, url: issue.url ?? null, status: issue.status };
-  return { state: "open", issue: issue.id ?? issueId, url: issue.url ?? null, status: issue.status };
+  if (type === "canceled") return { state: "rejected", ...base, mechanismRemoved: Boolean(issue.mechanismRemoved) };
+  if (type === "completed") return { state: "done", ...base };
+  return { state: "open", ...base };
 }
 
 function versionPlace(tags, fixedIn) {
@@ -689,7 +748,7 @@ function outcomeOf(entry, tags, issues, fixedIn) {
   const linear = linearState(entry.issue, issues);
   if (linear.state === "rejected") return { outcome: "rejected", linear };
   if (linear.state === "open") return { outcome: "repeat-open", linear };
-  const version = fixedIn.get(linear.issue) || fixedIn.get(entry.issue) || null;
+  const version = fixedIn.get(linear.issue) || null;
   if (!version) return { outcome: "repeat-fix-unknown", linear };
   const place = versionPlace(tags, version);
   if (place === "at-or-after") return { outcome: "returned", linear, fixedIn: version };
@@ -736,12 +795,16 @@ export function register(options = {}) {
     for (const [id, members] of groups) {
       const confirmed = members.filter((member) => member.status === "kept");
       const waiting = members.filter((member) => member.status === "needs-owner");
-      const head = confirmed[0] || members[0];
+      const declined = members.filter((member) => member.status === "owner-declined");
+      // Versions, sessions, cost and outcome come from confirmed members only;
+      // members waiting for the owner or declined are kept apart.
+      const basis = confirmed.length ? confirmed : waiting.length ? waiting : members;
+      const head = basis[0];
       const entry = byId.get(id) || null;
-      const tags = [...new Set(members.flatMap((member) => member.version.tags))].sort(compareTags);
-      const versionUnknown = members.some((member) => !member.version.tags.length);
+      const tags = [...new Set(basis.flatMap((member) => member.version.tags))].sort(compareTags);
+      const versionUnknown = basis.some((member) => !member.version.tags.length);
       const outcome = outcomeOf(entry, versionUnknown ? [] : tags, issues, fixedIn);
-      const sessions = [...new Set(members.map((member) => member.session).filter(Boolean))];
+      const sessions = [...new Set(basis.map((member) => member.session).filter(Boolean))];
       const priorSessions = new Set((entry?.encounters || []).filter((encounter) => encounter.pass !== passUuid).map((encounter) => encounter.session).filter(Boolean));
       findings.push({
         id,
@@ -753,15 +816,17 @@ export function register(options = {}) {
         mechanism: head.mechanism,
         proposal: head.proposal,
         features: head.features,
-        versions: { tags, range: tags.length ? (tags.length === 1 ? tags[0] : `${tags[0]}..${tags.at(-1)}`) : null, unknown: versionUnknown, byPath: members.some((member) => member.version.byPath) },
+        pending: { waiting: confirmed.length ? waiting.map((member) => member.id) : [], declined: declined.map((member) => member.id) },
+        places: { rule: head.rule || null, latest: head.places?.latest || null, changed: head.places?.changed || null },
+        versions: { tags, range: tags.length ? (tags.length === 1 ? tags[0] : `${tags[0]}..${tags.at(-1)}`) : null, unknown: versionUnknown, byPath: basis.some((member) => member.version.byPath) },
         sessions,
         sessionsTotal: new Set([...priorSessions, ...sessions]).size,
-        products: [...new Set(members.map((member) => member.product).filter(Boolean))],
-        cost: mergeCost(members.map((member) => member.cost)),
+        products: [...new Set(basis.map((member) => member.product).filter(Boolean))],
+        cost: mergeCost(basis.map((member) => member.cost)),
         latest: {
           tag: head.latest.tag,
-          canHappen: members.some((member) => member.latest.canHappen),
-          alreadyChanged: members.every((member) => member.latest.alreadyChanged),
+          canHappen: basis.some((member) => member.latest.canHappen),
+          alreadyChanged: basis.every((member) => member.latest.alreadyChanged),
         },
         issue: entry?.issue ?? null,
         ...outcome,
@@ -790,7 +855,16 @@ function eligibleForTriage(finding) {
 // Triage for worthy pack findings and returned ones, at most five by cost;
 // the rest «в очереди». Queued findings of earlier passes compete again
 // without a new case.
-export function selectFindings(findings, registry, passUuid, limit) {
+// Places of a carried finding read again in the last release (U8): it may
+// have changed since the pass that queued it.
+export function recheckLatest(entry, index) {
+  const tag = index?.tags?.at(-1) || null;
+  if (!tag || !entry.places || entry.latest?.tag === tag) return entry.latest;
+  const has = (place) => Boolean(place && index.file(tag, place.file) !== null && normalizeLoose(index.file(tag, place.file)).includes(normalizeLoose(place.text)));
+  return { tag, canHappen: has(entry.places.latest), alreadyChanged: has(entry.places.changed) && !has(entry.places.rule) };
+}
+
+export function selectFindings(findings, registry, passUuid, limit, index = null) {
   const rows = [];
   const triage = [];
   const seen = new Set(findings.map((finding) => finding.id));
@@ -798,33 +872,42 @@ export function selectFindings(findings, registry, passUuid, limit) {
     if (finding.scope !== "pack") { rows.push({ id: finding.id, row: finding.scope }); continue; }
     if (finding.status === "needs-owner") { rows.push({ id: finding.id, row: "needs-owner" }); continue; }
     if (finding.status === "owner-declined") { rows.push({ id: finding.id, row: "owner-declined" }); continue; }
+    if (finding.latest.alreadyChanged && finding.outcome !== "rejected") { rows.push({ id: finding.id, row: "already-changed" }); continue; }
     if (finding.outcome === "returned") { triage.push({ ...finding, action: "reopen" }); continue; }
     if (["repeat-open", "repeat-fix-unknown"].includes(finding.outcome)) { rows.push({ id: finding.id, row: finding.outcome, comment: true }); continue; }
     if (["rejected", "repeat-before-fix", "repeat-version-ambiguous"].includes(finding.outcome)) { rows.push({ id: finding.id, row: finding.outcome }); continue; }
-    if (finding.latest.alreadyChanged) { rows.push({ id: finding.id, row: "already-changed" }); continue; }
     if (eligibleForTriage(finding)) triage.push({ ...finding, action: "create" });
     else rows.push({ id: finding.id, row: "report-only" });
   }
   for (const entry of registry.findings) {
-    if (entry.outcome !== "queued" || seen.has(entry.id) || entry.issue) continue;
-    triage.push({ ...entry, carried: true, action: "create" });
+    if (entry.outcome !== "queued" || seen.has(entry.id)) continue;
+    // A queued return keeps its issue and is reopened; others are created.
+    const action = entry.queuedAction === "reopen" && entry.issue ? "reopen" : entry.issue ? null : "create";
+    if (!action) continue;
+    const latest = recheckLatest(entry, index);
+    const carried = { ...entry, latest, carried: true, action };
+    if (latest?.alreadyChanged) { rows.push({ id: entry.id, row: "already-changed", carried: true }); continue; }
+    if (action === "create" && !eligibleForTriage(carried)) { rows.push({ id: entry.id, row: "report-only", carried: true }); continue; }
+    triage.push(carried);
   }
   const ordered = triage.map((finding) => ({ ...finding, tieBreak: finding.id })).sort(compareTriage);
-  const chosen = ordered.slice(0, limit).map((finding) => ({ id: finding.id, action: finding.action, carried: Boolean(finding.carried) }));
-  const queued = ordered.slice(limit).map((finding) => ({ id: finding.id, action: finding.action, carried: Boolean(finding.carried) }));
+  const brief = (finding) => ({ id: finding.id, action: finding.action, carried: Boolean(finding.carried), ...(finding.carried ? { latest: finding.latest } : {}) });
+  const chosen = ordered.slice(0, limit).map(brief);
+  const queued = ordered.slice(limit).map(brief);
   return { passUuid, limit, triage: chosen, queued, rows };
 }
 
 export function select(options = {}) {
-  return withPass(options, ({ dataRoot, config, passUuid, write, log }) => {
+  return withPass(options, ({ dataRoot, repo, config, passUuid, write, log }) => {
     const pass = runFile(dataRoot, passUuid, "findings.json", null);
     if (!pass) throw new AuditError("run register before select");
     const plan = runFile(dataRoot, passUuid, "plan.json", null);
-    const result = selectFindings(pass.findings, readRegistry(dataRoot), passUuid, config.triageLimit);
+    const result = selectFindings(pass.findings, readRegistry(dataRoot), passUuid, config.triageLimit, new TagIndex(repo));
     const order = [...result.triage, ...result.queued].map((entry) => entry.id);
     if (plan) {
-      // A plan already sent keeps its Triage choices; new ones take free slots.
-      const planned = plan.ops.filter((op) => op.type === "create-issue" || op.type === "update-issue").map((op) => op.finding);
+      // Triage ops that may have reached Linear (sent or later) keep their
+      // place; ops still only planned are chosen again from scratch.
+      const planned = [...new Set(plan.ops.filter((op) => (op.type === "create-issue" || op.type === "update-issue") && op.status !== "planned").map((op) => op.finding))];
       const keep = result.triage.filter((entry) => planned.includes(entry.id));
       const rest = [...result.triage, ...result.queued].filter((entry) => !planned.includes(entry.id)).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
       const free = Math.max(0, config.triageLimit - planned.length);

@@ -25,17 +25,25 @@ export function addSignalSources(world) {
     `- ${at(BOUNDARY, 404)} ALPHA-12 worker ${IDS.worker} parked: needs-human`,
     `- ${at(BOUNDARY, 406)} ALPHA-14 dispatch attempt 2`,
     `- ${at(BOUNDARY, 407)} owner stopped ALPHA-15 and asked for a smaller scope`,
+    ...["ALPHA-20", "ALPHA-21", "ALPHA-22", "ALPHA-23"].map((key) => `- ${at(BOUNDARY, 500)} ${key} DISPATCHED`),
     "",
   ].join("\n"));
   const reports = path.join(orch, "reports");
+  // Phase reports as the workflow publishes them: no start or finish field,
+  // only publishedAt; a phase lasts from the dispatch or the previous report.
   const phase = (name, minutes, extra = {}) => {
-    const start = at(BOUNDARY, 500);
-    fs.writeFileSync(path.join(reports, name), JSON.stringify({ issue: name.split("-code")[0], stage: "mono-deliver", phase: "code", attempt: 1, phase_result: "implemented-needs-preflight", startedAt: start, finishedAt: at(start, minutes), ...extra }));
+    fs.writeFileSync(path.join(reports, name), JSON.stringify({ issue: name.split("-code")[0], stage: "mono-deliver", phase: "code", attempt: 1, sequence: 1, kind: "phase", phase_result: "implemented-needs-preflight", publishedAt: at(BOUNDARY, 500 + minutes), ...extra }));
   };
   phase("ALPHA-20-code.json", 10);
   phase("ALPHA-21-code.json", 12);
   phase("ALPHA-22-code.json", 60, { session: IDS.codexOwner });
   phase("ALPHA-23-code.json", 11, { attempt: 2, phase_result: "blocked" });
+  // Tester reports keep the verdict inside the `mono-qa certificate` string.
+  const qa = path.join(orch, "qa");
+  fs.mkdirSync(qa, { recursive: true });
+  const certificate = (issue, verdict) => `mono-qa certificate\n${JSON.stringify({ scope: "task", issue, verdict, mode: "ship", recordedAt: at(BOUNDARY, 530) })}`;
+  fs.writeFileSync(path.join(qa, "ALPHA-24-failed.json"), JSON.stringify({ issue: "ALPHA-24", certificate: certificate("ALPHA-24", "failed") }));
+  fs.writeFileSync(path.join(qa, "ALPHA-25-passed.json"), JSON.stringify({ issue: "ALPHA-25", certificate: certificate("ALPHA-25", "passed") }));
   const history = path.join(home, ".mono-agent-workflow", "evidence", "alpha", "history");
   fs.mkdirSync(history, { recursive: true });
   const receipt = path.join(history, "r-0001.json");

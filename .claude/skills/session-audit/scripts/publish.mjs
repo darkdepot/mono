@@ -4,11 +4,12 @@
 // Scripts never call Linear: the session performs each operation through
 // Linear MCP, saves the answer under the pass folder and reports it here.
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
 import {
-  AuditError, compareTags, isFile, isoNow, readJson, readQueue, readState, writeState,
+  AuditError, compareTags, isFile, isoNow, readJson, readQueue, readState, TagIndex,
 } from "./lib.mjs";
 import { cost, setup } from "./commands.mjs";
 import { METRICS, normalizeSpace, passInput, readRegistry, runFile, withPass } from "./review.mjs";
@@ -60,12 +61,49 @@ export function privateTexts(dataRoot, passes, size) {
   return { sequences, quotes: [...quotes] };
 }
 
+// Allowed links: Linear issue, document and project pages and the mono
+// repository on GitHub, without query or fragment (config regexes).
 function linkAllowed(url, patterns) {
-  return patterns.some((pattern) => {
-    if (!pattern.includes("*") && pattern.endsWith("/")) return url.startsWith(pattern);
-    const source = pattern.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^/]+");
-    return new RegExp(`^${source}(?:[/?#]|$)`).test(url);
-  });
+  if (/[?#]/.test(url)) return false;
+  return patterns.some((pattern) => new RegExp(pattern).test(url));
+}
+
+// Shapes of personal data and credentials that never go to Linear.
+const SECRET_SHAPES = [
+  ["e-mail address", /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/],
+  ["credential assignment", /\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|authorization)\s*[:=]\s*\S+/i],
+  ["bearer token", /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/i],
+  ["provider key", /\b(?:sk|pk|rk)[-_](?:live|test|proj|ant)?[-_]?[A-Za-z0-9_-]{16,}/],
+  ["GitHub token", /\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{20,}/],
+  ["Slack token", /\bxox[abpors]-[A-Za-z0-9-]{10,}/],
+  ["AWS key", /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/],
+  ["Linear key", /\blin_(?:api|oauth)_[A-Za-z0-9]{20,}/],
+  ["JSON web token", /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/],
+  ["private key", /-----BEGIN [A-Z ]*PRIVATE KEY-----/],
+];
+
+function secretProblems(text, passUuid) {
+  const problems = [];
+  for (const [name, shape] of SECRET_SHAPES) if (shape.test(text)) problems.push(`looks like a ${name}`);
+  // Long hex or base64 runs, after the pass's own uuid-based ids are removed.
+  const rest = text
+    .replace(/https?:\/\/[^\s)>\]»"']+/g, " ")
+    .replace(/\bF-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, " ")
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, " ")
+    .replace(new RegExp(`op=${passUuid}/[A-Za-z0-9._-]+`, "g"), " ");
+  if (/\b[0-9a-fA-F]{32,}\b/.test(rest)) problems.push("long hex string (possible secret)");
+  for (const run of rest.match(/[A-Za-z0-9+/_-]{32,}={0,2}/g) || []) {
+    if (/[A-Z]/.test(run) && /[a-z]/.test(run) && /[0-9]/.test(run)) { problems.push("long base64 string (possible secret)"); break; }
+  }
+  return problems;
+}
+
+function containsWords(haystack, needle) {
+  if (!needle.length || needle.length > haystack.length) return false;
+  for (let i = 0; i + needle.length <= haystack.length; i += 1) {
+    if (needle.every((word, j) => haystack[i + j] === word)) return true;
+  }
+  return false;
 }
 
 // Problems of a text bound for Linear; an empty list means it may be sent.
@@ -73,7 +111,6 @@ export function guardText(text, { passUuid, pointers = [], config, privateSet })
   const rules = config.publish;
   const problems = [];
   const fence = /```session-audit\n[\s\S]*?\n```/g;
-  const fences = text.match(fence) || [];
   const outside = text.replace(fence, "");
   if (/```/.test(outside)) problems.push("code fence other than the session-audit fence");
   if (/^\s*>/m.test(text)) problems.push("quoted block");
@@ -92,14 +129,15 @@ export function guardText(text, { passUuid, pointers = [], config, privateSet })
   for (const key of text.match(/\b[A-Z][A-Z0-9]+-\d+\b/g) || []) {
     if (!key.startsWith(`${rules.ownKeyPrefix}-`)) problems.push(`issue key of another team: ${key}`);
   }
-  const plain = words(outside.replace(fences.join(""), ""));
-  for (const [i, gram] of grams(plain, rules.overlapWords).entries()) {
+  problems.push(...secretProblems(text, passUuid));
+  // Every published word counts, the fence included.
+  const all = words(text);
+  for (const [i, gram] of grams(all, rules.overlapWords).entries()) {
     if (privateSet.sequences.has(gram)) { problems.push(`${rules.overlapWords} words in a row match a session digest (word ${i + 1})`); break; }
   }
-  const flat = normalizeSpace(text).toLowerCase();
+  // A stored quote of any length, as a run of whole words.
   for (const quote of privateSet.quotes) {
-    const wanted = normalizeSpace(quote).toLowerCase();
-    if (wanted.length >= rules.minQuoteChars && flat.includes(wanted)) problems.push("contains a stored finding quote");
+    if (containsWords(all, words(quote))) { problems.push("contains a stored finding quote"); break; }
   }
   return [...new Set(problems)];
 }
@@ -160,8 +198,13 @@ function counts(map) {
 
 // One finding line built only from allowed fields; mechanism and proposal
 // only for pack findings, product and host findings only kind and stage.
-export function findingLine(finding, { passUuid, issueRef = null }) {
-  const parts = [finding.id, `этап ${finding.stage}`, `вид ${KIND_RU[finding.kind] || finding.kind}`];
+// The stage is published only as a skill name of the pack.
+export function stageText(stage, stages) {
+  return stages && stages.has(stage) ? stage : "другой";
+}
+
+export function findingLine(finding, { passUuid, issueRef = null, stages = null }) {
+  const parts = [finding.id, `этап ${stageText(finding.stage, stages)}`, `вид ${KIND_RU[finding.kind] || "другой"}`];
   if (finding.scope !== "pack") return parts.join(" · ");
   parts.push(`версии ${finding.versions?.range || "неизвестны"}${finding.versions?.byPath ? " (по пути)" : ""}`);
   parts.push(`сессий ${finding.sessionsTotal ?? finding.sessions?.length ?? 0}`);
@@ -185,7 +228,7 @@ function issueRef(finding) {
   return linear?.url ? `${id} ${linear.url}` : id;
 }
 
-export function renderReport({ passUuid, map, findings, selection, signals, opened, checks, key = "report", revision = 0 }) {
+export function renderReport({ passUuid, map, findings, selection, signals, opened, checks, stages = null, key = "report", revision = 0 }) {
   const byId = new Map(findings.map((finding) => [finding.id, finding]));
   const lines = [];
   lines.push(`Проход ${passUuid}${revision ? `, правка ${revision}` : ""}. Окно ${map.window.start} — ${map.window.end}.`);
@@ -204,8 +247,8 @@ export function renderReport({ passUuid, map, findings, selection, signals, open
     lines.push("");
   };
   const carried = (id) => byId.get(id) || readRegistryEntry(selection.carried, id);
-  section("В Triage", selection.triage.map((entry) => findingLine(carried(entry.id), { passUuid, issueRef: entry.action === "reopen" ? issueRef(carried(entry.id)) : null })));
-  section("В очередь", selection.queued.map((entry) => findingLine(carried(entry.id), { passUuid })));
+  section("В Triage", selection.triage.map((entry) => findingLine(carried(entry.id), { passUuid, stages, issueRef: entry.action === "reopen" ? issueRef(carried(entry.id)) : null })));
+  section("В очередь", selection.queued.map((entry) => findingLine(carried(entry.id), { passUuid, stages })));
   const rowGroups = new Map();
   for (const row of selection.rows) {
     if (!rowGroups.has(row.row)) rowGroups.set(row.row, []);
@@ -213,10 +256,10 @@ export function renderReport({ passUuid, map, findings, selection, signals, open
   }
   for (const [row, entries] of rowGroups) {
     section(ROW_RU[row] || row, entries.map((entry) => {
-      const finding = byId.get(entry.id);
+      const finding = carried(entry.id);
       const ref = issueRef(finding);
       const decision = row === "rejected" && finding.linear ? ` · прежнее решение: ${finding.linear.status}${finding.linear.mechanismRemoved ? ", снято вместе с механизмом" : ""}` : "";
-      return `${findingLine(finding, { passUuid, issueRef: ref })}${decision}`;
+      return `${findingLine(finding, { passUuid, stages, issueRef: ref })}${decision}`;
     }));
   }
   const reasons = {};
@@ -243,19 +286,19 @@ function issueTitle(finding) {
   return `Разбор сессий: ${short}`;
 }
 
-function issueBody(finding, passUuid, key, reopen = false) {
+function issueBody(finding, passUuid, key, stages, reopen = false) {
   return [
     `${reopen ? "Вернулось" : "Находка"} ${finding.id}, проход ${passUuid}.`,
-    findingLine(finding, { passUuid }),
+    findingLine(finding, { passUuid, stages }),
     "",
     fenceBlock([marker(passUuid, key), `finding ${finding.id} ${finding.outcome || "new"}`]),
   ].join("\n");
 }
 
-function commentBody(finding, passUuid, key) {
+function commentBody(finding, passUuid, key, stages) {
   return [
     `Проход ${passUuid}: ${OUTCOME_RU[finding.outcome] || finding.outcome}.`,
-    findingLine(finding, { passUuid }),
+    findingLine(finding, { passUuid, stages }),
     "",
     fenceBlock([marker(passUuid, key)]),
   ].join("\n");
@@ -268,7 +311,8 @@ function passInputs(dataRoot, passUuid) {
   const selection = runFile(dataRoot, passUuid, "selection.json", null);
   if (!findings || !selection) throw new AuditError("run register and select before plan");
   const registry = readRegistry(dataRoot);
-  selection.carried = registry.findings.filter((entry) => selection.triage.concat(selection.queued).some((chosen) => chosen.id === entry.id && chosen.carried));
+  const carriedIds = new Map(selection.triage.concat(selection.queued, selection.rows).filter((chosen) => chosen.carried).map((chosen) => [chosen.id, chosen]));
+  selection.carried = registry.findings.filter((entry) => carriedIds.has(entry.id)).map((entry) => ({ ...entry, latest: carriedIds.get(entry.id).latest || entry.latest }));
   return {
     findings: findings.findings,
     selection,
@@ -285,7 +329,7 @@ function passesForGuard(passUuid, findings, selection) {
   return passes;
 }
 
-function desiredOps({ passUuid, config, map, inputs }) {
+function desiredOps({ passUuid, config, map, inputs, stages }) {
   const { findings, selection } = inputs;
   const byId = new Map([...findings, ...(selection.carried || [])].map((finding) => [finding.id, finding]));
   const ops = [];
@@ -294,20 +338,20 @@ function desiredOps({ passUuid, config, map, inputs }) {
     type: "create-document",
     title: `Разбор сессий: ${ruDate(map.window.end)}`,
     project: config.projectId,
-    body: renderReport({ passUuid, map, ...inputs }),
+    body: renderReport({ passUuid, map, ...inputs, stages }),
   });
   for (const entry of selection.triage) {
     const finding = byId.get(entry.id);
     if (entry.action === "reopen") {
       ops.push({ key: `${finding.id}.triage`, type: "update-issue", finding: finding.id, target: finding.linear?.issue || finding.issue, state: "Triage" });
-      ops.push({ key: `${finding.id}.comment`, type: "create-comment", finding: finding.id, target: finding.linear?.issue || finding.issue, body: commentBody(finding, passUuid, `${finding.id}.comment`) });
+      ops.push({ key: `${finding.id}.comment`, type: "create-comment", finding: finding.id, target: finding.linear?.issue || finding.issue, body: commentBody(finding, passUuid, `${finding.id}.comment`, stages) });
     } else if (entry.action === "create") {
-      ops.push({ key: finding.id, type: "create-issue", finding: finding.id, team: config.triageTeam, state: "Triage", title: issueTitle(finding), body: issueBody(finding, passUuid, finding.id) });
+      ops.push({ key: finding.id, type: "create-issue", finding: finding.id, team: config.triageTeam, state: "Triage", title: issueTitle(finding), body: issueBody(finding, passUuid, finding.id, stages, false) });
     }
   }
   for (const row of selection.rows.filter((entry) => entry.comment)) {
     const finding = byId.get(row.id);
-    ops.push({ key: `${finding.id}.comment`, type: "create-comment", finding: finding.id, target: finding.linear?.issue || finding.issue, body: commentBody(finding, passUuid, `${finding.id}.comment`) });
+    ops.push({ key: `${finding.id}.comment`, type: "create-comment", finding: finding.id, target: finding.linear?.issue || finding.issue, body: commentBody(finding, passUuid, `${finding.id}.comment`, stages) });
   }
   return ops;
 }
@@ -334,43 +378,68 @@ function refuseUnsafe(ops, context) {
   if (refused.length) throw new AuditError("text for Linear did not pass the publish check; rewrite the named fields and run plan again", { refused }, 2);
 }
 
-// Builds runs/<uuid>/plan.json, or continues it: operations already in the
-// plan stay as they are; new ones are appended; a report already sent gets
-// an update operation with the new text (the owner's answer).
+// The plan is bound to the inputs it was built from: commit refuses a plan
+// built before the last register or select.
+export function inputsDigest(dataRoot, passUuid) {
+  const findings = runFile(dataRoot, passUuid, "findings.json", null);
+  const selection = runFile(dataRoot, passUuid, "selection.json", null);
+  return crypto.createHash("sha256").update(JSON.stringify({ findings: findings?.findings ?? null, selection })).digest("hex");
+}
+
+const REACHED = (op) => op.status !== "planned";
+
+// Builds runs/<uuid>/plan.json, or continues it. Operations that may have
+// reached Linear (sent, unknown, confirmed, stopped) stay as they are;
+// operations still only planned are refreshed from the current inputs or
+// removed when no longer wanted; new ones are appended. A report already
+// sent gets an update operation only when its content changed.
 export function plan(options = {}) {
-  return withPass(options, ({ dataRoot, config, passUuid, map, at, write, log }) => {
+  return withPass(options, ({ dataRoot, repo, config, passUuid, map, at, write, log }) => {
     if (!config.projectId || !config.triageTeam) {
       throw new AuditError("projectId and triageTeam are needed in the personal config.json of the data root before anything is written to Linear", { projectId: Boolean(config.projectId), triageTeam: Boolean(config.triageTeam) });
     }
     const inputs = passInputs(dataRoot, passUuid);
-    const desired = desiredOps({ passUuid, config, map, inputs });
+    const stages = new Set(new TagIndex(repo).skillNames());
+    const desired = desiredOps({ passUuid, config, map, inputs, stages });
     const context = guardContext(dataRoot, passUuid, config, inputs);
     refuseUnsafe(desired, context);
+    const fresh = (op) => ({ ...op, marker: marker(passUuid, op.key), status: "planned", checks: 0 });
     const existing = runFile(dataRoot, passUuid, "plan.json", null);
+    const newReport = desired.find((op) => op.key === "report");
     let current;
     if (!existing) {
-      current = { passUuid, createdAt: at, project: config.projectId, team: config.triageTeam, ops: desired.map((op) => ({ ...op, marker: marker(passUuid, op.key), status: "planned", checks: 0 })) };
+      current = { passUuid, createdAt: at, project: config.projectId, team: config.triageTeam, ops: desired.map(fresh) };
+      current.ops[0].content = newReport.body;
     } else {
       current = existing;
-      const keys = new Set(current.ops.map((op) => op.key));
+      const wanted = new Map(desired.map((op) => [op.key, op]));
+      const reportOps = current.ops.filter((op) => op.key === "report" || op.type === "update-document");
+      // Planned non-report ops: refresh or drop.
+      current.ops = current.ops.filter((op) => REACHED(op) || op.key === "report" || op.type === "update-document" || wanted.has(op.key))
+        .map((op) => (REACHED(op) || op.key === "report" || op.type === "update-document" ? op : { ...fresh(wanted.get(op.key)) }));
       const report = current.ops.find((op) => op.key === "report");
-      const newReport = desired.find((op) => op.key === "report");
-      const lastBody = [...current.ops].reverse().find((op) => op.key === "report" || op.type === "update-document")?.body;
-      if (report.status === "planned") report.body = newReport.body;
-      else if (normalizeSpace(lastBody) !== normalizeSpace(newReport.body)) {
-        const revision = current.ops.filter((op) => op.type === "update-document").length + 1;
-        const key = `report.${revision}`;
-        const body = renderReport({ passUuid, map, ...inputs, key, revision });
-        const update = { key, type: "update-document", title: newReport.title, target: null, body, marker: marker(passUuid, key), status: "planned", checks: 0 };
-        refuseUnsafe([update], context);
-        current.ops.push(update);
-        keys.add(key);
+      const last = reportOps.at(-1);
+      const lastContent = last.content ?? last.body;
+      if (!REACHED(report)) {
+        Object.assign(report, { title: newReport.title, project: newReport.project, body: newReport.body, content: newReport.body });
+      } else if (normalizeSpace(lastContent) !== normalizeSpace(newReport.body)) {
+        if (last.type === "update-document" && !REACHED(last)) {
+          const revision = Number(last.key.split(".")[1]);
+          Object.assign(last, { title: newReport.title, body: renderReport({ passUuid, map, ...inputs, stages, key: last.key, revision }), content: newReport.body });
+          refuseUnsafe([last], context);
+        } else {
+          const revision = current.ops.filter((op) => op.type === "update-document").length + 1;
+          const key = `report.${revision}`;
+          const body = renderReport({ passUuid, map, ...inputs, stages, key, revision });
+          const update = { key, type: "update-document", title: newReport.title, target: null, body, content: newReport.body, marker: marker(passUuid, key), status: "planned", checks: 0 };
+          refuseUnsafe([update], context);
+          current.ops.push(update);
+        }
       }
-      for (const op of desired) {
-        if (keys.has(op.key)) continue;
-        current.ops.push({ ...op, marker: marker(passUuid, op.key), status: "planned", checks: 0 });
-      }
+      const keys = new Set(current.ops.map((op) => op.key));
+      for (const op of desired) if (!keys.has(op.key)) current.ops.push(fresh(op));
     }
+    current.inputsDigest = inputsDigest(dataRoot, passUuid);
     write(["runs", passUuid, "plan.json"], current);
     log(`plan ${current.ops.length} ops`);
     return { passUuid, plan: path.join(dataRoot, "runs", passUuid, "plan.json"), ops: current.ops.map(summaryOp) };
@@ -421,14 +490,38 @@ function resultOf(item) {
   return { id: item.id ?? null, identifier: item.identifier ?? null, url: item.url ?? null };
 }
 
-function checkReadBack(op, item) {
+function linksOf(text) {
+  return [...new Set(String(text ?? "").match(/https?:\/\/[^\s)>\]»"'*`]+/g) || [])].sort();
+}
+
+function sameText(planned, saved) {
+  return words(planned).join(" ") === words(saved).join(" ") && JSON.stringify(linksOf(planned)) === JSON.stringify(linksOf(saved));
+}
+
+function itemIds(item) {
+  return [item.id, item.identifier, item.uuid].filter(Boolean);
+}
+
+// The object read back is the one this operation wrote: its target, its
+// marker, and the same words and link addresses (formatting may change).
+function checkReadBack(op, item, current) {
   const problems = [];
   if (!item || typeof item !== "object") return ["the answer is not an object"];
   if (op.type === "update-issue") {
+    if (!itemIds(item).includes(op.target)) problems.push(`the answer is ${itemIds(item).join("/") || "unnamed"}, not ${op.target}`);
     if (item.statusType !== "triage") problems.push(`status is ${item.statusType ?? "unknown"}, not triage`);
     return problems;
   }
+  if (op.type === "update-document") {
+    const report = current.ops.find((candidate) => candidate.key === "report");
+    if (!itemIds(item).includes(op.target || report?.result?.id)) problems.push("the answer is not the report document");
+  }
+  if (op.type === "create-comment" && item.issueId && item.issueId !== op.target && item.issue?.identifier !== op.target) {
+    problems.push(`the comment is on ${item.issueId}, not ${op.target}`);
+  }
   if (!hasMarker(item, op)) problems.push("the marker is not in the body read back");
+  else if (!sameText(op.body, bodyOf(item))) problems.push("the saved text differs from the planned text");
+  if (op.title !== undefined && item.title !== undefined && words(item.title).join(" ") !== words(op.title).join(" ")) problems.push("the saved title differs");
   if (op.type === "create-issue" && item.statusType !== "triage") problems.push(`status is ${item.statusType ?? "unknown"}, not triage`);
   return problems;
 }
@@ -479,7 +572,7 @@ export function opCommand(options = {}) {
       if (op.status === "confirmed") return { passUuid, key: op.key, status: "confirmed", result: op.result };
       if (op.status === "planned") throw new AuditError(`operation ${op.key} was not marked sent`);
       const item = passInput(dataRoot, passUuid, options.response, "--response");
-      const problems = checkReadBack(op, item);
+      const problems = checkReadBack(op, item, current);
       if (problems.length) throw new AuditError(`the read-back of ${op.key} does not confirm it`, { problems }, 2);
       op.status = "confirmed";
       op.result = resultOf(item);
@@ -512,7 +605,7 @@ export function opCommand(options = {}) {
         : items.filter((item) => !item.createdAt || Date.parse(item.createdAt) >= since);
       const found = op.type === "update-issue"
         ? scoped.filter((item) => [item.id, item.identifier].includes(op.target) && item.statusType === "triage")
-        : scoped.filter((item) => hasMarker(item, op));
+        : scoped.filter((item) => hasMarker(item, op) && sameText(op.body, bodyOf(item)));
       op.checks = (op.checks || 0) + 1;
       op.lastCheckAt = at;
       if (found.length) {
@@ -565,17 +658,21 @@ function registryOutcome(finding, selection) {
   return row?.row === "report-only" ? "report" : row?.row || finding.outcome;
 }
 
-// Sessions of a stage on versions at or after fixed_in without the finding
-// confirm the fix after three of them (U7 fix_confirmed).
-function cleanSessions(entry, map) {
+// Sessions of the stage on versions at or after fixed_in that were actually
+// opened in this pass without the finding confirm the fix after three of
+// them (U7 fix_confirmed). Sessions only counted in the map do not.
+function cleanSessions(entry, map, reviewed) {
   if (!entry.fixedIn || !entry.features?.stage) return [];
-  return map.sessions.filter((session) => session.loads.some((load) => load.skill === entry.features.stage && load.version.status === "confirmed"
+  return map.sessions.filter((session) => reviewed.has(session.id) && session.loads.some((load) => load.skill === entry.features.stage && load.version.status === "confirmed"
     && load.version.tags.every((tag) => compareTags(tag, entry.fixedIn) >= 0))).map((session) => session.id);
 }
 
 export function commit(options = {}) {
   return withPass(options, ({ env, dataRoot, passUuid, state, map, at, write, log }) => {
     const current = readPlan(dataRoot, passUuid);
+    if (current.inputsDigest !== inputsDigest(dataRoot, passUuid)) {
+      throw new AuditError("register or select changed after the plan was built; run plan again and apply the new operations", {}, 2);
+    }
     const open = current.ops.filter((op) => op.status !== "confirmed");
     if (open.length) {
       throw new AuditError("not every write is confirmed; the boundary stays", { open: open.map(summaryOp) }, 2);
@@ -584,6 +681,9 @@ export function commit(options = {}) {
     const registry = readRegistry(dataRoot);
     const byId = new Map(registry.findings.map((entry) => [entry.id, entry]));
     const created = new Map(current.ops.filter((op) => op.type === "create-issue").map((op) => [op.finding, op.result]));
+    const reopened = new Set(current.ops.filter((op) => op.type === "update-issue").map((op) => op.finding));
+    const signalsFile = runFile(dataRoot, passUuid, "signals.json", { signals: [] });
+    const reviewed = new Set([...(inputs.opened.sessions || []), ...(signalsFile.signals || []).filter((signal) => (inputs.opened.signals || []).includes(signal.id)).map((signal) => signal.session).filter(Boolean)]);
     const seen = new Set();
     for (const finding of inputs.findings) {
       seen.add(finding.id);
@@ -595,6 +695,8 @@ export function commit(options = {}) {
         sessionsTotal: finding.sessionsTotal, pointer: finding.pointer,
         issue: issue ? (issue.identifier || issue.id) : entry.issue,
         outcome: registryOutcome(finding, inputs.selection),
+        queuedAction: inputs.selection.queued.find((entry) => entry.id === finding.id)?.action || null,
+        places: finding.places || entry.places || null,
         fixedIn: finding.fixedIn ?? entry.fixedIn ?? null,
         status: finding.status,
       });
@@ -603,16 +705,19 @@ export function commit(options = {}) {
         ...(finding.sessions.length ? [] : [{ pass: passUuid, session: null, versions: finding.versions.tags, at }])];
       byId.set(entry.id, entry);
     }
-    for (const chosen of [...inputs.selection.triage, ...inputs.selection.queued]) {
+    for (const chosen of [...inputs.selection.triage, ...inputs.selection.queued, ...inputs.selection.rows]) {
       if (!chosen.carried || seen.has(chosen.id)) continue;
       const entry = byId.get(chosen.id);
       const issue = created.get(chosen.id);
-      entry.outcome = issue ? "triage" : "queued";
+      if (chosen.row) entry.outcome = chosen.row === "report-only" ? "report" : chosen.row;
+      else if (issue || reopened.has(chosen.id)) entry.outcome = reopened.has(chosen.id) ? "returned" : "triage";
+      else entry.outcome = "queued";
+      if (chosen.latest) entry.latest = chosen.latest;
       if (issue) entry.issue = issue.identifier || issue.id;
     }
     for (const entry of byId.values()) {
       if (seen.has(entry.id) || !entry.fixedIn) continue;
-      entry.cleanSessions = [...new Set([...(entry.cleanSessions || []), ...cleanSessions(entry, map)])];
+      entry.cleanSessions = [...new Set([...(entry.cleanSessions || []), ...cleanSessions(entry, map, reviewed)])];
       entry.fixConfirmed = entry.fixConfirmed || entry.cleanSessions.length >= 3;
     }
     write(["findings.json"], { findings: [...byId.values()] });

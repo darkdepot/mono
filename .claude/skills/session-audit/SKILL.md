@@ -180,8 +180,11 @@ each finding with its own id.
    interventions they find as `[{session, from, to, reason: "intervention"}]`;
    save that list to `runs/<uuid>/inbox/extra.json`.
 3. `signals --extra <file>`: mechanical signals (park, `phase_result` blocked
-   or needs-human, `not-converged` receipts, failed tester, attempt ≥ 2, long
-   phase: over two medians of the stage and at least 30 minutes) plus the
+   or needs-human, `not-converged` receipts, a tester report whose
+   `mono-qa certificate` says `failed`, attempt ≥ 2, long phase: from the
+   issue's `DISPATCHED` ledger line or the previous phase report to this
+   report's `publishedAt`, over two medians of the stage and at least 30
+   minutes) plus the
    queue, ordered by cost (stop, intervention, extra rounds, attempt, length;
    unknown is zero and after a known equal). A signal joins a session only by
    an id written in its source; else `session: null` («без связи»), its source
@@ -201,9 +204,11 @@ each finding with its own id.
    object or a list, and returns only the file name:
    `{id, kind: broken|intervention|guess|time-loss|simplify, scope:
    pack|product|host, stage, pointer, quote, mechanism, proposal, rule,
-   latest, changed, screen, cost, sameAs}`. `pointer` is `{session, event, ts}`
-   (event = record uuid or Codex item id) or, without a session, `{source,
-   line, ts}` (a ledger line or report of the map). `quote`: at most two lines,
+   latest, changed, screen, cost, sameAs}`. `stage` is a pack skill name;
+   anything else is kept and published as `other`. `pointer` is `{session,
+   event}` (event = record uuid or Codex item id; its time and the stage
+   version are read from the file) or, without a session, `{source, line,
+   ts}` (a ledger line or report of the map). `quote`: at most two lines,
    copied from that event or line. `mechanism` and `proposal`: own words in
    pack terms (rule, reference, step, script), at most 300 characters, no
    paths, no issue keys of other teams, no quotes. `rule`/`latest`/`changed`:
@@ -233,15 +238,22 @@ each finding with its own id.
 8. `select`: Triage only for a confirmed pack finding with a proposal that the
    last release still allows and that repeated in two sessions, cost an
    intervention or stopped work; returned findings too; at most five, by
-   stops and interventions, then extra rounds and minutes. The rest are
-   «в очереди» and compete again next pass. «Уже изменено», product and host
-   findings, and findings waiting for the owner are rows of the report only.
+   stops and interventions, then extra rounds and minutes. Only confirmed
+   members count; members waiting for the owner or declined add nothing. The
+   rest are «в очереди» and compete again next pass (a queued return is
+   reopened then), after their places are read again in the last release.
+   «Уже изменено» (even for a return), product and host findings, and
+   findings waiting for the owner are rows of the report only.
 9. `plan`: builds `runs/<uuid>/plan.json` from allowed fields only and refuses
-   any text with a quote (8 words in a row from a digest, or a stored quote),
-   a path other than the pointer `runs/<uuid>/<F-id>`, an issue key of another
-   team or a link other than Linear and mono; rewrite the named finding and
-   run `check`, `register`, `select`, `plan` again. Run again after a crash,
-   it continues the same plan.
+   any text with a quote (8 words in a row from a digest, or a stored quote of
+   any length), a path other than the pointer `runs/<uuid>/<F-id>`, an issue
+   key of another team, an e-mail, a token or other credential, a long hex or
+   base64 string, or a link other than a Linear issue, document or project
+   page or the mono repository (no query or fragment); rewrite the named
+   finding and run `check`, `register`, `select`, `plan` again. Run again
+   after a crash or any change: operations that may have reached Linear stay,
+   planned ones are refreshed or removed, a report already sent gets one
+   update only if its content changed.
 10. Apply the plan one operation at a time, never two at once:
     `op next` gives the key and the exact MCP call; `op sent <key>` before the
     call (it re-checks the text); send `call.args` verbatim; read the object
@@ -262,6 +274,8 @@ each finding with its own id.
     `select`, `plan` (it appends operations and a report update) and apply
     the new operations. Nothing waiting: commit at once; the owner moves on
     without an answer: commit, the findings stay in the report as waiting.
-12. `commit`: only when every operation is confirmed; updates the registry
-    and the queue, moves the boundary and the deferred tails, and ends the
-    pass. Show `summary.text` to the owner in Russian product language.
+12. `commit`: only when the plan was built from the current `register` and
+    `select` and every operation is confirmed (a read-back must match the
+    target, the marker, and the planned words and links); updates the registry
+    and the queue (a fix counts as confirmed only by sessions opened in a
+    pass), moves the boundary and the deferred tails, and ends the pass. Show `summary.text` to the owner in Russian product language.
