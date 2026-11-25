@@ -33,6 +33,9 @@ const SECRET_SHAPES = [
   // URL userinfo: scheme://user:password@host keeps only the scheme and host.
   [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]*@/gi, '$1[redacted]@'],
   // Every value of a cookie header, not only the first pair.
+  // JSON first: "Cookie":"a=b; c=d", an escaped \"Cookie\":\"…\", or "Set-Cookie":["a=b","c=d"]; the value ends at its quote.
+  [/((?:set-)?cookie\\?["']\s*:\s*)(\[[^\]\r\n]*\]|\\?["'](?:[^"'\\\r\n]|\\(?!["']))*)/gi,
+    (match, prefix, value) => prefix + value.replace(/=\s*[^;"'\\,\]\s]*/g, '=[redacted]')],
   [/\b((?:set-)?cookie\s*[:=]\s*)([^\r\n]*)/gi, (match, prefix, rest) => prefix + rest.replace(/=\s*("[^"]*"|[^;\s]*)/g, '=[redacted]')],
   [/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, '[redacted]'], [/\bAIza[0-9A-Za-z_-]{35}\b/g, '[redacted]'], [/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}/g, '[redacted]'],
   [/\bsk-[A-Za-z0-9_-]{16,}/g, '[redacted]'], [/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, '[redacted]'], [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.?[A-Za-z0-9_-]*/g, '[redacted]'],
@@ -580,11 +583,22 @@ function packGroups(units, budget, cost, where) {
 // The head line of a finding mapped to the base side through the file's hunks.
 function baseLine(fileDiff, line) {
   let offset = 0;
-  for (const match of (fileDiff ?? '').matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)) {
+  for (const hunk of splitHunks(fileDiff ?? '').hunks) {
+    const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(hunk);
+    if (!match) continue;
     const [oldStart, oldCount, newStart, newCount] = [match[1], match[2] ?? 1, match[3], match[4] ?? 1].map(Number);
-    if (line >= newStart + newCount) offset += oldCount - newCount;
-    else if (line >= newStart) return Math.max(1, oldStart + Math.min(line - newStart, Math.max(oldCount - 1, 0)));
-    else break;
+    if (line < newStart) break;
+    if (line >= newStart + newCount) { offset += oldCount - newCount; continue; }
+    // Inside the hunk: walk its rows. Context rows advance both sides, removed rows the base side, added rows the head side;
+    // an added head line maps to the base line where it was inserted.
+    let oldLine = oldStart, newLine = newStart;
+    for (const row of hunk.replace(/\n$/, '').split('\n').slice(1)) {
+      if (row.startsWith('\\')) continue;
+      if (row.startsWith('-')) { oldLine++; continue; }
+      if (newLine === line) return Math.max(1, row.startsWith('+') ? oldLine - 1 : oldLine);
+      newLine++; if (!row.startsWith('+')) oldLine++;
+    }
+    return Math.max(1, oldLine);
   }
   return Math.max(1, line + offset);
 }

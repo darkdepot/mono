@@ -268,3 +268,28 @@ test('MONO-486 review fix: checker trimming keeps base-side lines of a deleted f
   assert.match(c.context.baseDiff, /^-export const kept_000609 /m);
   assert.ok(c.context.baseEvidence.find(item => item.file === 'kept.mjs').excerpts.some(excerpt => excerpt.text.includes('kept_000609 ')));
 });
+
+test('MONO-486 review fix: cookie values in JSON-serialised headers are redacted', () => {
+  const reason = stderrReason('{"headers":{"Cookie":"sid=short-cookie; other=also-short"}}\n{"Set-Cookie":["a=one-secret; Path=/","b=two-secret"]}\n"{\\"cookie\\":\\"sid=escaped-secret\\"}"');
+  for (const secret of ['short-cookie', 'also-short', 'one-secret', 'two-secret', 'escaped-secret']) assert.ok(!reason.includes(secret), `${secret} in ${reason}`);
+  assert.match(reason, /"Cookie":"sid=\[redacted\]; other=\[redacted\]"/);
+});
+
+test('MONO-486 review fix: a head line inside a mixed hunk maps to its base line, at the production checker limit', async t => {
+  const row = index => `export const row_${String(index).padStart(6, '0')} = '${'v'.repeat(160)}';`;
+  const base = Array.from({ length: 4500 }, (_, index) => row(index)).join('\n') + '\n';
+  // 4000 early lines deleted and every fifth line after them edited: one hunk mixes both.
+  const headText = Array.from({ length: 500 }, (_, offset) => offset % 5 === 0 && offset <= 400 ? row(4000 + offset).replace("'v", "'w") : row(4000 + offset)).join('\n') + '\n';
+  const f = fixture(t, { 'mixed.mjs': base });
+  fs.writeFileSync(path.join(f.worktree, 'mixed.mjs'), headText); f.git('add', '.'); f.git('commit', '-qm', 'mixed hunk');
+  const request = { ...f.request, base: f.request.head, head: f.git('rev-parse', 'HEAD') };
+  // Head line 201 is base line 4201 (row_004200), edited by this change.
+  const answer = (role, c) => role === 'code-review' ? review([finding('mixed.mjs', 201)], c.focusFiles ?? c.files) : { completed: true, verdicts: c.findings.map((item, index) => verdictFor(item, index)) };
+  const runner = recorder(answer), record = await runReviewRound(request, runner);
+  assert.equal(record.outcome, 'not-converged', JSON.stringify(record.failures));
+  const c = runner.calls.find(call => call.role === 'code-review-checker');
+  assert.ok(c.size <= 800000); assert.equal(c.context.diffScope, 'hunks around findings only');
+  assert.match(c.context.baseDiff, /^-export const row_004200 /m); assert.match(c.context.baseDiff, /^\+export const row_004200 = 'w/m);
+  assert.ok(c.context.baseEvidence[0].excerpts.some(excerpt => excerpt.fromLine <= 4201 && excerpt.toLine >= 4201 && excerpt.text.includes('row_004200 ')),
+    JSON.stringify(c.context.baseEvidence[0].excerpts.map(excerpt => [excerpt.fromLine, excerpt.toLine])));
+});
