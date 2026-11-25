@@ -3,6 +3,11 @@ import fs from 'node:fs';
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = value => typeof value === 'string' && value.trim().length > 0;
 
+// MONO-481: host verification runs worker code with host rights before the round, so it could rewrite the approved
+// images or the host's screen check result. The two switches never run together.
+export const SCREEN_HOST_CONFLICT = 'screenCheck and hostVerification cannot both be on: host verification runs worker code with host rights and could forge the screen check';
+export const screenHostConflict = config => config?.qa?.screenCheck === true && config?.orchestration?.delivery?.hostVerification === true;
+
 export function validateQaConfig(qa, config = {}) {
   const need = (ok, message) => { if (!ok) throw new Error(`qa: ${message}`); };
   need(object(qa), 'must be an object');
@@ -12,6 +17,7 @@ export function validateQaConfig(qa, config = {}) {
   if (Object.hasOwn(qa, 'earlyStart')) need(typeof qa.earlyStart === 'boolean', 'earlyStart must be boolean');
   // MONO-481, off by default: only an explicit true makes the host check screens against the mockups before the first review round.
   if (Object.hasOwn(qa, 'screenCheck')) need(typeof qa.screenCheck === 'boolean', 'screenCheck must be boolean');
+  if (screenHostConflict({ ...config, qa })) throw new Error(SCREEN_HOST_CONFLICT);
   need(['web', 'terminal', 'mobile'].includes(qa.mode), 'mode must be web, terminal or mobile');
   need(Array.isArray(qa.install) && qa.install.every(text), 'install must be an array of commands (empty when no installation is needed)');
   need(text(qa.start), 'start is required');

@@ -281,7 +281,9 @@ A product whose recipe sets `screenCheck: true` (off by default; it builds and
 runs worker code on the host before any review) gets its screens compared with
 the approved mockups before the first review round. Dispatch pins `screenCheck`
 from BASE, like `hostVerification`, only when the task snapshot holds
-`design.json`; the worker never takes screenshots and gets no new park.
+`design.json`; the worker never takes screenshots and gets no new park. It never
+runs with `hostVerification`: with both on BASE the config check and dispatch refuse,
+since host verification runs worker code with host rights and could forge the check.
 
 - Who and when: the orchestrator on the host runs `mono:qa` in `given-version`
   (never gate-eligible) on the head of the attempt's first preflight collection

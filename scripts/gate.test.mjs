@@ -709,6 +709,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
           let receipt = await round(at(first), 1, waiting);
           assert.deepEqual([runs(), reviewers(), receipt.review.spent, receipt.verification.exitCode], [0, 0, false, null]);
           screen(first, 'passed'); setReview(bin, { findings: [] });
+          // Dispatch never pins both switches (round 3); these pins only exercise the gate's re-validation after a run.
           // Codex review round 2: a worker-authored host run that changes the approved design and exits 0 does not get
           // the round; the result is re-validated against the current snapshot after the run, never from a cached read.
           const design = path.join(path.dirname(pinsFile), 'snapshot/design.json');

@@ -13,6 +13,7 @@ import { preapplyManifest, preapplyMandate, applyPreapply } from "./preapply.mjs
 import { workerTransport } from "../worker-transport.mjs";
 import { spawnWorker } from "./launch.mjs";
 import { IDEA_GATE_DEFAULT_SINCE, checkResearchSnapshot } from '../idea-gate.mjs';
+import { SCREEN_HOST_CONFLICT, screenHostConflict } from '../qa-recipe.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const q = value => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -37,8 +38,12 @@ export function renderDispatch(template, values) {
 }
 
 const requireThat = (condition, message) => { if (!condition) throw new Error(message); };
-// MONO-481: the screen check before review needs both the product's switch on BASE and a mockup in the task snapshot.
-export const screenCheckPinned = (baseConfig, designSnapshot) => Boolean(designSnapshot) && baseConfig?.qa?.screenCheck === true;
+// MONO-481: the screen check before review needs both the product's switch on BASE and a mockup in the task snapshot,
+// and never runs with host verification pinned (worker code with host rights could forge it).
+export function screenCheckPinned(baseConfig, designSnapshot) {
+  if (screenHostConflict(baseConfig)) throw new Error(SCREEN_HOST_CONFLICT);
+  return Boolean(designSnapshot) && baseConfig?.qa?.screenCheck === true;
+}
 export async function dispatch(args) {
   if (!path.isAbsolute(args.root ?? "")) throw new Error("absolute --root required");
   return withLock(path.join(args.root, "dispatch.lock"), () => prepareDispatch(args));
@@ -100,6 +105,7 @@ async function prepareDispatch(args) {
   git(repo, "fetch", "origin", "main");
   const base = git(repo, "rev-parse", "origin/main");
   const baseConfig = baseModelConfig(repo, base);
+  screenCheckPinned(baseConfig, null); // Refuse both switches on BASE before any worktree or snapshot work.
   const landing = validateLanding(baseConfig);
   const transport = workerTransport(baseConfig.orchestration?.transport ?? "codex-cli");
   const role = args.role ?? transport?.workerRoles[0], reason = args.reason ?? null;

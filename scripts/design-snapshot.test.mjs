@@ -85,3 +85,13 @@ test('screenCheck is pinned only with a mockup in the snapshot and the recipe sw
   for (const config of [{ qa: { screenCheck: false } }, { qa: {} }, {}]) assert.equal(screenCheckPinned(config, design), false);
   assert.equal(screenCheckPinned(on, null), false, 'no mockup: no screen check before review');
 }));
+
+// Codex review round 3: host verification runs worker code with host rights and could forge the screen check.
+test('screenCheck and hostVerification both on refuse dispatch; either alone keeps its behavior', () => fixture(f => {
+  const design = f.copy(), host = { orchestration: { delivery: { hostVerification: true } } };
+  for (const snapshot of [design, null])
+    assert.throws(() => screenCheckPinned({ ...host, qa: { screenCheck: true } }, snapshot),
+      /^Error: screenCheck and hostVerification cannot both be on: host verification runs worker code with host rights and could forge the screen check$/);
+  assert.equal(screenCheckPinned({ qa: { screenCheck: true } }, design), true, 'screenCheck alone is pinned');
+  for (const qa of [{}, { screenCheck: false }]) assert.equal(screenCheckPinned({ ...host, qa }, design), false, 'hostVerification alone: unchanged, no screen check');
+}));
