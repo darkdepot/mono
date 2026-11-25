@@ -19,7 +19,7 @@ export function prepareQa({ root, config, issue, head, shipReport }) {
 export function recordScreenCheck({ pins, head, outcome, report }) {
   const file = path.resolve(pins), launch = readJson(file);
   if (launch.screenCheck !== true) throw new Error('screen check: the attempt is not pinned with screenCheck');
-  return writeScreenCheck(launch.evidenceRoot, head, outcome, report, { file, digest: sha256File(file) });
+  return writeScreenCheck(head, outcome, report, { file, digest: sha256File(file) });
 }
 
 if (isMain(import.meta.url)) {

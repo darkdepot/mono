@@ -889,15 +889,13 @@ test("MONO-481 collector keeps the first round in flight without a gate launch u
     assert.deepEqual([noted.head, noted.collectionId], [f.head, `preflight-collect:${f.head}:1`]);
     // Another head's result, or this head's result bound to other pins (a forgery), does not release it.
     const binding = f.entry.pins;
-    writeScreenCheck(f.evidenceRoot, "e".repeat(40), "passed", "report", binding); await f.poll();
-    writeScreenCheck(f.evidenceRoot, f.head, "passed", "report", { file: f.pinsFile, digest: "0".repeat(64) }); await f.poll();
+    writeScreenCheck("e".repeat(40), "passed", "report", binding); await f.poll();
+    writeScreenCheck(f.head, "passed", "report", { file: f.pinsFile, digest: "0".repeat(64) }); await f.poll();
     assert.equal(fs.existsSync(launches), false);
-    // The host never writes a result while a host verification runs in the evidence root.
-    write(path.join(f.evidenceRoot, "verification", "x.running"), "{}");
-    assert.throws(() => writeScreenCheck(f.evidenceRoot, f.head, "passed", "report", binding), /host verification is running/);
-    fs.unlinkSync(path.join(f.evidenceRoot, "verification", "x.running"));
+    // Results live only in the host-owned ledger, never in evidenceRoot.
+    assert.equal(fs.existsSync(path.join(f.evidenceRoot, "screen-check")), false);
     // The host's result for this head releases the round to the gate (mismatches too: the gate refuses them with a receipt).
-    writeScreenCheck(f.evidenceRoot, f.head, "mismatches", "https://linear.app/x#comment-1", binding);
+    writeScreenCheck(f.head, "mismatches", "https://linear.app/x#comment-1", binding);
     await f.poll();
     assert.ok(fs.readFileSync(launches, "utf8").length > 0, "the gate runs once the head has a result");
     assert.equal(fs.existsSync(note), false, "the note is removed once the head has a result");

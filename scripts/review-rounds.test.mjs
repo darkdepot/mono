@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { admitRound, recordResult, readLedger, inFlight, waitForRound, requestDigest, roundRequestName, collectorLock, hostRunMarker, hostRunCheckout, evidenceSnapshot, recoverHostRun, writeScreenCheck, readScreenCheck } from "./review-rounds.mjs";
+import { admitRound, recordResult, readLedger, inFlight, waitForRound, requestDigest, roundRequestName, collectorLock, hostRunMarker, hostRunCheckout, evidenceSnapshot, evidenceTouched, recoverHostRun, writeScreenCheck, readScreenCheck } from "./review-rounds.mjs";
 import { processStart } from "./runtime.mjs";
 
 const scripts = path.dirname(fileURLToPath(import.meta.url));
@@ -156,13 +156,45 @@ test("MONO-481 screen check result: same head, new attempt or changed design dig
       return { file, digest: crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex"), dir };
     };
     const a1 = attempt(1), a2 = attempt(2);
-    writeScreenCheck(evidence, head, "passed", "report", a1);
-    assert.equal(readScreenCheck(evidence, head, a1)?.outcome, "passed");
-    assert.equal(readScreenCheck(evidence, head, a2), null, "a new attempt on the same head needs its own check");
+    const written = writeScreenCheck(head, "passed", "report", a1);
+    assert.equal(written, path.join(fs.realpathSync(root), "consumed/MONO-999-a1/screen-check", `${head}.json`), "the host-owned ledger, not evidenceRoot");
+    assert.equal(readScreenCheck(head, a1)?.outcome, "passed");
+    assert.equal(readScreenCheck(head, a2), null, "a new attempt on the same head needs its own check");
+    const copied = path.join(root, "consumed/MONO-999-a2/screen-check", `${head}.json`);
+    fs.mkdirSync(path.dirname(copied), { recursive: true }); fs.copyFileSync(written, copied);
+    assert.equal(readScreenCheck(head, a2), null, "the previous attempt's result copied over is still refused");
+    // A concurrent host run's evidence snapshot never sees, restores or quarantines the result.
+    const snapshot = evidenceSnapshot(evidence, a1.file);
+    assert.equal(evidenceTouched(snapshot, evidence, a1.file), null);
+    assert.equal(readScreenCheck(head, a1)?.outcome, "passed");
     fs.writeFileSync(path.join(a1.dir, "snapshot/design/01-screen.png"), "png v2");
-    assert.equal(readScreenCheck(evidence, head, a1), null, "changed approved images refuse the old result");
+    assert.equal(readScreenCheck(head, a1), null, "changed approved images refuse the old result");
     fs.writeFileSync(path.join(a1.dir, "snapshot/design/01-screen.png"), "png v1");
     fs.writeFileSync(path.join(a1.dir, "snapshot/design.json"), JSON.stringify({ images: "v2" }));
-    assert.equal(readScreenCheck(evidence, head, a1), null, "a changed design record refuses it too");
+    assert.equal(readScreenCheck(head, a1), null, "a changed design record refuses it too");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// Codex review round 2 on MONO-481: a symlink anywhere in consumed/KEY-aN/screen-check/<head>.json is refused,
+// for writing and for reading.
+test("MONO-481 screen check result path: a symlink in the chain is refused", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-screen-symlink-")), elsewhere = path.join(root, "elsewhere");
+  try {
+    const dir = path.join(root, "dispatch/MONO-999-a1"), file = path.join(dir, "pins.json");
+    fs.mkdirSync(dir, { recursive: true }); fs.mkdirSync(elsewhere); fs.writeFileSync(file, "{}");
+    const pins = { file, digest: crypto.createHash("sha256").update("{}").digest("hex") };
+    for (const link of ["consumed", "consumed/MONO-999-a1", "consumed/MONO-999-a1/screen-check"]) {
+      fs.rmSync(path.join(root, "consumed"), { recursive: true, force: true });
+      fs.mkdirSync(path.dirname(path.join(root, link)), { recursive: true });
+      fs.symlinkSync(elsewhere, path.join(root, link));
+      assert.throws(() => writeScreenCheck(head, "passed", "report", pins), /symlink or non-directory/, link);
+      assert.equal(readScreenCheck(head, pins), null, link);
+    }
+    fs.rmSync(path.join(root, "consumed"), { recursive: true, force: true });
+    writeScreenCheck(head, "passed", "report", pins);
+    const target = path.join(root, "consumed/MONO-999-a1/screen-check", `${head}.json`), real = path.join(elsewhere, "result.json");
+    fs.renameSync(target, real); fs.symlinkSync(real, target);
+    assert.equal(readScreenCheck(head, pins), null, "a symlinked result file");
+    assert.throws(() => writeScreenCheck(head, "passed", "report", pins), /symlink/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

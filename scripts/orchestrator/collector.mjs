@@ -158,7 +158,7 @@ async function collection(options, entry, admission) {
   const note = screenCheckRequestFile(options.root, options.issue, options.attempt);
   if (!found && entry.pins) {
     const pins = effectivePins(entry);
-    const hold = screenCheckHold({ pins, binding: entry.pins, spent: spentRounds(evidenceRoot, entry.pins.file), evidenceRoot, head: request.head });
+    const hold = screenCheckHold({ pins, binding: entry.pins, spent: spentRounds(evidenceRoot, entry.pins.file), head: request.head });
     if (hold?.state === "waiting") {
       const prior = fs.existsSync(note) ? readJson(note) : null;
       if (prior?.head !== request.head || prior?.collectionId !== request.collectionId)

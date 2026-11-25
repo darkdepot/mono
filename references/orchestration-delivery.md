@@ -295,17 +295,18 @@ from BASE, like `hostVerification`, only when the task snapshot holds
   from «Снимок контекста».
 - Order: while the attempt's receipt history has no spent round, the collector
   keeps the round in flight without a gate launch until
-  `<evidenceRoot>/screen-check/<head>.json` exists for that head (the worker
+  `consumed/KEY-aN/screen-check/<head>.json` exists for that head (the worker
   keeps waiting on `wait-round`; no collection retry is used, nothing counts
-  toward `not-reviewed`). Only the host writes it, outside every worker grant:
+  toward `not-reviewed`). The result lives only in this host-owned ledger,
+  outside every worker grant and outside evidenceRoot; only the host writes it:
   `node '<pack-root>/scripts/orchestrator/qa.mjs' screen-check --pins
   <dispatch/KEY-aN/pins.json> --head <SHA> --outcome passed|mismatches --report
-  <link>` with the registered `<root>/dispatch/KEY-aN/pins.json` path; it binds
+  <link>` with the registered `<root>/dispatch/KEY-aN/pins.json` path. It binds
   the result to that file and digest, the attempt number and the digest of the
-  snapshot's approved design (`design.json` and PNGs), and refuses while a host
-  verification runs. A result for another head, attempt or design does not count, and a host
-  verification run that changes `screen-check/` fails consistency and is put
-  back. The gate checks it again:
+  snapshot's approved design (`design.json` and PNGs); a symlink anywhere in the
+  path is refused. A result for another head, attempt or design does not count.
+  The gate reads it fresh again after any host verification, right before the
+  round, so a run that changes the approved design leaves the round waiting:
   no result refuses with «no result for this head yet», `mismatches` refuses
   with the report link; neither spends a round or runs the reviewer or host
   verification. `passed` lets the first round run. From the first spent round

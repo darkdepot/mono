@@ -709,19 +709,15 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
           let receipt = await round(at(first), 1, waiting);
           assert.deepEqual([runs(), reviewers(), receipt.review.spent, receipt.verification.exitCode], [0, 0, false, null]);
           screen(first, 'passed'); setReview(bin, { findings: [] });
-          // Codex review P2: a worker-authored host run on one head plants a bound "passed" result for the next head and
-          // fails. The change in screen-check/ fails consistency and is put back, so the next head still waits.
-          const second = commit('export const second = 2;\n'); git('checkout', '-q', first);
-          const result = file => path.join(evidence, 'screen-check', `${file}.json`), bound = JSON.parse(fs.readFileSync(result(first), 'utf8'));
-          write(path.join(scratch, 'verify-screen'), JSON.stringify({ file: result(second), body: { ...bound, head: second } }));
-          write(path.join(scratch, 'verify-exit'), '1');
-          receipt = await round(at(first, 2), 1, /fail: collection consistency failed: evidence changed during host verification: screen-check\/[a-f0-9]{40}\.json/);
-          assert.deepEqual([fs.existsSync(result(second)), reviewers(), runs()], [false, 0, 1], 'the planted result is put back');
-          fs.unlinkSync(path.join(scratch, 'verify-screen')); write(path.join(scratch, 'verify-exit'), '0');
-          git('checkout', '-q', second);
-          await round(at(second), 1, waiting);
-          assert.equal(runs(), 1, 'the next head waits for its own screen check: no host run');
-          git('checkout', '-q', first);
+          // Codex review round 2: a worker-authored host run that changes the approved design and exits 0 does not get
+          // the round; the result is re-validated against the current snapshot after the run, never from a cached read.
+          const design = path.join(path.dirname(pinsFile), 'snapshot/design.json');
+          write(path.join(scratch, 'verify-screen'), JSON.stringify({ file: design, body: { forged: true } }));
+          receipt = await round(at(first, 2), 1, waiting);
+          assert.deepEqual([runs(), reviewers(), receipt.review.spent], [1, 0, false], 'the run happened, the round did not');
+          fs.unlinkSync(path.join(scratch, 'verify-screen')); fs.unlinkSync(design);
+          // The result lives in the host-owned ledger, not in evidenceRoot: nothing a host run is judged on, nothing to quarantine.
+          assert.equal(fs.existsSync(path.join(evidence, 'screen-check')), false);
           receipt = await round(at(first, 3), 0, /pass: review clean \(round 1 of 1\) and host verification verified on head; screen check on the host passed on this head \(report .*#comment-screen-passed\)$/m);
           assert.deepEqual([runs(), reviewers(), receipt.review.spent], [2, 1, true]);
           return;
@@ -731,10 +727,10 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         // Another head's result does not count: a file for another head, or this head's file naming another head.
         const other = 'e'.repeat(40);
         screen(other, 'passed'); await round(at(first, 2), 1, waiting);
-        atomicJson(path.join(evidence, 'screen-check', `${first}.json`), { head: other, outcome: 'passed', report: 'x' });
+        atomicJson(path.join(fs.realpathSync(root), 'consumed/MONO-999-a1/screen-check', `${first}.json`), { head: other, outcome: 'passed', report: 'x' });
         await round(at(first, 3), 1, waiting);
         // A result without the host's binding to this attempt's launch pins (hand-written) does not count either.
-        atomicJson(path.join(evidence, 'screen-check', `${first}.json`), { head: first, outcome: 'passed', report: 'x' });
+        atomicJson(path.join(fs.realpathSync(root), 'consumed/MONO-999-a1/screen-check', `${first}.json`), { head: first, outcome: 'passed', report: 'x' });
         await round(at(first, 5), 1, waiting);
         screen(first, 'mismatches');
         receipt = await round(at(first, 4), 1, /fail: screen check on the host found mismatches with the mockup on this head .*#comment-screen-mismatches\); fix them from the task change and request the new head; no round spent/);
