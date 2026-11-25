@@ -268,8 +268,9 @@ Workflow states:
    - Always-ask questions (scope, first-product exemplars, product risk, product deploy-block approval): escalate immediately and interactively with a decision
      brief. First-product exemplars carry proposed references and reasons.
 7. `deploy-and-closeout`
-   - Invoke `mono:deploy` in this product session after green Ship and independent
-     `mono:qa` per references/orchestration-delivery.md; it owns merge/proof/checks/
+   - Invoke `mono:deploy` in this product session after green Ship and green
+     `mono:qa` of the same head per references/orchestration-delivery.md (QA may start
+     earlier with `qa.earlyStart: true`); it owns merge/proof/checks/
      rollback/outcome, Linear closeout and project update. Retire the delivered
      worker after closeout and carry its update/completion result to owner status.
 
