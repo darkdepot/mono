@@ -204,6 +204,15 @@ test('a committed base above the ceiling counts as 6', () => {
   } finally { f.cleanup(); }
 });
 
+test('a fractional BASE cap is refused before anything is written', () => {
+  const f = fixture({ cap: 3.5, used: 4 });
+  try {
+    refused(f.raise('--issue', ISSUE, '--reason', 'r'), /BASE attemptCap must be a whole number, got 3.5/);
+    assert.equal(f.bytes(), null);
+    assert.throws(() => f.spawnCheck(), /BASE attemptCap must be a whole number/);
+  } finally { f.cleanup(); }
+});
+
 test('a local --config with a higher cap than BASE grants no attempt', () => {
   const f = fixture({ cap: 3, used: 3 });
   try {

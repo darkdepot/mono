@@ -474,6 +474,8 @@ function capRaises(root) {
 export function attemptCapBase({ worktree, base, config } = {}) {
   if (!path.isAbsolute(worktree ?? "")) throw new Error("attempt cap: the product worktree and its BASE commit are required");
   const committed = deliveryConfig(baseModelConfig(worktree, base)).attemptCap, warnings = [];
+  // Attempts are whole: a fractional BASE cap would poison the shared raise registry.
+  if (!Number.isSafeInteger(committed)) throw new Error(`attempt cap: BASE attemptCap must be a whole number, got ${committed}`);
   if (config !== undefined && config !== null) {
     const local = deliveryConfig(config).attemptCap;
     if (local !== committed) warnings.push(`warning: --config attemptCap ${local} differs from BASE attemptCap ${committed} and is ignored; one task gets more attempts only through attempt-cap.mjs raise`);
