@@ -7,10 +7,10 @@ import { auditRows, parentTurns } from './skills-audit.mjs';
 import { RecordDump } from './skills-dump.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 import { hostProcess } from './skills-process.mjs';
-import { windowReply, personaPrompt, windowPolicy, roleWindows, targetReplyCount, textReply, validateReplies, isOwnerWindow, checkStageResponse, progressOnly } from './skills-owner.mjs';
+import { windowReply, personaPrompt, windowPolicy, roleWindows, targetReplyCount, textReply, validateReplies, isOwnerWindow, checkStageResponse, progressOnly, inheritedTurn } from './skills-owner.mjs';
 import { checkTrace, checkTraceSources, worstStatus, codexItems, codexWindows, visible, completedTrace, codexTerminals } from './skills-trace.mjs';
 import { traceRows, textStageTurns } from './skills-probe.mjs';
-import { mcpConfig, privateCodexHome, toolViolation, workspaceReadCall, workspaceReadCode, MissingEvidence, isWrite } from './skills-boundary.mjs';
+import { mcpConfig, privateCodexHome, codexHomeConfig, toolViolation, workspaceReadCall, workspaceReadCode, MissingEvidence, isWrite } from './skills-boundary.mjs';
 
 import { dialogueMode, testedVersion, permittedStages } from './skills-stage-driver.mjs';
 
@@ -20,6 +20,7 @@ const ownerText = event => (event.message?.content??[]).filter?.(b=>b.type==='te
 function childEnv(home){const env={...process.env};delete env.ANTHROPIC_API_KEY;delete env.ANTHROPIC_AUTH_TOKEN;delete env.OPENAI_API_KEY;if(home)env.CODEX_HOME=home;return env;}
 function modelArgs(request){return request.model?['--model',request.model]:[];}
 function codexCommon(request){return ['--json','--disable','apps','--disable','remote_plugin','--skip-git-repo-check','-c','approval_policy="never"','-c','sandbox_mode="workspace-write"','-c','sandbox_workspace_write.network_access=true',...(request.writableRoots?.length?['-c',`sandbox_workspace_write.writable_roots=${JSON.stringify(request.writableRoots)}`]:[]),...modelArgs(request)];}
+const inheritedRecord=(step,turn,index)=>({index,id:step.id,kind:'inherited',reply:null,question:null,shownLine:turn.line,target:true,received:true});
 const targetsAnswered=(request,replies)=>targetReplyCount(replies)===(request.scenario.expectedReplies??request.scenario.expectedWindows).length;
 export function checkSeedRoute(request){
   const seed=request.seed;let raw;
@@ -58,6 +59,11 @@ function validate(request){
   if(request.writableRoots!==undefined&&(!Array.isArray(request.writableRoots)||request.writableRoots.some(dir=>!path.isAbsolute(dir))))throw new Error('absolute writableRoots required');
   for(const key of ['timeoutMs','idleMs'])if(request[key]!==undefined&&(!Number.isFinite(request[key])||request[key]<=0))throw new Error(`invalid ${key}`);
   if(roleWindows(request.scenario.expectedWindows)&&request.scenario.expectedWindows.some(w=>!['approval','transition','choice'].includes(w.role)))throw new Error('every expected target needs its role');
+  if(request.continueSession!==undefined){
+    const session=request.continueSession;
+    if(session?.host!==request.host||typeof session.id!=='string'||!session.id.trim()||(request.host==='codex'&&!path.isAbsolute(session.home??'')))throw new Error('continued session needs the same host and its session id');
+    if(request.seed||request.readOnlyDump||!request.scenario.expectedReplies)throw new Error('a continued session runs one text stage without seed');
+  }
   if(request.seed){
     const seed=request.seed;
     if(!seed.prompt?.trim()||!path.isAbsolute(seed.projectFile??'')||fs.existsSync(seed.projectFile)||!seed.projectName)throw new Error('fresh seed prompt/projectFile/projectName required');
@@ -94,8 +100,10 @@ export async function runClaude(request){
   const config=path.join(request.outputDir,'mcp.json');fs.writeFileSync(config,JSON.stringify(mcpConfig(request.mcpServers)));
   const toolPolicy=request.scenario.allowedTools??'*';
   const allowed=toolPolicy.includes('*')?null:toolPolicy.filter(n=>!n.startsWith('mcp__'));if(dialogueMode(request.testedVersion)==='windows'&&allowed&&!allowed.includes('AskUserQuestion'))allowed.push('AskUserQuestion');
-  const args=[...(request.writableRoots?.length?['--add-dir',...request.writableRoots]:[]),'-p','--verbose','--input-format','stream-json','--output-format','stream-json',...(request.scenario.expectedReplies?['--replay-user-messages']:[]),'--permission-prompt-tool=stdio','--strict-mcp-config','--mcp-config',config,'--plugin-dir',request.packRoot,'--setting-sources','','--settings',JSON.stringify({enabledPlugins:{'mono@mono-marketplace':false}}),...(allowed?['--tools',allowed.join(',')]:[]),...modelArgs(request)];
-  const calls=new Map(),receipts=new Map(),replies=[],freeReplies=[],nudges=[],seenRequests=new Set(),pendingWindows=[];let confirmed=false,phase='confirm',seedEndLine,stageStartLine,lastMessage='',freeIndex=0,waiting=false,violation=null,evidenceMissing=null,endLine,seedRoute,hostFailure=false;
+  const args=[...(request.writableRoots?.length?['--add-dir',...request.writableRoots]:[]),'-p','--verbose','--input-format','stream-json','--output-format','stream-json',...(request.scenario.expectedReplies?['--replay-user-messages']:[]),'--permission-prompt-tool=stdio','--strict-mcp-config','--mcp-config',config,'--plugin-dir',request.packRoot,'--setting-sources','','--settings',JSON.stringify({enabledPlugins:{'mono@mono-marketplace':false}}),...(allowed?['--tools',allowed.join(',')]:[]),...modelArgs(request),...(request.continueSession?['--resume',request.continueSession.id]:[])];
+  const calls=new Map(),receipts=new Map(),replies=[],freeReplies=[],nudges=[],seenRequests=new Set(),pendingWindows=[];const continued=Boolean(request.continueSession);let sessionId;
+  // A continued stage resumes a conversation whose workspace an earlier stage already confirmed.
+  let confirmed=continued,phase=continued?'stage':'confirm',seedEndLine,stageStartLine=continued?0:undefined,lastMessage='',freeIndex=0,waiting=false,violation=null,evidenceMissing=null,endLine,seedRoute,hostFailure=false;
   const personaTasks=new Set(),deadline=Date.now()+(request.timeoutMs??3_600_000);let lastFreeQuestion,pendingProgress;
   const persona=question=>{
     const task=runPersona({...request,timeoutMs:Math.max(1,deadline-Date.now())},question,freeIndex++);
@@ -106,9 +114,13 @@ export async function runClaude(request){
   const fail=(reason,c)=>{violation=reason;c.stop(reason);};
   const missing=(reason,c)=>{evidenceMissing=reason;c.stop(reason);};
   const processResult=await hostProcess({binary:request.binary??{command:'claude'},args,cwd:request.cwd,env:childEnv(),trace,sent,stderr:path.join(request.outputDir,'stderr.log'),timeoutMs:request.timeoutMs??3_600_000,idleMs:request.scenario.expectedReplies?Math.min(request.idleMs??1000,1000):request.idleMs??240_000,
-    input:userMessage(`Только чтение: вызови ${request.workspaceProof.tool}, покажи пространство. Ничего не записывай; затем остановись.`),
+    input:userMessage(continued?request.scenario.prompt:`Только чтение: вызови ${request.workspaceProof.tool}, покажи пространство. Ничего не записывай; затем остановись.`),
     onEvent:(e,c,line)=>{
       let audit;try{audit=auditRows('claude',[{value:e,line:0}]);}catch(error){return missing(error.message,c);}
+      if(typeof e.session_id==='string'&&e.session_id){
+        sessionId??=e.session_id;
+        if(e.session_id!==sessionId||continued&&sessionId!==request.continueSession.id)return fail('resumed Claude session changed',c);
+      }
       if(e.type==='system'&&e.subtype==='init'&&!e.parent_tool_use_id)beginTurn();
       if(e.type==='assistant'){
         if(!e.parent_tool_use_id&&(e.message?.content??[]).some(b=>['text','thinking','tool_use'].includes(b.type))){waiting=false;lastMessage=ownerText(e)||lastMessage;}
@@ -193,6 +205,12 @@ export async function runClaude(request){
           else {
             const turn=stageTurns.at(-1);
             if(!turn||turn.terminalLine!==line)return missing('final stage message missing before text reply',c);
+            const step=request.scenario.expectedReplies[replies.length];
+            if(step.intent==='inherited'){
+              // Declared move under a recorded consent: nothing is sent.
+              try{inheritedTurn(step,turn.text);}catch(error){return fail(error.message,c);}
+              replies.push(inheritedRecord(step,turn,replies.length));waiting=true;c.complete();return;
+            }
             let reply;try{reply=textReply(request.scenario,turn.text,replies.length);}catch(error){return fail(error.message,c);}
             replies.push({index:replies.length,id:request.scenario.expectedReplies[replies.length].id,kind:'text',reply,question:turn.text,shownLine:turn.line,target:true,received:false});
             beginTurn();c.send(userMessage(reply));
@@ -216,7 +234,7 @@ export async function runClaude(request){
     }});
   await Promise.allSettled([...personaTasks]);
   if(!waiting&&!violation&&!evidenceMissing&&processResult.code===0&&!processResult.failure)evidenceMissing='fresh Claude parent terminal missing after last sent continuation';
-  return finishRun(request,{trace,sent,replies,freeReplies,nudges,confirmed,seedRoute,seedEndLine,stageStartLine,...(dump?{dumpComplete:dump.done,dumpFiles:dump.files,dumpStatusGaps:dump.statusGaps}:{}),process:processResult,violation,evidenceMissing,hostFailure,endLine,boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
+  return finishRun(request,{trace,sent,replies,freeReplies,nudges,confirmed,seedRoute,seedEndLine,stageStartLine,...(dump?{dumpComplete:dump.done,dumpFiles:dump.files,dumpStatusGaps:dump.statusGaps}:{}),process:processResult,violation,evidenceMissing,hostFailure,endLine,...(sessionId?{session:{host:'claude',id:sessionId}}:{}),boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
 }
 
 function rolloutFiles(home){
@@ -233,9 +251,13 @@ async function quiet(file,idleMs,deadline){
 }
 export async function runCodex(request){
   const dump=request.recordDump?new RecordDump(request.recordDump):null;
-  const home=path.join(request.outputDir,'codex-home');privateCodexHome(home,request.authFile,request.mcpServers);
+  // A continued stage resumes the earlier stage's private home and thread; only
+  // its MCP servers change (for example the start_stage permissions of this stage).
+  const continued=Boolean(request.continueSession);
+  const home=continued?request.continueSession.home:path.join(request.outputDir,'codex-home');
+  if(continued)codexHomeConfig(home,request.mcpServers);else privateCodexHome(home,request.authFile,request.mcpServers);
   const env=childEnv(home),binary=request.binary??{command:'codex'};
-  for(const args of [['plugin','marketplace','add',request.packRoot],['plugin','add','mono@mono-marketplace']]){
+  for(const args of continued?[]:[['plugin','marketplace','add',request.packRoot],['plugin','add','mono@mono-marketplace']]){
     const result=spawnSync(binary.command,[...(binary.args??[]),...args],{cwd:request.cwd,env,encoding:'utf8',timeout:request.timeoutMs??3_600_000,maxBuffer:16*1024*1024});
     fs.appendFileSync(path.join(request.outputDir,'setup.log'),(result.stdout??'')+(result.stderr??''));
     if(result.status!==0||result.error){if(request.readOnlyDump)throw Object.assign(new MissingEvidence('Codex local pack setup failed'),{hostFailure:true});throw new Error('Codex local pack setup failed');}
@@ -243,7 +265,26 @@ export async function runCodex(request){
   let thread=null,rollout=null,confirmed=false,violation=null,seenLines=0,freeIndex=0,endLine,seedRoute,seedEndLine,stageStartLine,cardCheck,lastFreeQuestion;
   const replies=[],freeReplies=[],cardChecks=[],seen=new Set(),auditedTraces=new Set(),deadline=Date.now()+(request.timeoutMs??3_600_000),proofCalls=new Map();
   const stdout=path.join(request.outputDir,'stdout.jsonl'),sent=path.join(request.outputDir,'sent.jsonl');fs.writeFileSync(stdout,'');fs.writeFileSync(sent,'');
-  let processResult;
+  let processResult,baseLines=0,scenarioStart=0;const baseFiles=new Map();
+  if(continued){
+    thread=request.continueSession.id;rollout=rolloutFor(home,thread);confirmed=true;
+    for(const file of rolloutFiles(home))baseFiles.set(file,fs.statSync(file).size);
+    baseLines=fs.readFileSync(rollout,'utf8').split('\n').length-1;seenLines=baseLines;
+  }
+  // A text stage's rollout can be resumed by a later stage. Its evidence is its
+  // own byte-identical copy (a continued stage: only its tail), so saved
+  // evidence never changes and records never see another stage's writes.
+  const ownTrace=Boolean(request.scenario.expectedReplies)&&!request.readOnlyDump;
+  const finalTrace=()=>{
+    const file=path.join(request.outputDir,'trace.jsonl');
+    fs.writeFileSync(file,fs.readFileSync(rollout,'utf8').split('\n').slice(baseLines).join('\n'));return file;
+  };
+  const finish=run=>{
+    if(!ownTrace||!rollout||!fs.existsSync(rollout))return finishRun(request,{...run,...(thread?{session:{host:'codex',id:thread,home}}:{})});
+    const copy=finalTrace(),others=(continued?rolloutFiles(home).filter(file=>file!==rollout&&baseFiles.get(file)!==fs.statSync(file).size):(run.auditedTraces??[]).filter(file=>file!==rollout));
+    const helpers=others.map((file,index)=>{const target=path.join(request.outputDir,`trace-helper-${index}.jsonl`);fs.copyFileSync(file,target);return target;});
+    return finishRun(request,{...run,trace:run.trace===rollout?copy:run.trace,auditedTraces:[copy,...helpers],...(continued?{stageStartLine:0}:{}),session:{host:'codex',id:thread,home}});
+  };
   const turn=async(prompt,confirm=false,replyRecord=null)=>{
     let hostError;
     const args=thread?['exec','resume',...codexCommon(request),thread,prompt]:['exec',...codexCommon(request),'-s','read-only','-C',request.cwd,prompt];
@@ -316,11 +357,14 @@ export async function runCodex(request){
     return fresh;
   };
   try{
+    if(continued){
+      stageStartLine=0;scenarioStart=baseLines;return await textLoop(await turn(request.scenario.prompt));
+    }
     const confirmationPrompt=`Только чтение: вызови ${request.workspaceProof.tool} и покажи пространство. Через exec выполни дословно, без добавлений: ${workspaceReadCode(request.workspaceProof)} Не имитируй результат. Ничего не записывай, затем остановись.`;
     let confirmationRows;
     for(let attempt=0;attempt<2;attempt++){try{confirmationRows=await turn(confirmationPrompt,true);break;}catch(error){if(!error.retryWorkspace||attempt===1)throw error;proofCalls.clear();}}
     if(!confirmed)throw new MissingEvidence('workspace not confirmed before stage');
-    let scenarioStart=confirmationRows.at(-1)?.line??0;
+    scenarioStart=confirmationRows.at(-1)?.line??0;
     if(request.seed){
       const seeded=await turn(request.seed.prompt);
       if(codexWindows(seeded,rollout,{phase:'card'}).length)throw new Error('window during seed preparation');
@@ -328,11 +372,14 @@ export async function runCodex(request){
     }
     if(dump){
       while(!dump.done){const rows=await turn(dump.prompt());dump.consume('codex',rows);}
-      return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,auditedTraces:[...auditedTraces],process:processResult,violation,dumpComplete:dump.done,dumpFiles:dump.files,dumpStatusGaps:dump.statusGaps});
+      return finish({trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,auditedTraces:[...auditedTraces],process:processResult,violation,dumpComplete:dump.done,dumpFiles:dump.files,dumpStatusGaps:dump.statusGaps});
     }
     stageStartLine=request.seed?seedEndLine:codexTerminals(confirmationRows).at(-1)?.line;
     let rows=await turn(request.scenario.prompt);
-    if(request.readOnlyDump)return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,auditedTraces:[...auditedTraces],process:processResult,violation});
+    if(request.readOnlyDump)return finish({trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,auditedTraces:[...auditedTraces],process:processResult,violation});
+    return await textLoop(rows);
+  }catch(error){return failed(error);}
+  async function textLoop(rows){
     for(let n=0;n<(request.maxTurns??(roleWindows(request.scenario.expectedWindows)?128:32));n++){
       if(endLine)break;
       if(request.scenario.expectedReplies){
@@ -342,10 +389,15 @@ export async function runCodex(request){
           const response=stageTurns[0];
           if(!response)throw new MissingEvidence('final stage response missing');
           checkStageResponse(request.scenario.expectedReplies.at(-1),response.text);
-          return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation});
+          return finish({trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation});
         }
         const turnMessage=stageTurns[0];
         if(!turnMessage)throw new MissingEvidence('final stage message missing before text reply');
+        const step=request.scenario.expectedReplies[replies.length];
+        if(step.intent==='inherited'){
+          inheritedTurn(step,turnMessage.text);replies.push(inheritedRecord(step,turnMessage,replies.length));
+          return finish({trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation});
+        }
         const reply=textReply(request.scenario,turnMessage.text,replies.length);
         const record={index:replies.length,id:request.scenario.expectedReplies[replies.length].id,kind:'text',reply,question:turnMessage.text,shownLine:turnMessage.line,target:true,received:false};
         replies.push(record);fs.appendFileSync(sent,JSON.stringify({thread,prompt:reply})+'\n');
@@ -375,16 +427,17 @@ export async function runCodex(request){
         if(roleWindows(request.scenario.expectedWindows)&&lastFreeQuestion===lastMessage)throw new Error('repeated free question without progress');
         lastFreeQuestion=lastMessage;const answer=await runPersona(request,lastMessage,freeIndex++);rows=await turn(answer);freeReplies.push({question:lastMessage,answer,policy:'persona'});continue;
       }
-      return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation,boundary:'Codex has no pre-execution refusal: private home, disabled linear/apps, first read-only turn and post-turn direct-call audit. A violation may already have executed; report failed.'});
+      return finish({trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation,boundary:'Codex has no pre-execution refusal: private home, disabled linear/apps, first read-only turn and post-turn direct-call audit. A violation may already have executed; report failed.'});
     }
-    if(endLine)return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation,endLine,boundary:'Scenario ended at the terminal after its last expected answer.'});
+    if(endLine)return finish({trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation,endLine,boundary:'Scenario ended at the terminal after its last expected answer.'});
     throw new Error('scenario turn limit reached');
-  }catch(error){
+  }
+  function failed(error){
     if(request.readOnlyDump){
       for(const file of rolloutFiles(home))auditedTraces.add(file);
       if(!rollout&&thread)try{rollout=rolloutFor(home,thread);}catch{}
     }
-    return finishRun(request,{hostFailure:Boolean(error.hostFailure),trace:rollout??stdout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation:error instanceof MissingEvidence?null:violation??error.message,evidenceMissing:error instanceof MissingEvidence?error.message:null,boundary:'Codex cannot refuse MCP calls before execution; rollout audit failed.'});
+    return finish({hostFailure:Boolean(error.hostFailure),trace:rollout??stdout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation:error instanceof MissingEvidence?null:violation??error.message,evidenceMissing:error instanceof MissingEvidence?error.message:null,boundary:'Codex cannot refuse MCP calls before execution; rollout audit failed.'});
   }
 }
 

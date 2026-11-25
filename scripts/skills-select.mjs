@@ -47,13 +47,14 @@ export function selectScenarios({indexFile, worktree, base, head = 'HEAD', hosts
   for (const id of affected) {
     const stage = catalog.stages.get(id);
     for (const scenario of catalog.scenarios.values()) if (scenario.stage === id) {
-      const chain = scenario.id === stage.main ? stage.chain.map(s => `${s}/${catalog.stages.get(s).main}`) : [`${id}/${scenario.id}`];
+      const chain = scenario.chain ? [...scenario.chain, `${id}/${scenario.id}`] : scenario.id === stage.main ? stage.chain.map(s => `${s}/${catalog.stages.get(s).main}`) : [`${id}/${scenario.id}`];
       units.push({id:`${id}-${scenario.id}`,target:`${id}/${scenario.id}`,scenarios:chain,
-        ...(scenario.id === stage.main && stage.chainSeed ? {seed:stage.chainSeed} : {})});
+        ...(!scenario.chain && scenario.id === stage.main && stage.chainSeed ? {seed:stage.chainSeed} : {})});
       chain.forEach(key => covered.add(key));
     }
   }
-  for (const key of wanted.keys()) if (!covered.has(key)) units.push({id:key.replace('/','-'),target:key,scenarios:[key]});
+  // A neighbor with a declared chain never runs without its prerequisites.
+  for (const key of wanted.keys()) if (!covered.has(key)) units.push({id:key.replace('/','-'),target:key,scenarios:[...(catalog.scenarios.get(key)?.chain ?? []),key]});
   if(purpose==='release'&&catalog.index.release){
     const chain=catalog.index.release.stages.map(id=>`${id}/${catalog.stages.get(id).main}`);
     units.splice(0,units.length,{id:'release',target:chain[0],scenarios:chain});

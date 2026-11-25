@@ -2719,3 +2719,18 @@ for(const op of ['append','prepend'])test(`MONO-394 document patch ${op} adds it
  const changed=f.check();assert.equal(changed.status,'failed');assert.match(changed.reason,/mismatch.*brief\.content/);
  const empty=edgePatchFixture(t,op,'empty-text').check();assert.equal(empty.status,'unverified');assert.match(empty.reason,/unsupported document patch/);
 });
+
+// MONO-492: a continued stage's session belongs to the stage run, never to its
+// separate read-only records dump.
+for(const host of ['claude','codex'])test(`${host}: continued stage records dump runs without the stage session`,async t=>{
+ const f=fixture(t),authFile=path.join(f.dir,'auth.json');fs.writeFileSync(authFile,'{}');
+ const stage=path.join(f.dir,'continued-stage.jsonl');fs.writeFileSync(stage,JSON.stringify(host==='codex'?{type:'event_msg',payload:{type:'task_complete'}}:{type:'result',subtype:'success'})+'\n');
+ let collected;
+ await verifyTextScenarioRecords({run:{trace:stage},runRequest:{host,cwd:f.dir,packRoot:process.cwd(),authFile,timeoutMs:10000,idleMs:10,
+  binary:{command:process.execPath,args:[path.resolve('scripts/test-fixtures/skills-fixed-dump-host.mjs'),'complete']},
+  continueSession:{host,id:'parent-session',home:path.join(f.dir,'parent-home')},
+  context:{projectName:'fixed-run',skillPrefix:'mono'},mcpServers:{monotest:{url:'https://example.test/mcp'}},scenario:{expectedReplies:[]}},
+  scenario:{expectedRecords:[{type:'project'}]},project:{id:projectId,name:'fixed-run'},outputDir:path.join(f.dir,'records')},
+  async request=>{collected=await collectRecordDump(request);return collected;});
+ assert.equal(collected.status,'passed',collected.reason);assert.equal(collected.dumpComplete,true);
+});

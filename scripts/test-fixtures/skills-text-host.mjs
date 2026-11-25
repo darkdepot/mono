@@ -33,7 +33,9 @@ if(args[0]==='exec') {
  fs.writeFileSync(file,[...rows,...fresh].map(JSON.stringify).join('\n')+'\n');
  out({type:'thread.started',thread_id:'text-thread'});out({type:'turn.completed'});process.exit(0);
 }
-let started=false;
+// A resumed Claude session skips the workspace turn and keeps its session id.
+const resume=args.indexOf('--resume'),session=resume<0?'text-session':mode==='fork'?'forked-session':args[resume+1];
+let started=resume>=0;
 const input=readline.createInterface({input:process.stdin});
 input.on('line',line=>{
  const e=JSON.parse(line);if(e.type!=='user')return;
@@ -63,6 +65,6 @@ input.on('line',line=>{
   if(mode==='window')out({type:'assistant',message:{content:[{type:'tool_use',id:'bad',name:'AskUserQuestion',input:{questions:[]}}]}});
   out({type:'assistant',message:{content:[{type:'text',text}]}});
  }
- out({type:'result',subtype:'success'});
+ out({type:'result',subtype:'success',session_id:session});
  if(mode==='extra-response'&&e.message.content[0].text!=='Run text'&&e.message.content[0].text==='принимаю'){out({type:'assistant',message:{content:[{type:'text',text:'Start Research?'}]}});out({type:'result',subtype:'success'});}
 });input.on('close',()=>process.exit(0));

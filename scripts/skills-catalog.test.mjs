@@ -869,3 +869,74 @@ test('continue9 six-stage release can prepare each saved stage and reach Handoff
  }
  assert.equal(result.status,'passed');assert.deepEqual(executed,['idea','research','discovery','design','tech-evaluation','handoff']);assert.deepEqual(prepared,executed);
 });
+
+// MONO-492: production route. A same-session scenario hands its conversation to
+// the next non-Design stage; Design keeps its own session and returns to it.
+test('same-session continuation resumes the production conversation for the next stage',async t=>{
+ const f=fixture(t);
+ const edit=(key,change)=>{const file=path.join(f.catalogDir,key,'scenario.json');write(file,JSON.stringify({...json(file),...change},null,2)+'\n');};
+ edit('discovery/approve',{continuation:'same-session'});edit('tech-evaluation/approve',{continuation:'same-session'});
+ // forward-chain shape: Discovery, Design in its own session, then Tech Evaluation and Handoff in the parent.
+ edit('handoff/correction',{chain:['discovery/approve','design/approve','tech-evaluation/approve']});
+ for(const stage of ['design','tech-evaluation','handoff'])write(path.join(f.dir,`skills/${stage}/SKILL.md`),'changed');
+ f.commit();
+ const selection=f.select();
+ assert.deepEqual(selection.units.find(u=>u.id==='handoff-correction').scenarios,['discovery/approve','design/approve','tech-evaluation/approve','handoff/correction']);
+ const calls=[];const result=await runSuite(suiteRequest(f,selection,{paper:{fileIds:['fixture','second-fixture'],command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'design/memory.md')}),async r=>{
+  calls.push(r);write(r.context.projectFile,JSON.stringify(runProject(r)));
+  return {...passedStage(r),session:r.continueSession??{host:r.host,id:`${path.basename(r.outputDir)}-session`,home:path.join(f.dir,'home')}};
+ });
+ assert.equal(result.status,'passed',JSON.stringify(result.items.filter(i=>i.status!=='passed')));
+ const call=(unit,host,position)=>calls.find(r=>path.basename(r.outputDir)===`${unit}-${host}-${position}`);
+ for(const host of ['claude','codex']){
+  const parent=`handoff-correction-${host}-0-session`;
+  assert.match(call('handoff-correction',host,0).scenario.prompt,/после отдельной сессии Design владелец вернётся в этот разговор/);
+  assert.equal(call('handoff-correction',host,1).context.entryStage,'design');
+  assert.equal(call('handoff-correction',host,1).continueSession,undefined,'Design opens its own session');
+  assert.equal(call('handoff-correction',host,2).continueSession.id,parent,'the parent continues after Design');
+  assert.match(call('handoff-correction',host,2).scenario.prompt,/родительскую сессию после отдельной сессии Design/);
+  assert.equal(call('handoff-correction',host,3).continueSession.id,parent,'Handoff stays in the parent conversation');
+  assert.match(call('handoff-correction',host,3).scenario.prompt,/Это тот же разговор владельца/);
+  assert.equal(call('handoff-correction',host,3).seed,undefined);
+  // tech-evaluation-approve: discovery declares, so Tech Evaluation and Handoff share its conversation.
+  assert.equal(call('tech-evaluation-approve',host,1).continueSession.id,`tech-evaluation-approve-${host}-0-session`);
+  assert.match(call('tech-evaluation-approve',host,1).scenario.prompt,/в этом же разговоре: после вызова закончи ход/);
+  assert.equal(call('tech-evaluation-approve',host,2).continueSession.id,`tech-evaluation-approve-${host}-0-session`);
+ }
+ for(const r of calls.filter(r=>!r.continueSession))assert.match(r.scenario.prompt,/Это отдельная сессия владельца/);
+});
+test('Design never owns a continued conversation; scenario chains keep pipeline order',t=>{
+ const f=fixture(t),index=path.join(f.catalogDir,'index.json');
+ const edit=(key,change)=>{const file=path.join(f.catalogDir,key,'scenario.json');const before=fs.readFileSync(file,'utf8');write(file,JSON.stringify({...json(file),...change},null,2)+'\n');return ()=>write(file,before);};
+ let undo=edit('design/approve',{continuation:'same-session'});
+ assert.throws(()=>loadCatalog(index),/invalid continuation design\/approve/);undo();
+ undo=edit('discovery/approve',{continuation:'one-session'});
+ assert.throws(()=>loadCatalog(index),/invalid continuation/);undo();
+ undo=edit('handoff/correction',{chain:['tech-evaluation/approve','discovery/approve']});
+ assert.throws(()=>loadCatalog(index),/invalid scenario chain handoff\/correction/);undo();
+ undo=edit('handoff/correction',{chain:['discovery/missing']});
+ assert.throws(()=>loadCatalog(index),/invalid scenario chain/);undo();
+ assert.doesNotThrow(()=>loadCatalog(index));
+});
+test('an explicit scenario chain replaces the legacy stage chain seed',t=>{
+ const f=fixture(t),file=path.join(f.catalogDir,'tech-evaluation/approve/scenario.json');
+ write(file,JSON.stringify({...json(file),chain:['idea/approve','research/approve','discovery/approve']},null,2)+'\n');
+ write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed');f.commit();
+ const unit=f.select().units.find(u=>u.id==='tech-evaluation-approve');
+ assert.deepEqual(unit.scenarios,['idea/approve','research/approve','discovery/approve','tech-evaluation/approve']);
+ assert.equal(unit.seed,undefined,'the legacy chainSeed belongs only to the legacy stage chain');
+});
+test('a neighbor scenario with an explicit chain is selected with its prerequisites',t=>{
+ const f=fixture(t),file=path.join(f.catalogDir,'handoff/approve/scenario.json');
+ write(file,JSON.stringify({...json(file),chain:['discovery/approve','design/approve','tech-evaluation/approve']},null,2)+'\n');
+ // As in the production index, the Design main chain ends at Design, so Handoff is only a neighbor.
+ const indexFile=path.join(f.catalogDir,'index.json'),index=json(indexFile);
+ index.stages.find(s=>s.id==='design').chain=['discovery','design'];write(indexFile,JSON.stringify(index,null,2)+'\n');
+ const base=f.commit();write(path.join(f.dir,'skills/design/SKILL.md'),'changed');
+ const selection=selectScenarios({indexFile:path.join(f.catalogDir,'index.json'),worktree:f.dir,base,head:f.commit()});
+ assert.deepEqual(selection.affected,['design']);
+ const units=selection.units.filter(u=>u.scenarios.at(-1)==='handoff/approve');
+ assert.ok(units.length);
+ for(const unit of units)if(unit.scenarios.length===1||unit.target==='handoff/approve')assert.deepEqual(unit.scenarios,['discovery/approve','design/approve','tech-evaluation/approve','handoff/approve']);
+ assert.ok(!selection.units.some(u=>u.scenarios.length===1&&u.scenarios[0]==='handoff/approve'),'never the chained scenario alone');
+});

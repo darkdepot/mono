@@ -747,6 +747,9 @@ export function verifyRecords(request){
    if(!dump&&(request.expectedReplies||source.expectedReplies)&&data.audit.calls.some(c=>isOwnerWindow(c.name)))throw new Error('stage called a window in text scenario');
    if(data.expectedReplies) {
     data.exchanges=textExchanges(source.host,data.rows,data.expectedReplies,{startLine:source.stageStartLine,idleContinuation:source.idleContinuation});
+    // Records under an inherited step bind to a recorded consent, which this
+    // verifier cannot check yet; it fails closed instead of binding a reply.
+    if(data.exchanges.some(e=>e.inherited))throw new Error('inherited step records have no consent binding yet');
    }
    return data;
   };
@@ -1058,7 +1061,7 @@ export async function collectRecordDump(request,execute=runScenario){
  const attempts=[];
  for(let attempt=0;attempt<2;attempt++){
   const outputDir=attempt?request.outputDir+'-retry-1':request.outputDir,dumpDir=path.join(outputDir,'dump');
-  const result=await execute({...request,outputDir,seed:undefined,writableRoots:[outputDir],readOnlyDump:true,recordDump:{dumpDir,project:request.project,projectName:request.projectName},workspaceProof:{tool:'mcp__monotest__get_workspace',input:{},path:['name'],equals:'Mono Test'},
+  const result=await execute({...request,outputDir,seed:undefined,continueSession:undefined,writableRoots:[outputDir],readOnlyDump:true,recordDump:{dumpDir,project:request.project,projectName:request.projectName},workspaceProof:{tool:'mcp__monotest__get_workspace',input:{},path:['name'],equals:'Mono Test'},
    scenario:{prompt:dumpPrompt({project:request.project,projectName:request.projectName,dumpDir}),brief:'Fixed read-only monotest dump',windows:[],expectedWindows:[]}});
   attempts.push({...result,outputDir,dumpDir});
   const violation=runViolations([result.trace,...(result.auditedTraces??[]).filter(trace=>trace!==result.trace)].filter(Boolean).map(trace=>({host:request.host,trace})),{...request.recordRules,readOnlyDump:true});
