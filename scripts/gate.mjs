@@ -166,7 +166,9 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest, retr
     notReviewedCause: streak.length ? (streak.every(receipt => notReviewedCause(receipt) === 'environment') ? 'environment' : 'review') : null,
     notReviewedCauses: [...new Set(causes)],
     // MONO-488: what in the work kept the streak's rounds from happening, and the last reason for a line without a known cause.
-    notReviewedWork: [...new Set(streak.flatMap(receipt => receiptWork(receipt.review)))], notReviewedReason: streak.at(-1)?.review.reason ?? null,
+    // The latest round's reason stays on the line whenever that round has no label, whatever earlier rounds named.
+    notReviewedWork: [...new Set(streak.flatMap(receipt => receiptWork(receipt.review)))],
+    notReviewedReason: streak.length && !receiptWork(streak.at(-1).review).length ? streak.at(-1).review.reason ?? null : null,
     reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,
     record: completed.findLast(receipt => receipt.base === base)?.review.record ?? null };
 }
@@ -368,8 +370,8 @@ const limitRefusal = (limit, host = false, strict = limit >= ROUND_LIMIT) => !st
 const notReviewedTwice = (cause, causes = [], work = []) => cause === 'environment'
   ? `not-reviewed twice in a row on this head (environment${causes.length ? `: ${causes.join(', ')}` : ''}); restore the environment (host awake, load down, network, CLI login) and resume the worker with reviewRetry, without a task change`
   : `not-reviewed twice in a row on this head (review${work.length ? `: ${work.join(', ')}` : ''}); ${work.includes(LOGIN_CAUSE) ? 'check that both review CLIs are logged in, then ' : ''}resume with a task change`;
-const blockedTwice = prior => `blocked: ${notReviewedTwice(prior.notReviewedCause, prior.notReviewedCauses, prior.notReviewedWork)}` +
-  (prior.notReviewedCause !== 'environment' && !prior.notReviewedWork?.length && prior.notReviewedReason ? `: ${clip(prior.notReviewedReason, 300)}` : '');
+export const blockedTwice = prior => `blocked: ${notReviewedTwice(prior.notReviewedCause, prior.notReviewedCauses, prior.notReviewedWork)}` +
+  (prior.notReviewedCause !== 'environment' && prior.notReviewedReason ? `: ${clip(prior.notReviewedReason, 300)}` : '');
 // MONO-488: only the exact messages behind each cause are mapped; any other reason gets no label (the line keeps the raw reason).
 const LOGIN_CAUSE = 'CLI login';
 const WORK_CAUSES = [
@@ -378,16 +380,21 @@ const WORK_CAUSES = [
   [/^reviewer\/checker must use different families/, 'a single model family for reviewer and checker'],
   [/^no readable text for /, 'unreadable or binary files'],
   [/^role process (?:could not start|input failed)/, 'a review CLI could not start'],
+  [/^review interrupted/, 'review interrupted'],
   [/^(?:native subscription login not confirmed|Claude subscription login not confirmed|Codex requires ChatGPT subscription login)/, LOGIN_CAUSE],
 ];
 const reasonCause = reason => WORK_CAUSES.find(([pattern]) => pattern.test(String(reason ?? '')))?.[1] ?? null;
 const failureCause = failure => failure.cause === 'login' ? LOGIN_CAUSE : failure.cause && failure.cause !== 'other' ? failure.cause : reasonCause(failure.reason);
 // The causes of one not-reviewed round, from this head's and round's failure records only (the stage record keeps older ones):
 // the failed role's attempts when a role failed, otherwise the round's own stop, and unreadable files.
-function roundWork(record, head, number) {
+export function roundWork(record, head, number) {
   const mine = (record.failures ?? []).filter(failure => failure?.head === head && failure.round === number);
-  const stop = mine.findLast(failure => !failure.role), role = stop && mine.findLast(failure => failure.role && failure.reason === stop.reason)?.role;
-  const sources = role ? mine.filter(failure => failure.role === role).slice(-2) : stop ? [stop] : [];
+  // The terminal call's attempts are recorded back to back, attempt 1 first: walk back from its last attempt to its
+  // attempt 1, never into an earlier call's failures (a pass whose retry recovered).
+  const stop = mine.findLast(failure => !failure.role), at = stop ? mine.findLastIndex(failure => failure.role && failure.reason === stop.reason) : -1;
+  let first = at;
+  while (first > 0 && mine[first].attempt > 1 && mine[first - 1].role === mine[at].role && mine[first - 1].attempt === mine[first].attempt - 1) first--;
+  const sources = at >= 0 ? mine.slice(first, at + 1) : stop ? [stop] : [];
   const work = sources.map(failureCause);
   if (record.unreviewedFiles?.length) work.push('unreadable or binary files');
   return [...new Set(work.filter(Boolean))];

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { evaluateShip, validatePreflight, advanceEvidence, botRemarkDigest, reviewHistory, roundOutcome, reviewContext, roundLimit, ROUND_LIMIT, extraRoundRefusal, extraRoundGranted } from "./gate.mjs";
+import { evaluateShip, validatePreflight, advanceEvidence, botRemarkDigest, reviewHistory, roundWork, blockedTwice, roundOutcome, reviewContext, roundLimit, ROUND_LIMIT, extraRoundRefusal, extraRoundGranted } from "./gate.mjs";
 import { REVIEW_PRODUCER, digest } from "./runtime.mjs";
 import { installReviewClis, setReview, reviewCalls, reviewFinding, reviewVerdict } from "./test-fixtures/review-clis.mjs";
 import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
@@ -230,6 +230,21 @@ test("review rounds are counted per task attempt from receipt history", () => {
     { ...three[2], pins: { file: '/root/dispatch/MONO-1-a2/pins.json', digest: 'd' } }, { producer: REVIEW_PRODUCER, pins }, null];
   assert.equal(read(foreign).spent, 0, 'old receipts, other tasks and other attempts are never counted');
 });
+test("MONO-488: a round's work causes come only from the call that ended it", () => {
+  const head = 'a'.repeat(40), on = extra => ({ head, round: 1, ...extra });
+  const interrupted = 'review interrupted; role process group stopped';
+  // A login failure recovered on the retry of an earlier pass, then the next pass interrupted on its first attempt.
+  const recovered = [on({ role: 'code-review', attempt: 1, reason: 'Claude login expired; login refresh: ok', cause: 'login' }),
+    on({ role: 'code-review', attempt: 1, reason: interrupted, cause: 'other' }), on({ reason: interrupted, interrupted: true })];
+  assert.deepEqual(roundWork({ failures: recovered }, head, 1), ['review interrupted']);
+  // A call that failed both attempts names both, and nothing of an earlier recovered pass.
+  const both = [on({ role: 'code-review', attempt: 1, reason: 'Claude login expired', cause: 'login' }),
+    on({ role: 'code-review', attempt: 1, reason: 'role failed (timeout); no response admitted', cause: 'timeout' }),
+    on({ role: 'code-review', attempt: 2, reason: 'Codex did not complete', cause: 'other' }), on({ reason: 'Codex did not complete' })];
+  assert.deepEqual(roundWork({ failures: both }, head, 1), ['timeout', 'malformed or incomplete reviewer answer']);
+  assert.deepEqual(roundWork({ failures: [on({ reason: 'incomplete changed-file coverage after focused pass' })], unreviewedFiles: ['a.bin'] }, head, 1),
+    ['incomplete coverage of the changed files', 'unreadable or binary files']);
+});
 test("a review retry clears only an environmental not-reviewed streak recorded before it (MONO-483)", () => {
   const pins = { file: '/root/dispatch/MONO-1-a1/pins.json', digest: 'd' }, base = 'b'.repeat(40), contractDigest = 'c'.repeat(64), at = '1'.repeat(40);
   let clock = 0;
@@ -255,6 +270,12 @@ test("a review retry clears only an environmental not-reviewed streak recorded b
   const named = [receipt('not-reviewed', 'review', { workCauses: ['malformed or incomplete reviewer answer'] }),
     receipt('not-reviewed', 'review', { reason: 'incomplete changed-file coverage after focused pass' })];
   assert.deepEqual(read(named).notReviewedWork, ['malformed or incomplete reviewer answer', 'incomplete coverage of the changed files']);
+  // MONO-488 review: a mixed streak keeps its labels and the latest unlabeled reason.
+  const mixedWork = [receipt('not-reviewed', 'review', { workCauses: ['malformed or incomplete reviewer answer'], reason: 'Codex did not complete' }),
+    receipt('not-reviewed', 'review', { workCauses: [], reason: 'role failed (output limit); no response admitted' })];
+  assert.equal(blockedTwice(read(mixedWork)), 'blocked: not-reviewed twice in a row on this head (review: malformed or incomplete reviewer answer); resume with a task change: role failed (output limit); no response admitted');
+  assert.equal(blockedTwice(read([...mixedWork].reverse().map((item, index) => ({ ...item, recordedAt: `2026-11-1${index}T00:00:00.000Z` })))),
+    'blocked: not-reviewed twice in a row on this head (review: malformed or incomplete reviewer answer); resume with a task change', 'a labelled latest round needs no raw reason');
   const mixed = [receipt('not-reviewed', 'environment'), receipt('not-reviewed', 'review')];
   assert.deepEqual([read(mixed, [retry(1)]).notReviewed, read(mixed).notReviewedCause], [2, 'review'], 'one work cause in the streak keeps it');
   const legacy = [receipt('not-reviewed', null), receipt('not-reviewed', null)];
