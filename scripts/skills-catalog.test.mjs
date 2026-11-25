@@ -913,6 +913,15 @@ test('same-session continuation resumes the production conversation for the next
  }
  for(const r of calls.filter(r=>!r.continueSession))assert.match(r.scenario.prompt,/Это отдельная сессия владельца/);
 });
+// MONO-485: after Design the parent follows the Design record's next=; the forward
+// chain therefore declares a medium PRD so that next=tech-evaluation.
+test('forward scenarios declare the medium route with Design and Tech Evaluation',()=>{
+ const catalog=loadCatalog(path.join(source,'index.json'));
+ const parent=catalog.scenarios.get('discovery/forward-parent'),grant=catalog.scenarios.get('design/forward-grant');
+ assert.match(parent.routeHint,/design=needed/);assert.match(parent.routeHint,/«средний»/);assert.match(parent.routeHint,/Tech Evaluation/);
+ assert.equal(grant.next,'tech-evaluation');assert.match(grant.routeHint,/Tech Evaluation/);
+ for(const key of ['tech-evaluation/forward-inherited','tech-evaluation/forward-stop','handoff/forward-chain'])assert.deepEqual(catalog.scenarios.get(key).chain.slice(0,2),['discovery/forward-parent','design/forward-grant']);
+});
 // MONO-485: a chained stage verifies its records with every earlier passed text
 // stage of the same chain as forward evidence (the Design session included).
 test('each chained stage receives the earlier passed stages as forward evidence',async t=>{

@@ -2738,7 +2738,7 @@ for(const host of ['claude','codex'])test(`${host}: continued stage records dump
 // MONO-485: a record under an inherited step binds to the owner's forward consent,
 // recorded earlier in the same chain and bound there to the actual owner reply.
 const forwardWords='утверждаю; дальше готовь, проверяй и передавай в работу';
-async function forwardFixture(t,{kind='start',scope='start',issues=3,words=forwardWords,grantProject,grantPrdUpdatedAt,grantDesign,grantStep={},between,revoked=false,consentRef,consentLine=true,anchoredStep=false,grantIn='prd'}={}){
+async function forwardFixture(t,{kind='start',scope='start',issues=3,words=forwardWords,grantProject,grantPrdUpdatedAt,grantDesign,grantStep={},between,revoked=false,consentRef,consentLine=true,anchoredStep=false,grantIn='prd',prdDesignNeeded=false,techBefore}={}){
  grantDesign??=grantIn==='design'?'self':'none';
  const {createHash}=await import('node:crypto'),{unwrap}=await import('./skills-proof.mjs'),f=textPrdFixture(t),id=f.request.project.id,sha=value=>createHash('sha256').update(value).digest('hex');
  const assistant=text=>({type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}}),user=text=>({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}}),terminal={type:'event_msg',payload:{type:'task_complete'}};
@@ -2746,7 +2746,10 @@ async function forwardFixture(t,{kind='start',scope='start',issues=3,words=forwa
  const commentsFile=path.join(f.request.dumpDir,'comments-1.json'),comments=unwrap(JSON.parse(fs.readFileSync(commentsFile)));
  const documentsFile=path.join(f.request.dumpDir,'documents-1.json'),documents=unwrap(JSON.parse(fs.readFileSync(documentsFile)));
  // The grant lives in the approval comment of the stage where the owner said the words.
- const prd=comments.comments.find(c=>c.body.includes('mono-prd: approved')),prdLine=prd.body.match(/mono-prd: approved [^\n]+/)[0];
+ const prd=comments.comments.find(c=>c.body.includes('mono-prd: approved'));
+ // A PRD-time grant is valid only on the route without Design (review round 1).
+ const prdLine=prd.body.match(/mono-prd: approved [^\n]+/)[0].replace('design=needed next=design',grantIn==='prd'&&!prdDesignNeeded?'design=not-needed next=tech-evaluation':'design=needed next=design');
+ if(grantIn!=='prd')prd.body=prd.body.replace(/mono-prd: approved [^\n]+/,prdLine);
  const [,document,updatedAt]=prdLine.match(/document=(\S+) updatedAt=(\S+)/);
  const grantLine='mono-forward: granted project='+(grantProject??id)+' scope='+scope+' prd='+document+' prd-updatedAt='+(grantPrdUpdatedAt??updatedAt)+' design='+grantDesign+' by=owner';
  // In the live chain the words come at Design: the grant sits in the mono-design comment as design=self.
@@ -2773,7 +2776,10 @@ async function forwardFixture(t,{kind='start',scope='start',issues=3,words=forwa
   documents.documents.unshift(spec);fs.writeFileSync(documentsFile,JSON.stringify(documents));fs.writeFileSync(path.join(f.request.dumpDir,'documents',spec.id+'.json'),JSON.stringify(spec));
  }
  const revoke={id:'00000000-0000-4000-8000-000000000093',createdAt:'2026-11-02T03:00:00Z',updatedAt:'2026-11-02T03:00:00Z',body:'```text\nmono-forward: revoked project='+id+' consent='+grantRow.id+'\n```\n\nПричина: владелец поправил пакет.'};
- comments.comments.unshift(...[record,packet,design,revoked?revoke:null].filter(Boolean));fs.writeFileSync(commentsFile,JSON.stringify(comments));
+ // An earlier Tech approval on the given PRD version (PC-016 compares it with the consent).
+ const techPage='Источник одной колонкой.';
+ const tech=techBefore?{id:'00000000-0000-4000-8000-000000000095',createdAt:'2026-11-02T03:40:00Z',updatedAt:'2026-11-02T03:40:00Z',body:'```text\nmono-tech: approved project='+id+' prd='+document+' prd-updatedAt='+techBefore+' spec=00000000-0000-4000-8000-0000000000e3 spec-sha256='+'c'.repeat(64)+' page-sha256='+sha(techPage+'\n')+' by=owner design='+(design?design.id:'none')+'\n```\n\n```mono-tech-page\n'+techPage+'\n```\n\nВладелец: ответил «утверждаю»'}:null;
+ comments.comments.unshift(...[record,packet,tech,design,revoked?revoke:null].filter(Boolean));fs.writeFileSync(commentsFile,JSON.stringify(comments));
  const dumpRows=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse);
  for(const row of dumpRows){const item=row.payload?.item;if(item?.tool==='list_comments'&&item.arguments.projectId===id)item.result=comments;if(item?.tool==='list_documents')item.result=documents;}
  if(spec){const read=dumpRows.find(row=>row.payload?.item?.tool==='get_document');dumpRows.splice(dumpRows.length-1,0,{...read,payload:{...read.payload,item:{...read.payload.item,id:'spec-read',arguments:{id:spec.id},result:spec}}});}
@@ -2813,6 +2819,21 @@ test('MONO-485 an anchored inherited Tech step under a Design grant records and 
  assert.deepEqual(r.starts.map(s=>[s.replyId,s.stage,s.kind]),[['tech-forward','handoff','intercepted']]);
  assert.equal(r.gateResults.find(g=>g.command==='tech')?.result.ok,true,'the tech gate sees the same Design');
 });
+// Review round 1.
+test('MONO-485 scope=tech does not cover a Handoff start without an owner answer',async t=>{
+ const r=(await forwardFixture(t,{kind:'tech',grantIn:'design',anchoredStep:true,scope:'tech'})).check();
+ assert.equal(r.status,'failed',JSON.stringify(r));assert.match(r.reason,/consent scope does not cover the Handoff start/);
+ const ok=(await forwardFixture(t,{kind:'tech',grantIn:'design',anchoredStep:true,scope:'package'})).check();
+ assert.equal(ok.requiredChecks?.find(c=>c.id==='records')?.status,'passed',JSON.stringify(ok));
+});
+test('MONO-485 a PRD-time grant with Design still required is refused at use',async t=>{
+ const r=(await forwardFixture(t,{kind:'tech',prdDesignNeeded:true})).check();
+ assert.equal(r.status,'failed',JSON.stringify(r));assert.match(r.reason,/consent at PRD approval needs design=not-needed/);
+});
+test('MONO-485 a start under consent on PRD v2 is refused while Tech approved PRD v1',async t=>{
+ const r=(await forwardFixture(t,{grantIn:'design',techBefore:'2026-11-01T00:00:00Z'})).check();
+ assert.equal(r.status,'failed',JSON.stringify(r));assert.match(r.reason,/consent PRD version differs/);
+});
 test('MONO-485 a Design grant must name itself or the latest Design',async t=>{
  const r=(await forwardFixture(t,{kind:'tech',grantIn:'design',grantDesign:'none'})).check();
  assert.equal(r.status,'failed',JSON.stringify(r));assert.match(r.reason,/consent Design differs/);
@@ -2847,20 +2868,48 @@ for(const [label,options,reason] of [
 });
 // The stage that hears the forward words writes the grant in its own approval record,
 // and only for a reply the scenario declares as forward words.
-for(const [declared,granted,valid] of [['start',true,true],[undefined,true,false],['start',false,false],['package',true,false]])test(`MONO-485 an approval record carries a consent only for declared forward words (declared=${declared}, granted=${granted})`,t=>{
+// The stage that hears the forward words writes the grant in its own approval record,
+// only for a reply the scenario declares as forward words, complete and bound to this
+// record (review round 1). A PRD-time grant is valid only with design=not-needed.
+const fullGrant=(p,d,u)=>({project:p,scope:'start',prd:d,'prd-updatedAt':u,design:'none',by:'owner'});
+function prdGrantFixture(t,{declared='start',granted=true,mutate=g=>g,route='design=not-needed next=tech-evaluation'}={}){
  const f=textPrdFixture(t);if(declared)f.request.expectedReplies[0].forward=declared;
  const grant=value=>{
   if(typeof value==='string'){
    try{return JSON.stringify(grant(JSON.parse(value)));}catch{}
-   return granted?value.replace(/mono-prd: approved project=(\S+) document=(\S+) updatedAt=(\S+)[^\n]*/g,(line,p,d,u)=>line+'\nmono-forward: granted project='+p+' scope=start prd='+d+' prd-updatedAt='+u+' design=none by=owner'):value;
+   return value.replace(/(mono-prd: approved project=(\S+) document=(\S+) updatedAt=(\S+)) design=needed next=design( by=owner)/g,(line,head,p,d,u,by)=>head+' '+route+by+(granted?'\nmono-forward: granted '+Object.entries(mutate(fullGrant(p,d,u))).filter(([,v])=>v!==undefined).map(([k,v])=>k+'='+v).join(' '):''));
   }
   if(Array.isArray(value))return value.map(grant);
   return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,grant(v)])):value;
  };
  for(const file of [f.request.trace,f.request.dumpTrace])fs.writeFileSync(file,fs.readFileSync(file,'utf8').trim().split('\n').map(row=>JSON.stringify(grant(JSON.parse(row)))).join('\n')+'\n');
  const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(file.endsWith('.json'))fs.writeFileSync(file,JSON.stringify(grant(JSON.parse(fs.readFileSync(file)))));}};walk(f.request.dumpDir);
- const r=f.check();
+ return f;
+}
+for(const [declared,granted,valid] of [['start',true,true],[undefined,true,false],['start',false,false],['package',true,false]])test(`MONO-485 an approval record carries a consent only for declared forward words (declared=${declared}, granted=${granted})`,t=>{
+ const r=prdGrantFixture(t,{declared:declared??null,granted}).check();
  if(valid)assert.equal(r.status,'passed',r.reason);else{assert.equal(r.status,'failed',JSON.stringify(r));assert.match(r.reason,/forward consent differs from the owner reply/);}
+});
+for(const [label,mutate,reason] of [
+ ['no project',g=>({...g,project:undefined}),/invalid forward consent record/],
+ ['other project',g=>({...g,project:'00000000-0000-4000-8000-0000000000ff'}),/consent belongs to another project/],
+ ['no prd',g=>({...g,prd:undefined}),/invalid forward consent record/],
+ ['other prd',g=>({...g,prd:'00000000-0000-4000-8000-0000000000e9'}),/consent PRD version differs/],
+ ['no prd-updatedAt',g=>({...g,'prd-updatedAt':undefined}),/invalid forward consent record/],
+ ['other prd-updatedAt',g=>({...g,'prd-updatedAt':'2026-01-01T00:00:00Z'}),/consent PRD version differs/],
+ ['no design',g=>({...g,design:undefined}),/invalid forward consent record/],
+ ['design=self at PRD',g=>({...g,design:'self'}),/consent Design differs/],
+ ['no scope',g=>({...g,scope:undefined}),/invalid forward consent record|forward consent differs/],
+ ['unknown scope',g=>({...g,scope:'all'}),/invalid forward consent record|forward consent differs/],
+ ['no by',g=>({...g,by:undefined}),/invalid forward consent record|forward consent differs/],
+ ['by=orchestrator',g=>({...g,by:'orchestrator'}),/invalid forward consent record|forward consent differs/],
+ ['extra field',g=>({...g,extra:'x'}),/invalid forward consent record/],
+])test(`MONO-485 an incomplete or foreign grant is refused when written: ${label}`,t=>{
+ const r=prdGrantFixture(t,{mutate}).check();assert.equal(r.status,'failed',JSON.stringify(r));assert.match(r.reason,reason);
+});
+test('MONO-485 a grant at PRD approval is refused while Design is still required',t=>{
+ const r=prdGrantFixture(t,{route:'design=needed next=design'}).check();
+ assert.equal(r.status,'failed',JSON.stringify(r));assert.match(r.reason,/consent at PRD approval needs design=not-needed/);
 });
 test('MONO-485 forward words and continuation marks validate only where they mean something',async()=>{
  const {validateReplies}=await import('./skills-owner.mjs');
