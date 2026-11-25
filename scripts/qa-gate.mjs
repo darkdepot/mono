@@ -22,13 +22,13 @@ const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(
     ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}` : JSON.stringify(value);
 
 // MONO-484: carried QA items are bound to the effective recipe, not only to its source category.
-// Gate switches (beforeMerge, earlyStart) are not part of the recipe.
+// Gate switches (beforeMerge, earlyStart, screenCheck) are not part of the recipe.
 export function qaRecipeDigest(config) {
   const source = qaRecipeSource(config);
   if (!source) throw new Error('QA: no recipe to fingerprint');
   let recipe;
   if (source === 'config') {
-    const { beforeMerge, earlyStart, ...rest } = config.qa;
+    const { beforeMerge, earlyStart, screenCheck, ...rest } = config.qa;
     recipe = canonical(rest);
   } else {
     const lines = fs.readFileSync(registry, 'utf8').split('\n');

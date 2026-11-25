@@ -418,6 +418,15 @@ head, где их видели (блок `recheck` и `purpose: change` в ож�
 проходит с коротким сертификатом и причиной; продукт без рецепта продолжает
 прежний путь с записью «тестировщик не подключён».
 
+Сверка экранов до ревью: с `qa.screenCheck: true` (по умолчанию выключено, включает
+владелец по продукту) задача с макетом в снимке получает пин `screenCheck`. На голове
+первого запроса сбора оркестратор на хосте прогоняет `mono:qa` в `given-version` только по
+пунктам PNG и вкуса; первый круг ревью ждёт результат этой головы, не тратя круг.
+Расхождения уходят исполнителю одним «Изменением задачи», исправленная голова
+сверяется снова. Исполнитель экраны не снимает, новых стоянок у него нет; видимость
+у него `unverified`, пока нет отчёта хоста о той же голове. Сверка и QA делят один
+стенд, QA после Ship остаётся полным: [Screen check before review](references/orchestration-delivery.md#screen-check-before-review).
+
 Последнюю задачу определяет состояние PR в GitHub: задача закрывается при
 вливании своего PR. После последнего merge финальная
 проверка по-прежнему нужна перед установкой. Сохранённый finalIssue не заменяет
@@ -925,7 +934,8 @@ count. Round 1 and the first round after a task change read the whole change;
 later rounds read the fixes and open findings. After
 the limit the orchestrator splits the Issue or changes approach in a new attempt.
 Refusals are receipts too and reach the worker as a `gate preflight: fail:`
-line. The orchestrator approves nothing between rounds and after merge decides
+line. With pin `screenCheck` the attempt's first round waits for the host's
+screen check of the same head; waiting and mismatches spend no round. The orchestrator approves nothing between rounds and after merge decides
 which candidates from the receipt's list become Issues (every `must-file` one does; the task's Linear writer files them): [review rounds](references/orchestration-delivery.md#review-rounds),
 worker [round rule](references/review-admission.md).
 

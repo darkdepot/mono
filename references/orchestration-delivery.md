@@ -248,7 +248,8 @@ changes it cannot run from its sandbox: the orchestrator runs them in the test
 Linear workspace after the first code report, before review. No separate gate:
 Preflight checks the proof in the code report before its first collection, and
 pre-ship review (`mono:review`) reports a missing run; the collection's review
-round never sees the code report.
+round never sees the code report. Screens of a task with a mockup: [Screen check
+before review](#screen-check-before-review).
 
 Parks:
 - needs-decision, `review not-converged after round 3` or `review round limit
@@ -273,6 +274,44 @@ list. A round takes up to 25 minutes on a large risky change; every reviewer rol
 has its own time limit, so a hung CLI ends the round instead of a window; a gate
 stuck outside them (a blocking Git read) is stopped after a fixed two-hour safety
 ceiling, also when its collector died, and the round fails.
+
+### Screen check before review
+
+A product whose recipe sets `screenCheck: true` (off by default; it builds and
+runs worker code on the host before any review) gets its screens compared with
+the approved mockups before the first review round. Dispatch pins `screenCheck`
+from BASE, like `hostVerification`, only when the task snapshot holds
+`design.json`; the worker never takes screenshots and gets no new park.
+
+- Who and when: the orchestrator on the host runs `mono:qa` in `given-version`
+  (never gate-eligible) on the head of the attempt's first preflight collection
+  request: the first point where everything in the code report is committed and
+  pushed. Never start it from the code report alone; it may describe uncommitted
+  edits. The collector log line `screen check waiting: <head>` is the trigger.
+- What: only the PNG items for the snapshot's artboards and the taste rules
+  from «Снимок контекста».
+- Order: while the attempt's receipt history has no spent round, the collector
+  keeps the round in flight without a gate launch until
+  `<evidenceRoot>/screen-check/<head>.json` exists for that head (the worker
+  keeps waiting on `wait-round`; no collection retry is used, nothing counts
+  toward `not-reviewed`). Only the host writes it, outside every worker grant:
+  `node '<pack-root>/scripts/orchestrator/qa.mjs' screen-check --pins
+  <dispatch/KEY-aN/pins.json> --head <SHA> --outcome passed|mismatches --report
+  <link>`. A result for another head does not count. The gate checks it again:
+  no result refuses with «no result for this head yet», `mismatches` refuses
+  with the report link; neither spends a round or runs the reviewer or host
+  verification. `passed` lets the first round run. From the first spent round
+  on, task changes included, the collection no longer waits.
+- Result: send the mismatches to the worker as one «Изменение задачи» before the
+  first round; the fixed head is checked again before its first round. On
+  `passed` post the report (head, artboards, verdict) as an Issue comment.
+- Queue: the screen check and QA passes share one stand and simulator; at most
+  one of them runs on the host at a time, in one queue by request time, with no
+  priority.
+- Proof: the report names its head. The worker and Preflight count it as the
+  visibility check only for the same head; otherwise the item stays
+  `unverified` («сверка экранов на хосте»).
+- QA after Ship is unchanged and checks the full list again.
 
 ## Delivery Write Barriers
 

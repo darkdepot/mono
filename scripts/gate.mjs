@@ -9,7 +9,7 @@ import { atomicJson, canonical, digest, readJson, flags, identity, isMain, proce
 import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
-import { hostRunMarker, hostRunCheckout, removeHostCheckout, evidenceSnapshot, evidenceTouched, stopHostGroup } from './review-rounds.mjs';
+import { hostRunMarker, hostRunCheckout, removeHostCheckout, evidenceSnapshot, evidenceTouched, stopHostGroup, screenCheckHold } from './review-rounds.mjs';
 
 export { reviewEnvironment } from "./model-environment.mjs";
 
@@ -504,8 +504,11 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     // New PR remarks on the same head are not covered by the stored round: they need a round of their own.
     if (prior.reuse && canonical(prior.reuse.prRemarks ?? null) !== canonical(request.prRemarks?.length ? request.prRemarks : null)) prior.reuse = null;
     let verification = { command: request.verification.command, args: request.verification.args, exitCode: null };
+    // MONO-481 pinned screenCheck: until the attempt's first spent round the round waits for the host's screen check of
+    // this head. Waiting and mismatches are refusals: no round, no reviewer, no host run, never a not-reviewed.
+    const screen = screenCheckHold({ pins, spent: prior.spent, evidenceRoot, head });
     // Skipped only where the answer is the blocked refusal anyway (not-reviewed twice, no stored round to reuse).
-    if (hostVerify && (prior.reuse || prior.notReviewed < 2)) {
+    if (hostVerify && !screen && (prior.reuse || prior.notReviewed < 2)) {
       verification = await runHostVerification(request.verification, repo, head, evidenceRoot, request.collectionId, request.pins.file);
       const touched = evidenceTouched(readJson(hostRunMarker(evidenceRoot, request.collectionId)).snapshot, evidenceRoot, request.pins.file) ?? verification.descendants ?? null;
       if (touched) { consistency.passed = false; consistency.error = touched; }
@@ -514,6 +517,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       checkConsistency();
     }
     if (!consistency.passed) review = refuse(`collection consistency failed: ${consistency.error}`);
+    else if (screen) review = refuse(screen.reason);
     else if (hostVerify && verification.host !== true) review = refuse(`blocked: ${NOT_REVIEWED_TWICE}`);
     else if (verification.host && verification.exitCode !== 0) review = refuse(hostFailure(verification));
     else if (prior.reuse) review = { ...prior.reuse.review, ...roundOutcome(prior.reuse.review.record, prior.reuse.review.round, strict), spent: false, reusedFrom: prior.reuse.runId };

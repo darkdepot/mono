@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { atomicJson, canonical, digest, readJson, lockTreeDead, syncDir, processTable } from "./runtime.mjs";
+import { atomicJson, canonical, digest, readJson, lockTreeDead, syncDir, processTable, REVIEW_PRODUCER } from "./runtime.mjs";
 
 export const TERMINAL = ["done", "refused", "failed"];
 export const roundRequestName = (issue, attempt) => `${issue}-round-a${attempt}.json`;
@@ -99,6 +99,49 @@ export async function recoverHostRun(evidenceRoot, collectionId, pinsFile) {
     }
   fs.rmSync(marker, { force: true });
   return touched ?? "host run interrupted";
+}
+
+// MONO-481 pinned screenCheck: before the attempt's first spent review round the host compares the screens of
+// exactly the requested committed head with the approved mockups (mono:qa given-version) and writes the result
+// here, in evidenceRoot, outside every worker grant. Only the host writes it (`qa.mjs screen-check`).
+export const SCREEN_OUTCOMES = ["passed", "mismatches"];
+export const screenCheckFile = (evidenceRoot, head) => path.join(evidenceRoot, "screen-check", `${head}.json`);
+export function writeScreenCheck(evidenceRoot, head, outcome, report) {
+  if (!/^[a-f0-9]{40}$/.test(head ?? "")) throw new Error("screen check: head must be a full commit SHA");
+  if (!SCREEN_OUTCOMES.includes(outcome)) throw new Error(`screen check: outcome must be ${SCREEN_OUTCOMES.join(" or ")}`);
+  if (typeof report !== "string" || !report.trim() || /[\r\n]/.test(report)) throw new Error("screen check: report must name the check report on one line");
+  const file = screenCheckFile(evidenceRoot, head);
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  atomicJson(file, { head, outcome, report, recordedAt: new Date().toISOString() });
+  return file;
+}
+// Completed (spent) review rounds of this attempt in the receipt history; unreadable files are not rounds.
+export function spentRounds(evidenceRoot, pinsFile) {
+  const history = path.join(evidenceRoot, "history");
+  if (!fs.existsSync(history)) return 0;
+  return fs.readdirSync(history).filter(name => name.endsWith(".json")).filter(name => {
+    try {
+      const file = path.join(history, name), stat = fs.lstatSync(file);
+      const receipt = stat.isFile() && !stat.isSymbolicLink() ? readJson(file).receipt : null;
+      return receipt?.producer === REVIEW_PRODUCER && attemptOf(receipt.pins?.file, pinsFile) && receipt.review?.spent === true;
+    } catch { return false; }
+  }).length;
+}
+// What holds the attempt's first round: null when it may run, otherwise {state: waiting|mismatches, reason}.
+// A result that is not a regular file, is unreadable or names another head counts as no result.
+export function screenCheckHold({ pins, spent, evidenceRoot, head }) {
+  if (pins?.screenCheck !== true || spent > 0) return null;
+  let result = null;
+  try {
+    const file = screenCheckFile(evidenceRoot, head), stat = fs.lstatSync(file);
+    if (stat.isFile() && !stat.isSymbolicLink()) result = readJson(file);
+  } catch {}
+  if (result?.head !== head || !SCREEN_OUTCOMES.includes(result.outcome))
+    return { state: "waiting", reason: "screen check on the host has no result for this head yet; no round spent, request this head again after a few minutes" };
+  if (result.outcome === "mismatches")
+    return { state: "mismatches", reason: `screen check on the host found mismatches with the mockup on this head (report ${String(result.report ?? "").replace(/\s+/g, " ").slice(0, 500)}); ` +
+      "fix them from the task change and request the new head; no round spent" };
+  return null;
 }
 
 export function validRoundRequest(round) {

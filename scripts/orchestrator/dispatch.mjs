@@ -37,6 +37,8 @@ export function renderDispatch(template, values) {
 }
 
 const requireThat = (condition, message) => { if (!condition) throw new Error(message); };
+// MONO-481: the screen check before review needs both the product's switch on BASE and a mockup in the task snapshot.
+export const screenCheckPinned = (baseConfig, designSnapshot) => Boolean(designSnapshot) && baseConfig?.qa?.screenCheck === true;
 export async function dispatch(args) {
   if (!path.isAbsolute(args.root ?? "")) throw new Error("absolute --root required");
   return withLock(path.join(args.root, "dispatch.lock"), () => prepareDispatch(args));
@@ -152,6 +154,9 @@ async function prepareDispatch(args) {
     fs.rmSync(snapshot, { recursive: true, force: true }); fs.renameSync(preparedSnapshot, snapshot);
   } finally { fs.rmSync(preparedSnapshot, { recursive: true, force: true }); }
   pins.idea = ideaBinding(snapshot, ideaResult);
+  // MONO-481: from BASE like hostVerification, and only for a task with an approved mockup (design.json in its snapshot):
+  // the first review round then waits for the host's screen check of the committed head.
+  if (screenCheckPinned(baseConfig, designSnapshot)) pins.screenCheck = true;
   atomicJson(pinsFile, pins); const pinsDigest = sha256File(pinsFile);
   Object.assign(gate, { root: args.root, issue, attempt, risk, critical, pins: { file: pinsFile, digest: pinsDigest } });
   atomicJson(gateFile, gate);

@@ -419,6 +419,21 @@ test('MONO-484 qa.earlyStart is an optional boolean and never changes the merge 
     assert.throws(() => qaRecipeSource({ ...f.config, qa: { ...f.config.qa, earlyStart } }), /earlyStart must be boolean/);
 });
 
+test('MONO-481 qa.screenCheck is an optional boolean, off when absent, and not part of the recipe fingerprint', t => {
+  const f = recheckGate(t);
+  for (const screenCheck of [true, false]) {
+    const config = { ...f.config, qa: { ...f.config.qa, screenCheck } };
+    assert.equal(qaRecipeSource(config), 'config');
+    assert.equal(qaDeliveryState({ ...f.input, config }).state, 'passed', 'the switch never changes the merge gate');
+    assert.equal(qaRecipeDigest(config), qaRecipeDigest(f.config), 'a gate switch, not a recipe change');
+  }
+  assert.equal(Object.hasOwn(f.config.qa, 'screenCheck'), false);
+  assert.equal(f.config.qa.screenCheck === true, false, 'absent means off');
+  for (const screenCheck of ['true', 1, null, {}])
+    assert.throws(() => qaRecipeSource({ ...f.config, qa: { ...f.config.qa, screenCheck } }), /screenCheck must be boolean/);
+  assert.throws(() => qaRecipeSource({ ...f.config, qa: { ...f.config.qa, screenChecks: true } }), /unknown field/, 'unknown fields are still refused');
+});
+
 test('MONO-484 review: switching the product recipe refuses carried items', t => {
   const f = recheckGate(t);
   assert.equal(qaDeliveryState(f.input).state, 'passed');

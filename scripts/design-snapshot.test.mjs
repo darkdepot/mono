@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { copyDesignSnapshot } from './orchestrator/design-snapshot.mjs';
+import { screenCheckPinned } from './orchestrator/dispatch.mjs';
 
 const project = '11111111-1111-1111-1111-111111111111';
 const recordId = '44444444-4444-4444-4444-444444444444';
@@ -75,3 +76,12 @@ for (const expectedProject of ['66666666-6666-6666-6666-666666666666', null])
     assert.throws(() => f.copy(f.source, f.target, expectedProject), /Project/);
     assert.deepEqual(fs.readdirSync(f.target), []);
   }));
+
+// MONO-481: dispatch pins screenCheck only for a task whose snapshot holds an approved mockup and a product
+// whose BASE recipe turns the switch on; absent means off.
+test('screenCheck is pinned only with a mockup in the snapshot and the recipe switch on', () => fixture(f => {
+  const design = f.copy(), on = { qa: { screenCheck: true } };
+  assert.equal(screenCheckPinned(on, design), true);
+  for (const config of [{ qa: { screenCheck: false } }, { qa: {} }, {}]) assert.equal(screenCheckPinned(config, design), false);
+  assert.equal(screenCheckPinned(on, null), false, 'no mockup: no screen check before review');
+}));
