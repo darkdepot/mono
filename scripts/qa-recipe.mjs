@@ -6,8 +6,10 @@ const text = value => typeof value === 'string' && value.trim().length > 0;
 export function validateQaConfig(qa, config = {}) {
   const need = (ok, message) => { if (!ok) throw new Error(`qa: ${message}`); };
   need(object(qa), 'must be an object');
-  need(Object.keys(qa).every(key => ['mode', 'install', 'start', 'ready', 'data', 'forbiddenActions', 'skills', 'beforeMerge'].includes(key)), 'unknown field');
+  need(Object.keys(qa).every(key => ['mode', 'install', 'start', 'ready', 'data', 'forbiddenActions', 'skills', 'beforeMerge', 'earlyStart'].includes(key)), 'unknown field');
   if (Object.hasOwn(qa, 'beforeMerge')) need(typeof qa.beforeMerge === 'boolean', 'beforeMerge must be boolean');
+  // Off by default: only an explicit true lets the tester start before green Ship.
+  if (Object.hasOwn(qa, 'earlyStart')) need(typeof qa.earlyStart === 'boolean', 'earlyStart must be boolean');
   need(['web', 'terminal', 'mobile'].includes(qa.mode), 'mode must be web, terminal or mobile');
   need(Array.isArray(qa.install) && qa.install.every(text), 'install must be an array of commands (empty when no installation is needed)');
   need(text(qa.start), 'start is required');

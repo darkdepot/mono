@@ -23,10 +23,10 @@ function buildIdentity(build) {
   return JSON.stringify(build.map(({ issue, head }) => ({ issue, head })).sort((a, b) => a.issue.localeCompare(b.issue)));
 }
 
-function evidenceFile(file, root) {
+function evidenceFile(file, root, label = 'evidenceRoot') {
   need(text(file) && path.isAbsolute(file), 'evidence path must be absolute');
   const actual = fs.realpathSync(file), parent = fs.realpathSync(root);
-  need(actual.startsWith(parent + path.sep), 'evidence escapes evidenceRoot');
+  need(actual.startsWith(parent + path.sep), `evidence escapes ${label}`);
   const stat = fs.statSync(actual);
   need(stat.isFile() && stat.size > 0 && (stat.mode & 0o444) !== 0, 'evidence must be a readable nonempty file');
   const fd = fs.openSync(actual, 'r');
@@ -34,8 +34,70 @@ function evidenceFile(file, root) {
   finally { fs.closeSync(fd); }
 }
 
+// A missing prior file is a broken carry-over, never «still waiting» (ENOENT means waiting at the gate).
+function carryStep(message, fn) {
+  try { return fn(); }
+  catch (error) { throw new Error(`qa certificate: ${message}: ${error.message.replace(/^qa certificate: /, '')}`); }
+}
+const real = file => fs.realpathSync(file);
+
+// MONO-484: the host writes `purpose` and the `recheck` block before the pass. Items marked
+// `carriedFrom` keep the result and evidence of the head where they were last observed live.
+function priorPass(cert, expected, ctx) {
+  const block = expected.recheck;
+  need(object(block) && sha(block.previousHead) && block.previousHead !== expected.head
+    && text(block.previousReport) && text(block.previousExpected) && Array.isArray(block.live), 'recheck requires previousHead, previousReport, previousExpected and live');
+  need(!ctx.seen.has(block.previousHead), 'recheck chain repeats a head');
+  const prevDir = path.dirname(path.resolve(block.previousReport));
+  need(path.basename(block.previousReport) === 'task-report.json' && path.basename(block.previousExpected) === 'task-expected.json'
+    && path.dirname(path.resolve(block.previousExpected)) === prevDir && path.basename(prevDir) === block.previousHead
+    && path.basename(path.dirname(prevDir)) === expected.issue && path.basename(path.dirname(path.dirname(prevDir))) === 'qa',
+  'previous report must be qa/<KEY>/<previousHead>/task-report.json of this task');
+  const taskDir = path.dirname(prevDir);
+  if (ctx.taskDir) need(carryStep('previous QA folder missing', () => real(taskDir)) === carryStep('task QA folder missing', () => real(ctx.taskDir)),
+    'previous report is outside qa/<KEY>/ of this task');
+  const prevReport = carryStep('previous QA report missing', () => JSON.parse(fs.readFileSync(block.previousReport, 'utf8')));
+  const prevExpected = carryStep('previous QA expectations missing', () => JSON.parse(fs.readFileSync(block.previousExpected, 'utf8')));
+  need(object(prevExpected), 'previous expectations must be an object');
+  // The prior pass is checked by the same rules, without a ship certificate for its head.
+  const prevCert = carryStep('previous QA report invalid', () => validate(prevReport, { ...prevExpected, scope: 'task', issue: expected.issue,
+    head: block.previousHead, mode: 'ship', recipeSource: expected.recipeSource },
+  { skipShip: true, taskDir, seen: new Set([...ctx.seen, expected.head]) }));
+  need(prevCert.kind === 'behavior', 'previous report has no item results');
+  const prevExpectations = new Map(prevExpected.expectedItems.map(item => [item.id, item]));
+  const live = new Set();
+  for (const entry of block.live) {
+    need(object(entry) && text(entry.id) && text(entry.reason) && expected.expectedItems.some(item => item.id === entry.id), 'recheck live entries need an expected id and reason');
+    live.add(entry.id);
+  }
+  for (const item of prevCert.items) if (['failed', 'unverified'].includes(item.outcome)) live.add(item.id);
+  for (const item of expected.expectedItems) {
+    const old = prevExpectations.get(item.id);
+    if (!old || old.source !== item.source || old.expectation !== item.expectation) live.add(item.id);
+  }
+  return { taskDir, live, items: new Map(prevCert.items.map(item => [item.id, item])), previousHead: block.previousHead };
+}
+
+function carriedItem(item, prior) {
+  need(sha(item.carriedFrom), 'carriedFrom must be a head');
+  need(!prior.live.has(item.id), `item ${item.id} must be checked live`);
+  const old = prior.items.get(item.id);
+  need(old && old.source === item.source && old.expectation === item.expectation, `carried item ${item.id} differs from the previous report`);
+  need(old.outcome === item.outcome && (old.outcome === 'passed' || (old.outcome === 'excluded'
+    && old.successor === item.successor && old.reason === item.reason)), `carried item ${item.id} was not green on the previous head`);
+  need(item.carriedFrom === (old.carriedFrom ?? prior.previousHead), `carried item ${item.id} must name the head where it was observed`);
+  need(JSON.stringify(item.evidence) === JSON.stringify(old.evidence) && item.evidence.length > 0, `carried item ${item.id} must keep its evidence`);
+  const origin = path.join(prior.taskDir, item.carriedFrom);
+  for (const file of item.evidence) carryStep(`carried evidence of ${item.id} missing`, () => evidenceFile(file, origin, 'the observed head folder'));
+}
+
 // Expected identity comes from the caller, never from the certificate being checked.
-export function validateQaCertificate(report, expected) {
+// `taskDir` is the host's qa/<KEY>/ folder; the gate passes it, the CLI derives it from the recheck block.
+export function validateQaCertificate(report, expected, { taskDir } = {}) {
+  return validate(report, expected, { skipShip: false, taskDir, seen: new Set() });
+}
+
+function validate(report, expected, ctx) {
   need(object(expected), 'expected identity required');
   const raw = report?.certificate;
   need(typeof raw === 'string' && raw.startsWith(QA_MARKER + '\n'), 'one marker required');
@@ -52,9 +114,12 @@ export function validateQaCertificate(report, expected) {
   if (cert.recipeSource === 'file') readQaRecipeFile(expected.recipeFile);
   const gateEligible = cert.mode === 'ship' && cert.recipeSource !== 'file';
   need(typeof cert.gateEligible === 'boolean' && cert.gateEligible === gateEligible, 'gateEligible mismatch');
-  if (cert.mode === 'ship') validateShipCertificate({ issue: expected.issue, head: expected.head, certificate: expected.shipCertificate });
+  if (cert.mode === 'ship' && !ctx.skipShip) validateShipCertificate({ issue: expected.issue, head: expected.head, certificate: expected.shipCertificate });
   if (cert.scope === 'project') need(buildIdentity(cert.build) === buildIdentity(expected.build), 'project build changed');
   need(['behavior', 'no-behavior'].includes(cert.kind) && cert.kind === expected.kind, 'kind mismatch');
+  need(expected.purpose === undefined || ['change', 'release', 'acceptance'].includes(expected.purpose), 'purpose must be change, release or acceptance');
+  if (expected.recheck !== undefined) need(cert.scope === 'task' && cert.mode === 'ship' && cert.recipeSource !== 'file'
+    && cert.kind === 'behavior' && expected.purpose === 'change', 'recheck only for a task ship pass with purpose change');
   need(Array.isArray(expected.expectedItems) && expected.expectedItems.every(item => object(item) && text(item.id)
     && text(item.expectation) && SOURCES.includes(item.source))
     && new Set(expected.expectedItems.map(item => item.id)).size === expected.expectedItems.length, 'unique expectation list required');
@@ -69,6 +134,7 @@ export function validateQaCertificate(report, expected) {
   need(text(expected.evidenceRoot), 'evidenceRoot required');
   need(expected.expectedItems.length > 0, 'unique expectation list required');
   need(Array.isArray(expected.taskCriteria) && expected.taskCriteria.every(id => expectations.has(id)), 'taskCriteria must be bound to expectations');
+  const prior = expected.recheck === undefined ? null : priorPass(cert, expected, ctx);
   const ids = new Set();
   for (const item of cert.items) {
     need(object(item) && text(item.id) && !ids.has(item.id) && text(item.expectation), 'unique item id and expectation required');
@@ -79,7 +145,13 @@ export function validateQaCertificate(report, expected) {
     need(item.source !== 'scenario' || item.outcome !== 'excluded', 'scenario cannot be excluded');
     need(['passed', 'failed', 'unverified', 'excluded'].includes(item.outcome), 'item outcome required');
     need(Array.isArray(item.evidence), 'item evidence required');
-    for (const file of item.evidence) evidenceFile(file, expected.evidenceRoot);
+    if (item.carriedFrom !== undefined) {
+      need(prior, 'carried items require a recheck block with purpose change');
+      carriedItem(item, prior);
+    } else {
+      for (const file of item.evidence) evidenceFile(file, expected.evidenceRoot);
+      if (prior) for (const file of item.evidence) evidenceFile(file, path.join(prior.taskDir, expected.head), 'the current head folder');
+    }
     if (item.outcome === 'excluded') {
       need(item.evidence.length > 0, 'excluded requires evidence of instability on main');
       need(item.source !== 'task' && !expected.taskCriteria.includes(item.id), 'task acceptance cannot be excluded');

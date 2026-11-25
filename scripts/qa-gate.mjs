@@ -73,7 +73,9 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
       const dir = path.join(root, 'qa', target.issue, target.head);
       const expected = { ...read(path.join(dir, `${scope}-expected.json`)), ...overrides,
         issue: target.issue, head: target.head, scope, mode: 'ship', recipeSource };
-      const cert = validateQaCertificate(read(path.join(dir, `${scope}-report.json`)), expected);
+      // A scoped recheck (MONO-484) reads its prior pass only from this task's qa/<KEY>/ folder.
+      const cert = validateQaCertificate(read(path.join(dir, `${scope}-report.json`)), expected,
+        { taskDir: path.join(root, 'qa', target.issue) });
       need(cert.gateEligible, `${scope} certificate cannot open gates`);
       need(cert.verdict === 'passed', `${scope} QA ${cert.verdict}`);
     };
