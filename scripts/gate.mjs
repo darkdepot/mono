@@ -154,7 +154,8 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest, retr
   // only when everything before it in the streak failed on the environment. It never accepts a head or spends a round.
   let streak = onHead.slice(start);
   // A retry dated later than now (the collection judging it) is no delivered resume: it never counts.
-  retries = retries.filter(retry => typeof retry?.recordedAt === 'string' && retry.recordedAt <= now);
+  // A retry voided after a refused startup never counts either.
+  retries = retries.filter(retry => typeof retry?.recordedAt === 'string' && retry.recordedAt <= now && retry.void === undefined);
   for (let index = streak.length - 1; index >= 0; index--) {
     const after = streak[index].recordedAt, next = streak[index + 1]?.recordedAt;
     const cut = retries.some(retry => String(retry.recordedAt) > String(after) && (next === undefined || String(retry.recordedAt) < String(next)));

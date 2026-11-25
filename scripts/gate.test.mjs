@@ -266,6 +266,8 @@ test("a review retry clears only an environmental not-reviewed streak recorded b
   assert.equal(reviewHistory(pending, { pins, head: at, base, contractDigest, retries: [delivered], now: judged }).notReviewed, 0);
   assert.equal(reviewHistory(pending, { pins, head: at, base, contractDigest, retries: [delivered], now: pending[1].recordedAt }).notReviewed, 2,
     'a retry later than the judging time does not count');
+  assert.equal(reviewHistory(pending, { pins, head: at, base, contractDigest, retries: [{ ...delivered, void: 'startup refused: fixture' }], now: judged }).notReviewed, 2,
+    'a retry voided after a refused startup never counts');
 });
 test('shared review context refreshes the remote base, uses HEAD while dirty, and reads this attempt\'s current-contract rounds with delivered task changes', async () => {
   const { execFileSync } = await import('node:child_process');

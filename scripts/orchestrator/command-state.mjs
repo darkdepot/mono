@@ -340,15 +340,30 @@ export function dropTaskChange(pinsDirectory, change) {
 // (a role timeout, a sleeping host, the network, a login). Resume records it append-only beside the launch pins,
 // outside every worker grant like task-changes.json; the gate lets it cut only an environmental not-reviewed streak.
 // It never changes the contract, the round count or the acceptance of a head.
+// A retry whose startup was refused stays in the file marked void (with the reason) and never counts.
 const reviewRetriesFile = pinsDirectory => path.join(pinsDirectory, "review-retries.json");
+const validRetry = (retry, index) => retry?.number === index + 1 && typeof retry.recordedAt === "string" &&
+  !Number.isNaN(Date.parse(retry.recordedAt)) && new Date(retry.recordedAt).toISOString() === retry.recordedAt &&
+  Object.keys(retry).every(key => ["number", "recordedAt", "void"].includes(key)) &&
+  (retry.void === undefined || (typeof retry.void === "string" && retry.void.trim() !== ""));
 export function reviewRetries(pinsDirectory) {
   const file = reviewRetriesFile(pinsDirectory);
   if (!fs.existsSync(file)) return [];
   const retries = readJson(file);
-  if (!Array.isArray(retries) || retries.some((retry, index) => retry?.number !== index + 1 || Object.keys(retry).length !== 2 ||
-      typeof retry.recordedAt !== "string" || Number.isNaN(Date.parse(retry.recordedAt)) || new Date(retry.recordedAt).toISOString() !== retry.recordedAt))
-    throw new Error("invalid review-retries.json");
+  if (!Array.isArray(retries) || !retries.every(validRetry)) throw new Error("invalid review-retries.json");
   return retries;
+}
+// Every write of review-retries.json goes through its own per-attempt lock, retried with a bounded backoff:
+// the cleanup after a refused startup must not depend on the shared launch.lock, which another issue may hold.
+export async function withReviewRetriesLock(pinsDirectory, action, { tries = 50, delayMs = 100 } = {}) {
+  const lock = path.join(pinsDirectory, "review-retries.lock");
+  for (let attempt = 1; ; attempt++) {
+    try { return await withLock(lock, action); }
+    catch (error) {
+      if (error.code !== "ELOCKED" || attempt >= tries) throw error;
+      await new Promise(resolve => setTimeout(resolve, Math.min(delayMs * attempt, 1000)));
+    }
+  }
 }
 export function recordReviewRetry(pinsDirectory) {
   const retries = reviewRetries(pinsDirectory);
@@ -360,6 +375,15 @@ export function recordReviewRetry(pinsDirectory) {
 export function dropReviewRetry(pinsDirectory, retry) {
   const retries = reviewRetries(pinsDirectory);
   if (canonical(retries.at(-1) ?? null) === canonical(retry)) atomicJson(reviewRetriesFile(pinsDirectory), retries.slice(0, -1));
+}
+// A refused startup: the retry it recorded is marked void wherever it stands; returns whether it was found.
+export function voidReviewRetry(pinsDirectory, retry, reason) {
+  const retries = reviewRetries(pinsDirectory);
+  const index = retries.findIndex(item => item.number === retry.number && item.recordedAt === retry.recordedAt);
+  if (index < 0) return false;
+  retries[index] = { ...retries[index], void: String(reason || "startup refused").replace(/\s+/g, " ").slice(0, 300) };
+  atomicJson(reviewRetriesFile(pinsDirectory), retries);
+  return true;
 }
 export function recordTaskChange(pinsDirectory, url, text) {
   if (!LINEAR_URL.test(url ?? "") || !text.includes(url))

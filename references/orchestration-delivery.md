@@ -457,7 +457,9 @@ and the review round reads it with the Issue; a refused resume records nothing.
 After an environmental `not-reviewed` streak the request is `{root, issue,
 resumeFile, reviewRetry: true}` instead (never both): resume records
 `{number, recordedAt}` in `dispatch/KEY-aN/review-retries.json`, drops it when
-the launch or its startup is refused, and the contract stays unchanged.
+the launch is refused and marks it `void` (with the reason, under the attempt's
+own `review-retries.lock`, never the shared `launch.lock`) when its startup is
+refused; a void retry never counts. The contract stays unchanged.
 Resume carries no grants or network override: a risk, critical or grant change is
 a new attempt on the same branch.
 

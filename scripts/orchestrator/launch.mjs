@@ -6,7 +6,7 @@ import { startGate } from "../gate.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
 import { workerTransport } from "../worker-transport.mjs";
-import { effectivePins, attemptState, recordTaskChange, dropTaskChange, recordReviewRetry, dropReviewRetry } from "./command-state.mjs";
+import { effectivePins, attemptState, recordTaskChange, dropTaskChange, recordReviewRetry, dropReviewRetry, voidReviewRetry, withReviewRetriesLock } from "./command-state.mjs";
 import { ensureCollector } from "./collector.mjs";
 
 function releasePin(request) {
@@ -411,8 +411,16 @@ export async function resumeWorker(request) {
     try { return { ...await confirmStartup(request.root, launched.entry, launched), collector }; }
     catch (error) {
       // A refused startup delivered nothing either: its review retry must not stay effective.
+      // It is voided under the attempt's own lock (bounded retries), never the shared launch.lock another issue may hold.
       const retry = launched.retry();
-      if (retry) await withLock(path.join(request.root, "launch.lock"), () => dropReviewRetry(path.dirname(launched.entry.pins.file), retry));
+      if (retry) {
+        const directory = path.dirname(launched.entry.pins.file);
+        try { await withReviewRetriesLock(directory, () => voidReviewRetry(directory, retry, `startup refused: ${error.message}`)); }
+        catch (cleanup) {
+          throw new Error(`${error.message}; review retry ${retry.number} in ${path.join(directory, "review-retries.json")} could not be voided ` +
+            `(${cleanup.message}): mark it void before the next collection`);
+        }
+      }
       throw error;
     }
   }
