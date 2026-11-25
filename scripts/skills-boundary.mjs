@@ -11,6 +11,16 @@ export function privateCodexHome(home, authFile, servers) {
   fs.mkdirSync(home); // Never reuse a user home or silently trust existing config.
   if (!path.isAbsolute(authFile) || !fs.statSync(authFile).isFile()) throw new Error('explicit Codex auth file required');
   fs.symlinkSync(authFile,path.join(home,'auth.json'));
+  writeCodexConfig(home,servers);
+}
+// Rewrites only the MCP servers of an existing private home: a continued stage
+// resumes the same thread with its own servers.
+export function codexHomeConfig(home, servers) {
+  mcpConfig(servers);
+  if (!path.isAbsolute(home??'') || !fs.existsSync(path.join(home,'auth.json')) || !fs.existsSync(path.join(home,'config.toml'))) throw new Error('continued Codex home must be an earlier private home');
+  writeCodexConfig(home,servers);
+}
+function writeCodexConfig(home, servers) {
   let config='[mcp_servers.linear]\nurl = "https://mcp.linear.app/mcp"\nenabled = false\n';
   for(const [name,value] of Object.entries(servers)){
     if(Object.keys(value).some(k=>!['url','command','args'].includes(k)) ||

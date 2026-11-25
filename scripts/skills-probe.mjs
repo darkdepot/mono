@@ -5,7 +5,7 @@ import { auditRows, parentTurns, completedTrace } from './skills-audit.mjs';
 import { MissingEvidence } from './skills-boundary.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 
-import { validateReplies, textReply, isOwnerWindow, checkStageResponse, stageQuestion, progressOnly, asksOnce } from './skills-owner.mjs';
+import { validateReplies, textReply, isOwnerWindow, checkStageResponse, stageQuestion, progressOnly, asksOnce, inheritedTurn } from './skills-owner.mjs';
 
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
 export const visibleText = text => typeof text === 'string' && text.replace(/[\s\p{Cf}\p{Variation_Selector}]/gu, '').length > 0;
@@ -117,6 +117,12 @@ export function textExchanges(host, rows, expectedReplies, {startLine=0,idleCont
   for (const [index,expected] of expectedReplies.entries()) {
     const turn=turns.find(t=>t.line>cursor);
     if (!turn) throw new Error(`last stage message missing for ${expected.id}`);
+    if (expected.intent==='inherited') {
+      // Declared move under a recorded consent: one completed turn, no question,
+      // no reply. It is the last step, so the trailing check below still applies.
+      inheritedTurn(expected,turn.text);
+      exchanges.push({...turn,question:null,inherited:true,expected,response:turn,...(!index&&nudges.length?{nudges}:{})});continue;
+    }
     textReply({expectedReplies},turn.text,index);
     turn.question=stageQuestion(expected,turn.text);
     if (turn.reply===undefined) throw new Error(`actual owner reply missing for ${expected.id}`);

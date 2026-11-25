@@ -1,6 +1,7 @@
 import { permittedStages } from './skills-stage-driver.mjs';
 export const targetReplyCount = replies => replies.filter(r=>r.target!==false).length;
-export const anchored = r => typeof r.question==='object' && r.question!==null;
+// An inherited step has no question: its anchors live in the declared response.
+export const anchored = r => r?.intent==='inherited' ? typeof r.response==='object' && r.response!==null && !Array.isArray(r.response) : typeof r.question==='object' && r.question!==null;
 const strings = values => Array.isArray(values) && values.every(s=>typeof s==='string'&&s.trim());
 function anchorPolicy(policy) {
   return policy && Array.isArray(policy.anchors) && policy.anchors.length && policy.anchors.every(s=>typeof s==='string'?s.trim():strings(s)&&s.length) && strings(policy.forbidden??[]) && strings(policy.forbiddenExact??[]);
@@ -11,10 +12,39 @@ export function checkAnchors(policy, value, label) {
   const lines=value.split('\n').map(line=>line.trim().toLocaleLowerCase());
   if ((policy.forbiddenExact??[]).some(s=>lines.includes(s.trim().toLocaleLowerCase()))) throw new Error(`${label} has forbidden exact scenario line`);
 }
+// An inherited step moves without a question and without a driver answer: its
+// consent was recorded earlier. Only a step that declares it may skip the
+// question, and nothing can follow it in the same run, since nothing is sent.
+function validateInherited(r,index,count,ids) {
+  if (typeof r.id!=='string' || !r.id.trim() || ids.has(r.id) ||
+      !['idea','research','discovery','design','tech-evaluation','handoff'].includes(r.stage) || !['approval','transition'].includes(r.role) ||
+      !Array.isArray(r.summary) || !r.summary.length || r.summary.some(s=>typeof s!=='string'||!s.trim()) ||
+      r.question!==undefined || r.reply!==undefined || r.correction!==undefined || r.asksStart!==false) throw new Error('invalid inherited step: summary, no question, no reply and asksStart=false required');
+  ids.add(r.id);
+  if (index!==count-1) throw new Error('inherited step must be the last expected step of its run');
+  if (r.by==='orchestrator') throw new Error('inherited consent belongs to the owner');
+  if (typeof r.outcome?.approval!=='boolean' || typeof r.outcome?.startNext!=='boolean' || r.outcome.approval!==(r.role==='approval') ||
+      (r.stage==='research'&&r.role==='approval') || (r.stage==='handoff'&&r.role==='approval')) throw new Error('reply outcome contradicts scenario role or start authority');
+  if (r.framing!==undefined) throw new Error('inherited step has no framing');
+  if (anchored(r)) {
+    if (!anchorPolicy(r.response) || r.response.question!==false) throw new Error('inherited step response anchors and question=false required');
+    const presentations=Array.isArray(r.presentation)?r.presentation:[r.presentation];
+    if (!presentations.length||presentations.some(p=>!['inline','document'].includes(p))) throw new Error('scenario presentation required; Idea is inline');
+    if (r.driverStart!==null && (!permittedStages(r).length||permittedStages(r).some(stage=>!['idea','research','discovery','design','tech-evaluation','handoff','delivery'].includes(stage)))) throw new Error('invalid driver start authority for delegated stage');
+    if (r.outcome.startNext!==(r.driverStart!==null&&permittedStages(r).length>0)) throw new Error('reply outcome contradicts scenario role or start authority');
+  } else if (!Array.isArray(r.response)||!r.response.length||r.response.some(text=>typeof text!=='string'||!text.trim())) throw new Error('invalid declared stage response');
+}
+// The completed turn of an inherited step shows its summary and asks nothing.
+export function inheritedTurn(expected, message) {
+  if (typeof message!=='string' || !expected.summary.every(s=>message.includes(s))) throw new Error('inherited step summary differs from scenario');
+  if (/\?(?![\p{L}\p{N}=&%#/])/u.test(message)) throw new Error('inherited step asked the owner');
+  checkStageResponse(expected, message);
+}
 export function validateReplies(expected) {
   if (!Array.isArray(expected) || !expected.length) throw new Error('scenario expectedReplies required');
   const ids=new Set();
-  for (const r of expected) {
+  for (const [index,r] of expected.entries()) {
+    if (r?.intent==='inherited') { validateInherited(r,index,expected.length,ids); continue; }
     if (!r || typeof r.id!=='string' || !r.id.trim() || ids.has(r.id) ||
         !['idea','research','discovery','design','tech-evaluation','handoff'].includes(r.stage) ||
         !['approval','transition','clarification'].includes(r.role) ||

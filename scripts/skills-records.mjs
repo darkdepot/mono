@@ -747,6 +747,9 @@ export function verifyRecords(request){
    if(!dump&&(request.expectedReplies||source.expectedReplies)&&data.audit.calls.some(c=>isOwnerWindow(c.name)))throw new Error('stage called a window in text scenario');
    if(data.expectedReplies) {
     data.exchanges=textExchanges(source.host,data.rows,data.expectedReplies,{startLine:source.stageStartLine,idleContinuation:source.idleContinuation});
+    // Records under an inherited step bind to a recorded consent, which this
+    // verifier cannot check yet; it fails closed instead of binding a reply.
+    if(data.exchanges.some(e=>e.inherited))throw new Error('inherited step records have no consent binding yet');
    }
    return data;
   };

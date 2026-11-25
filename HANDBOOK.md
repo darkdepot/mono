@@ -1788,7 +1788,18 @@ Unit preparation failures persist completed items, fail that unit and leave its
 later chain unverified while independent units continue. Empty selection is
 `not-required` (CLI exit 0), never a pass. Scout definitions select their launching
 stages; missing project manifest paths are refused before prompt generation.
-Focused checks: `node --test scripts/skills-catalog.test.mjs scripts/skills-window-roles.test.mjs`.
+A scenario with `continuation: "same-session"` hands its conversation to the next
+chain stage, as in the owner's session: Claude resumes the session (`--resume`),
+Codex resumes the thread in the same private home with this stage's MCP servers.
+After Design the parent conversation (the stage before Design) continues; Design
+itself always opens its own session, so a continuation into Design is refused.
+A continued stage skips the workspace read its conversation already made, and its
+evidence holds only its own turns (Codex writes the rollout tail as `trace.jsonl`).
+A reply step with `intent: "inherited"` moves without a question and without a
+driver answer under an earlier recorded consent. It must be the last step, show
+its summary, ask nothing and pass its declared response; an undeclared skip fails
+as before. Records verification refuses inherited steps until consent binding exists.
+Focused checks: `node --test scripts/skills-catalog.test.mjs scripts/skills-window-roles.test.mjs scripts/skills-continuation.test.mjs`.
 The shared audit bounds real MCP actions to monotest/Paper and a local stage-driver
 control tool, and requires a workspace read before writes. Every main/child rollout
 shares that boundary; replies and completion stay tied to the main thread.

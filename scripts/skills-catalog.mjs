@@ -46,6 +46,9 @@ export function loadCatalog(indexFile) {
       }
       if (!read(catalogFile(root, path.posix.join(path.posix.dirname(relative), 'rubric.md'))).trim()) fail(`missing rubric ${key}`);
       if (scenario.next !== null && !stages.has(scenario.next)) fail(`unknown next ${key}`);
+      // Production route: the next stage continues in this conversation, after
+      // Design in its parent; Design itself always opens its own session.
+      if (scenario.continuation !== undefined && (scenario.continuation !== 'same-session' || scenario.next === 'design')) fail(`invalid continuation ${key}`);
       for (const host of ['claude','codex']) {
         const flow = scenario.hosts?.[host];
         if(!flow?.expectedReplies || Object.hasOwn(flow,'windows') || Object.hasOwn(flow,'expectedWindows'))fail(`text replies required for ${host} ${key}`);
