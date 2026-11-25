@@ -54,7 +54,8 @@ its lock on release.
   `plan` stops loudly and nothing is written to Linear.
 - `state.json`: `boundary` (end of the last finished pass), `deferredTails`
   and `pending` (`uuid`, `windowStart`, `windowEnd`, `startedAt`, `sessionId`,
-  `deferredTails`, after a takeover also `takenOverAt`, `takenOverFrom`). The
+  `deferredTails`, after a takeover also `takenOverAt`, `takenOverFrom` and `holders`, every
+  session that held the pass). The
   command that moves the boundary also moves `pending.deferredTails` to
   `state.deferredTails`: records that were still being written (`file`,
   `offset`) are read as new in the next pass whatever their own time.
@@ -170,8 +171,8 @@ given session ids, with their `subagents/`, each `message.id` once (the record
 with the largest usage wins). Fields and sums follow `scripts/token-usage.mjs`:
 `usage`, `tokens` (full input plus output) and `cacheReadTokens` apart. With
 `--pass` only records from the pass start count. The opening budget and the
-summary count the session holding the pass (and the one it was taken over
-from) with its subagents from the pass start, as `budgetTokens`: `tokens`
+summary count every holder of the pass (`holders` across takeovers) with
+their subagents from the pass start, as `budgetTokens`: `tokens`
 without cache reads, which are shown apart.
 
 ## Weekly pass
@@ -191,7 +192,8 @@ each finding with its own id.
    and tester reports are not read by subagents (tens of megabytes a week):
    `signals` handles them mechanically in step 3. The subagents return
    interventions they find as `[{session, from, to, reason: "intervention"}]`
-   (`from` and `to` are keys or times from the digest lines); save that list
+   (`from` and `to` are times or `#key`s from the digest lines; `signals`
+   reads a key back to its event's own time); save that list
    to `runs/<uuid>/inbox/extra.json`.
 3. `signals --extra <file>`: mechanical signals (park, `phase_result` blocked
    or needs-human, `not-converged` receipts, a tester report whose

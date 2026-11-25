@@ -558,7 +558,7 @@ function parentProblems(op, item) {
 
 // The object read back is the one this operation wrote: its target, its
 // marker, and the same words and link addresses (formatting may change).
-function checkReadBack(op, item, current) {
+export function checkReadBack(op, item, current) {
   const problems = [];
   if (!item || typeof item !== "object") return ["the answer is not an object"];
   if (op.type === "update-issue") {
@@ -569,6 +569,8 @@ function checkReadBack(op, item, current) {
   if (op.type === "update-document") {
     const report = current.ops.find((candidate) => candidate.key === "report");
     if (!itemIds(item).includes(op.target || report?.result?.id)) problems.push("the answer is not the report document");
+    // The updated report must still sit where the report was created.
+    if (report) problems.push(...parentProblems(report, item));
   }
   if (op.type === "create-document") problems.push(...parentProblems(op, item));
   if (op.type === "create-comment" && item.issueId && item.issueId !== op.target && item.issue?.identifier !== op.target) {

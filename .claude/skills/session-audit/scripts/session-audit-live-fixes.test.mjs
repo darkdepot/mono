@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { PACK, loadBody, makePackRepo } from "../fixtures/pack.mjs";
 import { PROJECT, TEAM, addPathHintSession, addSignalSources, fakeLinear } from "../fixtures/review.mjs";
 import { BOUNDARY, IDS, NOW, at, buildWorld, claude, codex, execCmd, jsonl } from "../fixtures/sessions.mjs";
-import { openedBreakdown, renderReport } from "./publish.mjs";
+import { checkReadBack, marker, openedBreakdown, renderReport } from "./publish.mjs";
 
 const SCRIPTS = path.dirname(fileURLToPath(import.meta.url));
 const SKILL = path.dirname(SCRIPTS);
@@ -164,6 +164,26 @@ test("AC1: a planned report of an older project config moves to the team; the pr
   const moved = ok(w.env, ["op", "next", "--session", ME, "--now", NOW]);
   assert.equal(moved.call.args.team, TEAM);
   assert.equal(moved.call.args.project, undefined);
+});
+
+test("AC1: an update of the report is confirmed only while the report stays in its team (live get_document shape)", () => {
+  const passUuid = "p0000000-0000-4000-8000-000000000001";
+  const body = `Отчёт недели.\n\n\`\`\`session-audit\n${marker(passUuid, "report.1")}\n\`\`\``;
+  const current = { ops: [{ key: "report", type: "create-document", team: "Mono", status: "confirmed", result: { id: "doc-1" } }] };
+  const update = { key: "report.1", type: "update-document", target: "doc-1", title: "Разбор сессий: 25.11.2026", body, marker: marker(passUuid, "report.1") };
+  // Exactly what get_document answered for a team document on 25.11.2026.
+  const live = {
+    id: "doc-1", title: "Разбор сессий: 25.11.2026", content: body, url: "https://linear.app/fixture/document/doc-1",
+    createdAt: "2026-11-25T03:00:00.000Z", updatedAt: "2026-11-25T03:10:00.000Z",
+    project: null, initiative: null, team: { id: "5042d156-0000-4000-8000-000000000000", name: "Mono" }, issue: null,
+  };
+  assert.deepEqual(checkReadBack(update, live, current), []);
+  assert.match(checkReadBack(update, { ...live, project: { id: "p-1", name: "Some project" } }, current).join(" "), /in a project/);
+  assert.match(checkReadBack(update, { ...live, team: { id: "t-2", name: "Other" } }, current).join(" "), /not Mono/);
+  const create = { ...update, key: "report", type: "create-document", team: "Mono", body: body.replace("report.1", "report"), marker: marker(passUuid, "report") };
+  // list_documents with fields: the same parent fields per document.
+  const listed = { id: "doc-1", title: live.title, content: create.body, team: { id: live.team.id, name: "Mono" }, project: null, createdAt: live.createdAt };
+  assert.deepEqual(checkReadBack(create, listed, current), []);
 });
 
 // ---------------------------------------------------------------- AC2
@@ -321,4 +341,47 @@ test("AC7: SKILL.md routes the mandatory layer and the brief; the brief is gener
   for (const pattern of [/\/Users\//, /~\//, /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/, /\bZeni\b/, /\bv\d+\.\d+\.\d+\b/]) {
     assert.doesNotMatch(brief, pattern);
   }
+});
+
+// ---------------------------------------------------------------- review round 1
+
+test("AC6: an extra signal bounded by digest keys gets the times of those events", (t) => {
+  const w = world(t);
+  const passUuid = ok(w.env, ["collect", "--session", ME, "--now", NOW]).passUuid;
+  const text = fs.readFileSync(ok(w.env, ["extract", IDS.owner, "--session", ME]).chunks[0].file, "utf8");
+  const from = digestKey(text, "Continuing after the boundary.");
+  const to = digestKey(text, "Which page next?");
+  const extra = save(w, passUuid, "extra.json", [{ session: IDS.owner, from, to: to.slice(1), reason: "intervention" }]);
+  const result = ok(w.env, ["signals", "--extra", extra, "--session", ME, "--now", NOW]);
+  const signal = result.signals.find((candidate) => candidate.session === IDS.owner && candidate.reasons.includes("intervention"));
+  assert.deepEqual(signal.range.first, { key: from.slice(1), ts: at(BOUNDARY, 31) });
+  assert.deepEqual(signal.range.last, { key: to.slice(1), ts: at(BOUNDARY, 32) });
+  const bad = run(w.env, ["signals", "--extra", save(w, passUuid, "bad.json", [{ session: IDS.owner, from: "#no-such-event" }]), "--session", ME, "--now", NOW]);
+  assert.equal(bad.status, 2);
+  assert.match(bad.err.error, /neither a time nor an event/);
+});
+
+test("AC4: after several takeovers the budget counts every holder of the pass", (t) => {
+  const A = "c1111111-1111-4111-8111-111111111111";
+  const B = "c2222222-2222-4111-8111-111111111111";
+  const C = "c3333333-3333-4111-8111-111111111111";
+  const usage = { input_tokens: 1, cache_creation_input_tokens: 2, cache_read_input_tokens: 900, output_tokens: 4 };
+  const w = world(t, {
+    extra: (built) => {
+      for (const [id, minute] of [[A, 1], [B, 3], [C, 5]]) {
+        const c = claude(id, built.alpha);
+        const file = path.join(built.projectDir, `${id}.jsonl`);
+        jsonl(file, [c.say(at(NOW, minute), "working", `msg_${id.slice(0, 8)}`, usage)]);
+        const later = new Date(Date.parse(NOW) + 10 * 60000);
+        fs.utimesSync(file, later, later);
+      }
+    },
+  });
+  ok(w.env, ["collect", "--session", A, "--now", NOW]);
+  ok(w.env, ["collect", "--session", B, "--now", at(NOW, 2), "--take-over"]);
+  ok(w.env, ["collect", "--session", C, "--now", at(NOW, 4), "--take-over"]);
+  assert.deepEqual(readJson(path.join(w.data, "state.json")).pending.holders, [A, B, C]);
+  const opened = ok(w.env, ["opened", "--session", C, "--now", at(NOW, 6)]);
+  assert.equal(opened.budget.tokens.used, 3 * (1 + 2 + 4), "A, B and C each spent 7 without cache reads");
+  assert.equal(opened.budget.tokens.cacheReadApart, 3 * 900);
 });

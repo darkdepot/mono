@@ -219,7 +219,9 @@ export function collect({ env = process.env, sessionId, now, takeOver = false } 
           }, 3);
         }
         const previous = pass.sessionId;
-        pass = { ...pass, sessionId, takenOverAt: at, takenOverFrom: previous };
+        // Every holder of the pass stays listed: the pass budget counts them all.
+        const holders = [...new Set([...(pass.holders || [previous]), sessionId])];
+        pass = { ...pass, sessionId, takenOverAt: at, takenOverFrom: previous, holders };
         writeState(dataRoot, { ...state, pending: pass });
         appendRunLog(dataRoot, pass.uuid, `${at} takeover from ${previous} by ${sessionId} on the owner's words`);
       }

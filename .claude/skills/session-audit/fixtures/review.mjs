@@ -104,7 +104,9 @@ export function fakeLinear() {
         doc.updatedAt = now;
         return { ...doc };
       }
-      const doc = { id: `doc-${next++}`, title, content: rewrite(content), url: `https://linear.app/fixture/document/doc-${next}`, ...(team ? { team: { id: `team-${team.length}`, name: team } } : { project: { id: project } }), createdAt: now, updatedAt: now };
+      const doc = { id: `doc-${next++}`, title, content: rewrite(content), url: `https://linear.app/fixture/document/doc-${next}`, createdAt: now, updatedAt: now,
+        // A team document as get_document returns it (observed 25.11.2026).
+        ...(team ? { project: null, initiative: null, team: { id: `team-${team.length}`, name: team }, issue: null } : { project: { id: project } }) };
       documents.push(doc);
       return { ...doc };
     },
