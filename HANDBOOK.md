@@ -39,6 +39,7 @@ anything else left after the third round parks `needs-decision` for the
 orchestrator to narrow the contract, split the Issue or change the approach. The collector host needs both the Codex and Claude CLIs logged in by
 subscription, from different model families; a single-family setup gives
 `not-reviewed`, and so does a logged-out CLI whose role has to run. The Claude login refreshes itself: before each Claude role on the host, and every five minutes from the watcher while a worker is registered; a role that fails on an expired login names it («вход Claude истёк или не найден»), gets one refresh and one relaunch. See [review rounds](references/orchestration-delivery.md#review-rounds).
+A change too large for one role request (over the engine's input limit: Codex 1,000,000 bytes, Claude 800,000) is reviewed in file groups, a file over the limit by its hunks, with the same contract and open findings in every group; every changed file must still be covered, the checker's evidence is cut to the findings' regions to fit, and what cannot fit fails with its reason, as does a role failure, which keeps the engine's trimmed stderr.
 Every collection requires a pinned request and correlated admission; unpinned
 legacy requests cannot start collections. Receipts of the previous format are not accepted.
 
