@@ -4,9 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { spawnSync } from 'node:child_process';
 import { validateReplies, inheritedTurn } from './skills-owner.mjs';
 import { probeText } from './skills-probe.mjs';
 import { runScenario } from './skills-run.mjs';
+import { permittedStages } from './skills-stage-driver.mjs';
 
 const repo=process.cwd(),host=path.join(repo,'scripts/test-fixtures/skills-text-host.mjs');
 const question='Что: колонка Источник.\nУтверждаем и начинаем Handoff?';
@@ -170,4 +172,50 @@ test('codex: a continued stage changes only MCP servers and keeps marketplace se
   assert.match(config,/\[mcp_servers\.stage_driver\]\ndefault_tools_approval_mode = "approve"\ncommand = "node"\nargs = \["new"\]/);
   assert.match(config,/\[mcp_servers\.monotest\]/);
  }finally{fs.rmSync(home,{recursive:true,force:true});}
+});
+
+// MONO-493: a resumed Claude session keeps the start_stage schema it loaded in an
+// earlier stage. The schema stays the same in every run, and the driver checks
+// each call against the current run's permitted list.
+function driverSession(run){
+ const {command,args}=JSON.parse(fs.readFileSync(path.join(run.outputDir,'mcp.json'),'utf8')).mcpServers.stage_driver;
+ return calls=>{
+  const requests=[{jsonrpc:'2.0',id:0,method:'initialize',params:{protocolVersion:'2024-11-05'}},{jsonrpc:'2.0',id:1,method:'tools/list'},
+   ...calls.map((stage,i)=>({jsonrpc:'2.0',id:i+2,method:'tools/call',params:{name:'start_stage',arguments:{stage,projectId:'fixture-project'}}}))];
+  const result=spawnSync(command,args,{input:requests.map(JSON.stringify).join('\n')+'\n',encoding:'utf8'});
+  assert.equal(result.status,0,result.stderr);
+  const replies=result.stdout.trim().split('\n').map(JSON.parse);
+  return {schema:replies[1].result.tools[0].inputSchema,calls:replies.slice(2)};
+ };
+}
+test('claude: Discovery permits Design, then Tech Evaluation in the same resumed session permits Handoff',async t=>{
+ const first=setup(t,'claude',[question,'Утверждение записал.']);
+ first.request.scenario.expectedReplies=[{...agree,id:'discovery-approval',stage:'discovery',driverStart:['design']}];
+ const one=await runScenario(first.request);
+ assert.equal(one.status,'passed',JSON.stringify(one.reason));
+ const discovery=driverSession(first.request)(['design','handoff']);
+ assert.deepEqual(JSON.parse(discovery.calls[0].result.content[0].text),{driverIntercepted:true,stage:'design',projectId:'fixture-project'});
+ assert.match(discovery.calls[1].error.message,/permission/);
+ const secondPlan=path.join(first.dir,'plan-2.json');fs.writeFileSync(secondPlan,JSON.stringify({messages:[question,'Утверждение записал.']}));
+ const second={...first.request,outputDir:path.join(first.dir,'out-2'),continueSession:one.session,binary:{command:process.execPath,args:[host,'agree','--plan',secondPlan]},
+  scenario:{...first.request.scenario,prompt:'Начни Tech Evaluation',expectedReplies:[{...agree,driverStart:['handoff']}]}};
+ const two=await runScenario(second);
+ assert.equal(two.status,'passed',JSON.stringify(two.reason));assert.deepEqual(two.session,one.session,'same host conversation');
+ const tech=driverSession(second)(['handoff','design']);
+ // The session may still hold the schema it loaded during Discovery; that schema must accept Handoff.
+ assert.deepEqual(tech.schema,discovery.schema,'the resumed session sees the same schema');
+ assert.equal(discovery.schema.properties.stage.enum,undefined,'no stage list cached in the schema');
+ assert.deepEqual(JSON.parse(tech.calls[0].result.content[0].text),{driverIntercepted:true,stage:'handoff',projectId:'fixture-project'});
+ assert.match(tech.calls[1].error.message,/permission.*handoff/,'the refusal names the current run list');
+});
+test('a reply without driverStart adds nothing to the driver list',async t=>{
+ const {request}=setup(t,'claude',[question,'Утверждение записал.']);
+ request.scenario.expectedReplies=[{...agree,id:'plain'},{...agree,driverStart:['handoff']}];
+ await runScenario(request);
+ const {calls}=driverSession(request)(['handoff','null','undefined']);
+ assert.ok(calls[0].result,JSON.stringify(calls[0]));
+ assert.ok(calls[1].error&&calls[2].error);
+ assert.deepEqual(JSON.parse(fs.readFileSync(path.join(request.outputDir,'stage-driver-permission.json'),'utf8')),['handoff']);
+ for(const reply of [{},{driverStart:undefined},{driverStart:null}])assert.deepEqual(permittedStages(reply),[],JSON.stringify(reply));
+ assert.deepEqual(permittedStages({driverStart:'design'}),['design']);assert.deepEqual(permittedStages({driverStart:['handoff']}),['handoff']);
 });

@@ -17,23 +17,34 @@ export function testedVersion(request, fallbackRoot) {
 }
 
 export const stageDriverTool='mcp__stage_driver__start_stage';
-export const permittedStages=reply=>reply.driverStart===null?[]:Array.isArray(reply.driverStart)?reply.driverStart:[reply.driverStart];
+// A reply without driverStart, or with driverStart null, permits no stage.
+export const permittedStages=reply=>reply.driverStart===undefined||reply.driverStart===null?[]:Array.isArray(reply.driverStart)?reply.driverStart:[reply.driverStart];
 export function startReceipt(input, allowed) {
- if(!allowed.includes(input?.stage)||typeof input?.projectId!=='string'||!input.projectId.trim())throw new Error('stage start has no scenario permission');
+ if(!allowed.includes(input?.stage)||typeof input?.projectId!=='string'||!input.projectId.trim())throw new Error(`stage start has no scenario permission; this run permits: ${allowed.join(', ')||'none'}`);
  return {driverIntercepted:true,stage:input.stage,projectId:input.projectId};
 }
+// The permitted list lives in the current run's file and is read on every call.
+// The schema names no stages: a resumed session can keep the schema it loaded in
+// an earlier stage, and a list there would be stale.
+export function readPermitted(file) {
+ const value=JSON.parse(fs.readFileSync(file,'utf8'));
+ if(!Array.isArray(value)||value.some(stage=>typeof stage!=='string'||!stage))throw new Error('stage-driver permission file is not a list of stages');
+ return value;
+}
+export const startStageTool={name:'start_stage',description:'Intercept a next-stage invocation for the scenario driver. Call only after the owner reply authorizes it. The driver checks the stage against the current run permission when called. Does not run the next stage.',
+ inputSchema:{type:'object',properties:{stage:{type:'string'},projectId:{type:'string'}},required:['stage','projectId'],additionalProperties:false}};
 // No stage runs inside this tool. The suite owns the later invocation, after
 // native reply ordering, records and the mandatory rubric have passed.
 if(process.argv[1]===fileURLToPath(import.meta.url)) {
- const allowed=JSON.parse(process.argv[2]);
+ const permissionFile=process.argv[2];
  const lines=readline.createInterface({input:process.stdin});
  lines.on('line',line=>{
   let request;try{request=JSON.parse(line);if(request.id===undefined)return;
    let result;
    if(request.method==='initialize')result={protocolVersion:request.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'mono-stage-driver',version:'1'}};
    else if(request.method==='ping')result={};
-   else if(request.method==='tools/list')result={tools:[{name:'start_stage',description:'Intercept a next-stage invocation for the scenario driver. Call only after the owner reply authorizes it. Does not run the next stage.',inputSchema:{type:'object',properties:{stage:{type:'string',enum:allowed},projectId:{type:'string'}},required:['stage','projectId'],additionalProperties:false}}]};
-   else if(request.method==='tools/call'&&request.params.name==='start_stage')result={content:[{type:'text',text:JSON.stringify(startReceipt(request.params.arguments,allowed))}]};
+   else if(request.method==='tools/list')result={tools:[startStageTool]};
+   else if(request.method==='tools/call'&&request.params.name==='start_stage')result={content:[{type:'text',text:JSON.stringify(startReceipt(request.params.arguments,readPermitted(permissionFile)))}]};
    else throw new Error('unsupported stage-driver request');
    process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:request.id,result})+'\n');
   }catch(error){if(request?.id!==undefined)process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:request.id,error:{code:-32602,message:error.message}})+'\n');}

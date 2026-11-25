@@ -26,20 +26,29 @@ const text=value=>typeof value==='string'&&value.trim().length>0;
 const ownUrl=url=>typeof url==='string'&&url.startsWith('https://linear.app/monotest/');
 const idOf=row=>row?.uuid??row?.id;
 const bodyOf=row=>row?.body??row?.content??row?.description;
+// Linear stores a "- " list item as "* "; a retry copies the stored marker.
+const listMarkers=value=>value.replace(/^( {0,3})[-*+] /gm,'$1* ');
+// A nothing-saved patch is recovered by a later successful same-document write
+// whose fresh read-back contains every intended edit and every edit the retry
+// made, modulo Linear's list-marker rewrite. Without that read-back it stays unsaved.
 function recoveredUnsavedWrite(data,call){
  const error=unsavedResult(data.host,call,data.rows);
  if(!error||call.name!=='mcp__monotest__save_document')return false;
  const input=callInput(data.host,call);
- if(!text(input?.id)||!Array.isArray(input.patch))return false;
- const wanted=input.patch.map(p=>p?.new_string);
+ const edits=patch=>Array.isArray(patch)&&patch.length&&patch.every(p=>typeof p?.new_string==='string')?patch.map(p=>p.new_string):null;
+ const wanted=edits(input?.patch);
+ if(!text(input?.id)||!wanted)return false;
  for(const retry of data.calls.filter(c=>c.line>error.line&&c.name===call.name)){
-  const again=callInput(data.host,retry);
-  if(again?.id!==input.id||!Array.isArray(again.patch)||!isDeepStrictEqual(again.patch.map(p=>p?.new_string),wanted))continue;
+  const again=callInput(data.host,retry),retried=edits(again?.patch);
+  if(again?.id!==input.id||!retried)continue;
   let saved;try{saved=resultFor(data.host,retry,data.rows);}catch{continue;}
   if(idOf(saved.value)!==input.id)continue;
   for(const read of data.calls.filter(c=>c.line>saved.resultLine&&c.name==='mcp__monotest__get_document')){
    if(callInput(data.host,read)?.id!==input.id)continue;
-   try{if(idOf(resultFor(data.host,read,data.rows).value)===input.id)return true;}catch{}
+   let fresh;try{fresh=resultFor(data.host,read,data.rows).value;}catch{continue;}
+   if(idOf(fresh)!==input.id||typeof fresh.content!=='string'||elided(fresh.content))continue;
+   const content=listMarkers(fresh.content);
+   if([...wanted,...retried].every(edit=>content.includes(listMarkers(edit))))return true;
   }
  }
  return false;

@@ -2441,6 +2441,26 @@ for(const mode of ['recovered','no-explicit-error','no-retry','wrong-target','no
  f.events.splice(7,0,...events);f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
  const r=f.check();assert.equal(r.status,mode==='recovered'?'passed':'unverified',JSON.stringify(r));
 });
+// MONO-493: Linear stores "- " list items as "* ", so a retry copies the stored marker and may narrow or add
+// edits. Recovery holds when the fresh read-back contains every intended and every retried edit.
+for(const mode of ['markers-narrowed','added-confirmed','added-unconfirmed','intended-missing','no-fresh-read'])test(`MONO-493 nothing-saved recovery accepts Linear list markers and checked retry edits (${mode})`,t=>{
+ const f=textFixture(t,'claude','defer'),prior='Список:\n* R4. Пусто.\n* R5. Колонка.';
+ const doc={id:'brief',projectId,title:'Brief',content:prior};
+ const added=mode.startsWith('added');
+ const final={...doc,content:`${added?'Список источников:':'Список:'}\n* R4. Пусто, пробелы.\n* R5. Колонка ${mode==='intended-missing'?'тут':'везде'}.`};
+ const bad=f.call('bad-patch','mcp__monotest__save_document',{id:'brief',patch:[{op:'replace',old_string:'- R4. Пусто.\n- R5. Колонка.',new_string:'- R4. Пусто, пробелы.\n- R5. Колонка везде.'}]});
+ const error={type:'user',message:{content:[{...resumeLive.writeError,tool_use_id:'bad-patch'}]}};
+ const patch=[{op:'replace',old_string:'* R4. Пусто.',new_string:'* R4. Пусто, пробелы.'},{op:'replace',old_string:'Колонка.',new_string:mode==='intended-missing'?'Колонка тут.':'Колонка везде.'}];
+ if(added)patch.push({op:'replace',old_string:'Список:',new_string:'Список источников:'});
+ const retry=f.call('patch','mcp__monotest__save_document',{id:'brief',patch});
+ const fresh=mode==='added-unconfirmed'?{...final,content:final.content.replace('Список источников:','Список:')}:final;
+ const events=[f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',doc),bad,error,retry,f.result('patch',final)];
+ if(mode!=='no-fresh-read')events.push(f.call('fresh','mcp__monotest__get_document',{id:'brief'}),f.result('fresh',fresh));
+ f.events.splice(7,0,...events);f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
+ const r=f.check();
+ if(['markers-narrowed','added-confirmed'].includes(mode))assert.equal(r.status,'passed',JSON.stringify(r));
+ else{assert.equal(r.status,'unverified',JSON.stringify(r));assert.match(r.reason,/successful record result missing/);}
+});
 test('continue9 missing saved rubric digest retains actual missing-binding reason on resume',async t=>{
  const f=u7DocumentFixture(t,'codex');f.check();
  const input={run:{trace:f.request.trace},runRequest:{host:'codex',cwd:f.dir,packRoot:process.cwd(),context:{skillPrefix:'mono',projectName:f.project.name},scenario:{expectedReplies:f.request.expectedReplies,rubricDefinition:f.request.rubricDefinition},mcpServers:{monotest:{url:'test'}}},scenario:{next:'handoff',expectedRecords:f.request.expectedRecords},project:f.project,outputDir:path.join(f.dir,'missing-binding')};

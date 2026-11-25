@@ -472,12 +472,17 @@ export async function runScenario(request){
   try{
     request={...request,testedVersion:testedVersion(request)};
     validate(request);
+    let driverPermission=null;
     if(!request.readOnlyDump&&request.scenario.expectedReplies?.some(r=>r.driverStart)) {
       if(request.mcpServers.stage_driver)throw new Error('stage driver server is owned by the driver');
-      const allowed=[...new Set(request.scenario.expectedReplies.flatMap(permittedStages))];
-      request={...request,mcpServers:{...request.mcpServers,stage_driver:{command:process.execPath,args:[path.join(request.packRoot,'scripts/skills-stage-driver.mjs'),JSON.stringify(allowed)]}}};
+      // The driver reads this run's list from its own file on every call, so a
+      // resumed session never relies on a list an earlier stage was given.
+      // The runner's own driver copy keeps the file protocol paired with this runner.
+      driverPermission={file:path.join(request.outputDir,'stage-driver-permission.json'),allowed:[...new Set(request.scenario.expectedReplies.flatMap(permittedStages))]};
+      request={...request,mcpServers:{...request.mcpServers,stage_driver:{command:process.execPath,args:[fileURLToPath(new URL('./skills-stage-driver.mjs',import.meta.url)),driverPermission.file]}}};
     }
     fs.mkdirSync(request.outputDir);created=true; // a run never overwrites another run
+    if(driverPermission)fs.writeFileSync(driverPermission.file,JSON.stringify(driverPermission.allowed)+'\n',{flag:'wx'});
     run=request.host==='claude'?await runClaude(request):await runCodex(request);
     run={...run,testedVersion:request.testedVersion};
     fs.writeFileSync(path.join(request.outputDir,'result.json'),JSON.stringify(run,null,2)+'\n');return run;
