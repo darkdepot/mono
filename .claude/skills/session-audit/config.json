@@ -1,5 +1,5 @@
 {
-  "budget": { "minutes": 60, "tokens": 3000000 },
+  "budget": { "minutes": 90, "tokens": 3500000 },
   "randomSessions": 3,
   "triageLimit": 5,
   "firstPassDays": 7,
