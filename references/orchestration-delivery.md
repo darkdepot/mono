@@ -277,7 +277,10 @@ Parks:
      `extra-round.lock`, outside every worker grant, bound to that receipt; a
      refused spawn drops it, a refused startup voids it, a host verification run
      that touches it fails consistency and puts it back, and a new attempt never
-     sees it. `reviewRetry` and `extraRound` never go in one resume. The fourth
+     sees it. `reviewRetry` and `extraRound` never go in one resume, and both
+     wait for this attempt's round in flight; any resume writing a control file
+     (also `taskChange`) waits for every host verification run of the root,
+     whose snapshot covers the control files of all attempts. The fourth
      round reads the fixes and open findings, or the whole change after a task
      change, and judges leftovers like round 3; its lines say
      `round 4 of 4 (extra)`. Write the grant to the journal in one line with the

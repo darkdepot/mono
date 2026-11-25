@@ -9,7 +9,7 @@ import { atomicJson, canonical, digest, readJson, flags, identity, isMain, proce
 import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges, reviewRetries, extraRounds } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
-import { hostRunMarker, hostRunCheckout, removeHostCheckout, evidenceSnapshot, evidenceTouched, stopHostGroup, screenCheckHold, readScreenCheck } from './review-rounds.mjs';
+import { hostRunMarker, hostRunCheckout, removeHostCheckout, openHostRun, evidenceTouched, stopHostGroup, screenCheckHold, readScreenCheck } from './review-rounds.mjs';
 
 export { reviewEnvironment } from "./model-environment.mjs";
 
@@ -266,8 +266,7 @@ const failureLines = text => text.split("\n").filter(line => /^\s*(FAIL\b|not ok
 const GIT_ROUTING = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX"];
 export async function runHostVerification({ command, args }, repo, head, evidenceRoot, collectionId, pinsFile) {
   const marker = hostRunMarker(evidenceRoot, collectionId), log = marker.replace(/\.running$/, ".log"), checkout = hostRunCheckout(evidenceRoot, collectionId);
-  fs.mkdirSync(path.dirname(marker), { recursive: true });
-  atomicJson(marker, { collectionId, group: null, startedAt: new Date().toISOString(), snapshot: evidenceSnapshot(evidenceRoot, pinsFile) });
+  openHostRun(evidenceRoot, collectionId, pinsFile);
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-verify-"));
   const fd = fs.openSync(log, "w", 0o644);
   const startedAt = Date.now();

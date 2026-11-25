@@ -257,6 +257,18 @@ test('extra-round resume: checked before anything is written, recorded beside th
     refused({ extraRound: { reason: 'owner' } }, /extraRound refused: an owner remark on the PR is open/);
     fs.rmSync(path.join(pins.evidenceRoot, 'history', `${owner}.json`));
     const last = seal('not-converged', [finding('k1')]);
+    // MONO-482 review: while a round of this attempt is in flight, or any host verification of the root is running or
+    // unrecovered, the grant would be taken for a planted one: resume refuses and writes nothing; afterwards it is recorded.
+    const { admitRound, recordResult, hostRunMarker, evidenceSnapshot, evidenceTouched } = await import('./review-rounds.mjs');
+    const tip = 'c'.repeat(40), admission = admitRound(f.root, f.issue, 1, { root: f.root, head: tip, collect: false, collectionId: `preflight-collect:${tip}:1` });
+    refused({ extraRound: { reason: 'during a round' } }, /review round preflight-collect:c+:1 has no result yet/);
+    refused({ reviewRetry: true }, /review round preflight-collect:c+:1 has no result yet/);
+    recordResult(f.root, f.issue, 1, admission, { status: 'done' });
+    const marker = hostRunMarker(pins.evidenceRoot, `preflight-collect:${tip}:2`);
+    put(marker, JSON.stringify({ collectionId: `preflight-collect:${tip}:2`, group: null, snapshot: evidenceSnapshot(pins.evidenceRoot, pinsFile) }));
+    refused({ extraRound: { reason: 'during a host run' } }, /host verification .* is running or unrecovered/);
+    refused({ taskChange: url }, /host verification .* is running or unrecovered/);
+    fs.rmSync(marker);
     // A spawn that fails after the grant was recorded drops exactly that grant (and the task change with it).
     const launch = path.join(f.pack, 'scripts/orchestrator/launch.mjs'), source = fs.readFileSync(launch, 'utf8'), spawnLine = 'child = spawn(command, args, options);';
     put(launch, source.replace(spawnLine, `throw new Error('fixture spawn refused'); ${spawnLine}`));
@@ -272,6 +284,9 @@ test('extra-round resume: checked before anything is written, recorded beside th
     assert.equal(read(path.join(attempt, 'task-changes.json')).length, 1);
     assert.ok(!f.entry().workerWritableRoots.some(root => attempt === root || attempt.startsWith(root + path.sep)), 'the grant is outside every worker grant');
     assert.equal(read(path.join(f.root, 'attempts.json'))[f.issue], 1, 'the same attempt resumes');
+    // The grant recorded after the runs ended survives the next host run's snapshot.
+    const after = evidenceSnapshot(pins.evidenceRoot, pinsFile);
+    assert.equal(evidenceTouched(after, pins.evidenceRoot, pinsFile), null); assert.equal(read(grants).length, 1);
     await stopped(f.entry().pid);
     // A second extra round in the same attempt refuses before anything is written.
     const before = fs.readFileSync(grants, 'utf8');

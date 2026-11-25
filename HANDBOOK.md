@@ -952,7 +952,9 @@ out-of-contract work and left no open owner remark on the PR. Resume checks this
 before writing anything and records the grant in `dispatch/KEY-aN/extra-round.json`
 beside the launch pins under `extra-round.lock` (host-only, outside worker grants,
 bound to the attempt's third spent receipt; dropped on a refused spawn, voided on
-a refused startup, guarded by the host-run evidence snapshot); the gate's strict
+a refused startup, guarded by the host-run evidence snapshot, which covers the
+control files of every attempt of the root; a resume writing one waits for every
+host run and, with a retry or extra round, for the attempt's round in flight); the gate's strict
 limit becomes 4 and the review round accepts a fourth (`round 4 of 4 (extra)`),
 which judges like round 3. A not-converged extra round parks
 `needs-decision … (extra round used)` with no second grant. After
