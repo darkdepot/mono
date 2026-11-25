@@ -12,7 +12,7 @@ import { checkTrace, checkTraceSources, worstStatus, codexItems, codexWindows, v
 import { traceRows, textStageTurns } from './skills-probe.mjs';
 import { mcpConfig, privateCodexHome, codexHomeConfig, toolViolation, workspaceReadCall, workspaceReadCode, MissingEvidence, isWrite } from './skills-boundary.mjs';
 
-import { dialogueMode, testedVersion, permittedStages } from './skills-stage-driver.mjs';
+import { dialogueMode, testedVersion, permittedStages, driverStageNames } from './skills-stage-driver.mjs';
 
 const userMessage = text => ({type:'user',message:{role:'user',content:[{type:'text',text}]},parent_tool_use_id:null,session_id:''});
 const pause = ms => new Promise(resolve=>setTimeout(resolve,ms));
@@ -472,17 +472,17 @@ export async function runScenario(request){
   try{
     request={...request,testedVersion:testedVersion(request)};
     validate(request);
-    let driverPermission=null;
     if(!request.readOnlyDump&&request.scenario.expectedReplies?.some(r=>r.driverStart)) {
       if(request.mcpServers.stage_driver)throw new Error('stage driver server is owned by the driver');
-      // The driver reads this run's list from its own file on every call, so a
-      // resumed session never relies on a list an earlier stage was given.
-      // The runner's own driver copy keeps the file protocol paired with this runner.
-      driverPermission={file:path.join(request.outputDir,'stage-driver-permission.json'),allowed:[...new Set(request.scenario.expectedReplies.flatMap(permittedStages))]};
-      request={...request,mcpServers:{...request.mcpServers,stage_driver:{command:process.execPath,args:[fileURLToPath(new URL('./skills-stage-driver.mjs',import.meta.url)),driverPermission.file]}}};
+      // This run's list travels only in the driver's launch argument. Every host
+      // invocation, a resumed one too, starts the driver from this run's MCP config,
+      // and no file the stage can write feeds a running driver. The runner's own
+      // driver copy keeps the launch protocol paired with this runner.
+      const allowed=[...new Set(request.scenario.expectedReplies.flatMap(permittedStages))];
+      if(allowed.some(stage=>!driverStageNames.includes(stage)))throw new Error('driverStart names an unknown stage');
+      request={...request,mcpServers:{...request.mcpServers,stage_driver:{command:process.execPath,args:[fileURLToPath(new URL('./skills-stage-driver.mjs',import.meta.url)),JSON.stringify(allowed)]}}};
     }
     fs.mkdirSync(request.outputDir);created=true; // a run never overwrites another run
-    if(driverPermission)fs.writeFileSync(driverPermission.file,JSON.stringify(driverPermission.allowed)+'\n',{flag:'wx'});
     run=request.host==='claude'?await runClaude(request):await runCodex(request);
     run={...run,testedVersion:request.testedVersion};
     fs.writeFileSync(path.join(request.outputDir,'result.json'),JSON.stringify(run,null,2)+'\n');return run;

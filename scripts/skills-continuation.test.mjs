@@ -215,7 +215,18 @@ test('a reply without driverStart adds nothing to the driver list',async t=>{
  const {calls}=driverSession(request)(['handoff','null','undefined']);
  assert.ok(calls[0].result,JSON.stringify(calls[0]));
  assert.ok(calls[1].error&&calls[2].error);
- assert.deepEqual(JSON.parse(fs.readFileSync(path.join(request.outputDir,'stage-driver-permission.json'),'utf8')),['handoff']);
+ const {args}=JSON.parse(fs.readFileSync(path.join(request.outputDir,'mcp.json'),'utf8')).mcpServers.stage_driver;
+ assert.deepEqual(JSON.parse(args.at(-1)),['handoff']);
  for(const reply of [{},{driverStart:undefined},{driverStart:null}])assert.deepEqual(permittedStages(reply),[],JSON.stringify(reply));
  assert.deepEqual(permittedStages({driverStart:'design'}),['design']);assert.deepEqual(permittedStages({driverStart:['handoff']}),['handoff']);
+});
+// The stage can write files in its run folder; none of them may widen what the driver accepts.
+test('a stage that writes a permission file still cannot start a stage its run does not permit',async t=>{
+ const {request}=setup(t,'claude',[question,'Утверждение записал.']);
+ request.scenario.expectedReplies=[{...agree,id:'discovery-approval',stage:'discovery',driverStart:['design']}];
+ assert.equal((await runScenario(request)).status,'passed');
+ for(const file of ['stage-driver-permission.json','permission.json'])fs.writeFileSync(path.join(request.outputDir,file),'["handoff"]');
+ const {calls}=driverSession(request)(['handoff','design']);
+ assert.match(calls[0].error?.message??'',/permission.*design/,JSON.stringify(calls[0]));
+ assert.equal(JSON.parse(calls[1].result.content[0].text).stage,'design');
 });

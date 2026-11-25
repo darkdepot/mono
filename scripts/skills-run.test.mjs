@@ -3,9 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { spawn, spawnSync } from 'node:child_process';
-import readline from 'node:readline';
-import { driverStageNames } from './skills-stage-driver.mjs';
+import { spawnSync } from 'node:child_process';
+import { driverStageNames, launchPermitted } from './skills-stage-driver.mjs';
 import { runScenario as runTextScenario } from './skills-run.mjs';
 import { runScenario as runWindowFixture, runPersona, runClaude, runCodex } from './test-fixtures/legacy-window-run.mjs';
 const runScenario=request=>request.scenario.expectedReplies?runTextScenario(request):runWindowFixture(request);
@@ -538,33 +537,19 @@ for(const host of ['claude','codex'])test(`${host}: active driver refuses retire
  const r=await runTextScenario(setup(t,host));assert.equal(r.status,'unverified');assert.match(r.reason,/retired/);
 });
 
-test('U7 stage-driver MCP intercepts only predefined destinations without executing a stage',t=>{
+test('U7 stage-driver MCP intercepts only predefined destinations without executing a stage',()=>{
  const requests=[{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05'}},{jsonrpc:'2.0',id:2,method:'tools/list'},{jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'start_stage',arguments:{stage:'discovery',projectId:'fixture-project'}}},{jsonrpc:'2.0',id:4,method:'tools/call',params:{name:'start_stage',arguments:{stage:'handoff',projectId:'fixture-project'}}}];
- const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-driver-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
- const permission=path.join(dir,'permission.json');fs.writeFileSync(permission,'["discovery"]');
- const result=spawnSync(process.execPath,['scripts/skills-stage-driver.mjs',permission],{input:requests.map(JSON.stringify).join('\n')+'\n',encoding:'utf8'});
+ const result=spawnSync(process.execPath,['scripts/skills-stage-driver.mjs','["discovery"]'],{input:requests.map(JSON.stringify).join('\n')+'\n',encoding:'utf8'});
  assert.equal(result.status,0,result.stderr);const replies=result.stdout.trim().split('\n').map(JSON.parse);
  assert.equal(replies.length,4);assert.deepEqual(replies.map(r=>r.id),[1,2,3,4]);
- // The schema lists only the fixed stage vocabulary; this run's permission is checked at call time (MONO-493).
+ // The schema lists only the fixed stage vocabulary; the run's launch list is checked on each call (MONO-493).
  assert.deepEqual(replies[1].result.tools[0].inputSchema.properties.stage.enum,driverStageNames);
  assert.deepEqual(JSON.parse(replies[2].result.content[0].text),{driverIntercepted:true,stage:'discovery',projectId:'fixture-project'});
  assert.match(replies[3].error.message,/permission/);assert.equal(replies[3].result,undefined);
 });
-test('MONO-493 stage driver reads the permitted list at call time, not at start',async t=>{
- const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-driver-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
- const permission=path.join(dir,'permission.json');fs.writeFileSync(permission,'["design"]');
- const child=spawn(process.execPath,['scripts/skills-stage-driver.mjs',permission],{stdio:['pipe','pipe','inherit']});
- const lines=readline.createInterface({input:child.stdout})[Symbol.asyncIterator]();
- const ask=async request=>{child.stdin.write(JSON.stringify(request)+'\n');return JSON.parse((await lines.next()).value);};
- const call=(id,stage)=>ask({jsonrpc:'2.0',id,method:'tools/call',params:{name:'start_stage',arguments:{stage,projectId:'p'}}});
- try{
-  assert.ok((await call(1,'design')).result);
-  fs.writeFileSync(permission,'["handoff"]');
-  assert.equal(JSON.parse((await call(2,'handoff')).result.content[0].text).stage,'handoff');
-  assert.match((await call(3,'design')).error.message,/permits: handoff/);
-  fs.writeFileSync(permission,'[null]');
-  assert.match((await call(4,'handoff')).error.message,/not a list of stages/);
- }finally{child.kill();}
+test('MONO-493 stage driver takes its list only from a launch argument of known stages',()=>{
+ assert.deepEqual(launchPermitted('["handoff"]'),['handoff']);assert.deepEqual(launchPermitted('[]'),[]);
+ for(const bad of ['[null,"handoff"]','"handoff"','["Handoff"]','/tmp/permission.json'])assert.throws(()=>launchPermitted(bad),undefined,bad);
 });
 
 const liveIdle=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-host-context-regressions.json',import.meta.url))).idle;
