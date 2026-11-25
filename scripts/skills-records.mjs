@@ -47,8 +47,9 @@ function recoveredUnsavedWrite(data,call){
    if(callInput(data.host,read)?.id!==input.id)continue;
    let fresh;try{fresh=resultFor(data.host,read,data.rows).value;}catch{continue;}
    if(idOf(fresh)!==input.id||typeof fresh.content!=='string'||elided(fresh.content))continue;
-   const content=listMarkers(fresh.content);
-   if([...wanted,...retried].every(edit=>content.includes(listMarkers(edit))))return true;
+   const content=listMarkers(fresh.content),all=[...wanted,...retried];
+   // A deletion leaves nothing to find in the read-back; it needs the identical retry.
+   if(all.some(edit=>!edit.trim())?isDeepStrictEqual(retried,wanted):all.every(edit=>content.includes(listMarkers(edit))))return true;
   }
  }
  return false;

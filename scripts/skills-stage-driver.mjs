@@ -24,15 +24,17 @@ export function startReceipt(input, allowed) {
  return {driverIntercepted:true,stage:input.stage,projectId:input.projectId};
 }
 // The permitted list lives in the current run's file and is read on every call.
-// The schema names no stages: a resumed session can keep the schema it loaded in
-// an earlier stage, and a list there would be stale.
+// The schema lists only the fixed stage vocabulary, the same in every run: a
+// resumed session can keep the schema it loaded in an earlier stage, and a
+// per-run list there would be stale.
+export const driverStageNames=['idea','research','discovery','design','tech-evaluation','handoff','delivery'];
 export function readPermitted(file) {
  const value=JSON.parse(fs.readFileSync(file,'utf8'));
  if(!Array.isArray(value)||value.some(stage=>typeof stage!=='string'||!stage))throw new Error('stage-driver permission file is not a list of stages');
  return value;
 }
 export const startStageTool={name:'start_stage',description:'Intercept a next-stage invocation for the scenario driver. Call only after the owner reply authorizes it. The driver checks the stage against the current run permission when called. Does not run the next stage.',
- inputSchema:{type:'object',properties:{stage:{type:'string'},projectId:{type:'string'}},required:['stage','projectId'],additionalProperties:false}};
+ inputSchema:{type:'object',properties:{stage:{type:'string',enum:driverStageNames},projectId:{type:'string'}},required:['stage','projectId'],additionalProperties:false}};
 // No stage runs inside this tool. The suite owns the later invocation, after
 // native reply ordering, records and the mandatory rubric have passed.
 if(process.argv[1]===fileURLToPath(import.meta.url)) {

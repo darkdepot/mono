@@ -2461,6 +2461,20 @@ for(const mode of ['markers-narrowed','added-confirmed','added-unconfirmed','int
  if(['markers-narrowed','added-confirmed'].includes(mode))assert.equal(r.status,'passed',JSON.stringify(r));
  else{assert.equal(r.status,'unverified',JSON.stringify(r));assert.match(r.reason,/successful record result missing/);}
 });
+// A deletion has nothing to find in the read-back, so it still needs the identical retry.
+for(const mode of ['identical','different'])test(`MONO-493 nothing-saved deletion recovers only by the identical retry (${mode})`,t=>{
+ const f=textFixture(t,'claude','defer'),doc={id:'brief',projectId,title:'Brief',content:'Список:\n* R4. Пусто.\n* R5. Колонка.'};
+ const final={...doc,content:mode==='identical'?'Список:\n* R5. Колонка.':'Список:\n* R4. Пусто, пробелы.\n* R5. Колонка.'};
+ const bad=f.call('bad-patch','mcp__monotest__save_document',{id:'brief',patch:[{op:'replace',old_string:'- R4. Пусто.\n',new_string:''}]});
+ const error={type:'user',message:{content:[{...resumeLive.writeError,tool_use_id:'bad-patch'}]}};
+ const patch=mode==='identical'?[{op:'replace',old_string:'* R4. Пусто.\n',new_string:''}]:[{op:'replace',old_string:'* R4. Пусто.',new_string:'* R4. Пусто, пробелы.'}];
+ f.events.splice(7,0,f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',doc),bad,error,
+  f.call('patch','mcp__monotest__save_document',{id:'brief',patch}),f.result('patch',final),f.call('fresh','mcp__monotest__get_document',{id:'brief'}),f.result('fresh',final));
+ f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
+ const r=f.check();
+ if(mode==='identical')assert.equal(r.status,'passed',JSON.stringify(r));
+ else{assert.equal(r.status,'unverified',JSON.stringify(r));assert.match(r.reason,/successful record result missing/);}
+});
 test('continue9 missing saved rubric digest retains actual missing-binding reason on resume',async t=>{
  const f=u7DocumentFixture(t,'codex');f.check();
  const input={run:{trace:f.request.trace},runRequest:{host:'codex',cwd:f.dir,packRoot:process.cwd(),context:{skillPrefix:'mono',projectName:f.project.name},scenario:{expectedReplies:f.request.expectedReplies,rubricDefinition:f.request.rubricDefinition},mcpServers:{monotest:{url:'test'}}},scenario:{next:'handoff',expectedRecords:f.request.expectedRecords},project:f.project,outputDir:path.join(f.dir,'missing-binding')};

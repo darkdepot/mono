@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { validateReplies, inheritedTurn } from './skills-owner.mjs';
 import { probeText } from './skills-probe.mjs';
 import { runScenario } from './skills-run.mjs';
-import { permittedStages } from './skills-stage-driver.mjs';
+import { permittedStages, driverStageNames } from './skills-stage-driver.mjs';
 
 const repo=process.cwd(),host=path.join(repo,'scripts/test-fixtures/skills-text-host.mjs');
 const question='Что: колонка Источник.\nУтверждаем и начинаем Handoff?';
@@ -204,7 +204,7 @@ test('claude: Discovery permits Design, then Tech Evaluation in the same resumed
  const tech=driverSession(second)(['handoff','design']);
  // The session may still hold the schema it loaded during Discovery; that schema must accept Handoff.
  assert.deepEqual(tech.schema,discovery.schema,'the resumed session sees the same schema');
- assert.equal(discovery.schema.properties.stage.enum,undefined,'no stage list cached in the schema');
+ assert.deepEqual(discovery.schema.properties.stage.enum,driverStageNames,'only the fixed stage vocabulary, never a per-run list');
  assert.deepEqual(JSON.parse(tech.calls[0].result.content[0].text),{driverIntercepted:true,stage:'handoff',projectId:'fixture-project'});
  assert.match(tech.calls[1].error.message,/permission.*handoff/,'the refusal names the current run list');
 });
