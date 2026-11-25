@@ -708,7 +708,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
           let receipt = await round(at(first), 1, waiting);
           assert.deepEqual([runs(), reviewers(), receipt.review.spent, receipt.verification.exitCode], [0, 0, false, null]);
           screen(first, 'passed'); setReview(bin, { findings: [] });
-          receipt = await round(at(first, 2), 0, /pass: review clean \(round 1 of 1\) and host verification verified on head/);
+          receipt = await round(at(first, 2), 0, /pass: review clean \(round 1 of 1\) and host verification verified on head; screen check on the host passed on this head \(report .*#comment-screen-passed\)$/m);
           assert.deepEqual([runs(), reviewers(), receipt.review.spent], [1, 1, true]);
           return;
         }
@@ -730,8 +730,9 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         setReview(bin, { loggedOut: 'codex' });
         receipt = await round(at(second, 2), 1, /fail: not-reviewed: .*no round spent, request this head once more/);
         setReview(bin, { loggedOut: null });
-        receipt = await round(at(second, 3), 1, /fail: review not-converged \(round 1 of 1\)/);
-        assert.deepEqual([receipt.review.spent, reviewers()], [true, 1]);
+        // The round's line carries the host's result for this head: the worker cannot read evidenceRoot.
+        receipt = await round(at(second, 3), 1, /fail: review not-converged \(round 1 of 1\).*; screen check on the host passed on this head \(report .*#comment-screen-passed\)$/m);
+        assert.deepEqual([receipt.review.spent, reviewers(), receipt.screenCheck.head], [true, 1, second]);
         // From the first spent round on no screen check is needed: the fixed head passes on the worker's verification.
         const third = commit('export const third = 3;\n');
         await round(at(third), 0, /pass: review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification/);

@@ -129,14 +129,17 @@ export function spentRounds(evidenceRoot, pinsFile) {
 }
 // What holds the attempt's first round: null when it may run, otherwise {state: waiting|mismatches, reason}.
 // A result that is not a regular file, is unreadable or names another head counts as no result.
-export function screenCheckHold({ pins, spent, evidenceRoot, head }) {
-  if (pins?.screenCheck !== true || spent > 0) return null;
-  let result = null;
+export function readScreenCheck(evidenceRoot, head) {
   try {
     const file = screenCheckFile(evidenceRoot, head), stat = fs.lstatSync(file);
-    if (stat.isFile() && !stat.isSymbolicLink()) result = readJson(file);
-  } catch {}
-  if (result?.head !== head || !SCREEN_OUTCOMES.includes(result.outcome))
+    const result = stat.isFile() && !stat.isSymbolicLink() ? readJson(file) : null;
+    return result?.head === head && SCREEN_OUTCOMES.includes(result.outcome) ? result : null;
+  } catch { return null; }
+}
+export function screenCheckHold({ pins, spent, evidenceRoot, head }) {
+  if (pins?.screenCheck !== true || spent > 0) return null;
+  const result = readScreenCheck(evidenceRoot, head);
+  if (!result)
     return { state: "waiting", reason: "screen check on the host has no result for this head yet; no round spent, request this head again after a few minutes" };
   if (result.outcome === "mismatches")
     return { state: "mismatches", reason: `screen check on the host found mismatches with the mockup on this head (report ${String(result.report ?? "").replace(/\s+/g, " ").slice(0, 500)}); ` +

@@ -287,7 +287,9 @@ from BASE, like `hostVerification`, only when the task snapshot holds
   (never gate-eligible) on the head of the attempt's first preflight collection
   request: the first point where everything in the code report is committed and
   pushed. Never start it from the code report alone; it may describe uncommitted
-  edits. The collector log line `screen check waiting: <head>` is the trigger.
+  edits. Trigger: the line `attention: screen check waiting: <head>` in
+  `reports/KEY-collector-aN.log` (no watcher event; the watcher stays quiet
+  while the round is in flight and the collector lives).
 - What: only the PNG items for the snapshot's artboards and the taste rules
   from «Снимок контекста».
 - Order: while the attempt's receipt history has no spent round, the collector
@@ -302,9 +304,13 @@ from BASE, like `hostVerification`, only when the task snapshot holds
   with the report link; neither spends a round or runs the reviewer or host
   verification. `passed` lets the first round run. From the first spent round
   on, task changes included, the collection no longer waits.
-- Result: send the mismatches to the worker as one «Изменение задачи» before the
-  first round; the fixed head is checked again before its first round. On
-  `passed` post the report (head, artboards, verdict) as an Issue comment.
+- Result: write the mismatches (artboard, expected/actual, snapshot) as one
+  «Изменение задачи» comment on the Issue and pass its link as `--report`: the
+  live worker gets it in the gate line and fixes without a resume (a stopped
+  worker is resumed with that `taskChange` as usual). The fixed head is checked
+  again before its first round. A
+  `passed` result needs no write: the first round's gate line ends with
+  «screen check on the host passed on this head (report <link>)».
 - Queue: the screen check and QA passes share one stand and simulator; at most
   one of them runs on the host at a time, in one queue by request time, with no
   priority.
