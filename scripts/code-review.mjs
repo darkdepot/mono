@@ -577,6 +577,28 @@ function boundedCheckerPrompt({ build, extra, limit, engine, findings, scopedDif
   const findingFiles = new Set(findings.map(finding => finding.file));
   const onlyFindingFiles = result => result.parts.filter(part => !binary.has(part.file) && findingFiles.has(part.file)).map(part => part.diff).join('');
   const fullDiff = file => full.parts.find(part => part.file === file)?.diff;
+  // Each file's diff kept only around its findings: whole hunks near a finding, a long hunk cut to its lines near it.
+  const aroundFindings = (result, radius) => result.parts.filter(part => !binary.has(part.file) && findingFiles.has(part.file)).map(part => {
+    const windows = findings.filter(finding => finding.file === part.file).map(finding => [finding.line - radius, finding.line + radius]);
+    const near = line => windows.some(([from, to]) => line >= from && line <= to);
+    const { header, hunks } = splitHunks(part.diff);
+    return header + hunks.flatMap(hunk => {
+      const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(hunk);
+      if (!match) return [];
+      const start = Number(match[1]), count = Number(match[2] ?? 1);
+      if (!windows.some(([from, to]) => start <= to && start + Math.max(count, 1) - 1 >= from)) return [];
+      const rows = hunk.replace(/\n$/, '').split('\n'), kept = [rows[0]];
+      // A removed row sits at the head line where it was removed; context and added rows advance the head line.
+      let line = start, skipped = false;
+      for (const row of rows.slice(1)) {
+        if (near(line)) { if (skipped) kept.push('… (lines cut to fit the input limit)'); kept.push(row); skipped = false; }
+        else skipped = true;
+        if (!row.startsWith('-') && !row.startsWith('\\')) line++;
+      }
+      if (skipped) kept.push('… (lines cut to fit the input limit)');
+      return [kept.join('\n') + '\n'];
+    }).join('');
+  }).join('');
   const head = radius => evidenceExcerpts(extra.headEvidence, findings, radius, (file, line) => line);
   const base = radius => evidenceExcerpts(extra.baseEvidence, findings, radius, (file, line) => baseLine(fullDiff(file), line));
   const note = 'Input limit: evidence and diffs are cut to fit; read head files directly for more context.';
@@ -586,7 +608,9 @@ function boundedCheckerPrompt({ build, extra, limit, engine, findings, scopedDif
     () => { current = { ...current, inputLimitNote: note, headEvidence: head(80) }; },
     () => { current = { ...current, baseEvidence: base(80) }; },
     () => { current = { ...current, ...(current.diff === '' ? {} : { diff: onlyFindingFiles(scoped) }), baseDiff: onlyFindingFiles(full), diffScope: 'files with findings only' }; },
+    () => { current = { ...current, ...(current.diff === '' ? {} : { diff: aroundFindings(scoped, 80) }), baseDiff: aroundFindings(full, 80), diffScope: 'hunks around findings only' }; },
     () => { current = { ...current, headEvidence: head(20), baseEvidence: base(20) }; },
+    () => { current = { ...current, ...(current.diff === '' ? {} : { diff: aroundFindings(scoped, 20) }), baseDiff: aroundFindings(full, 20) }; },
   ];
   for (const step of steps) { step(); if (fits()) return prompt; }
   throw new Error(`code-review-checker input of ${promptSize(prompt)} bytes is over the ${engine} input limit of ${limit} bytes even with evidence cut to the regions of its ${findings.length} findings`);

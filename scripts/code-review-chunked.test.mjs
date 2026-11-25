@@ -196,7 +196,25 @@ test('MONO-486 (b): the checker input is bounded: duplicate diff once, evidence 
     const call = runner.calls.find(item => item.role === 'code-review-checker'); assert.ok(call.size <= limit); check(call.context);
     assert.equal(record.findings[0].status, 'confirmed');
   }
-  const runner = recorder(answer), record = await runReviewRound(request, { ...runner, promptLimits: { claude: 3000 } });
+  const runner = recorder(answer), record = await runReviewRound(request, { ...runner, promptLimits: { claude: 2000 } });
   assert.equal(record.outcome, 'not-reviewed'); assert.equal(runner.calls.filter(call => call.role === 'code-review-checker').length, 0);
-  assert.match(record.failures.at(-1).reason, /code-review-checker input of \d+ bytes is over the claude input limit of 3000 bytes even with evidence cut/);
+  assert.match(record.failures.at(-1).reason, /code-review-checker input of \d+ bytes is over the claude input limit of 2000 bytes even with evidence cut/);
+});
+
+test('MONO-486 (b): a finding in a file whose own diff is over the checker limit keeps only the hunk lines around it, in round one and round two', async t => {
+  const f = fixture(t, { 'flagged.mjs': body('flagged', 3000) });
+  const answer = (role, c) => role === 'code-review' ? review([finding('flagged.mjs', 1500)], c.focusFiles ?? c.files) : { completed: true, verdicts: c.findings.map((item, index) => verdictFor(item, index)) };
+  const limit = 60000, checkerOf = runner => runner.calls.find(call => call.role === 'code-review-checker');
+  const first = recorder(answer), one = await runReviewRound(f.request, { ...first, promptLimits: { claude: limit } });
+  assert.equal(one.outcome, 'not-converged', JSON.stringify(one.failures));
+  const c1 = checkerOf(first); assert.ok(c1.size <= limit);
+  assert.match(c1.context.baseDiff, /flagged_001499 /); assert.ok(!c1.context.baseDiff.includes('flagged_000100 '), 'far lines are cut');
+  assert.match(c1.context.baseDiff, /lines cut to fit the input limit/); assert.equal(c1.context.diffScope, 'hunks around findings only');
+  // Round two reads a small fix elsewhere; the whole baseDiff still rides beside it and is cut the same way.
+  fs.writeFileSync(path.join(f.worktree, 'input.mjs'), 'export function value(n) { return Math.max(0, n); }\n'); f.git('add', '.'); f.git('commit', '-qm', 'fix');
+  const second = recorder(answer), two = await runReviewRound({ ...f.request, head: f.git('rev-parse', 'HEAD'), stageRecord: one }, { ...second, promptLimits: { claude: limit } });
+  assert.equal(two.outcome, 'not-converged', JSON.stringify(two.failures)); assert.equal(two.rounds.length, 2);
+  const c2 = checkerOf(second); assert.ok(c2.size <= limit); assert.equal(c2.context.diffNote, undefined, 'a different scoped diff is not deduplicated away');
+  assert.equal(c2.context.scope, 'fixes-and-open-findings'); assert.equal(c2.context.diffScope, 'hunks around findings only');
+  assert.match(c2.context.baseDiff, /flagged_001499 /); assert.ok(!c2.context.baseDiff.includes('flagged_000100 '));
 });
