@@ -561,6 +561,24 @@ test('three-round cap cannot reset by changing contract/base; an amended contrac
  assert.deepEqual([next.rounds.length,next.round.scope],[3,'fixes-and-open-findings'],'later rounds on the same contract stay narrow');
  const rebased=await runReviewRound({...f.request,stageRecord:{...record,base:'f'.repeat(40),rounds:record.rounds.slice(0,1)}},runner);assert.equal(rebased.outcome,'not-reviewed');assert.match(rebased.failures.at(-1).reason,/stage base changed/);
 });
+// MONO-482: the gate passes the round limit it allows (3, or 4 with the attempt's extra round). The fourth round
+// works like the third (same scope choice, same successor rule); a fifth never runs and no other limit is taken.
+test('MONO-482 extra round: a gate-granted fourth round runs like the third, never a fifth',async t=>{
+ const f=fixture(t);let record;
+ for(let i=1;i<=3;i++)record=await runReviewRound({...f.request,stageRecord:record},responder({findings:[sample]}));
+ assert.deepEqual(record.successorKeys,[key],'round 3 lists a harmless blocking leftover as a successor');
+ const fourth=await runReviewRound({...f.request,stageRecord:record,roundLimit:4},responder({findings:[sample]}));
+ assert.deepEqual([fourth.rounds.length,fourth.round.number,fourth.round.scope],[4,4,'fixes-and-open-findings'],'the fourth round reads the fixes and open findings');
+ assert.deepEqual(fourth.successorKeys,[key],'round 4 applies the round-3 successor rule');
+ const runner=responder();
+ const fifth=await runReviewRound({...f.request,stageRecord:fourth,roundLimit:4},runner);
+ assert.deepEqual([fifth.outcome,fifth.rounds.length,runner.calls.length],['not-reviewed',4,0]);assert.match(fifth.failures.at(-1).reason,/four-round limit/);
+ for(const roundLimit of [2,5,'4',null]){const bad=await runReviewRound({...f.request,stageRecord:record,roundLimit},runner);
+  assert.equal(bad.outcome,'not-reviewed');assert.match(bad.failures.at(-1).reason,/invalid round limit/);}
+ assert.equal(runner.calls.length,0);
+ const changed=await runReviewRound({...f.request,contract:'changed',stageRecord:record,roundLimit:4},responder({findings:[sample]}));
+ assert.deepEqual([changed.rounds.length,changed.round.scope],[4,'full'],'a fourth round after a task change reads the whole change');
+});
 test('head or tree mutation invalidates response; later finding provenance comes from diff at ±2 lines',async t=>{
  const f=fixture(t),runner=responder();const mutated=await runReviewRound(f.request,{runRole:async req=>{fs.writeFileSync(path.join(f.worktree,'dirty.txt'),'changed');return runner.runRole(req);}});
  assert.equal(mutated.outcome,'not-reviewed');assert.equal(mutated.rounds.length,0);fs.unlinkSync(path.join(f.worktree,'dirty.txt'));

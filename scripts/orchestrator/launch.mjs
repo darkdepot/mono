@@ -2,12 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { atomicJson, readJson, identity, requireCompatiblePack, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart, processStartEpoch, packLayout, runtimePackRoot } from "../runtime.mjs";
-import { startGate } from "../gate.mjs";
+import { startGate, extraRoundCheck } from "../gate.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
 import { workerTransport } from "../worker-transport.mjs";
-import { effectivePins, attemptState, recordTaskChange, dropTaskChange, recordReviewRetry, dropReviewRetry, voidReviewRetry } from "./command-state.mjs";
+import { effectivePins, attemptState, recordTaskChange, dropTaskChange, recordReviewRetry, dropReviewRetry, voidReviewRetry, validExtraRoundRequest, recordExtraRound, dropExtraRound, voidExtraRound } from "./command-state.mjs";
 import { ensureCollector } from "./collector.mjs";
+import { hostRunsInProgress, settleRetiredHostRunsSync, inFlight, readLedger } from "../review-rounds.mjs";
 
 function releasePin(request) {
   if (!request.pins) return false;
@@ -354,12 +355,17 @@ async function startCollector(root, entry) {
   catch (error) { return { status: "not-started", reason: error.message }; }
 }
 // Resume carries text only: a task change («Изменение задачи» comment, taskChange = its link), a review retry
-// (reviewRetry: true, after restoring the environment of an environmental not-reviewed streak) or recovery input.
+// (reviewRetry: true, after restoring the environment of an environmental not-reviewed streak), an extra review round
+// (extraRound: {reason}, MONO-482: once per attempt on the strict path after its rounds are spent) or recovery input.
 // Risk, critical and grants come from the immutable launch pins; changing them is a new attempt on the same branch.
 export async function resumeWorker(request) {
   checkRequest(request); guard(request.root, true);
-  const extra = Object.keys(request).filter(key => !["root", "issue", "resumeFile", "taskChange", "reviewRetry"].includes(key));
-  if (extra.length) throw new Error(`resume takes only root, issue, resumeFile, taskChange and reviewRetry; ${extra.join(", ")}: a risk or grant change is a new attempt on the same branch`);
+  const extra = Object.keys(request).filter(key => !["root", "issue", "resumeFile", "taskChange", "reviewRetry", "extraRound"].includes(key));
+  if (extra.length) throw new Error(`resume takes only root, issue, resumeFile, taskChange, reviewRetry and extraRound; ${extra.join(", ")}: a risk or grant change is a new attempt on the same branch`);
+  validExtraRoundRequest(request.extraRound);
+  // A review retry repeats a round that did not happen; an extra round adds one after the spent rounds: never both at once.
+  if (request.reviewRetry && request.extraRound !== undefined)
+    throw new Error("reviewRetry and extraRound are exclusive: a review retry is for an environmental not-reviewed streak, an extra round for spent rounds; resume with one of them");
   if (request.reviewRetry !== undefined && request.reviewRetry !== true) throw new Error("reviewRetry must be true when given");
   if (request.reviewRetry && request.taskChange !== undefined)
     throw new Error("reviewRetry and taskChange are exclusive: a review retry is for an environmental not-reviewed streak, a task change for everything else");
@@ -381,6 +387,20 @@ export async function resumeWorker(request) {
     const prompt = fs.readFileSync(request.resumeFile, "utf8");
     if (request.taskChange !== undefined && !entry.pins) throw new Error("taskChange requires a pinned attempt");
     if (request.reviewRetry && !entry.pins) throw new Error("reviewRetry requires a pinned attempt");
+    if (request.extraRound !== undefined && !entry.pins) throw new Error("extraRound requires a pinned attempt");
+    // MONO-482 review: a resume that writes a control file beside the pins waits for every host verification run of the
+    // root (its snapshot would take the write for a planted one); a retry or extra round also for this attempt's rounds
+    // in flight. Checked under launch.lock, which the host run's marker also takes, up to the write in beforeSpawn.
+    if (request.taskChange !== undefined || request.reviewRetry || request.extraRound !== undefined) {
+      settleRetiredHostRunsSync(request.root); const running = hostRunsInProgress(request.root);
+      if (running.length) throw new Error(`host verification ${path.basename(running[0], ".running")} is running or unrecovered; resume with a task change, review retry or extra round after it ends`);
+    }
+    if (request.reviewRetry || request.extraRound !== undefined) {
+      const open = inFlight(readLedger(request.root, entry.issue, entry.attempt));
+      if (open.length) throw new Error(`review round ${open[0].admission.collectionId} has no result yet; resume with a review retry or extra round after it ends`);
+    }
+    // MONO-482: the right to the extra round is checked before anything is written; a refusal leaves nothing behind.
+    const extraRound = request.extraRound === undefined ? null : extraRoundCheck(entry.pins.file);
     const roots = effectiveGrants(entry, request.root);
     const transport = workerTransport(entry.transport) ?? workerTransport("codex-cli");
     transport.assertStopped?.(entry);
@@ -395,8 +415,10 @@ export async function resumeWorker(request) {
     if (prepared?.credentialPaths) updated.githubCredentialPaths = [...new Set([...(entry.githubCredentialPaths ?? []), ...prepared.credentialPaths])];
     const registry = readJson(path.join(request.root, "workers.json")); registry[request.issue] = updated;
     atomicJson(path.join(request.root, "workers.json"), registry);
-    let change = null, retry = null;
-    return { entry: updated, retry: () => retry, ...await launchTransport(request.root, updated, prompt, true, prepared, { beforeSpawn() {
+    let change = null, retry = null, grant = null;
+    return { entry: updated, retry: () => retry, grant: () => grant, ...await launchTransport(request.root, updated, prompt, true, prepared, { beforeSpawn() {
+      // Recorded first: a concurrent second grant refuses here, before the task change is written.
+      if (extraRound) grant = recordExtraRound(path.dirname(entry.pins.file), request.extraRound.reason, extraRound.receipt);
       // Recorded at delivery: the review round reads every delivered task change with the Issue.
       if (request.taskChange !== undefined) change = recordTaskChange(path.dirname(entry.pins.file), request.taskChange, prompt);
       // A review retry is recorded at delivery too; the gate reads it only against an environmental streak.
@@ -404,6 +426,7 @@ export async function resumeWorker(request) {
     }, onRefusal() {
       if (change) dropTaskChange(path.dirname(entry.pins.file), change);
       if (retry) dropReviewRetry(path.dirname(entry.pins.file), retry);
+      if (grant) dropExtraRound(path.dirname(entry.pins.file), grant);
     } }) };
   });
   const collector = await startCollector(request.root, launched.entry);
@@ -412,12 +435,21 @@ export async function resumeWorker(request) {
     catch (error) {
       // A refused startup delivered nothing either: its review retry must not stay effective.
       // It is voided under the attempt's own lock (bounded retries), never the shared launch.lock another issue may hold.
-      const retry = launched.retry();
+      const retry = launched.retry(), grant = launched.grant();
       if (retry) {
         const directory = path.dirname(launched.entry.pins.file);
         try { voidReviewRetry(directory, retry, `startup refused: ${error.message}`); }
         catch (cleanup) {
           throw new Error(`${error.message}; review retry ${retry.number} in ${path.join(directory, "review-retries.json")} could not be voided ` +
+            `(${cleanup.message}): mark it void before the next collection`);
+        }
+      }
+      // MONO-482: so is its extra round, under extra-round.lock; the attempt may ask for it again.
+      if (grant) {
+        const directory = path.dirname(launched.entry.pins.file);
+        try { voidExtraRound(directory, grant, `startup refused: ${error.message}`); }
+        catch (cleanup) {
+          throw new Error(`${error.message}; extra round ${grant.number} in ${path.join(directory, "extra-round.json")} could not be voided ` +
             `(${cleanup.message}): mark it void before the next collection`);
         }
       }

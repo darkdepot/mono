@@ -64,7 +64,7 @@ Issue(s): <keys>
 Branch: <branch>; commit state: <clean/dirty/committed>
 Changed files: <count/list/summary>
 Local verification: <commands/outcomes>
-Review: <clean|clean-with-successors|not-converged|not-reviewed|unavailable>; round: <n of 1|3>; receipt: <collectionId|none>
+Review: <clean|clean-with-successors|not-converged|not-reviewed|unavailable>; round: <n of 1|3|4>; receipt: <collectionId|none>
 Review successors: <none|weight file:line title for each>
 Review route: risk=<tiny|standard|deep|risky>; source=<Linear|diff>; critical=<none|signal>; reclassified=<no|summary>
 Drift candidate: <none/summary>

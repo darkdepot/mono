@@ -30,13 +30,26 @@ const attemptOf = (receiptPins, pinsFile) => typeof receiptPins === "string" && 
 // While the run is going only this attempt's collection writes receipts bound to its pins, so a changed
 // history file, or a new or changed receipt bound to these pins, means the run touched the evidence.
 // Head receipts of other attempts may be replaced legitimately meanwhile and are not judged.
-// MONO-483: the attempt's host-owned control files beside the launch pins (task-changes.json, review-retries.json)
-// are judged too: the run has host rights, and a planted task change or review retry would steer the review gate.
-const CONTROL_FILES = ["task-changes.json", "review-retries.json"];
+// MONO-483: the attempt's host-owned control files beside the launch pins (task-changes.json, review-retries.json,
+// MONO-482 extra-round.json) are judged too: the run has host rights, and a planted task change, review retry or
+// extra round would steer the review gate.
+const CONTROL_FILES = ["task-changes.json", "review-retries.json", "extra-round.json"];
+// Control files whose entries a refused startup may void during the run: each is restored under its own lock.
+const VOIDABLE = { "review-retries.json": "review-retries.lock", "extra-round.json": "extra-round.lock" };
+// MONO-482 review: the run's host rights reach every attempt of the root, so the control files of every attempt
+// directory under dispatch/ are judged (a later attempt's directory created during the run too), not only its own.
+const attemptDirectories = pinsFile => {
+  const own = path.dirname(pinsFile), dispatch = path.dirname(own);
+  let names = [];
+  try { names = fs.readdirSync(dispatch); } catch {}
+  const dirs = names.map(name => path.join(dispatch, name)).filter(dir => { try { return fs.lstatSync(dir).isDirectory(); } catch { return false; } });
+  return [...new Set([own, ...dirs])].sort();
+};
+const controlLabel = (file, pinsFile) => path.dirname(file) === path.dirname(pinsFile) ? path.basename(file) : `${path.basename(path.dirname(file))}/${path.basename(file)}`;
 export function evidenceSnapshot(evidenceRoot, pinsFile) {
   const files = [];
-  for (const name of CONTROL_FILES) {
-    const file = path.join(path.dirname(pinsFile), name);
+  for (const directory of attemptDirectories(pinsFile)) for (const name of CONTROL_FILES) {
+    const file = path.join(directory, name);
     let bytes; try { if (!fs.lstatSync(file).isFile()) { files.push([file, { hash: "irregular", ours: true, history: false, control: true }]); continue; } bytes = fs.readFileSync(file); } catch { continue; }
     files.push([file, { hash: crypto.createHash("sha256").update(bytes).digest("hex"), ours: true, history: false, control: true, bytes: bytes.toString("base64") }]);
   }
@@ -52,10 +65,10 @@ export function evidenceSnapshot(evidenceRoot, pinsFile) {
   }
   return files;
 }
-// The snapshot of review-retries.json goes back under its own lock, but a void the current file carries for the same
-// retry is kept: a void only narrows what a retry may do (a refused startup may void it during the host run).
-function restoreRetries(file, bytes) {
-  withLockSync(path.join(path.dirname(file), "review-retries.lock"), () => {
+// The snapshot of review-retries.json (and extra-round.json) goes back under its own lock, but a void the current file
+// carries for the same entry is kept: a void only narrows what an entry may do (a refused startup may void it during the host run).
+function restoreVoidable(file, bytes) {
+  withLockSync(path.join(path.dirname(file), VOIDABLE[path.basename(file)]), () => {
     const old = JSON.parse(Buffer.from(bytes, "base64").toString("utf8"));
     let current = []; try { current = fs.lstatSync(file).isFile() ? JSON.parse(fs.readFileSync(file, "utf8")) : []; } catch {}
     const voided = new Map((Array.isArray(current) ? current : []).filter(item => typeof item?.void === "string").map(item => [`${item.number}@${item.recordedAt}`, item.void]));
@@ -71,8 +84,8 @@ export function evidenceTouched(snapshot, evidenceRoot, pinsFile) {
   for (const [file, old] of before) {
     const now = after.get(file);
     if (now?.hash === old.hash || (!old.history && !old.control && !now?.ours)) continue;
-    touched.push(old.control ? path.basename(file) : path.relative(evidenceRoot, file));
-    if (old.control && path.basename(file) === "review-retries.json" && old.bytes !== undefined) restoreRetries(file, old.bytes);
+    touched.push(old.control ? controlLabel(file, pinsFile) : path.relative(evidenceRoot, file));
+    if (old.control && VOIDABLE[path.basename(file)] && old.bytes !== undefined) restoreVoidable(file, old.bytes);
     else if (old.ours && old.bytes !== undefined) { fs.rmSync(file, { recursive: true, force: true }); fs.writeFileSync(file, Buffer.from(old.bytes, "base64"), { flag: "wx" }); }
     else if (old.control) fs.rmSync(file, { recursive: true, force: true });
     else if (now?.ours) quarantineEvidence(evidenceRoot, file);
@@ -80,10 +93,65 @@ export function evidenceTouched(snapshot, evidenceRoot, pinsFile) {
   for (const [file, now] of after) {
     if (before.has(file) || !now.ours) continue;
     // A control file created during the run is moved aside into the evidence quarantine.
-    touched.push(now.control ? path.basename(file) : path.relative(evidenceRoot, file));
+    touched.push(now.control ? controlLabel(file, pinsFile) : path.relative(evidenceRoot, file));
     if (now.control && now.bytes === undefined) fs.rmSync(file, { recursive: true, force: true }); else quarantineEvidence(evidenceRoot, file);
   }
   return touched.length ? `evidence changed during host verification: ${touched.join(", ")}` : null;
+}
+// MONO-482 review: the marker and its snapshot are written under the root's launch.lock, the lock every resume that
+// writes a control file holds from its check to its write; such a resume refuses while any host run of the root is
+// running or unrecovered, so a legitimate grant, retry or task change is never taken for a planted one.
+// At most one host run per orchestrator root: while another marker is open or unrecovered the run is refused
+// (EHOSTRUN) before its snapshot, so no snapshot ever holds another run's plant and no settlement can put one back.
+export class HostRunBusy extends Error { constructor(message) { super(message); this.code = "EHOSTRUN"; } }
+export function openHostRun(evidenceRoot, collectionId, pinsFile, options) {
+  const marker = hostRunMarker(evidenceRoot, collectionId), root = path.dirname(path.dirname(path.dirname(pinsFile)));
+  return withLockSync(path.join(root, "launch.lock"), () => {
+    settleRetiredHostRunsSync(root);
+    const open = hostRunsInProgress(root);
+    if (open.length) throw new HostRunBusy(`host verification ${path.basename(open[0], ".running")} is running or unrecovered in this orchestrator root; ` +
+      "nothing ran and no round is spent, request this head again after it ends");
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+    atomicJson(marker, { collectionId, pinsFile, group: null, startedAt: new Date().toISOString(), snapshot: evidenceSnapshot(evidenceRoot, pinsFile) });
+    return marker;
+  }, options);
+}
+// A marker is recovered by its attempt's collector (recoverHostRun once its gate is dead). An attempt no longer in the
+// registry has no collector left: the next opening settles its marker here, under launch.lock. Only a marker that names
+// its pins file and whose run never registered a group, or whose group has ended, is settled; anything else stays busy.
+export function settleRetiredHostRunsSync(root) {
+  let registry = {};
+  try { registry = readJson(path.join(root, "workers.json")); } catch { return; }
+  for (const marker of hostRunsInProgress(root)) {
+    let state; try { state = readJson(marker); } catch { continue; }
+    const named = typeof state.pinsFile === "string" && /^([A-Z][A-Z0-9]*-\d+)-a([1-9][0-9]*)$/u.exec(path.basename(path.dirname(state.pinsFile)));
+    if (!named || path.dirname(path.dirname(path.dirname(state.pinsFile))) !== root || registry[named[1]]?.attempt === Number(named[2])) continue;
+    if (state.group !== null) {
+      // Like stopHostGroup: a live leader with another start identity means the run's group ended and its id was reused.
+      let live = true;
+      try {
+        const members = processTable().filter(row => row.group === state.group && !row.state.startsWith("Z")), leader = members.find(row => row.pid === state.group);
+        live = members.length > 0 && !(state.procStart && leader && leader.procStart !== state.procStart);
+      } catch { continue; }
+      if (live) continue;
+    }
+    const evidenceRoot = path.dirname(path.dirname(marker));
+    removeHostCheckout(evidenceRoot, state.collectionId);
+    evidenceTouched(state.snapshot ?? [], evidenceRoot, state.pinsFile);
+    fs.rmSync(marker, { force: true });
+  }
+}
+// The host-run markers of every attempt of the root (each attempt's pinned evidence root).
+export function hostRunsInProgress(root) {
+  const dispatch = path.join(root, "dispatch"), roots = new Set(), markers = [];
+  for (const name of fs.existsSync(dispatch) ? fs.readdirSync(dispatch) : []) {
+    try { const evidenceRoot = readJson(path.join(dispatch, name, "pins.json")).evidenceRoot; if (typeof evidenceRoot === "string" && path.isAbsolute(evidenceRoot)) roots.add(evidenceRoot); } catch {}
+  }
+  for (const evidenceRoot of roots) {
+    const directory = path.join(evidenceRoot, "verification");
+    for (const name of fs.existsSync(directory) ? fs.readdirSync(directory).filter(name => name.endsWith(".running")).sort() : []) markers.push(path.join(directory, name));
+  }
+  return markers;
 }
 // Kills the run's group until telemetry shows no live member; returns an error text otherwise. A group id can
 // be reused only after the group is gone: a live leader with another start identity means ours already ended,
@@ -103,7 +171,7 @@ export async function stopHostGroup(group, procStart = null) {
 // Collector recovery after a gate that died during its host run: stop the group (or refuse while it may live),
 // remove the head checkout, settle the evidence against the stored snapshot, quarantine anything left for this
 // collection, drop the marker.
-export async function recoverHostRun(evidenceRoot, collectionId, pinsFile) {
+export async function recoverHostRun(evidenceRoot, collectionId, pinsFile, { afterStop } = {}) {
   if (!fs.existsSync(hostRunMarker(evidenceRoot, collectionId))) return null;
   // The gate snapshots the resolved evidence root: a request path through a symlink must compare the same files.
   evidenceRoot = fs.realpathSync(evidenceRoot);
@@ -115,15 +183,41 @@ export async function recoverHostRun(evidenceRoot, collectionId, pinsFile) {
     const failure = Number.isInteger(state.group) && state.group > 0 && state.procStart ? await stopHostGroup(state.group, state.procStart) : "verification group without a start identity";
     if (failure) throw new Error(`host verification group of ${collectionId} not confirmed stopped: ${failure}`);
   }
-  removeHostCheckout(evidenceRoot, collectionId);
-  const touched = evidenceTouched(state.snapshot ?? [], evidenceRoot, pinsFile);
-  for (const directory of [evidenceRoot, path.join(evidenceRoot, "history")]) if (fs.existsSync(directory))
-    for (const name of fs.readdirSync(directory).filter(name => name.endsWith(".json"))) {
-      let id = null; try { id = readJson(path.join(directory, name)).receipt?.collectionId; } catch {}
-      if (id === collectionId) quarantineEvidence(evidenceRoot, path.join(directory, name));
-    }
-  fs.rmSync(marker, { force: true });
-  return touched ?? "host run interrupted";
+  afterStop?.();
+  // MONO-482 review: every settlement of a marker (the gate's own end, this recovery, a retired attempt's) holds the
+  // root's launch.lock and re-reads the marker: one settled meanwhile is never settled again from a stale snapshot.
+  return settleUnderLock(hostRunRoot(pinsFile), marker, current => {
+    if (canonical(current) !== canonical(state)) return null;
+    removeHostCheckout(evidenceRoot, collectionId);
+    const touched = evidenceTouched(state.snapshot ?? [], evidenceRoot, pinsFile);
+    for (const directory of [evidenceRoot, path.join(evidenceRoot, "history")]) if (fs.existsSync(directory))
+      for (const name of fs.readdirSync(directory).filter(name => name.endsWith(".json"))) {
+        let id = null; try { id = readJson(path.join(directory, name)).receipt?.collectionId; } catch {}
+        if (id === collectionId) quarantineEvidence(evidenceRoot, path.join(directory, name));
+      }
+    fs.rmSync(marker, { force: true });
+    return touched ?? "host run interrupted";
+  });
+}
+const hostRunRoot = pinsFile => path.dirname(path.dirname(path.dirname(pinsFile)));
+// Runs action(marker state) under the root's launch.lock only while the marker still exists; null when it is gone.
+function settleUnderLock(root, marker, action) {
+  return withLockSync(path.join(root, "launch.lock"), () => {
+    let current; try { current = readJson(marker); } catch { return null; }
+    return action(current);
+  });
+}
+// The gate's own end of its host run: under launch.lock, while its marker still exists, put back touched evidence,
+// let the caller re-read what it decides from (with the run's single slot still held), then drop the marker unless
+// a group may still live. {gone: true} when the marker was settled by someone else.
+export function settleHostRun(evidenceRoot, collectionId, pinsFile, { keepMarker = false, reread } = {}) {
+  const marker = hostRunMarker(evidenceRoot, collectionId);
+  return settleUnderLock(hostRunRoot(pinsFile), marker, state => {
+    const touched = evidenceTouched(state.snapshot ?? [], evidenceRoot, pinsFile);
+    const read = reread?.();
+    if (!keepMarker) fs.rmSync(marker, { force: true });
+    return { touched, read };
+  }) ?? { gone: true };
 }
 
 // MONO-481 pinned screenCheck: before the attempt's first spent review round the host compares the screens of

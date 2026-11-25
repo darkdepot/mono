@@ -6,10 +6,10 @@ import { fileURLToPath } from "node:url";
 import os from "node:os";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, flags, identity, isMain, processStart, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER, REVIEW_ROUND_ROLES } from "./runtime.mjs";
-import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges, reviewRetries } from "./orchestrator/command-state.mjs";
+import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges, reviewRetries, extraRounds } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
-import { hostRunMarker, hostRunCheckout, removeHostCheckout, evidenceSnapshot, evidenceTouched, stopHostGroup, screenCheckHold, readScreenCheck } from './review-rounds.mjs';
+import { hostRunMarker, hostRunCheckout, removeHostCheckout, openHostRun, settleHostRun, stopHostGroup, screenCheckHold, readScreenCheck } from './review-rounds.mjs';
 
 export { reviewEnvironment } from "./model-environment.mjs";
 
@@ -168,6 +168,41 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest, retr
     reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,
     record: completed.findLast(receipt => receipt.base === base)?.review.record ?? null };
 }
+// MONO-482: one extra round per attempt on the strict path. The orchestrator asks for it with resume extraRound
+// {reason} once the attempt's rounds are spent; resume records it in extra-round.json beside the launch pins (host-only,
+// outside every worker grant), bound to the attempt's last spent receipt. Open findings are the last round's leftovers
+// except the successor candidates of an accepted round; a raised risk or out-of-contract work (open or closed) and an
+// open owner remark on the PR never qualify.
+const spentReceipts = (receipts, pinsFile) => receipts.filter(receipt => receipt?.producer === REVIEW_PRODUCER && sameAttempt(receipt.pins?.file, pinsFile) &&
+  receipt.review?.spent === true).sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)));
+const effectiveGrants = grants => (grants ?? []).filter(grant => grant?.void === undefined);
+export function extraRoundRefusal(receipts, { pins, risk, grants = [] }) {
+  const refuse = refusal => ({ refusal, receipt: null });
+  if (risk !== 'risky') return refuse("the extra round is for the strict path (risky) only; the fast path finishes on the worker's full verification");
+  const spent = spentReceipts(receipts, pins.file);
+  if (effectiveGrants(grants).length || spent.length > ROUND_LIMIT) return refuse('one extra round per attempt and this attempt already has it; split the Issue or change approach in a new attempt');
+  if (spent.length < ROUND_LIMIT) return refuse(`rounds left (${spent.length} of ${ROUND_LIMIT} spent); request the next round without extraRound`);
+  const last = spent.at(-1), findings = last.review.record?.findings ?? [];
+  if (findings.some(finding => finding.outOfContract || finding.riskRaised)) return refuse("the last round raised the risk or found work outside the contract; that is the orchestrator's decision, not an extra round");
+  const successors = ACCEPTED.includes(last.review.outcome) ? new Set((last.review.successors ?? []).map(item => item.key)) : new Set();
+  const open = leftover(last.review.record).filter(finding => !successors.has(finding.key));
+  if (open.some(finding => finding.class === 'pr-remark' && finding.source === 'owner')) return refuse('an owner remark on the PR is open; do it or ask the owner');
+  if (open.length > 1) return refuse(`${open.length} findings open; the extra round is for at most one`);
+  return { refusal: null, receipt: last.runId };
+}
+// The gate counts a grant only bound to this attempt's ROUND_LIMIT-th spent receipt, delivered before the judging
+// collection and not voided by a refused startup; a new attempt has its own pins directory and no grant.
+export function extraRoundGranted(receipts, { pins, grants = [], now = new Date().toISOString() }) {
+  const bound = spentReceipts(receipts, pins.file)[ROUND_LIMIT - 1];
+  return !!bound && effectiveGrants(grants).some(grant => typeof grant.recordedAt === 'string' && grant.recordedAt <= now && grant.receipt === bound.runId);
+}
+// The host-side check before resume records the grant: reads the attempt's pins, receipts and grants.
+export function extraRoundCheck(pinsFile) {
+  const pins = readJson(pinsFile);
+  const { refusal, receipt } = extraRoundRefusal(receiptHistory(pins.evidenceRoot, pinsFile), { pins: { file: pinsFile }, risk: pins.risk, grants: extraRounds(path.dirname(pinsFile)) });
+  if (refusal) throw new Error(`extraRound refused: ${refusal}`);
+  return { receipt };
+}
 // What may leave the rounds as a successor candidate instead of blocking the PR:
 // - an older defect the task did not introduce (any round); on the strict path only a harmless one;
 // - a minor (P3) leftover once the first fixes are in (round 2 on), unless it is about data, security or a gate letting work through;
@@ -190,19 +225,26 @@ export function roundOutcome(record, round, strict = false) {
   return { outcome: 'clean-with-successors', successors: open.map(finding => ({ key: finding.key, origin: finding.origin,
     line: `${mustFile(finding) ? 'must-file ' : ''}${findingLine(finding)}` })) };
 }
-function reviewRefusal(review, host = false) {
+function reviewRefusal(review, host = false, risk = undefined) {
   if (review.outcome === 'refused') return review.reason;
   if (review.outcome === 'not-reviewed') return review.repeated
     ? `blocked: ${notReviewedTwice(review.streakCause ?? review.cause, review.causes)}: ${review.reason}`
     : `not-reviewed: ${review.reason}; no round spent, request this head once more`;
   // The collector reads the last 64 KiB of gate output: keep the line inside it and say what was left out.
   const limit = review.limit ?? ROUND_LIMIT;
-  const all = leftover(review.record).map(openLine), round = `round ${review.round} of ${limit}`, open = [];
+  const all = leftover(review.record).map(openLine), round = roundText(review.round, limit), open = [];
   for (const line of all) { if (open.join('; ').length + line.length > 40000) break; open.push(line); }
   const list = `${all.length} open: ${open.join('; ')}${open.length < all.length ? `; ${all.length - open.length} more in the next round` : ''}`;
   if (review.round < limit) return `review not-converged (${round}); fix and request the next round; ${list}`;
-  return limit === ROUND_LIMIT ? `needs-decision: review not-converged after ${round}; ${list}` : `review not-converged (${round}); ${host ? HOST_FAST_FIX : FAST_FIX}; ${list}`;
+  if (!strictPath(risk, limit)) return `review not-converged (${round}); ${host ? HOST_FAST_FIX : FAST_FIX}; ${list}`;
+  return limit > ROUND_LIMIT ? `needs-decision: review not-converged after round ${review.round} of ${limit} (extra round used); ${list}`
+    : `needs-decision: review not-converged after ${round}; ${list}; ${EXTRA_HINT}`;
 }
+// MONO-482: strictness comes from the pinned risk (older receipts without it: from their limit, the fast path has one round).
+const strictPath = (risk, limit) => risk === undefined ? limit >= ROUND_LIMIT : risk === 'risky';
+const roundText = (round, limit) => `round ${round} of ${limit}${round > ROUND_LIMIT ? ' (extra)' : ''}`;
+const EXTRA_HINT = 'the orchestrator may resume with extraRound for one extra round in this attempt if at most one finding is open and none raised the risk, ' +
+  'left the contract or is an open owner remark on the PR; otherwise split the Issue or change approach in a new attempt';
 const FAST_FIX = 'fix, run the full verification on the final head and request it with workerVerification {head, exitCode: 0}';
 const HOST_FAST_FIX = 'fix and request the final head; the collection runs the full verification on the host';
 // The worker cannot rerun a check that needs the host (process table): it fixes from this line and the log.
@@ -224,8 +266,9 @@ const failureLines = text => text.split("\n").filter(line => /^\s*(FAIL\b|not ok
 const GIT_ROUTING = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX"];
 export async function runHostVerification({ command, args }, repo, head, evidenceRoot, collectionId, pinsFile) {
   const marker = hostRunMarker(evidenceRoot, collectionId), log = marker.replace(/\.running$/, ".log"), checkout = hostRunCheckout(evidenceRoot, collectionId);
-  fs.mkdirSync(path.dirname(marker), { recursive: true });
-  atomicJson(marker, { collectionId, group: null, startedAt: new Date().toISOString(), snapshot: evidenceSnapshot(evidenceRoot, pinsFile) });
+  // MONO-482 review: one host run per orchestrator root; another open run refuses this one before anything runs.
+  try { openHostRun(evidenceRoot, collectionId, pinsFile); }
+  catch (error) { if (error.code === "EHOSTRUN") return { command, args, host: true, head, exitCode: null, busy: error.message }; throw error; }
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-verify-"));
   const fd = fs.openSync(log, "w", 0o644);
   const startedAt = Date.now();
@@ -286,7 +329,7 @@ export function validatePreflight(receipt, head, base) {
   requireThat(receipt.head === head && receipt.base === base, "missing or stale review receipt/head/base");
   // MONO-481: the worker cannot read the host ledger; the round's line carries the host's screen check of this head.
   const screen = receipt.screenCheck?.head === head ? `; screen check on the host passed on this head (report ${receipt.screenCheck.report})` : '';
-  requireThat(ACCEPTED.includes(receipt.review.outcome), reviewRefusal(receipt.review, receipt.verification?.host === true) + screen);
+  requireThat(ACCEPTED.includes(receipt.review.outcome), reviewRefusal(receipt.review, receipt.verification?.host === true, receipt.risk) + screen);
   requireThat(receipt.consistency?.passed === true && receipt.consistency.error === null, `collection consistency failed or missing: ${receipt.consistency?.error ?? "no record"}`);
   // Host verification (pinned hostVerification): the collection ran the full verification of this head outside the sandbox.
   // Otherwise the collection does not verify (exitCode null): only the worker's full verification of this head, exit 0, passes it.
@@ -306,13 +349,17 @@ export function validatePreflight(receipt, head, base) {
   const successors = receipt.review.successors ?? [], worker = receipt.review.workerVerification;
   requireThat(!worker || (worker.head === head && worker.exitCode === 0), "worker verification is not on this head");
   const fixes = receipt.review.hostVerified ? ', fixes after it confirmed by the full verification on the host,' : worker ? ', fixes after it confirmed by the worker\'s full verification,' : '';
-  return `review ${receipt.review.outcome} (round ${receipt.review.round} of ${receipt.review.limit ?? ROUND_LIMIT})${fixes} and ${host ? 'host ' : ''}verification verified on head` +
+  return `review ${receipt.review.outcome} (${roundText(receipt.review.round, receipt.review.limit ?? ROUND_LIMIT)})${fixes} and ${host ? 'host ' : ''}verification verified on head` +
     (successors.length ? `; successor candidates: ${successors.map(item => item.line).join('; ')}` : '') + screen;
 }
 
 const ROUND_LIMIT_REACHED = `review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); split the Issue or change approach in a new attempt`;
 // Fast path: the spent round needs the worker's full verification on the final head instead of another round.
-const limitRefusal = (limit, host = false) => limit === ROUND_LIMIT ? `needs-decision: ${ROUND_LIMIT_REACHED}` : `review round spent (1 of 1 on this task attempt); ${host ? HOST_FAST_FIX : FAST_FIX}`;
+// MONO-482: the strict path's line after round 3 names the extra round; after the extra round it says it is used.
+const limitRefusal = (limit, host = false, strict = limit >= ROUND_LIMIT) => !strict
+  ? (limit >= ROUND_LIMIT ? `needs-decision: ${ROUND_LIMIT_REACHED}` : `review round spent (1 of 1 on this task attempt); ${host ? HOST_FAST_FIX : FAST_FIX}`)
+  : limit > ROUND_LIMIT ? `needs-decision: review round limit reached (${limit} of ${limit} on this task attempt, extra round used); split the Issue or change approach in a new attempt`
+  : `needs-decision: review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); ${EXTRA_HINT}`;
 // MONO-483: the refusal names the cause and the next step. The environment (a role timeout, a sleeping host, the network,
 // a login still failing after its refresh) is restored and retried without a task change; the work's own cause needs one.
 const notReviewedTwice = (cause, causes = []) => cause === 'environment'
@@ -372,11 +419,16 @@ function reviewBaseTip(repo, baseRef, liveTip) {
 export function reviewContext(request, pins, liveTip = null) {
   const repo = fs.realpathSync(request.worktree), head = git(repo, "rev-parse", "HEAD");
   const base = git(repo, "merge-base", head, reviewBaseTip(repo, request.baseRef, liveTip));
+  return { head, base, ...attemptContext(request, pins, head, base) };
+}
+// The attempt's contract (with its task changes) and round history (with review retries and the extra round): every
+// decision taken from a control file beside the pins. A collection with a host run reads it again once its run opened.
+function attemptContext(request, pins, head, base) {
   let contract = null, contractDigest = null;
-  if (!pins || !request.pins) return { head, base, contract, contractDigest, history: null };
+  if (!pins || !request.pins) return { contract, contractDigest, history: null };
   const pinnedIssue = /^([A-Z][A-Z0-9]*-[1-9][0-9]*)-a[1-9][0-9]*$/.exec(path.basename(path.dirname(request.pins.file)))?.[1];
   const file = path.join(pins.fullSnapshot?.directory ?? path.join(path.dirname(request.pins.file), "snapshot"), `issue-${pinnedIssue}.md`);
-  if (!pinnedIssue || !fs.existsSync(file)) return { head, base, contract, contractDigest, history: null };
+  if (!pinnedIssue || !fs.existsSync(file)) return { contract, contractDigest, history: null };
   contract = fs.readFileSync(file, "utf8");
   // Delivered task changes («Изменение задачи» comment plus resume) narrow or correct the task:
   // the reviewer reads them with the Issue. Resume records them append-only beside the launch pins.
@@ -384,8 +436,11 @@ export function reviewContext(request, pins, liveTip = null) {
     contract += `\n\n## Изменение задачи ${change.number} (${change.url})\n${change.text}`;
   contractDigest = digest(contract);
   // Review retries live beside the launch pins too, outside every worker grant; they never enter the contract.
-  return { head, base, contract, contractDigest, history: reviewHistory(receiptHistory(request.evidenceRoot, request.pins.file),
-    { pins: request.pins, head, base, contractDigest, retries: reviewRetries(path.dirname(request.pins.file)) }) };
+  const receipts = receiptHistory(request.evidenceRoot, request.pins.file), now = new Date().toISOString();
+  const history = reviewHistory(receipts, { pins: request.pins, head, base, contractDigest, retries: reviewRetries(path.dirname(request.pins.file)), now });
+  // MONO-482: the extra round granted by resume lives beside the launch pins too; it raises only the strict path's limit.
+  history.extra = extraRoundGranted(receipts, { pins: request.pins, grants: extraRounds(path.dirname(request.pins.file)), now });
+  return { contract, contractDigest, history };
 }
 async function verifyPreflight(request, live = null, allowPending = false) {
   const pins = checkCollectionRequest(request);
@@ -407,7 +462,9 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   requireThat(/^[a-f0-9]{40}$/.test(request.head), "dispatch head required");
   // Remarks on the draft PR (bot, CI, owner) the worker fixed: open findings of this round, recorded in the receipt.
   if (request.prRemarks !== undefined) prRemarkFindings(request.prRemarks);
-  const workerCheck = request.workerVerification, limit = roundLimit(request.risk), strict = limit === ROUND_LIMIT;
+  // MONO-482: strictness comes from the pinned risk; the attempt's extra round (read with the history below) raises the strict limit by one.
+  const workerCheck = request.workerVerification, strict = request.risk === 'risky';
+  let limit = roundLimit(request.risk);
   requireThat(workerCheck === undefined || (Object.keys(workerCheck ?? {}).sort().join(",") === "exitCode,head" && /^[a-f0-9]{40}$/.test(workerCheck.head) &&
     Number.isInteger(workerCheck.exitCode)), "workerVerification must be {head, exitCode} of the worker's full verification run");
   const workerVerified = workerCheck?.head === request.head && workerCheck.exitCode === 0;
@@ -415,15 +472,17 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   // so a delivered task change («Изменение задачи») gets one round of its own even on an unchanged head;
   // the stage record holds ROUND_LIMIT rounds, so a fast-path task change after them needs a new attempt.
   const roundsUsed = prior => strict ? prior.spent : prior.onContract;
-  const roundOpen = prior => roundsUsed(prior) < limit && prior.spent < ROUND_LIMIT;
+  // The stage record holds ROUND_LIMIT rounds, one more with the strict path's extra round.
+  const roundOpen = prior => roundsUsed(prior) < limit && prior.spent < Math.max(limit, ROUND_LIMIT);
   const hostVerify = pins?.hostVerification === true;
-  const closedRefusal = prior => strict || prior.onContract ? limitRefusal(limit, hostVerify) : limitRefusal(ROUND_LIMIT);
+  const closedRefusal = prior => strict || prior.onContract ? limitRefusal(limit, hostVerify, strict) : limitRefusal(ROUND_LIMIT, false, false);
   const evidenceRoot = preflightEvidenceRoot(request);
   validateEvidenceGrants(request.packRoot ?? request.skillsRoot, request.workerWritableRoots, 'packRoot');
   validateEvidenceGrants(request.skillsRoot, request.workerWritableRoots, 'installed skillsRoot');
   const repo = fs.realpathSync(request.worktree);
   cleanTree(repo);
-  const { head, base, contract, contractDigest, history } = reviewContext(request, pins, live?.baseRefOid);
+  let { head, base, contract, contractDigest, history } = reviewContext(request, pins, live?.baseRefOid);
+  if (strict && history?.extra) limit = ROUND_LIMIT + 1;
   if (pins && head !== request.head) throw new Error(`collection request mismatch: head; expected ${canonical(head)}`);
   if (pins && !new RegExp(`^preflight-collect:${head}:[1-9][0-9]*$`).test(request.collectionId ?? ""))
     throw new Error(`collection request mismatch: collectionId; expected ${canonical(`preflight-collect:${head}:<n>`)}`);
@@ -515,7 +574,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   };
   if (request.collect === true) {
     const recordedAt = new Date().toISOString();
-    const prior = history;
+    let prior = history;
     requireThat(prior, "review contract missing in the pinned dispatch snapshot (issue-<KEY>.md)");
     const consistency = { passed: true, error: null };
     const checkConsistency = () => {
@@ -527,7 +586,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     // Host verification runs first, on every collection (a same-head retry reruns it): a red head spends no
     // round and no reviewer call, and the refusal never counts toward not-reviewed.
     // New PR remarks on the same head are not covered by the stored round: they need a round of their own.
-    if (prior.reuse && canonical(prior.reuse.prRemarks ?? null) !== canonical(request.prRemarks?.length ? request.prRemarks : null)) prior.reuse = null;
+    const remarkReuse = () => { if (prior.reuse && canonical(prior.reuse.prRemarks ?? null) !== canonical(request.prRemarks?.length ? request.prRemarks : null)) prior.reuse = null; };
+    remarkReuse();
     let verification = { command: request.verification.command, args: request.verification.args, exitCode: null };
     // MONO-481 pinned screenCheck: until the attempt's first spent round the round waits for the host's screen check of
     // this head. Waiting and mismatches are refusals: no round, no reviewer, no host run, never a not-reviewed.
@@ -536,17 +596,27 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     // Skipped only where the answer is the blocked refusal anyway (not-reviewed twice, no stored round to reuse).
     if (hostVerify && !screen && (prior.reuse || prior.notReviewed < 2)) {
       verification = await runHostVerification(request.verification, repo, head, evidenceRoot, request.collectionId, request.pins.file);
-      const touched = evidenceTouched(readJson(hostRunMarker(evidenceRoot, request.collectionId)).snapshot, evidenceRoot, request.pins.file) ?? verification.descendants ?? null;
+    }
+    if (hostVerify && verification.busy === undefined && verification.host === true) {
+      // Settled under launch.lock while the marker still exists: touched evidence is put back or quarantined, then the
+      // contract and history are read again with the root's only host-run slot still held (MONO-482 review: no decision
+      // from a control file read before this run opened); a group that may still live keeps the marker.
+      const settled = settleHostRun(evidenceRoot, request.collectionId, request.pins.file, { keepMarker: !!verification.descendants,
+        reread: () => { try { return { value: attemptContext(request, pins, head, base) }; } catch (error) { return { error: error.message }; } } });
+      const touched = settled.gone ? 'host verification was settled by recovery before this collection ended' : settled.touched ?? verification.descendants ?? settled.read.error ?? null;
       if (touched) { consistency.passed = false; consistency.error = touched; }
-      // Touched evidence is already put back or quarantined; a group that may still live keeps the marker.
-      if (!verification.descendants) fs.rmSync(hostRunMarker(evidenceRoot, request.collectionId), { force: true });
+      else {
+        ({ contract, contractDigest, history } = settled.read.value); prior = history; remarkReuse();
+        limit = roundLimit(request.risk) + (strict && history?.extra ? 1 : 0);
+      }
       checkConsistency();
     }
     // Re-validated fresh after any host run, right before the round: a run that changed the approved design (or the
     // result) leaves the round waiting. The receipt names the result this decision read.
     screen ??= hold();
     const passedScreen = !screen && pins?.screenCheck === true && prior.spent === 0 ? readScreenCheck(head, request.pins) : null;
-    if (!consistency.passed) review = refuse(`collection consistency failed: ${consistency.error}`);
+    if (verification.busy !== undefined) review = refuse(verification.busy);
+    else if (!consistency.passed) review = refuse(`collection consistency failed: ${consistency.error}`);
     else if (screen) review = refuse(screen.reason);
     else if (hostVerify && verification.host !== true) review = refuse(blockedTwice(prior));
     else if (verification.host && verification.exitCode !== 0) review = refuse(hostFailure(verification));
@@ -555,7 +625,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     else if (!roundOpen(prior)) review = workerFixed(prior, hostVerify ? verification.exitCode === 0 : workerVerified) ?? refuse(closedRefusal(prior));
     else {
       const record = await runReviewRound({ worktree: repo, head, base, contract, risk: request.critical ? 'riskyCritical' : request.risk,
-        config: baseModelConfig(repo, request.modelRoutes?.base ?? base), packRoot: path.resolve(scriptDir, '..'), ...(prior.record ? { stageRecord: prior.record } : {}),
+        config: baseModelConfig(repo, request.modelRoutes?.base ?? base), packRoot: path.resolve(scriptDir, '..'), roundLimit: Math.max(limit, ROUND_LIMIT), ...(prior.record ? { stageRecord: prior.record } : {}),
         ...(request.prRemarks?.length ? { remarks: request.prRemarks } : {}) });
       const { costs, host, cause: _cause, ...stageRecord } = record;
       // MONO-483: environment only when every failed role attempt of the round failed on the environment and every file was read.
@@ -901,7 +971,7 @@ preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,ri
   and records verification unrun (exitCode null); one gate-review-v3 receipt per collectionId.
   Pinned hostVerification (BASE orchestration.delivery.hostVerification): collect:true first runs the pinned verification in a clean checkout of the head
   outside the worker sandbox (log in <evidenceRoot>/verification/); exit 0 passes in place of workerVerification, a red head spends no round.
-  Rounds per task attempt from the pinned risk (risky 3 with task changes counted, else 1 per contract: a task change gets one round), counted from receipt history; rounds after the first review only the fixes and open findings; the same head reuses its round; not-reviewed spends nothing.
+  Rounds per task attempt from the pinned risk (risky 3 with task changes counted, plus one extra round granted by resume extraRound and recorded in extra-round.json beside the pins; else 1 per contract: a task change gets one round), counted from receipt history; rounds after the first review only the fixes and open findings; the same head reuses its round; not-reviewed spends nothing.
   not-reviewed names review.cause: environment (every failed role attempt timed out, met a sleeping host, the network or a login still failing after its refresh)
   or review (anything else, and older receipts); with host load at the start and end of the round and a sleep flag. Twice in a row on a head is blocked:
   environment -> restore it and resume the worker with reviewRetry (no task change, no round, same contract); review -> resume with a task change.

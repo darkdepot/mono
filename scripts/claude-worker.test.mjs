@@ -453,6 +453,33 @@ test("Claude resume with reviewRetry: a refused startup voids the recorded retry
   });
 });
 
+// MONO-482: a resume whose startup is refused delivered nothing: its extra round is voided under extra-round.lock,
+// and the attempt may ask for it again.
+test("Claude resume with extraRound: a refused startup voids the grant and the attempt keeps its extra round", async () => {
+  await fixture(async ({ start, registry, root, request, runtime }) => {
+    await start("success");
+    let entry = registry()[request.issue];
+    const waitExit = async () => { entry = registry()[request.issue]; while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); } };
+    await waitExit();
+    const dir = path.join(root, "dispatch", `${request.issue}-a1`), pinsFile = path.join(dir, "pins.json"), grants = path.join(dir, "extra-round.json"), evidence = path.join(root, "evidence");
+    write(pinsFile, { packVersion: "0.31.0", workerWritableRoots: entry.workerWritableRoots, risk: "risky", evidenceRoot: evidence });
+    const all = registry(); all[request.issue].pins = { file: pinsFile, digest: crypto.createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") };
+    write(path.join(root, "workers.json"), all);
+    for (const n of [1, 2, 3]) write(path.join(evidence, "history", `run-${n}.json`), { receipt: { producer: "gate-review-v3", pins: { file: pinsFile, digest: "d" }, runId: `run-${n}`,
+      recordedAt: `2026-11-25T00:0${n}:00.000Z`, head: String(n).repeat(40), base: "b".repeat(40), review: { outcome: "not-converged", spent: true, successors: [], record: { findings: [] } } } });
+    const effective = () => JSON.parse(fs.readFileSync(grants, "utf8")).filter(item => item.void === undefined).map(item => item.number);
+    const resumeFile = path.join(root, "resume.md"); write(resumeFile, '{"mode":"wrong-model"}');
+    await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile, extraRound: { reason: "QA fix after round 3" } }), /model/);
+    assert.match(JSON.parse(fs.readFileSync(grants, "utf8"))[0].void, /^startup refused: /);
+    assert.deepEqual(effective(), [], "the refused startup's grant is void");
+    await waitExit();
+    write(resumeFile, '{"mode":"success"}');
+    await runtime.resumeWorker({ root, issue: request.issue, resumeFile, extraRound: { reason: "QA fix after round 3" } });
+    assert.deepEqual(effective(), [2], "a confirmed startup keeps its grant");
+    assert.equal(JSON.parse(fs.readFileSync(grants, "utf8"))[1].receipt, "run-3");
+  });
+});
+
 test("Claude pre-registration refusals preserve the attempt budget", async t => {
   for (const [name, options, mutate, reason] of [
     ["missing-tool", { missingTool: true }, () => {}, /install|Claude Code/],
