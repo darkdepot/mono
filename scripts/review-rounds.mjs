@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { atomicJson, canonical, digest, readJson, lockTreeDead, syncDir, processTable, REVIEW_PRODUCER } from "./runtime.mjs";
+import { atomicJson, canonical, digest, readJson, lockTreeDead, syncDir, processTable, withLockSync, REVIEW_PRODUCER } from "./runtime.mjs";
 
 export const TERMINAL = ["done", "refused", "failed"];
 export const roundRequestName = (issue, attempt) => `${issue}-round-a${attempt}.json`;
@@ -52,6 +52,19 @@ export function evidenceSnapshot(evidenceRoot, pinsFile) {
   }
   return files;
 }
+// The snapshot of review-retries.json goes back under its own lock, but a void the current file carries for the same
+// retry is kept: a void only narrows what a retry may do (a refused startup may void it during the host run).
+function restoreRetries(file, bytes) {
+  withLockSync(path.join(path.dirname(file), "review-retries.lock"), () => {
+    const old = JSON.parse(Buffer.from(bytes, "base64").toString("utf8"));
+    let current = []; try { current = fs.lstatSync(file).isFile() ? JSON.parse(fs.readFileSync(file, "utf8")) : []; } catch {}
+    const voided = new Map((Array.isArray(current) ? current : []).filter(item => typeof item?.void === "string").map(item => [`${item.number}@${item.recordedAt}`, item.void]));
+    const restored = Array.isArray(old) ? old.map(item => voided.has(`${item?.number}@${item?.recordedAt}`) && item.void === undefined ? { ...item, void: voided.get(`${item.number}@${item.recordedAt}`) } : item) : old;
+    fs.rmSync(file, { recursive: true, force: true });
+    // Byte for byte when no void had to be kept.
+    if (canonical(restored) === canonical(old)) fs.writeFileSync(file, Buffer.from(bytes, "base64"), { flag: "wx" }); else atomicJson(file, restored);
+  });
+}
 // Puts this attempt's earlier receipts back and quarantines new ones bound to it; returns what changed.
 export function evidenceTouched(snapshot, evidenceRoot, pinsFile) {
   const before = new Map(snapshot), after = new Map(evidenceSnapshot(evidenceRoot, pinsFile)), touched = [];
@@ -59,7 +72,8 @@ export function evidenceTouched(snapshot, evidenceRoot, pinsFile) {
     const now = after.get(file);
     if (now?.hash === old.hash || (!old.history && !old.control && !now?.ours)) continue;
     touched.push(old.control ? path.basename(file) : path.relative(evidenceRoot, file));
-    if (old.ours && old.bytes !== undefined) { fs.rmSync(file, { recursive: true, force: true }); fs.writeFileSync(file, Buffer.from(old.bytes, "base64"), { flag: "wx" }); }
+    if (old.control && path.basename(file) === "review-retries.json" && old.bytes !== undefined) restoreRetries(file, old.bytes);
+    else if (old.ours && old.bytes !== undefined) { fs.rmSync(file, { recursive: true, force: true }); fs.writeFileSync(file, Buffer.from(old.bytes, "base64"), { flag: "wx" }); }
     else if (old.control) fs.rmSync(file, { recursive: true, force: true });
     else if (now?.ours) quarantineEvidence(evidenceRoot, file);
   }

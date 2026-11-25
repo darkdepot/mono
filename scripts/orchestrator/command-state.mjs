@@ -3,7 +3,7 @@ import { validateShipCertificate } from "../ship-certificate.mjs";
 import { qaDeliveryState, requireQaPassed } from '../qa-gate.mjs';
 import path from "node:path";
 import crypto from "node:crypto";
-import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, shipBotChecks, baseModelConfig, processStart } from "../runtime.mjs";
+import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, withLockSync, shipBotChecks, baseModelConfig, processStart } from "../runtime.mjs";
 import { validatePhase, requirePredecessors } from "../delivery-state.mjs";
 import { readLedger, inFlight, admissionFor, admitRound, requestDigest, validRoundRequest } from "../review-rounds.mjs";
 import { checkIdea, IDEA_GATE_DEFAULT_SINCE } from '../idea-gate.mjs';
@@ -353,37 +353,35 @@ export function reviewRetries(pinsDirectory) {
   if (!Array.isArray(retries) || !retries.every(validRetry)) throw new Error("invalid review-retries.json");
   return retries;
 }
-// Every write of review-retries.json goes through its own per-attempt lock, retried with a bounded backoff:
-// the cleanup after a refused startup must not depend on the shared launch.lock, which another issue may hold.
-export async function withReviewRetriesLock(pinsDirectory, action, { tries = 50, delayMs = 100 } = {}) {
-  const lock = path.join(pinsDirectory, "review-retries.lock");
-  for (let attempt = 1; ; attempt++) {
-    try { return await withLock(lock, action); }
-    catch (error) {
-      if (error.code !== "ELOCKED" || attempt >= tries) throw error;
-      await new Promise(resolve => setTimeout(resolve, Math.min(delayMs * attempt, 1000)));
-    }
-  }
-}
-export function recordReviewRetry(pinsDirectory) {
-  const retries = reviewRetries(pinsDirectory);
-  const retry = { number: retries.length + 1, recordedAt: new Date().toISOString() };
-  atomicJson(reviewRetriesFile(pinsDirectory), [...retries, retry]);
-  return retry;
+// Every read-modify-write of review-retries.json (record, drop, void, and the evidence restore after a host run)
+// holds the attempt's own review-retries.lock, retried with a bounded backoff; where launch.lock is held too it is
+// always taken first. The void after a refused startup never depends on launch.lock, which another issue may hold.
+export const reviewRetriesLock = pinsDirectory => path.join(pinsDirectory, "review-retries.lock");
+export function recordReviewRetry(pinsDirectory, options) {
+  return withLockSync(reviewRetriesLock(pinsDirectory), () => {
+    const retries = reviewRetries(pinsDirectory);
+    const retry = { number: retries.length + 1, recordedAt: new Date().toISOString() };
+    atomicJson(reviewRetriesFile(pinsDirectory), [...retries, retry]);
+    return retry;
+  }, options);
 }
 // A proven refused spawn delivered nothing: drop exactly the retry it recorded.
-export function dropReviewRetry(pinsDirectory, retry) {
-  const retries = reviewRetries(pinsDirectory);
-  if (canonical(retries.at(-1) ?? null) === canonical(retry)) atomicJson(reviewRetriesFile(pinsDirectory), retries.slice(0, -1));
+export function dropReviewRetry(pinsDirectory, retry, options) {
+  withLockSync(reviewRetriesLock(pinsDirectory), () => {
+    const retries = reviewRetries(pinsDirectory);
+    if (canonical(retries.at(-1) ?? null) === canonical(retry)) atomicJson(reviewRetriesFile(pinsDirectory), retries.slice(0, -1));
+  }, options);
 }
 // A refused startup: the retry it recorded is marked void wherever it stands; returns whether it was found.
-export function voidReviewRetry(pinsDirectory, retry, reason) {
-  const retries = reviewRetries(pinsDirectory);
-  const index = retries.findIndex(item => item.number === retry.number && item.recordedAt === retry.recordedAt);
-  if (index < 0) return false;
-  retries[index] = { ...retries[index], void: String(reason || "startup refused").replace(/\s+/g, " ").slice(0, 300) };
-  atomicJson(reviewRetriesFile(pinsDirectory), retries);
-  return true;
+export function voidReviewRetry(pinsDirectory, retry, reason, options) {
+  return withLockSync(reviewRetriesLock(pinsDirectory), () => {
+    const retries = reviewRetries(pinsDirectory);
+    const index = retries.findIndex(item => item.number === retry.number && item.recordedAt === retry.recordedAt);
+    if (index < 0) return false;
+    retries[index] = { ...retries[index], void: String(reason || "startup refused").replace(/\s+/g, " ").slice(0, 300) };
+    atomicJson(reviewRetriesFile(pinsDirectory), retries);
+    return true;
+  }, options);
 }
 export function recordTaskChange(pinsDirectory, url, text) {
   if (!LINEAR_URL.test(url ?? "") || !text.includes(url))

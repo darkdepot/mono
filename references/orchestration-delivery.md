@@ -459,7 +459,10 @@ resumeFile, reviewRetry: true}` instead (never both): resume records
 `{number, recordedAt}` in `dispatch/KEY-aN/review-retries.json`, drops it when
 the launch is refused and marks it `void` (with the reason, under the attempt's
 own `review-retries.lock`, never the shared `launch.lock`) when its startup is
-refused; a void retry never counts. The contract stays unchanged.
+refused; a void retry never counts. Every read-modify-write of that file (record,
+drop, void, the restore after a tampering host run, which keeps a later void)
+holds `review-retries.lock`, after `launch.lock` where both are held. The
+contract stays unchanged.
 Resume carries no grants or network override: a risk, critical or grant change is
 a new attempt on the same branch.
 

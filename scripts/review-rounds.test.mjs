@@ -200,6 +200,61 @@ test("MONO-483 host run: planted, edited or removed review retries and task chan
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+// MONO-483 review round 3: every read-modify-write of review-retries.json holds review-retries.lock, so a record
+// waits for a void in progress instead of overwriting it; a restore of touched evidence keeps a later void.
+test("MONO-483 review retries: a record waits for a void under review-retries.lock and the void survives", async () => {
+  const { recordReviewRetry, voidReviewRetry } = await import("./orchestrator/command-state.mjs");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-retry-lock-"));
+  try {
+    const dir = path.join(root, "dispatch", "MONO-999-a1"), file = path.join(dir, "review-retries.json"), lock = path.join(dir, "review-retries.lock");
+    fs.mkdirSync(dir, { recursive: true });
+    const first = recordReviewRetry(dir);
+    // Another writer holds the lock: a record never writes around it.
+    fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, lockId: "outside" }));
+    assert.throws(() => recordReviewRetry(dir, { tries: 2, delayMs: 10 }), error => error.code === "ELOCKED");
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), [first], "nothing was written around the held lock");
+    fs.rmSync(lock);
+    // Interleave: a separate process takes the lock, reads, waits, then voids and releases; the record started meanwhile
+    // must read after the void and keep it.
+    const commandState = new URL("./orchestrator/command-state.mjs", import.meta.url).href, ready = path.join(root, "ready");
+    const child = spawn(process.execPath, ["--input-type=module", "-e", `
+      import fs from "node:fs"; import { withLockSync } from ${JSON.stringify(new URL("./runtime.mjs", import.meta.url).href)};
+      import { reviewRetries } from ${JSON.stringify(commandState)};
+      withLockSync(${JSON.stringify(lock)}, () => {
+        const read = reviewRetries(${JSON.stringify(dir)}); fs.writeFileSync(${JSON.stringify(ready)}, "1");
+        const until = Date.now() + 400; while (Date.now() < until) {}
+        read[0] = { ...read[0], void: "startup refused: fixture" };
+        fs.writeFileSync(${JSON.stringify(file)}, JSON.stringify(read));
+      });`], { stdio: "inherit" });
+    while (!fs.existsSync(ready)) await new Promise(resolve => setTimeout(resolve, 10));
+    const second = recordReviewRetry(dir);
+    await new Promise(resolve => child.once("exit", resolve));
+    const after = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal(after[0].void, "startup refused: fixture", "the void survives a concurrent record");
+    assert.deepEqual(after[1], second);
+    assert.equal(voidReviewRetry(dir, second, "startup refused: again"), true);
+    assert.equal(fs.existsSync(lock), false, "the lock is released");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("MONO-483 review retries: restoring touched evidence never undoes a void recorded meanwhile", async () => {
+  const { recordReviewRetry, voidReviewRetry } = await import("./orchestrator/command-state.mjs");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-retry-restore-")), evidence = path.join(root, "evidence");
+  try {
+    const dir = path.join(root, "dispatch", "MONO-999-a1"), pinsFile = path.join(dir, "pins.json"), file = path.join(dir, "review-retries.json");
+    fs.mkdirSync(dir, { recursive: true }); fs.mkdirSync(path.join(evidence, "history"), { recursive: true }); fs.writeFileSync(pinsFile, "{}");
+    const retry = recordReviewRetry(dir);
+    const snapshot = evidenceSnapshot(evidence, pinsFile);
+    // During the host run: the run plants a retry, and a refused startup's cleanup voids the real one.
+    const planted = JSON.parse(fs.readFileSync(file, "utf8")).concat([{ number: 2, recordedAt: "2099-01-01T00:00:00.000Z" }]);
+    fs.writeFileSync(file, JSON.stringify(planted));
+    assert.equal(voidReviewRetry(dir, retry, "startup refused: fixture"), true);
+    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /review-retries\.json/, "the tampering still fails the collection");
+    const restored = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.deepEqual(restored, [{ ...retry, void: "startup refused: fixture" }], "the plant is gone and the void stays");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 // Codex review round 2 on MONO-481: a symlink anywhere in consumed/KEY-aN/screen-check/<head>.json is refused,
 // for writing and for reading.
 test("MONO-481 screen check result path: a symlink in the chain is refused", () => {
