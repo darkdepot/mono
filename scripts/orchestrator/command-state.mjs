@@ -461,9 +461,22 @@ function capRaises(root) {
     throw new Error("invalid attempt-cap-raises.json");
   return all;
 }
-// The issue's attempt state: used attempts, the config base cap, recorded raises and the effective cap.
-export function attemptCapState(root, issue, config) {
-  const baseCap = deliveryConfig(config).attemptCap, raises = capRaises(root)[issue] ?? [];
+// The base cap comes from the product config committed at BASE (like model routes), never from the --config file:
+// a different attemptCap there is ignored with a warning, and a BASE value above the ceiling counts as the ceiling.
+// No attemptCap at BASE: the pack default (3).
+export function attemptCapBase({ worktree, base, config } = {}) {
+  if (!path.isAbsolute(worktree ?? "")) throw new Error("attempt cap: the product worktree and its BASE commit are required");
+  const committed = deliveryConfig(baseModelConfig(worktree, base)).attemptCap, warnings = [];
+  if (config !== undefined && config !== null) {
+    const local = deliveryConfig(config).attemptCap;
+    if (local !== committed) warnings.push(`warning: --config attemptCap ${local} differs from BASE attemptCap ${committed} and is ignored; one task gets more attempts only through attempt-cap.mjs raise`);
+  }
+  if (committed > ATTEMPT_CAP_CEILING) warnings.push(`warning: BASE attemptCap ${committed} is above the ceiling of ${ATTEMPT_CAP_CEILING} and counts as ${ATTEMPT_CAP_CEILING}; more attempts only through recorded raises with the owner's words`);
+  return { baseCap: Math.min(committed, ATTEMPT_CAP_CEILING), warnings };
+}
+// The issue's attempt state: used attempts, the BASE cap, recorded raises and the effective cap.
+export function attemptCapState(root, issue, source) {
+  const { baseCap, warnings } = attemptCapBase(source), raises = capRaises(root)[issue] ?? [];
   raises.forEach((raise, index) => {
     if (baseCap + index + 1 > ATTEMPT_CAP_CEILING && raise.ownerWords === undefined)
       throw new Error(`invalid attempt-cap-raises.json: raise ${raise.number} of ${issue} lifts the cap to ${baseCap + index + 1} above ${ATTEMPT_CAP_CEILING} without owner words`);
@@ -472,22 +485,22 @@ export function attemptCapState(root, issue, config) {
   const used = (fs.existsSync(attemptsFile) ? readJson(attemptsFile) : {})[issue] ?? 0;
   if (!Number.isInteger(used) || used < 0) throw new Error("invalid attempt registry");
   const cap = baseCap + raises.length;
-  return { issue, used, baseCap, cap, ceiling: ATTEMPT_CAP_CEILING, exhausted: used >= cap, raises };
+  return { issue, used, baseCap, cap, ceiling: ATTEMPT_CAP_CEILING, exhausted: used >= cap, raises, warnings };
 }
-export function raiseAttemptCap(root, issue, config, { reason, ownerWords } = {}, options) {
+export function raiseAttemptCap(root, issue, source, { reason, ownerWords } = {}, options) {
   if (!path.isAbsolute(root ?? "") || !ISSUE_KEY.test(issue ?? "")) throw new Error("attempt cap raise refused: an absolute --root and an issue key are required");
   if (!filledText(reason, CAP_REASON_LIMIT)) throw new Error(`attempt cap raise refused: a non-empty --reason of at most ${CAP_REASON_LIMIT} characters is required`);
   const words = typeof ownerWords === "string" && ownerWords.trim() !== "" ? ownerWords : undefined;
   if (words !== undefined && words.length > OWNER_WORDS_LIMIT) throw new Error(`attempt cap raise refused: --owner-words over ${OWNER_WORDS_LIMIT} characters`);
   return withLockSync(capRaisesLock(root), () => {
-    const state = attemptCapState(root, issue, config);
+    const state = attemptCapState(root, issue, source);
     if (!state.exhausted) throw new Error(`attempt cap raise refused: ${issue} cap is not exhausted: ${state.used} of ${state.cap} used`);
     const cap = state.cap + 1;
     if (cap > ATTEMPT_CAP_CEILING && words === undefined)
       throw new Error(`attempt cap raise refused: ${issue} would go to ${cap} attempts, above the ceiling of ${ATTEMPT_CAP_CEILING}; record the owner's verbatim words with --owner-words`);
     const raise = { number: state.raises.length + 1, reason: reason.trim(), recordedAt: new Date().toISOString(), ...(words === undefined ? {} : { ownerWords: words }) };
     atomicJson(capRaisesFile(root), { ...capRaises(root), [issue]: [...state.raises, raise] });
-    return { issue, used: state.used, baseCap: state.baseCap, cap, raise };
+    return { issue, used: state.used, baseCap: state.baseCap, cap, raise, warnings: state.warnings };
   }, options);
 }
 export function recordTaskChange(pinsDirectory, url, text) {

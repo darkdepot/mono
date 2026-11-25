@@ -13,23 +13,33 @@ import { capRaisesFile, ATTEMPT_CAP_CEILING } from './orchestrator/command-state
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'orchestrator/attempt-cap.mjs');
 const ISSUE = 'MONO-900';
 
+const gitEnv = { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' };
+const delivery = cap => ({ orchestration: { delivery: cap === undefined ? {} : { attemptCap: cap } } });
+// The cap's base comes from the product config committed on its base branch (origin/main), like model routes.
 function fixture({ used = 3, cap = 3, issues = { [ISSUE]: used } } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mono-attempt-cap-')));
-  fs.mkdirSync(path.join(root, 'reports'));
+  const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mono-attempt-cap-')));
+  const root = path.join(scratch, 'root'), repo = path.join(scratch, 'repo'), origin = path.join(scratch, 'origin.git');
+  fs.mkdirSync(path.join(root, 'reports'), { recursive: true });
   atomicJson(path.join(root, 'control.json'), { state: 'active' });
   atomicJson(path.join(root, 'workers.json'), {});
   atomicJson(path.join(root, 'attempts.json'), issues);
-  const config = path.join(root, 'config.json');
-  atomicJson(config, { orchestration: { delivery: { attemptCap: cap } } });
-  const raise = (...args) => spawnSync(process.execPath, [script, 'raise', '--root', root, '--config', config, ...args], { encoding: 'utf8' });
-  const spawnCheck = (issue = ISSUE) => checkSpawnAvailability({ root, issue, config });
+  const config = path.join(repo, '.agents/mono-workflow.config.json');
+  atomicJson(config, delivery(cap));
+  const git = (...args) => { const r = spawnSync('git', args, { cwd: repo, env: gitEnv, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  git('init', '-q', '-b', 'main'); git('add', '.'); git('commit', '-q', '-m', 'base');
+  spawnSync('git', ['init', '-q', '--bare', origin], { env: gitEnv }); git('remote', 'add', 'origin', origin); git('push', '-q', 'origin', 'main');
+  const base = git('rev-parse', 'HEAD');
+  // A local edit of the config file, never committed: it must not change the cap.
+  const local = value => atomicJson(config, delivery(value));
+  const raise = (...args) => spawnSync(process.execPath, [script, 'raise', '--root', root, '--config', config, ...args], { encoding: 'utf8', env: gitEnv });
+  const spawnCheck = (issue = ISSUE) => checkSpawnAvailability({ root, issue, config, worktree: repo, base });
   const setUsed = (n, issue = ISSUE) => {
     const attempts = JSON.parse(fs.readFileSync(path.join(root, 'attempts.json'), 'utf8'));
     atomicJson(path.join(root, 'attempts.json'), { ...attempts, [issue]: n });
   };
   const records = () => fs.existsSync(capRaisesFile(root)) ? JSON.parse(fs.readFileSync(capRaisesFile(root), 'utf8')) : null;
   const bytes = () => fs.existsSync(capRaisesFile(root)) ? fs.readFileSync(capRaisesFile(root), 'utf8') : null;
-  return { root, config, raise, spawnCheck, setUsed, records, bytes, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+  return { root, config, local, raise, spawnCheck, setUsed, records, bytes, cleanup: () => fs.rmSync(scratch, { recursive: true, force: true }) };
 }
 const ok = r => { assert.equal(r.status, 0, r.stderr + r.stdout); return JSON.parse(r.stdout); };
 const refused = (r, pattern) => { assert.notEqual(r.status, 0, r.stdout); assert.match(r.stderr, pattern); };
@@ -49,7 +59,7 @@ test('a raise of +1 with a reason allows exactly one more attempt', () => {
     assert.throws(() => f.spawnCheck(), /attempt cap reached: 4 of 4 used \(base 3, raises 1\)/);
     // The record is shown where the orchestrator reads attempt state.
     const shown = ok(spawnSync(process.execPath, [script, 'show', '--root', f.root, '--config', f.config, '--issue', ISSUE], { encoding: 'utf8' }));
-    assert.deepEqual({ ...shown, raises: shown.raises.length }, { issue: ISSUE, used: 4, baseCap: 3, cap: 4, ceiling: ATTEMPT_CAP_CEILING, exhausted: true, raises: 1 });
+    assert.deepEqual({ ...shown, raises: shown.raises.length }, { issue: ISSUE, used: 4, baseCap: 3, cap: 4, ceiling: ATTEMPT_CAP_CEILING, exhausted: true, raises: 1, warnings: [] });
   } finally { f.cleanup(); }
 });
 
@@ -148,5 +158,44 @@ test('concurrent raises lose no update', async () => {
     assert.equal(same.filter(r => r.status === 0).length, 1, same.map(r => r.stderr).join('\n'));
     for (const r of same.filter(r => r.status !== 0)) assert.match(r.stderr, /not exhausted: 4 of 5 used/);
     assert.equal(f.records()['MONO-910'].length, 2);
+  } finally { f.cleanup(); }
+});
+
+test('a committed base above the ceiling counts as 6', () => {
+  const f = fixture({ cap: 100, used: 6 });
+  try {
+    assert.throws(() => f.spawnCheck(), /attempt cap reached: 6 of 6 used \(base 6, raises 0\)/);
+    const shown = f.raise('--issue', ISSUE, '--reason', 'r');
+    refused(shown, /above the ceiling of 6/);
+    assert.match(shown.stderr, /warning: BASE attemptCap 100 is above the ceiling of 6 and counts as 6/);
+    assert.equal(f.bytes(), null);
+    f.setUsed(5);
+    const state = f.spawnCheck();
+    assert.equal(state.used, 5); assert.equal(state.cap.baseCap, 6);
+    assert.ok(state.cap.warnings.some(w => /BASE attemptCap 100 is above the ceiling/.test(w)));
+  } finally { f.cleanup(); }
+});
+
+test('a local --config with a higher cap than BASE grants no attempt', () => {
+  const f = fixture({ cap: 3, used: 3 });
+  try {
+    f.local(10);
+    assert.throws(() => f.spawnCheck(), /attempt cap reached: 3 of 3 used \(base 3, raises 0\)/);
+    const shown = spawnSync(process.execPath, [script, 'show', '--root', f.root, '--config', f.config, '--issue', ISSUE], { encoding: 'utf8' });
+    const state = ok(shown);
+    assert.equal(state.baseCap, 3); assert.equal(state.cap, 3); assert.equal(state.exhausted, true);
+    assert.match(shown.stderr, /warning: --config attemptCap 10 differs from BASE attemptCap 3 and is ignored/);
+    // A raise still goes through the recorded step and counts from the BASE cap.
+    assert.equal(ok(f.raise('--issue', ISSUE, '--reason', 'r')).cap, 4);
+  } finally { f.cleanup(); }
+});
+
+test('without attemptCap in the committed config the pack default of 3 stays', () => {
+  const f = fixture({ cap: undefined, used: 2 });
+  try {
+    const state = f.spawnCheck();
+    assert.equal(state.cap.baseCap, 3); assert.deepEqual(state.cap.warnings, []);
+    f.setUsed(3);
+    assert.throws(() => f.spawnCheck(), /attempt cap reached: 3 of 3 used \(base 3, raises 0\)/);
   } finally { f.cleanup(); }
 });

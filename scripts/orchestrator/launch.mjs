@@ -275,12 +275,13 @@ export function checkSpawnAvailability(request) {
   const used = attempts[request.issue] ?? 0;
   if (!Number.isInteger(used) || used < 0) throw new Error("invalid attempt registry");
   if (request.attempt !== undefined && request.attempt !== used + 1) throw new Error('stale dispatch attempt');
-  // MONO-490: the cap is the config base plus the raises recorded for this issue by attempt-cap.mjs raise.
-  const cap = attemptCapState(request.root, request.issue, request.config);
+  // MONO-490: the cap is the BASE config cap (at most the ceiling) plus the raises recorded by attempt-cap.mjs raise.
+  const cap = attemptCapState(request.root, request.issue, { worktree: request.worktree, base: request.base, config: request.config });
+  for (const warning of cap.warnings) console.error(`attempt cap: ${warning}`);
   if (used >= cap.cap) throw new Error(`attempt cap reached: ${used} of ${cap.cap} used (base ${cap.baseCap}, raises ${cap.raises.length}); ` +
     `a raise is a recorded step: attempt-cap.mjs raise --root <root> --config <config> --issue ${request.issue} --reason <why>` +
     ` (above ${ATTEMPT_CAP_CEILING} also --owner-words <the owner's words>)`);
-  return { file, registry, attemptsFile, attempts, used };
+  return { file, registry, attemptsFile, attempts, used, cap };
 }
 export async function spawnWorker(request, preparation = {}) {
   checkRequest(request);
