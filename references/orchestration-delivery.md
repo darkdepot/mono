@@ -327,9 +327,11 @@ Parks:
   contract nor the round count. A retry dated after the collection is ignored,
   and a host verification run that plants, edits or removes it (or
   `task-changes.json`) fails consistency and is put back.
-- blocked, `not-reviewed twice in a row on this head (review)`: the work itself
-  kept the review from happening (unreadable or binary files, incomplete
-  coverage, a malformed answer, one model family): fix it, then resume the
+- blocked, `not-reviewed twice in a row on this head (review: …)`: the work itself
+  kept the review from happening, and the line names which (unreadable or binary
+  files, incomplete coverage, a malformed or incomplete answer, a single model
+  family, a CLI that could not start; it asks to check the CLI login only when a
+  login failed): fix it, then resume the
   worker with a task change (the streak belongs to one contract; the count
   stays); a review retry does not clear it.
 

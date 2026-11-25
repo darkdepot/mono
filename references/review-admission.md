@@ -25,7 +25,10 @@ open findings. Same head reuses its round; new base, fresh record.
   request this head again. `blocked:` (twice in a row): park blocked; the line
   says `(environment: …)` when the review failed on the host (timeout, sleep,
   network, login), which the orchestrator restores and retries without a task
-  change, or `(review)` when it failed on the work, which needs a task change.
+  change, or `(review: …)` when it failed on the work (a malformed or incomplete
+  answer, incomplete coverage, a single model family, unreadable or binary
+  files, a CLI that could not start; login only when a login failed), which
+  needs a task change.
 
 One defect the checker merged under one `mergeKey` counts as one open finding
 at its heaviest weight; it closes when every merged report closes.

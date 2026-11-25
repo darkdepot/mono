@@ -248,7 +248,7 @@ Workflow states:
      link and those words in the resume file; a risk or grant change is a new attempt on the same branch.
      A `not-reviewed twice … (environment: …)` park needs no task change: restore
      the host (wake, load, network, CLI login), then resume.mjs with reviewRetry: true;
-     a `(review)` park still needs the task change.
+     a `(review: …)` park still needs the task change.
      A strict-path `needs-decision` after round 3: first an extra round, resume.mjs
      with extraRound: {reason} (once per attempt, at most one open finding, no raised
      risk, out-of-contract work or open owner remark; never with reviewRetry), with

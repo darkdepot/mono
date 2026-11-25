@@ -178,6 +178,10 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest, retr
   return { spent: completed.length, onContract: completed.filter(receipt => receipt.review.contractDigest === contractDigest).length, notReviewed: streak.length,
     notReviewedCause: streak.length ? (streak.every(receipt => notReviewedCause(receipt) === 'environment') ? 'environment' : 'review') : null,
     notReviewedCauses: [...new Set(causes)],
+    // MONO-488: what in the work kept the streak's rounds from happening, and the last reason for a line without a known cause.
+    // The latest round's reason stays on the line whenever that round has no label, whatever earlier rounds named.
+    notReviewedWork: [...new Set(streak.flatMap(receipt => receiptWork(receipt.review)))],
+    notReviewedReason: streak.length && !receiptWork(streak.at(-1).review).length ? streak.at(-1).review.reason ?? null : null,
     reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,
     record: completed.findLast(receipt => receipt.base === base)?.review.record ?? null };
 }
@@ -242,7 +246,7 @@ export function roundOutcome(record, round, strict = false) {
 function reviewRefusal(review, host = false, risk = undefined) {
   if (review.outcome === 'refused') return review.reason;
   if (review.outcome === 'not-reviewed') return review.repeated
-    ? `blocked: ${notReviewedTwice(review.streakCause ?? review.cause, review.causes)}: ${review.reason}`
+    ? `blocked: ${notReviewedTwice(review.streakCause ?? review.cause, review.causes, review.streakWork ?? receiptWork(review))}: ${review.reason}`
     : `not-reviewed: ${review.reason}; no round spent, request this head once more`;
   // The collector reads the last 64 KiB of gate output: keep the line inside it and say what was left out.
   const limit = review.limit ?? ROUND_LIMIT;
@@ -376,10 +380,41 @@ const limitRefusal = (limit, host = false, strict = limit >= ROUND_LIMIT) => !st
   : `needs-decision: review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); ${EXTRA_HINT}`;
 // MONO-483: the refusal names the cause and the next step. The environment (a role timeout, a sleeping host, the network,
 // a login still failing after its refresh) is restored and retried without a task change; the work's own cause needs one.
-const notReviewedTwice = (cause, causes = []) => cause === 'environment'
+// MONO-488: the work's cause is named; login is mentioned only when a role failed on its login.
+const notReviewedTwice = (cause, causes = [], work = []) => cause === 'environment'
   ? `not-reviewed twice in a row on this head (environment${causes.length ? `: ${causes.join(', ')}` : ''}); restore the environment (host awake, load down, network, CLI login) and resume the worker with reviewRetry, without a task change`
-  : "not-reviewed twice in a row on this head (review); check that both review CLIs are logged in, then resume with a task change";
-const blockedTwice = prior => `blocked: ${notReviewedTwice(prior.notReviewedCause, prior.notReviewedCauses)}`;
+  : `not-reviewed twice in a row on this head (review${work.length ? `: ${work.join(', ')}` : ''}); ${work.includes(LOGIN_CAUSE) ? 'check that both review CLIs are logged in, then ' : ''}resume with a task change`;
+export const blockedTwice = prior => `blocked: ${notReviewedTwice(prior.notReviewedCause, prior.notReviewedCauses, prior.notReviewedWork)}` +
+  (prior.notReviewedCause !== 'environment' && prior.notReviewedReason ? `: ${clip(prior.notReviewedReason, 300)}` : '');
+// MONO-488: only the exact messages behind each cause are mapped; any other reason gets no label (the line keeps the raw reason).
+const LOGIN_CAUSE = 'CLI login';
+const WORK_CAUSES = [
+  [/^(?:(?:Codex|Claude) did not complete|Claude (?:result|structured output) missing|unreadable (?:transport|role) JSON|role JSON (?:over size limit|object required)|response fields differ from schema|(?:review|checker) incomplete|finding needs code evidence|finding without checker response|unknown or repeated checker id|contradictory merge verdicts|danger needs a concrete basis|checker provenance missing|closure requires a rejected current defect|invalid (?:reviewer|checker|finding|danger)\b)/, 'malformed or incomplete reviewer answer'],
+  [/^incomplete changed-file coverage/, 'incomplete coverage of the changed files'],
+  [/^reviewer\/checker must use different families/, 'a single model family for reviewer and checker'],
+  [/^no readable text for /, 'unreadable or binary files'],
+  [/^role process (?:could not start|input failed)/, 'a review CLI could not start'],
+  [/^review interrupted/, 'review interrupted'],
+  [/^(?:native subscription login not confirmed|Claude subscription login not confirmed|Codex requires ChatGPT subscription login)/, LOGIN_CAUSE],
+];
+const reasonCause = reason => WORK_CAUSES.find(([pattern]) => pattern.test(String(reason ?? '')))?.[1] ?? null;
+const failureCause = failure => failure.cause === 'login' ? LOGIN_CAUSE : failure.cause && failure.cause !== 'other' ? failure.cause : reasonCause(failure.reason);
+// The causes of one not-reviewed round, from this head's and round's failure records only (the stage record keeps older ones):
+// the failed role's attempts when a role failed, otherwise the round's own stop, and unreadable files.
+export function roundWork(record, head, number) {
+  const mine = (record.failures ?? []).filter(failure => failure?.head === head && failure.round === number);
+  // The terminal call's attempts are recorded back to back, attempt 1 first: walk back from its last attempt to its
+  // attempt 1, never into an earlier call's failures (a pass whose retry recovered).
+  const stop = mine.findLast(failure => !failure.role), at = stop ? mine.findLastIndex(failure => failure.role && failure.reason === stop.reason) : -1;
+  let first = at;
+  while (first > 0 && mine[first].attempt > 1 && mine[first - 1].role === mine[at].role && mine[first - 1].attempt === mine[first].attempt - 1) first--;
+  const sources = at >= 0 ? mine.slice(first, at + 1) : stop ? [stop] : [];
+  const work = sources.map(failureCause);
+  if (record.unreviewedFiles?.length) work.push('unreadable or binary files');
+  return [...new Set(work.filter(Boolean))];
+}
+// Older receipts carry no causes: their reason is read with the same narrow map.
+const receiptWork = review => review.workCauses ?? [reasonCause(review.reason)].filter(Boolean);
 // Other issues' and older receipts share this folder: only this attempt's pins files are read further;
 // unreadable or irregular files are skipped, never counted. No worker grant reaches evidenceRoot.
 function receiptHistory(evidenceRoot, pinsFile) {
@@ -646,11 +681,13 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       const cause = record.cause === 'environment' && !record.unreviewedFiles?.length ? 'environment' : 'review';
       const repeated = prior.notReviewed > 0, number = (record.rounds?.length ?? 0) + 1;
       const roleCauses = record.failures.filter(failure => failure.head === head && failure.round === number && failure.role && failure.cause).map(failure => failure.cause);
+      const work = record.outcome === 'not-reviewed' ? roundWork(record, head, number) : [];
       review = record.outcome === 'not-reviewed'
-        ? { outcome: 'not-reviewed', spent: false, round: null, repeated, cause, reason: record.failures.at(-1)?.reason ?? `no readable text for ${record.unreviewedFiles.join(', ') || 'the review'}`,
+        ? { outcome: 'not-reviewed', spent: false, round: null, repeated, cause, workCauses: work,
+          reason: record.failures.at(-1)?.reason ?? `no readable text for ${record.unreviewedFiles.join(', ') || 'the review'}`,
           // The refusal line of a second one names the streak's cause: environment only when the whole streak is.
           ...(repeated ? { streakCause: prior.notReviewedCause === 'environment' && cause === 'environment' ? 'environment' : 'review',
-            causes: [...new Set([...prior.notReviewedCauses, ...roleCauses])] } : {}),
+            causes: [...new Set([...prior.notReviewedCauses, ...roleCauses])], streakWork: [...new Set([...prior.notReviewedWork, ...work])] } : {}),
           successors: [], record: null, failures: record.failures.slice(-6), costs, ...(host ? { host } : {}) }
         : { ...roundOutcome(record, roundsUsed(prior) + 1, strict), spent: true, round: roundsUsed(prior) + 1, record: stageRecord, ...(host ? { host } : {}) };
     }
