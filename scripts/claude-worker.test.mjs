@@ -85,6 +85,9 @@ if (args.includes("auth")) {
 let input = ""; process.stdin.on("data", chunk => input += chunk);
 process.stdin.on("end", () => {
   const mode = input.startsWith("{") ? JSON.parse(input).mode : "success";
+  // MONO-483 review: take the shared launch.lock as if another issue's launch held it.
+  const holdLock = input.startsWith("{") ? JSON.parse(input).holdLock : null;
+  if (holdLock) fs.writeFileSync(holdLock, JSON.stringify({ pid: process.ppid, lockId: "held-by-another-launch" }));
   const session = value("--session-id") || value("--resume");
   fs.writeFileSync(path.join(process.cwd(), "observed.json"), JSON.stringify({args, input, envKeys: Object.keys(process.env),
     tmpdir:process.env.TMPDIR, claudeTmpdir:process.env.CLAUDE_CODE_TMPDIR,
@@ -410,6 +413,44 @@ test("Claude startup refuses missing identity, response, login, wrong identity, 
     if (mode === "wrong-model") assert.equal(entry.model_launch.actual_model, "other-model");
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, "attempts.json")))["MONO-999"], 1);
   }, { shortWindow: mode === "late-response" }));
+});
+
+// MONO-483 review: a resume whose wrapper starts but whose startup is refused delivered nothing: its review retry is voided,
+// even while another launch holds the shared launch.lock.
+test("Claude resume with reviewRetry: a refused startup voids the recorded retry, also under a held launch.lock", async () => {
+  await fixture(async ({ start, registry, root, request, runtime }) => {
+    await start("success");
+    let entry = registry()[request.issue];
+    while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
+    const dir = path.join(root, "dispatch", `${request.issue}-a1`), pinsFile = path.join(dir, "pins.json"), retries = path.join(dir, "review-retries.json");
+    write(pinsFile, { packVersion: "0.31.0", workerWritableRoots: entry.workerWritableRoots });
+    const all = registry(); all[request.issue].pins = { file: pinsFile, digest: crypto.createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") };
+    write(path.join(root, "workers.json"), all);
+    const { reviewHistory } = await import("./gate.mjs");
+    const effective = () => JSON.parse(fs.readFileSync(retries, "utf8")).filter(item => item.void === undefined).map(item => item.number);
+    const waitExit = async () => { entry = registry()[request.issue]; while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); } };
+    const resumeFile = path.join(root, "resume.md"); write(resumeFile, '{"mode":"wrong-model"}');
+    await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile, reviewRetry: true }), /model/);
+    assert.equal(registry()[request.issue].startup.status, "refused");
+    assert.match(JSON.parse(fs.readFileSync(retries, "utf8"))[0].void, /^startup refused: /);
+    assert.deepEqual(effective(), [], "the refused startup's retry is void");
+    await waitExit();
+    // Another launch holds the shared launch.lock while this startup is refused: the retry is still voided.
+    const launchLock = path.join(root, "launch.lock");
+    write(resumeFile, JSON.stringify({ mode: "wrong-model", holdLock: launchLock }));
+    await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile, reviewRetry: true }), /model|operation locked/);
+    assert.equal(fs.existsSync(launchLock), true, "launch.lock stayed held by the other launch");
+    assert.deepEqual(effective(), [], "a held launch.lock does not leave the retry effective");
+    const receipts = ["2026-01-01T00:00:00.000Z", "2026-01-01T00:01:00.000Z"].map((recordedAt, index) => ({ producer: "gate-review-v3", recordedAt, runId: `r${index}`,
+      pins: { file: pinsFile, digest: "d" }, head: "1".repeat(40), base: "b".repeat(40), review: { outcome: "not-reviewed", spent: false, cause: "environment", contractDigest: "c", failures: [] } }));
+    const history = reviewHistory(receipts, { pins: { file: pinsFile }, head: "1".repeat(40), base: "b".repeat(40), contractDigest: "c",
+      retries: JSON.parse(fs.readFileSync(retries, "utf8")) });
+    assert.equal(history.notReviewed, 2, "the gate ignores void retries: the environmental streak stays blocked");
+    fs.rmSync(launchLock); await waitExit();
+    write(resumeFile, '{"mode":"success"}');
+    await runtime.resumeWorker({ root, issue: request.issue, resumeFile, reviewRetry: true });
+    assert.deepEqual(effective(), [3], "a confirmed startup keeps its retry");
+  });
 });
 
 test("Claude pre-registration refusals preserve the attempt budget", async t => {

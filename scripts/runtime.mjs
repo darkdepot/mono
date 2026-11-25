@@ -339,6 +339,28 @@ export function reclaimLock(file) {
     fs.unlinkSync(file); syncDir(path.dirname(file));
   } finally { fs.closeSync(fd); fs.unlinkSync(marker); syncDir(path.dirname(file)); }
 }
+// A short synchronous critical section on a lock file of the same shape as withLock, retried with a bounded backoff
+// while another holder has it (MONO-483: every read-modify-write of review-retries.json). Throws ELOCKED after the bound.
+export function withLockSync(file, action, { tries = 50, delayMs = 100 } = {}) {
+  durableDirectory(path.dirname(file));
+  const holder = { pid: process.pid, lockId: crypto.randomUUID(), createdAt: new Date().toISOString() };
+  let fd;
+  for (let attempt = 1; ; attempt++) {
+    try { fd = fs.openSync(file, "wx", 0o600); break; }
+    catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      if (attempt >= tries) { const locked = new Error(`operation locked: ${file}; retry after the holder completes`); locked.code = "ELOCKED"; throw locked; }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(delayMs * attempt, 1000));
+    }
+  }
+  try {
+    fs.writeFileSync(fd, JSON.stringify(holder)); fs.fsyncSync(fd);
+    return action();
+  } finally {
+    fs.closeSync(fd);
+    try { if (readJson(file).lockId === holder.lockId) fs.unlinkSync(file); } catch {}
+  }
+}
 export async function withLock(file, action, { reclaim = false } = {}) {
   durableDirectory(path.dirname(file));
   if (reclaim && fs.existsSync(file)) reclaimLock(file);

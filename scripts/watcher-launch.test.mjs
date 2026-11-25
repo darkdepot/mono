@@ -183,6 +183,40 @@ test('launch-watcher-required through task-change resume: a refused resume recor
   });
 });
 
+test('review-retry resume: recorded beside the launch pins, dropped when the launch is refused, exclusive with a task change (MONO-483)', async () => {
+  const f = fixture();
+  try {
+    pulse(f.root); pass(f.dispatch()); const entry = f.entry(); await stopped(entry.pid);
+    const attempt = path.join(f.root, 'dispatch', `${f.issue}-a1`), retries = path.join(attempt, 'review-retries.json');
+    const resumeFile = path.join(f.scratch, 'review-retry.md'); put(resumeFile, 'The network is back; request the same head again.\n');
+    const request = path.join(f.scratch, 'review-retry.json'), resume = body => { atomicJson(request, body); return f.call('orchestrator/resume.mjs', '--request', request); };
+    const url = `https://linear.app/fixture/issue/${f.issue}/x#comment-1`;
+    let r = resume({ root: f.root, issue: f.issue, resumeFile, reviewRetry: true, taskChange: url });
+    assert.notEqual(r.status, 0); assert.match(r.stderr, /reviewRetry and taskChange are exclusive/);
+    r = resume({ root: f.root, issue: f.issue, resumeFile, reviewRetry: 'yes' });
+    assert.notEqual(r.status, 0); assert.match(r.stderr, /reviewRetry must be true/);
+    // A refused launch (here: no live watcher) delivers nothing and records no retry.
+    fs.unlinkSync(path.join(f.root, 'watcher.json'));
+    r = resume({ root: f.root, issue: f.issue, resumeFile, reviewRetry: true });
+    assert.notEqual(r.status, 0); assert.match(r.stdout + r.stderr, /watcher-required:/);
+    assert.equal(fs.existsSync(retries), false, 'an undelivered retry is not recorded');
+    // A spawn that fails after the retry was recorded drops exactly that retry.
+    pulse(f.root);
+    const launch = path.join(f.pack, 'scripts/orchestrator/launch.mjs'), source = fs.readFileSync(launch, 'utf8'), spawnLine = 'child = spawn(command, args, options);';
+    assert.ok(source.includes(spawnLine));
+    put(launch, source.replace(spawnLine, `throw new Error('fixture spawn refused'); ${spawnLine}`));
+    r = resume({ root: f.root, issue: f.issue, resumeFile, reviewRetry: true });
+    assert.notEqual(r.status, 0); assert.match(r.stderr, /fixture spawn refused/);
+    assert.deepEqual(read(retries), [], 'a refused spawn drops the retry it recorded');
+    put(launch, source);
+    pass(resume({ root: f.root, issue: f.issue, resumeFile, reviewRetry: true }));
+    assert.deepEqual(read(retries).map(retry => retry.number), [1]);
+    assert.ok(!f.entry().workerWritableRoots.some(root => attempt === root || attempt.startsWith(root + path.sep)), 'the retry file is outside every worker grant');
+    assert.equal(fs.existsSync(path.join(attempt, 'task-changes.json')), false, 'a review retry is not a task change');
+    assert.equal(read(path.join(f.root, 'attempts.json'))[f.issue], 1, 'the same attempt resumes');
+  } finally { await f.cleanup(); }
+});
+
 test('dispatch creates only active launch pins', async () => {
   const f = fixture();
   try {
