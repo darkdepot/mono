@@ -109,7 +109,19 @@ export async function recoverHostRun(evidenceRoot, collectionId, pinsFile) {
 // here, in evidenceRoot, outside every worker grant. Only the host writes it (`qa.mjs screen-check`).
 export const SCREEN_OUTCOMES = ["passed", "mismatches"];
 export const screenCheckFile = (evidenceRoot, head) => path.join(evidenceRoot, "screen-check", `${head}.json`);
-// The result is bound to the attempt's launch pins (file and digest): it counts for that attempt only.
+// The approved mockup lives in the attempt's dispatch snapshot (design.json and design/*.png beside the pins), not in
+// the commit: its digest binds a result to the images it was checked against.
+export function screenDesignDigest(pinsFile) {
+  const snapshot = path.join(path.dirname(pinsFile), "snapshot"), hash = crypto.createHash("sha256");
+  const manifest = path.join(snapshot, "design.json"), images = path.join(snapshot, "design");
+  hash.update(fs.existsSync(manifest) ? fs.readFileSync(manifest) : "no design.json").update("\0");
+  for (const name of fs.existsSync(images) ? fs.readdirSync(images).sort() : [])
+    hash.update(name).update("\0").update(fs.readFileSync(path.join(images, name))).update("\0");
+  return hash.digest("hex");
+}
+const attemptNumber = pinsFile => Number(/-a([1-9][0-9]*)$/.exec(path.basename(path.dirname(pinsFile)))?.[1] ?? NaN);
+// The result is bound to the attempt (its launch pins file and digest, attempt number) and to the approved design
+// digest: it counts for that attempt and those images only.
 export function writeScreenCheck(evidenceRoot, head, outcome, report, pins) {
   if (!/^[a-f0-9]{40}$/.test(head ?? "")) throw new Error("screen check: head must be a full commit SHA");
   if (!SCREEN_OUTCOMES.includes(outcome)) throw new Error(`screen check: outcome must be ${SCREEN_OUTCOMES.join(" or ")}`);
@@ -121,7 +133,8 @@ export function writeScreenCheck(evidenceRoot, head, outcome, report, pins) {
     throw new Error("screen check: a host verification is running in this evidence root; write the result after it ends");
   const file = screenCheckFile(evidenceRoot, head);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  atomicJson(file, { head, outcome, report, pins: { file: pins.file, digest: pins.digest }, recordedAt: new Date().toISOString() });
+  atomicJson(file, { head, outcome, report, pins: { file: pins.file, digest: pins.digest }, attempt: attemptNumber(pins.file),
+    design: screenDesignDigest(pins.file), recordedAt: new Date().toISOString() });
   return file;
 }
 // The collector's note that a round waits for the host's screen check, in the host-owned ledger (outside worker
@@ -140,14 +153,15 @@ export function spentRounds(evidenceRoot, pinsFile) {
   }).length;
 }
 // What holds the attempt's first round: null when it may run, otherwise {state: waiting|mismatches, reason}.
-// A result that is not a regular file, is unreadable, names another head or is not bound to these launch pins
-// counts as no result.
+// A result that is not a regular file, is unreadable, names another head, another attempt or other launch pins, or
+// was checked against other approved images counts as no result.
 export function readScreenCheck(evidenceRoot, head, binding) {
   try {
     const file = screenCheckFile(evidenceRoot, head), stat = fs.lstatSync(file);
     const result = stat.isFile() && !stat.isSymbolicLink() ? readJson(file) : null;
     return result?.head === head && SCREEN_OUTCOMES.includes(result.outcome) && typeof binding?.file === "string" &&
-      result.pins?.file === binding.file && result.pins?.digest === binding.digest ? result : null;
+      result.pins?.file === binding.file && result.pins?.digest === binding.digest && result.attempt === attemptNumber(binding.file) &&
+      result.design === screenDesignDigest(binding.file) ? result : null;
   } catch { return null; }
 }
 export function screenCheckHold({ pins, binding, spent, evidenceRoot, head }) {

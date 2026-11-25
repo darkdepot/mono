@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { admitRound, recordResult, readLedger, inFlight, waitForRound, requestDigest, roundRequestName, collectorLock, hostRunMarker, hostRunCheckout, evidenceSnapshot, recoverHostRun } from "./review-rounds.mjs";
+import { admitRound, recordResult, readLedger, inFlight, waitForRound, requestDigest, roundRequestName, collectorLock, hostRunMarker, hostRunCheckout, evidenceSnapshot, recoverHostRun, writeScreenCheck, readScreenCheck } from "./review-rounds.mjs";
 import { processStart } from "./runtime.mjs";
 
 const scripts = path.dirname(fileURLToPath(import.meta.url));
@@ -138,4 +139,30 @@ test("host run recovery: a gate that died mid-run leaves no planted or edited re
     try { process.kill(-writer?.pid, "SIGKILL"); } catch {}
     fs.rmSync(evidence, { recursive: true, force: true });
   }
+});
+
+// Greptile P1 on MONO-481: the approved mockup lives in the dispatch snapshot, not the commit. A result binds the
+// attempt (pins file, digest, number) and the snapshot's design digest; the same head in a new attempt or with
+// changed approved images does not reuse it.
+test("MONO-481 screen check result: same head, new attempt or changed design digest → refused", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-screen-binding-")), evidence = path.join(root, "evidence");
+  try {
+    const attempt = n => {
+      const dir = path.join(root, "dispatch", `MONO-999-a${n}`), file = path.join(dir, "pins.json");
+      fs.mkdirSync(path.join(dir, "snapshot/design"), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ screenCheck: true, evidenceRoot: evidence }));
+      fs.writeFileSync(path.join(dir, "snapshot/design.json"), JSON.stringify({ images: "v1" }));
+      fs.writeFileSync(path.join(dir, "snapshot/design/01-screen.png"), "png v1");
+      return { file, digest: crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex"), dir };
+    };
+    const a1 = attempt(1), a2 = attempt(2);
+    writeScreenCheck(evidence, head, "passed", "report", a1);
+    assert.equal(readScreenCheck(evidence, head, a1)?.outcome, "passed");
+    assert.equal(readScreenCheck(evidence, head, a2), null, "a new attempt on the same head needs its own check");
+    fs.writeFileSync(path.join(a1.dir, "snapshot/design/01-screen.png"), "png v2");
+    assert.equal(readScreenCheck(evidence, head, a1), null, "changed approved images refuse the old result");
+    fs.writeFileSync(path.join(a1.dir, "snapshot/design/01-screen.png"), "png v1");
+    fs.writeFileSync(path.join(a1.dir, "snapshot/design.json"), JSON.stringify({ images: "v2" }));
+    assert.equal(readScreenCheck(evidence, head, a1), null, "a changed design record refuses it too");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

@@ -301,8 +301,9 @@ from BASE, like `hostVerification`, only when the task snapshot holds
   `node '<pack-root>/scripts/orchestrator/qa.mjs' screen-check --pins
   <dispatch/KEY-aN/pins.json> --head <SHA> --outcome passed|mismatches --report
   <link>` with the registered `<root>/dispatch/KEY-aN/pins.json` path; it binds
-  the result to that file and digest and refuses while a host verification runs.
-  A result for another head or other pins does not count, and a host
+  the result to that file and digest, the attempt number and the digest of the
+  snapshot's approved design (`design.json` and PNGs), and refuses while a host
+  verification runs. A result for another head, attempt or design does not count, and a host
   verification run that changes `screen-check/` fails consistency and is put
   back. The gate checks it again:
   no result refuses with «no result for this head yet», `mismatches` refuses
