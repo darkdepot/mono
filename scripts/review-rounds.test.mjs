@@ -175,6 +175,31 @@ test("MONO-481 screen check result: same head, new attempt or changed design dig
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+// MONO-483 review: a host verification run has host rights; a review retry or task change it plants, edits or
+// removes beside the launch pins is reported as touched evidence (the receipt is refused) and put back.
+test("MONO-483 host run: planted, edited or removed review retries and task changes are touched evidence and put back", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-control-files-")), evidence = path.join(root, "evidence");
+  try {
+    const dir = path.join(root, "dispatch", "MONO-999-a1"), pinsFile = path.join(dir, "pins.json");
+    fs.mkdirSync(dir, { recursive: true }); fs.mkdirSync(path.join(evidence, "history"), { recursive: true }); fs.writeFileSync(pinsFile, "{}");
+    const retries = path.join(dir, "review-retries.json"), changes = path.join(dir, "task-changes.json");
+    const planted = JSON.stringify([{ number: 1, recordedAt: "2099-01-01T00:00:00.000Z" }]);
+    let snapshot = evidenceSnapshot(evidence, pinsFile);
+    assert.equal(evidenceTouched(snapshot, evidence, pinsFile), null, "nothing changed, nothing touched");
+    fs.writeFileSync(retries, planted);
+    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /evidence changed during host verification: review-retries\.json/);
+    assert.equal(fs.existsSync(retries), false, "a planted retry is moved aside");
+    const real = JSON.stringify([{ number: 1, recordedAt: "2026-11-25T10:00:00.000Z" }]);
+    fs.writeFileSync(retries, real); fs.writeFileSync(changes, "[]");
+    snapshot = evidenceSnapshot(evidence, pinsFile);
+    fs.writeFileSync(retries, planted); fs.rmSync(changes);
+    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /task-changes\.json.*review-retries\.json|review-retries\.json.*task-changes\.json/);
+    assert.deepEqual([fs.readFileSync(retries, "utf8"), fs.readFileSync(changes, "utf8")], [real, "[]"], "edited and removed control files are put back");
+    assert.equal(evidenceTouched(evidenceSnapshot(evidence, path.join(root, "dispatch", "MONO-999-a2", "pins.json")), evidence, path.join(root, "dispatch", "MONO-999-a2", "pins.json")), null,
+      "another attempt's control files are not this run's");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 // Codex review round 2 on MONO-481: a symlink anywhere in consumed/KEY-aN/screen-check/<head>.json is refused,
 // for writing and for reading.
 test("MONO-481 screen check result path: a symlink in the chain is refused", () => {

@@ -140,7 +140,7 @@ const leftover = record => (record?.findings ?? []).filter(finding => !['closed'
 const sameAttempt = (file, pinsFile) => typeof file === 'string' && path.dirname(file) === path.dirname(pinsFile);
 // MONO-483: a not-reviewed receipt names its cause; an old one without it counts as the work's own.
 const notReviewedCause = receipt => receipt.review.cause === 'environment' ? 'environment' : 'review';
-export function reviewHistory(receipts, { pins, head, base, contractDigest, retries = [] }) {
+export function reviewHistory(receipts, { pins, head, base, contractDigest, retries = [], now = new Date().toISOString() }) {
   const mine = receipts.filter(receipt => receipt?.producer === REVIEW_PRODUCER && sameAttempt(receipt.pins?.file, pins.file) && receipt.review)
     .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)));
   const completed = mine.filter(receipt => receipt.review.spent === true);
@@ -153,6 +153,8 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest, retr
   // MONO-483: a review retry (resume with reviewRetry, recorded on the host) cuts the streak where it was recorded,
   // only when everything before it in the streak failed on the environment. It never accepts a head or spends a round.
   let streak = onHead.slice(start);
+  // A retry dated later than now (the collection judging it) is no delivered resume: it never counts.
+  retries = retries.filter(retry => typeof retry?.recordedAt === 'string' && retry.recordedAt <= now);
   for (let index = streak.length - 1; index >= 0; index--) {
     const after = streak[index].recordedAt, next = streak[index + 1]?.recordedAt;
     const cut = retries.some(retry => String(retry.recordedAt) > String(after) && (next === undefined || String(retry.recordedAt) < String(next)));

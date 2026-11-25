@@ -33,6 +33,7 @@ test('role process failures: the timer is a timeout, the output limit is not, a 
   assert.match(flooded.message, /^role failed \(output limit\); no response admitted$/);
   assert.deepEqual([flooded.timedOut, flooded.outputLimit], [false, true]);
   assert.equal(roleFailureCause(flooded), 'other', 'an output limit is not the environment');
+  assert.equal(roleFailureCause(flooded, { slept: true }), 'other', 'an output limit stays with the work across a host sleep');
 
   for (const sign of ['error: Could not resolve host: api.openai.com', 'getaddrinfo ENOTFOUND chatgpt.com',
     'stream disconnected before completion: error sending request for url (https://chatgpt.com/backend-api/codex/responses)', 'read ECONNRESET']) {
@@ -41,6 +42,7 @@ test('role process failures: the timer is a timeout, the output limit is not, a 
   }
   const plain = await failure(node('console.error("model refused the request"); process.exit(1)'));
   assert.equal(roleFailureCause(plain), 'other', 'a plain exit is not the network');
+  assert.equal(roleFailureCause({ codexLoginMissing: true }), 'login', 'a logged-out Codex is a login cause');
 });
 
 test('a round names each failed attempt\'s cause, the host load and a sleep; only an all-environment round is environmental', async t => {

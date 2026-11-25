@@ -30,8 +30,16 @@ const attemptOf = (receiptPins, pinsFile) => typeof receiptPins === "string" && 
 // While the run is going only this attempt's collection writes receipts bound to its pins, so a changed
 // history file, or a new or changed receipt bound to these pins, means the run touched the evidence.
 // Head receipts of other attempts may be replaced legitimately meanwhile and are not judged.
+// MONO-483: the attempt's host-owned control files beside the launch pins (task-changes.json, review-retries.json)
+// are judged too: the run has host rights, and a planted task change or review retry would steer the review gate.
+const CONTROL_FILES = ["task-changes.json", "review-retries.json"];
 export function evidenceSnapshot(evidenceRoot, pinsFile) {
   const files = [];
+  for (const name of CONTROL_FILES) {
+    const file = path.join(path.dirname(pinsFile), name);
+    let bytes; try { if (!fs.lstatSync(file).isFile()) { files.push([file, { hash: "irregular", ours: true, history: false, control: true }]); continue; } bytes = fs.readFileSync(file); } catch { continue; }
+    files.push([file, { hash: crypto.createHash("sha256").update(bytes).digest("hex"), ours: true, history: false, control: true, bytes: bytes.toString("base64") }]);
+  }
   for (const directory of [evidenceRoot, path.join(evidenceRoot, "history")]) {
     if (!fs.existsSync(directory)) continue;
     for (const name of fs.readdirSync(directory).filter(name => name.endsWith(".json"))) {
@@ -49,14 +57,17 @@ export function evidenceTouched(snapshot, evidenceRoot, pinsFile) {
   const before = new Map(snapshot), after = new Map(evidenceSnapshot(evidenceRoot, pinsFile)), touched = [];
   for (const [file, old] of before) {
     const now = after.get(file);
-    if (now?.hash === old.hash || (!old.history && !now?.ours)) continue;
-    touched.push(path.relative(evidenceRoot, file));
-    if (old.ours) { fs.rmSync(file, { force: true }); fs.writeFileSync(file, Buffer.from(old.bytes, "base64"), { flag: "wx" }); }
+    if (now?.hash === old.hash || (!old.history && !old.control && !now?.ours)) continue;
+    touched.push(old.control ? path.basename(file) : path.relative(evidenceRoot, file));
+    if (old.ours && old.bytes !== undefined) { fs.rmSync(file, { recursive: true, force: true }); fs.writeFileSync(file, Buffer.from(old.bytes, "base64"), { flag: "wx" }); }
+    else if (old.control) fs.rmSync(file, { recursive: true, force: true });
     else if (now?.ours) quarantineEvidence(evidenceRoot, file);
   }
   for (const [file, now] of after) {
     if (before.has(file) || !now.ours) continue;
-    touched.push(path.relative(evidenceRoot, file)); quarantineEvidence(evidenceRoot, file);
+    // A control file created during the run is moved aside into the evidence quarantine.
+    touched.push(now.control ? path.basename(file) : path.relative(evidenceRoot, file));
+    if (now.control && now.bytes === undefined) fs.rmSync(file, { recursive: true, force: true }); else quarantineEvidence(evidenceRoot, file);
   }
   return touched.length ? `evidence changed during host verification: ${touched.join(", ")}` : null;
 }

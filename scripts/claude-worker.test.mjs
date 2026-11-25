@@ -412,6 +412,28 @@ test("Claude startup refuses missing identity, response, login, wrong identity, 
   }, { shortWindow: mode === "late-response" }));
 });
 
+// MONO-483 review: a resume whose wrapper starts but whose startup is refused delivered nothing: its review retry is dropped.
+test("Claude resume with reviewRetry: a refused startup drops the recorded retry", async () => {
+  await fixture(async ({ start, registry, root, request, runtime }) => {
+    await start("success");
+    let entry = registry()[request.issue];
+    while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
+    const dir = path.join(root, "dispatch", `${request.issue}-a1`), pinsFile = path.join(dir, "pins.json"), retries = path.join(dir, "review-retries.json");
+    write(pinsFile, { packVersion: "0.31.0", workerWritableRoots: entry.workerWritableRoots });
+    const all = registry(); all[request.issue].pins = { file: pinsFile, digest: crypto.createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") };
+    write(path.join(root, "workers.json"), all);
+    const resumeFile = path.join(root, "resume.md"); write(resumeFile, '{"mode":"wrong-model"}');
+    await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile, reviewRetry: true }), /model/);
+    assert.equal(registry()[request.issue].startup.status, "refused");
+    assert.deepEqual(JSON.parse(fs.readFileSync(retries, "utf8")), [], "the refused startup's retry is dropped");
+    entry = registry()[request.issue];
+    while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
+    write(resumeFile, '{"mode":"success"}');
+    await runtime.resumeWorker({ root, issue: request.issue, resumeFile, reviewRetry: true });
+    assert.deepEqual(JSON.parse(fs.readFileSync(retries, "utf8")).map(item => item.number), [1], "a confirmed startup keeps its retry");
+  });
+});
+
 test("Claude pre-registration refusals preserve the attempt budget", async t => {
   for (const [name, options, mutate, reason] of [
     ["missing-tool", { missingTool: true }, () => {}, /install|Claude Code/],

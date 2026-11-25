@@ -275,7 +275,9 @@ Parks:
   recorded in `dispatch/KEY-aN/review-retries.json` beside the launch pins,
   outside every worker grant; it cuts only a streak recorded before it whose
   receipts all say `environment`, never accepts a head, and changes neither the
-  contract nor the round count.
+  contract nor the round count. A retry dated after the collection is ignored,
+  and a host verification run that plants, edits or removes it (or
+  `task-changes.json`) fails consistency and is put back.
 - blocked, `not-reviewed twice in a row on this head (review)`: the work itself
   kept the review from happening (unreadable or binary files, incomplete
   coverage, a malformed answer, one model family): fix it, then resume the
@@ -455,7 +457,7 @@ and the review round reads it with the Issue; a refused resume records nothing.
 After an environmental `not-reviewed` streak the request is `{root, issue,
 resumeFile, reviewRetry: true}` instead (never both): resume records
 `{number, recordedAt}` in `dispatch/KEY-aN/review-retries.json`, drops it when
-the launch is refused, and the contract stays unchanged.
+the launch or its startup is refused, and the contract stays unchanged.
 Resume carries no grants or network override: a risk, critical or grant change is
 a new attempt on the same branch.
 

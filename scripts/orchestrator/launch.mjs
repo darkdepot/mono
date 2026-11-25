@@ -396,7 +396,7 @@ export async function resumeWorker(request) {
     const registry = readJson(path.join(request.root, "workers.json")); registry[request.issue] = updated;
     atomicJson(path.join(request.root, "workers.json"), registry);
     let change = null, retry = null;
-    return { entry: updated, ...await launchTransport(request.root, updated, prompt, true, prepared, { beforeSpawn() {
+    return { entry: updated, retry: () => retry, ...await launchTransport(request.root, updated, prompt, true, prepared, { beforeSpawn() {
       // Recorded at delivery: the review round reads every delivered task change with the Issue.
       if (request.taskChange !== undefined) change = recordTaskChange(path.dirname(entry.pins.file), request.taskChange, prompt);
       // A review retry is recorded at delivery too; the gate reads it only against an environmental streak.
@@ -407,6 +407,14 @@ export async function resumeWorker(request) {
     } }) };
   });
   const collector = await startCollector(request.root, launched.entry);
-  if (workerTransport(launched.entry.transport)?.startupEvent) return { ...await confirmStartup(request.root, launched.entry, launched), collector };
+  if (workerTransport(launched.entry.transport)?.startupEvent) {
+    try { return { ...await confirmStartup(request.root, launched.entry, launched), collector }; }
+    catch (error) {
+      // A refused startup delivered nothing either: its review retry must not stay effective.
+      const retry = launched.retry();
+      if (retry) await withLock(path.join(request.root, "launch.lock"), () => dropReviewRetry(path.dirname(launched.entry.pins.file), retry));
+      throw error;
+    }
+  }
   return { pid: launched.pid, thread_id: launched.thread_id, procStart: launched.procStart, collector };
 }

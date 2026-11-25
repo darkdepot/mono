@@ -259,6 +259,13 @@ test("a review retry clears only an environmental not-reviewed streak recorded b
   const plain = read(spentFirst), retried = read(spentFirst, [retry(1)]);
   assert.deepEqual([retried.spent, retried.onContract, retried.record], [plain.spent, plain.onContract, plain.record], 'a retry changes no round count and no record');
   assert.deepEqual([plain.spent, plain.onContract, retried.notReviewed], [1, 1, 0]);
+  // MONO-483 review: a retry dated after the collection that judges it (a planted future record) never counts.
+  const pending = [receipt('not-reviewed', 'environment'), receipt('not-reviewed', 'environment')], future = { number: 1, recordedAt: '2099-01-01T00:00:00.000Z' };
+  assert.equal(reviewHistory(pending, { pins, head: at, base, contractDigest, retries: [future], now: time() }).notReviewed, 2, 'a future-dated retry is ignored');
+  const delivered = retry(1), judged = time();
+  assert.equal(reviewHistory(pending, { pins, head: at, base, contractDigest, retries: [delivered], now: judged }).notReviewed, 0);
+  assert.equal(reviewHistory(pending, { pins, head: at, base, contractDigest, retries: [delivered], now: pending[1].recordedAt }).notReviewed, 2,
+    'a retry later than the judging time does not count');
 });
 test('shared review context refreshes the remote base, uses HEAD while dirty, and reads this attempt\'s current-contract rounds with delivered task changes', async () => {
   const { execFileSync } = await import('node:child_process');
@@ -565,6 +572,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.deepEqual([receipt.review.spent, receipt.review.record], [false, null]);
         await round(at(offline, 2), 1, /fail: blocked: not-reviewed twice in a row on this head/);
         const blocked = call(at(offline, 3)); assert.equal(blocked.status, 1); assert.match(blocked.stdout, /fail: blocked: not-reviewed twice in a row/);
+        assert.match(blocked.stdout, /environment: login/, 'a logged-out Codex is an environmental login cause');
         setReview(bin, { loggedOut: null, findings: [], verdict: closing });
         const second = commit('export const two = 2;\n');
         // A bot remark from the draft PR, fixed on this head: it enters the round and is signed with the receipt.

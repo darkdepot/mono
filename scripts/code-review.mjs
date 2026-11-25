@@ -470,6 +470,8 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
     try { invocation.boundary.auth = subscriptionStatus(route.engine, authResult); }
     catch (error) {
       if (route.engine === 'claude') { try { error.loginFailure = JSON.parse(authResult.stdout)?.loggedIn === false; } catch {} }
+      // A logged-out Codex is an environmental login cause too, but never goes through Claude's login refresh.
+      else if (!authResult.error && /not logged in/i.test(`${authResult.stdout}\n${authResult.stderr}`)) error.codexLoginMissing = true;
       throw error;
     }
     if (route.engine === 'codex') {
@@ -528,8 +530,9 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
 export const ENVIRONMENT_CAUSES = ['timeout', 'host-slept', 'network', 'login'];
 export const SLEEP_GAP_MS = 60_000;
 export function roleFailureCause(error, { answered = false, slept = false } = {}) {
-  if (answered || error?.interrupted === true) return 'other';
-  if (error?.loginFailure) return 'login';
+  // Work signals first: an output limit or a malformed answer stays with the work even across a host sleep.
+  if (answered || error?.interrupted === true || error?.outputLimit) return 'other';
+  if (error?.loginFailure || error?.codexLoginMissing) return 'login';
   if (error?.processFailure && slept) return 'host-slept';
   if (error?.timedOut) return 'timeout';
   if (error?.processFailure && error?.network) return 'network';
