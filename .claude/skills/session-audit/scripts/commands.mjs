@@ -233,7 +233,7 @@ export function collect({ env = process.env, sessionId, now, takeOver = false } 
     const revisitTails = Array.isArray(state.deferredTails) ? state.deferredTails : [];
     const map = buildMap({ config, env, repo, window, passUuid, startedAt, dataRoot, revisitTails });
     const sourceCount = map.sources.ledger.length + map.sources.reports.length;
-    if (!pass && map.sessions.length === 0 && sourceCount === 0 && map.queueLength === 0) {
+    if (!pass && map.sessions.length === 0 && sourceCount === 0 && map.queueLength === 0 && !queuedFindings(dataRoot)) {
       return { nothingNew: true, window, written: false, deferredTails: map.deferredTails.length };
     }
     if (!pass) {
@@ -262,6 +262,15 @@ export function collect({ env = process.env, sessionId, now, takeOver = false } 
       counters: map.counters,
     };
   }, { takeOver, now: at });
+}
+
+// Findings of the registry waiting in the Triage queue start a pass alone.
+function queuedFindings(dataRoot) {
+  const file = path.join(dataRoot, "findings.json");
+  if (!isFile(file)) return 0;
+  try {
+    return (readJson(file).findings || []).filter((finding) => finding.outcome === "queued").length;
+  } catch { return 0; }
 }
 
 // ---------------------------------------------------------------- extract
@@ -543,8 +552,16 @@ export function extract({ env = process.env, sessionId, target, from, to } = {})
     assertOwner(state, sessionId);
     const passUuid = checkName(state.pending.uuid, "pass uuid");
     const map = readMap(dataRoot, passUuid);
-    const mapSession = map.sessions.find((session) => session.id === target || session.ids.includes(target));
-    if (!mapSession) throw new AuditError(`session ${target} is not in the map of pass ${passUuid}`);
+    let mapSession = map.sessions.find((session) => session.id === target || session.ids.includes(target));
+    if (!mapSession) {
+      // A queued signal of an earlier pass: its session may have no new
+      // events now and so is not in this map; the queue keeps what is needed
+      // to open its own range.
+      const queued = readQueue(dataRoot).find((signal) => signal.sessionRef && (signal.sessionRef.id === target || signal.sessionRef.ids.includes(target)));
+      if (!queued) throw new AuditError(`session ${target} is not in the map of pass ${passUuid}`);
+      if (!from && !to) throw new AuditError(`session ${target} comes from the queue: give its range with --from and --to`, { range: queued.range });
+      mapSession = queued.sessionRef;
+    }
     checkName(mapSession.id, "session id");
     const entries = digestItems(mapSession, mapSession, config);
     const window = map.window;

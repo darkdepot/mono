@@ -1,6 +1,6 @@
 ---
 name: session-audit
-description: Weekly audit of Mono sessions in the mono repository. Use when the owner says «разбери сессии». Builds the week map of real Mono sessions (product, kind, versions, links), the mandatory-layer sources, a digest of any session and the token cost of the pass. Project skill, not part of the pack.
+description: Weekly audit of Mono sessions in the mono repository. Use when the owner says «разбери сессии». Maps every real Mono session since the last pass, reads ledgers, reports and owner words, opens sessions by signals and a small random sample, checks each finding against its source, joins repeats with past findings, writes one weekly report and at most five Triage issues without quotes, and prints the summary. Project skill, not part of the pack.
 ---
 
 # Session audit
@@ -18,6 +18,12 @@ node .claude/skills/session-audit/scripts/session-audit.mjs extract <session id>
 node .claude/skills/session-audit/scripts/session-audit.mjs cost --pass <pass uuid>
 node .claude/skills/session-audit/scripts/session-audit.mjs cost <session id>...
 ```
+
+The weekly pass adds `signals`, `opened`, `check`, `confirm`, `candidates`,
+`register`, `select`, `plan`, `op`, `commit` and `summary` (see «Weekly pass»
+and `--help`). Each takes `--session ${CLAUDE_SESSION_ID}`; files given to them
+(subagent results, saved Linear answers) must lie in `runs/<pass uuid>/` of the
+data root, for example `runs/<pass uuid>/inbox/`.
 
 Output is JSON on stdout; a refusal is JSON on stderr with a non-zero exit
 (2: stop with a reason, 3: the pass belongs to another session).
@@ -42,15 +48,22 @@ its lock on release.
 
 - `config.json` here holds shared values only. `<data root>/config.json`
   overrides them key by key: `runPrefixes`, `standCodexHomes`,
-  `excludedSessions`, `projectId`, `triageTeam`.
+  `excludedSessions`, `projectId` (Linear project of the weekly report) and
+  `triageTeam` (Linear team for Triage). Without `projectId` and `triageTeam`
+  `plan` stops loudly and nothing is written to Linear.
 - `state.json`: `boundary` (end of the last finished pass), `deferredTails`
   and `pending` (`uuid`, `windowStart`, `windowEnd`, `startedAt`, `sessionId`,
   `deferredTails`, after a takeover also `takenOverAt`, `takenOverFrom`). The
   command that moves the boundary also moves `pending.deferredTails` to
   `state.deferredTails`: records that were still being written (`file`,
   `offset`) are read as new in the next pass whatever their own time.
-- `queue.json`: unread signals; `collect` only counts them.
-- `runs/<pass uuid>/`: `map.json`, `log`, `extract/<session>/chunk-NN.md`.
+- `queue.json`: `{signals: []}`, signals not opened yet; `collect` only counts
+  them, `signals` writes them, `commit` drops the opened ones.
+- `findings.json`: the findings registry (U7), apart from what was read.
+- `runs/<pass uuid>/`: `map.json`, `log`, `extract/<session>/chunk-NN.md`,
+  `signals.json`, `opened.json`, `checked/`, `checks.json`, `findings.json`,
+  `F-<uuid>/finding.json` (quotes; the pointer of the report),
+  `selection.json`, `plan.json`, `summary.json`.
 
 ## collect
 
@@ -150,5 +163,119 @@ given session ids, with their `subagents/`, each `message.id` once (the record
 with the largest usage wins). Fields and sums follow `scripts/token-usage.mjs`:
 `usage`, `tokens` (full input plus output) and `cacheReadTokens` apart.
 
-The analysis, signals, findings and records of the weekly pass are added by
-the next task of the project.
+## Weekly pass
+
+Run in this order; every step after `collect` refuses a session that does not
+hold the pass (exit 3). Never work around a refusal. The data root lock
+refuses rather than waits, so this session runs `extract` and every pass
+command one at a time; subagents only read chunk files and write inbox files,
+each finding with its own id.
+
+1. `collect`. `nothingNew: true`: say so and stop; nothing is opened or
+   written. A resumed pass continues where it stopped (its plan included).
+2. Mandatory layer, read whole by subagents in parts: the ledger lines and
+   reports of `map.sources`, and the owner words of top-level `owner` and
+   `orchestrator` sessions (`extract` of each; `owner` lines only, without
+   notifications, service records or tool results). The subagents return
+   interventions they find as `[{session, from, to, reason: "intervention"}]`;
+   save that list to `runs/<uuid>/inbox/extra.json`.
+3. `signals --extra <file>`: mechanical signals (park, `phase_result` blocked
+   or needs-human, `not-converged` receipts, a tester report whose
+   `mono-qa certificate` says `failed`, attempt ≥ 2, long phase: from the
+   issue's `DISPATCHED` ledger line or the previous phase report to this
+   report's `publishedAt`, over two medians of the stage and at least 30
+   minutes) plus the
+   queue, ordered by cost (stop, intervention, extra rounds, attempt, length;
+   unknown is zero and after a known equal). A signal joins a session only by
+   an id written in its source; else `session: null` («без связи»), its source
+   line is the evidence. `random` are three sessions without signals, of
+   different kinds, seeded by the pass uuid.
+4. Open the three random sessions and the signals in order. Session signals:
+   `extract <session>` (a queued signal of an earlier pass: `extract <session>
+   --from <range.first.ts> --to <range.last.ts>`). Each opening is one
+   subagent (`openModel` of the config, empty: this session's model) with the
+   digest chunks, `SKILL.md` and references of the stage at every tag of the
+   range (`git show <tag>:<path>`), and the registry candidates
+   (`candidates --stage <s> --kind <k> --rule <text>`). After each, `opened
+   <signal or session id>`; stop opening signals when `budget.exhausted`.
+   Unopened signals stay in the queue for the next pass and are named in the
+   summary.
+5. The subagent writes its findings to `runs/<uuid>/inbox/<name>.json`, one
+   object or a list, and returns only the file name:
+   `{id, kind: broken|intervention|guess|time-loss|simplify, scope:
+   pack|product|host, stage, pointer, quote, mechanism, proposal, rule,
+   latest, changed, screen, cost, sameAs}`. `stage` is a pack skill name;
+   anything else is kept and published as `other`. `pointer` is `{session,
+   event}` (event = record uuid or Codex item id; its time and the stage
+   version are read from the file) or, without a session, `{source, line,
+   ts}` (a ledger line or report of the map). `quote`: at most two lines,
+   copied from that event or line. `mechanism` and `proposal`: own words in
+   pack terms (rule, reference, step, script), at most 300 characters, no
+   paths, no issue keys of other teams, no quotes. `rule`/`latest`/`changed`:
+   `{file, text}` in the pack (`latest`: where the last release still allows
+   it; `changed`: where the last release says otherwise). `cost`: `stops`,
+   `interventions`, `extraRounds`, `minutes`, each `{value, mark:
+   measured|estimate|unknown, source}`; `measured` needs `source.kind` ledger,
+   receipt or wave-cost (`scripts/wave-cost.mjs <KEY>`). `sameAs`: the
+   registry `F-` id or another proposal id when the mechanism is the same;
+   features alone never make two findings one, and one rule can have several
+   findings.
+6. `check <file>`: drops and counts a finding whose quote is not in its event
+   or line, whose rule place is missing in a tag of the range, or whose guess
+   rule exists in one; versions «не подтверждена» use the tag of the path
+   hint («по пути»), and without it `broken` with a rule and `guess` are
+   dropped as `no-version`. `screen: true` gives `needs-owner`.
+7. `register --linear <file>`: before it, read every registry finding named
+   by `sameAs` that has an issue with Linear MCP `get_issue` (with relations
+   for a Duplicate) and save the answers as a list to
+   `runs/<uuid>/inbox/linear.json`, adding `duplicateOf` for a Duplicate and
+   `mechanismRemoved: true` for a cancel whose comment says the mechanism was
+   removed. Outcomes: open issue: comment and row; rejected: row with the
+   earlier decision and link, no status change; Done without `fixed_in` in
+   `CHANGELOG.md`: comment and row; every version at or after `fixed_in`:
+   «вернулось», back to Triage; all before it: repeat, row only; crossing or
+   unknown: «повтор, версия неоднозначна».
+8. `select`: Triage only for a confirmed pack finding with a proposal that the
+   last release still allows and that repeated in two sessions, cost an
+   intervention or stopped work; returned findings too; at most five, by
+   stops and interventions, then extra rounds and minutes. Only confirmed
+   members count; members waiting for the owner or declined add nothing. The
+   rest are «в очереди» and compete again next pass (a queued return is
+   reopened then), after their places are read again in the last release.
+   «Уже изменено» (even for a return), product and host findings, and
+   findings waiting for the owner are rows of the report only.
+9. `plan`: builds `runs/<uuid>/plan.json` from allowed fields only and refuses
+   any text with a quote (8 words in a row from a digest, or a stored quote of
+   any length), a path other than the pointer `runs/<uuid>/<F-id>`, an issue
+   key of another team, an e-mail, a token or other credential, a long hex or
+   base64 string, or a link other than a Linear issue, document or project
+   page or the mono repository (no query or fragment); rewrite the named
+   finding and run `check`, `register`, `select`, `plan` again. Run again
+   after a crash or any change: operations that may have reached Linear stay,
+   planned ones are refreshed or removed, a report already sent gets one
+   update only if its content changed.
+10. Apply the plan one operation at a time, never two at once:
+    `op next` gives the key and the exact MCP call; `op sent <key>` before the
+    call (it re-checks the text); send `call.args` verbatim; read the object
+    back (`get_document`, `get_issue`, the comment), save the answer to the
+    inbox and `op confirm <key> --response <file>`. An error, timeout or
+    unclear answer: `op lost <key>`, then reconcile, never create again: save
+    `list_documents` of the project or `list_issues` of the team created since
+    the pass start, or all `list_comments` of the target issue, as full
+    objects with their text (`content`, `description` or `body`), and run
+    `op reconcile <key> --listing <file>`; text search is only a helper. Not
+    found: wait a minute and reconcile again. After three misses the pass
+    stops with the marker `session-audit op=<uuid>/<key>`: tell the owner;
+    only after their words that the object is not in Linear run
+    `op resume <key> --owner-said`.
+11. `summary` gives the result before the commit. If it lists findings to
+    confirm, show the summary with «От тебя» and ask; on the owner's answer
+    in this session run `confirm <proposal id> --yes|--no`, `register`,
+    `select`, `plan` (it appends operations and a report update) and apply
+    the new operations. Nothing waiting: commit at once; the owner moves on
+    without an answer: commit, the findings stay in the report as waiting.
+12. `commit`: only when the plan was built from the current `register` and
+    `select` and every operation is confirmed (a read-back must match the
+    target, the marker, and the planned words and links); updates the registry
+    and the queue (a fix counts as confirmed only by sessions opened in a
+    pass), moves the boundary and the deferred tails, and ends the pass. Show `summary.text` to the owner in Russian product language.

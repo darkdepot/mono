@@ -1,6 +1,7 @@
 {
   "budget": { "minutes": 60, "tokens": 3000000 },
   "randomSessions": 3,
+  "triageLimit": 5,
   "firstPassDays": 7,
   "openModel": "",
   "extract": {
@@ -37,6 +38,27 @@
   "excludedSessions": [],
   "projectId": "",
   "triageTeam": "",
+  "signals": {
+    "ledgerPatterns": {
+      "stops": "\\b(park|parked|parking|blocked|needs-human|needs-decision|stalled|timed-out)\\b",
+      "interventions": "\\b(owner (asked|stopped|corrected|intervened|overrode|said)|intervention)\\b",
+      "extraRounds": "\\bnot-converged\\b",
+      "attempt": "\\b(?:attempt\\s+|a)([2-9]|[1-9]\\d+)\\b"
+    },
+    "stopPhaseResults": ["blocked", "needs-human"],
+    "qaFailValues": ["fail", "failed", "red", "blocked"],
+    "longPhaseMinutes": 30,
+    "longPhaseFactor": 2
+  },
+  "publish": {
+    "ownKeyPrefix": "MONO",
+    "allowedLinks": [
+      "^https://linear\\.app/[A-Za-z0-9_-]+/(issue|document|project)/[A-Za-z0-9._~%-]+(/[A-Za-z0-9._~%-]+)*$",
+      "^https://github\\.com/[A-Za-z0-9_.-]+/mono(/[A-Za-z0-9._~%/-]*)?$"
+    ],
+    "overlapWords": 8
+  },
+  "reconcile": { "intervalSeconds": 60, "attempts": 3 },
   "claude": {
     "knownRecordTypes": [
       "user", "assistant", "attachment", "system", "summary", "progress",
