@@ -918,3 +918,25 @@ test('Design never owns a continued conversation; scenario chains keep pipeline 
  assert.throws(()=>loadCatalog(index),/invalid scenario chain/);undo();
  assert.doesNotThrow(()=>loadCatalog(index));
 });
+test('an explicit scenario chain replaces the legacy stage chain seed',t=>{
+ const f=fixture(t),file=path.join(f.catalogDir,'tech-evaluation/approve/scenario.json');
+ write(file,JSON.stringify({...json(file),chain:['idea/approve','research/approve','discovery/approve']},null,2)+'\n');
+ write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed');f.commit();
+ const unit=f.select().units.find(u=>u.id==='tech-evaluation-approve');
+ assert.deepEqual(unit.scenarios,['idea/approve','research/approve','discovery/approve','tech-evaluation/approve']);
+ assert.equal(unit.seed,undefined,'the legacy chainSeed belongs only to the legacy stage chain');
+});
+test('a neighbor scenario with an explicit chain is selected with its prerequisites',t=>{
+ const f=fixture(t),file=path.join(f.catalogDir,'handoff/approve/scenario.json');
+ write(file,JSON.stringify({...json(file),chain:['discovery/approve','design/approve','tech-evaluation/approve']},null,2)+'\n');
+ // As in the production index, the Design main chain ends at Design, so Handoff is only a neighbor.
+ const indexFile=path.join(f.catalogDir,'index.json'),index=json(indexFile);
+ index.stages.find(s=>s.id==='design').chain=['discovery','design'];write(indexFile,JSON.stringify(index,null,2)+'\n');
+ const base=f.commit();write(path.join(f.dir,'skills/design/SKILL.md'),'changed');
+ const selection=selectScenarios({indexFile:path.join(f.catalogDir,'index.json'),worktree:f.dir,base,head:f.commit()});
+ assert.deepEqual(selection.affected,['design']);
+ const units=selection.units.filter(u=>u.scenarios.at(-1)==='handoff/approve');
+ assert.ok(units.length);
+ for(const unit of units)if(unit.scenarios.length===1||unit.target==='handoff/approve')assert.deepEqual(unit.scenarios,['discovery/approve','design/approve','tech-evaluation/approve','handoff/approve']);
+ assert.ok(!selection.units.some(u=>u.scenarios.length===1&&u.scenarios[0]==='handoff/approve'),'never the chained scenario alone');
+});
