@@ -184,6 +184,15 @@ test("AC1: an update of the report is confirmed only while the report stays in i
   // list_documents with fields: the same parent fields per document.
   const listed = { id: "doc-1", title: live.title, content: create.body, team: { id: live.team.id, name: "Mono" }, project: null, createdAt: live.createdAt };
   assert.deepEqual(checkReadBack(create, listed, current), []);
+
+  // Project fallback: a team document (project null) or one without a project field is not the report.
+  const projectCreate = { ...create, team: undefined, project: "p-1" };
+  const projectCurrent = { ops: [{ ...current.ops[0], team: undefined, project: "p-1" }] };
+  assert.match(checkReadBack(projectCreate, listed, projectCurrent).join(" "), /names no project/);
+  assert.match(checkReadBack(update, live, projectCurrent).join(" "), /names no project/);
+  const { project: _project, ...bare } = listed;
+  assert.match(checkReadBack(projectCreate, bare, projectCurrent).join(" "), /names no project/);
+  assert.deepEqual(checkReadBack(projectCreate, { ...listed, team: null, project: { id: "p-1", name: "Разбор" } }, projectCurrent), []);
 });
 
 // ---------------------------------------------------------------- AC2
@@ -379,8 +388,14 @@ test("AC4: after several takeovers the budget counts every holder of the pass", 
   });
   ok(w.env, ["collect", "--session", A, "--now", NOW]);
   ok(w.env, ["collect", "--session", B, "--now", at(NOW, 2), "--take-over"]);
+  // A pass taken over before `holders` existed names only the last two.
+  const stateFile = path.join(w.data, "state.json");
+  const legacy = readJson(stateFile);
+  delete legacy.pending.holders;
+  assert.deepEqual([legacy.pending.takenOverFrom, legacy.pending.sessionId], [A, B]);
+  fs.writeFileSync(stateFile, JSON.stringify(legacy));
   ok(w.env, ["collect", "--session", C, "--now", at(NOW, 4), "--take-over"]);
-  assert.deepEqual(readJson(path.join(w.data, "state.json")).pending.holders, [A, B, C]);
+  assert.deepEqual(readJson(stateFile).pending.holders, [A, B, C]);
   const opened = ok(w.env, ["opened", "--session", C, "--now", at(NOW, 6)]);
   assert.equal(opened.budget.tokens.used, 3 * (1 + 2 + 4), "A, B and C each spent 7 without cache reads");
   assert.equal(opened.budget.tokens.cacheReadApart, 3 * 900);

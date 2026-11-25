@@ -551,7 +551,8 @@ function parentProblems(op, item) {
   }
   if (op.project) {
     const projects = parentNames(item, "project");
-    if (projects.length && !projects.includes(String(op.project).toLowerCase())) return [`the document is in project ${projects[0]}, not ${op.project}`];
+    if (!projects.length) return [`the answer names no project; the report belongs to project ${op.project}`];
+    if (!projects.includes(String(op.project).toLowerCase())) return [`the document is in project ${projects[0]}, not ${op.project}`];
   }
   return [];
 }
