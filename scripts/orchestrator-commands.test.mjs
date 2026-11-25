@@ -1175,7 +1175,7 @@ test("preapply AE12 named contracts on installed scratch", async t => {
     // raises carrying the owner's words, the only way above 6.
     policy.orchestration.delivery = { ...policy.orchestration.delivery, attemptCap: 6 };
     atomicJson(path.join(root, "attempt-cap-raises.json"), { "MONO-997": [7, 8, 9, 10].map((cap, index) => ({ number: index + 1,
-      reason: `AE12 fixture attempt ${cap}`, recordedAt: new Date().toISOString(), ownerWords: `fixture: allow attempt ${cap}` })) });
+      reason: `AE12 fixture attempt ${cap}`, recordedAt: new Date().toISOString(), cap, ownerWords: `fixture: allow attempt ${cap}` })) });
     policy.orchestration.dispatch = { product: "ae12", evidenceRoot: path.join(scratch, "evidence"), openDecisions: 0, lifecycle_moves: [], verification: { command: "node", args: ["scripts/verify.mjs"] } };
     write(config, JSON.stringify(policy, null, 2) + "\n"); write(path.join(repo, ".gitignore"), ".worktrees/\n.agents/ignored.txt\n"); write(path.join(repo, ".agents/directory/file"), "fixture\n"); write(path.join(repo, ".gitattributes"), ".agents/filtered.txt ident\n");
     git(repo, "add", "."); git(repo, "commit", "-m", "AE12 mandate bootstrap"); git(repo, "push", "origin", "main");

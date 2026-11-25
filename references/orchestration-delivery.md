@@ -200,13 +200,18 @@ the raise command. A BASE value above 6 counts as 6 with a warning, and an
 warning naming both values, so a local config never adds attempts. Raise one
 Issue's cap only through
 `node '<pack-root>/scripts/orchestrator/attempt-cap.mjs' raise --root <root> --config <config> --issue <KEY> --reason <why> [--owner-words <words>]`
-(BASE there is `origin/main` of the repo holding `--config`, as dispatch last fetched it).
-A raise adds one attempt, only while the cap is exhausted and with a non-empty
-reason; a cap above 6 needs the owner's verbatim words in `--owner-words`. Anything
-else is refused and writes nothing. The record `attempt-cap-raises.json`
-(`{number, reason, recordedAt, ownerWords?}` per raise) sits beside `attempts.json`
-under its own lock, outside every worker grant; the ceiling of 6 is not
-configurable. `attempt-cap.mjs show` prints used attempts, base, raises and the
+(raise evaluates against the BASE dispatch would use now: `origin/main` of the repo
+holding `--config`, as last fetched; spawn uses the BASE pinned at dispatch, so a
+spawn refused on a stale pinned BASE is re-dispatched, which picks up the current
+BASE). A raise adds one attempt, only while the cap is exhausted and with a
+non-empty reason, and records the cap it produced: one more than the effective cap.
+A cap above 6 needs the owner's verbatim words in `--owner-words`. Anything else is
+refused and writes nothing. The effective cap is the larger of the clamped BASE cap
+and the last raise's cap, so a later BASE change never re-judges a recorded raise;
+caps strictly increase and a record above 6 without owner words is invalid. The
+record `attempt-cap-raises.json` (`{number, reason, recordedAt, cap, ownerWords?}`
+per raise) sits beside `attempts.json` under its own lock, outside every worker
+grant; the ceiling of 6 is not configurable. `attempt-cap.mjs show` prints used attempts, base, raises and the
 effective cap; report recorded raises with the attempt state.
 Keep dirty work on same-thread resume. If that thread cannot resume, park
 needs-decision with its capsule and preserved dirty tree; never loop new spawns,

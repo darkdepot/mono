@@ -815,11 +815,14 @@ contract nor the round count. On the strict path after its three rounds,
 `dispatch/KEY-aN/extra-round.json`, bound to the last spent receipt. Resume carries no grants or network override; a risk, critical or
 grant change is a new attempt on the same branch. The attempt cap is `attemptCap`
 from the product config committed at BASE (the base for every task, pack default 3,
-at most 6: a higher value counts as 6 with a warning) plus the raises recorded for
-that Issue in `attempt-cap-raises.json` beside `attempts.json`, outside every worker
-grant; `orchestrator/attempt-cap.mjs raise` records one raise only while the cap is
+at most 6: a higher value counts as 6 with a warning), or the cap of the last raise
+recorded for that Issue in `attempt-cap-raises.json` beside `attempts.json`, outside
+every worker grant, whichever is larger; `orchestrator/attempt-cap.mjs raise`
+records one raise with the cap it produced (one more) only while the cap is
 exhausted, with a reason, and above 6 attempts only with the owner's verbatim
-words; otherwise it refuses and writes nothing. A different `attemptCap` in the
+words; otherwise it refuses and writes nothing. A later BASE change never re-judges
+a recorded raise. Raise evaluates the BASE dispatch would use now; a spawn refused
+on a stale pinned BASE is re-dispatched. A different `attemptCap` in the
 `--config` file is ignored with a warning, so a local config never adds attempts;
 the ceiling of 6 is not configurable. See [attempt cap raises](references/orchestration-delivery.md#monitoring-protocol). Registry changes and collector
 admissions use `launch.lock`. The collector admits each round request into the

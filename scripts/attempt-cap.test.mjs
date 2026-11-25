@@ -28,9 +28,11 @@ function fixture({ used = 3, cap = 3, issues = { [ISSUE]: used } } = {}) {
   const git = (...args) => { const r = spawnSync('git', args, { cwd: repo, env: gitEnv, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
   git('init', '-q', '-b', 'main'); git('add', '.'); git('commit', '-q', '-m', 'base');
   spawnSync('git', ['init', '-q', '--bare', origin], { env: gitEnv }); git('remote', 'add', 'origin', origin); git('push', '-q', 'origin', 'main');
-  const base = git('rev-parse', 'HEAD');
+  let base = git('rev-parse', 'HEAD');
   // A local edit of the config file, never committed: it must not change the cap.
   const local = value => atomicJson(config, delivery(value));
+  // A new commit on main changes the BASE cap for spawn and raise alike.
+  const commitBase = value => { local(value); git('commit', '-q', '-am', `cap ${value}`); git('push', '-q', 'origin', 'main'); base = git('rev-parse', 'HEAD'); };
   const raise = (...args) => spawnSync(process.execPath, [script, 'raise', '--root', root, '--config', config, ...args], { encoding: 'utf8', env: gitEnv });
   const spawnCheck = (issue = ISSUE) => checkSpawnAvailability({ root, issue, config, worktree: repo, base });
   const setUsed = (n, issue = ISSUE) => {
@@ -39,7 +41,7 @@ function fixture({ used = 3, cap = 3, issues = { [ISSUE]: used } } = {}) {
   };
   const records = () => fs.existsSync(capRaisesFile(root)) ? JSON.parse(fs.readFileSync(capRaisesFile(root), 'utf8')) : null;
   const bytes = () => fs.existsSync(capRaisesFile(root)) ? fs.readFileSync(capRaisesFile(root), 'utf8') : null;
-  return { root, config, local, raise, spawnCheck, setUsed, records, bytes, cleanup: () => fs.rmSync(scratch, { recursive: true, force: true }) };
+  return { root, config, local, commitBase, raise, spawnCheck, setUsed, records, bytes, cleanup: () => fs.rmSync(scratch, { recursive: true, force: true }) };
 }
 const ok = r => { assert.equal(r.status, 0, r.stderr + r.stdout); return JSON.parse(r.stdout); };
 const refused = (r, pattern) => { assert.notEqual(r.status, 0, r.stdout); assert.match(r.stderr, pattern); };
@@ -51,7 +53,8 @@ test('a raise of +1 with a reason allows exactly one more attempt', () => {
     const result = ok(f.raise('--issue', ISSUE, '--reason', 'review found a fixable bug after round 3'));
     assert.equal(result.cap, 4); assert.equal(result.raise.number, 1);
     const [record] = f.records()[ISSUE];
-    assert.deepEqual(Object.keys(record).sort(), ['number', 'reason', 'recordedAt']);
+    assert.deepEqual(Object.keys(record).sort(), ['cap', 'number', 'reason', 'recordedAt']);
+    assert.equal(record.cap, 4);
     assert.equal(record.reason, 'review found a fixable bug after round 3');
     assert.equal(new Date(record.recordedAt).toISOString(), record.recordedAt);
     assert.equal(f.spawnCheck().used, 3);
@@ -110,14 +113,18 @@ test('a hand-edited record cannot lift the cap', () => {
   const f = fixture({ used: 6, cap: 6 });
   try {
     const at = new Date().toISOString();
-    atomicJson(capRaisesFile(f.root), { [ISSUE]: [{ number: 1, reason: 'r', recordedAt: at }] });
+    atomicJson(capRaisesFile(f.root), { [ISSUE]: [{ number: 1, reason: 'r', recordedAt: at, cap: 7 }] });
     assert.throws(() => f.spawnCheck(), /invalid attempt-cap-raises\.json: raise 1 of MONO-900 lifts the cap to 7 above 6 without owner words/);
+    refused(f.raise('--issue', ISSUE, '--reason', 'r', '--owner-words', 'w'), /lifts the cap to 7 above 6 without owner words/);
     for (const bad of [
-      { [ISSUE]: [{ number: 2, reason: 'r', recordedAt: at }] },
-      { [ISSUE]: [{ number: 1, reason: '', recordedAt: at }] },
-      { [ISSUE]: [{ number: 1, reason: 'r', recordedAt: 'yesterday' }] },
-      { [ISSUE]: [{ number: 1, reason: 'r', recordedAt: at, cap: 9 }] },
-      { [ISSUE]: [{ number: 1, reason: 'r', recordedAt: at, ownerWords: ' ' }] },
+      { [ISSUE]: [{ number: 2, reason: 'r', recordedAt: at, cap: 4 }] },
+      { [ISSUE]: [{ number: 1, reason: '', recordedAt: at, cap: 4 }] },
+      { [ISSUE]: [{ number: 1, reason: 'r', recordedAt: 'yesterday', cap: 4 }] },
+      { [ISSUE]: [{ number: 1, reason: 'r', recordedAt: at }] },
+      { [ISSUE]: [{ number: 1, reason: 'r', recordedAt: at, cap: 4, extra: true }] },
+      { [ISSUE]: [{ number: 1, reason: 'r', recordedAt: at, cap: 4 }, { number: 2, reason: 'r', recordedAt: at, cap: 4 }] },
+      { [ISSUE]: [{ number: 1, reason: 'r', recordedAt: at, cap: 9, ownerWords: ' ' }] },
+      { 'MONO-901': [{ number: 1, reason: 'r', recordedAt: at, cap: 8 }] },
       { 'not-an-issue': [] },
       [],
     ]) {
@@ -158,6 +165,27 @@ test('concurrent raises lose no update', async () => {
     assert.equal(same.filter(r => r.status === 0).length, 1, same.map(r => r.stderr).join('\n'));
     for (const r of same.filter(r => r.status !== 0)) assert.match(r.stderr, /not exhausted: 4 of 5 used/);
     assert.equal(f.records()['MONO-910'].length, 2);
+  } finally { f.cleanup(); }
+});
+
+test('a later BASE change keeps raises that were valid when recorded', () => {
+  const f = fixture({ cap: 3, used: 3 });
+  try {
+    for (const used of [3, 4, 5]) { f.setUsed(used); ok(f.raise('--issue', ISSUE, '--reason', `fix ${used}`)); }
+    assert.deepEqual(f.records()[ISSUE].map(r => r.cap), [4, 5, 6]);
+    f.setUsed(5);
+    f.commitBase(4);
+    // The third raise produced cap 6 under base 3; base 4 does not re-judge it as 7: attempt 6 is allowed.
+    const state = f.spawnCheck();
+    assert.equal(state.used, 5); assert.equal(state.cap.baseCap, 4); assert.equal(state.cap.cap, 6);
+    f.setUsed(6);
+    assert.throws(() => f.spawnCheck(), /attempt cap reached: 6 of 6 used \(base 4, raises 3\)/);
+    // The next raise goes from 6 to 7 and needs the owner's words.
+    refused(f.raise('--issue', ISSUE, '--reason', 'r'), /would go to 7 attempts, above the ceiling of 6/);
+    assert.equal(ok(f.raise('--issue', ISSUE, '--reason', 'r', '--owner-words', 'да, седьмую')).cap, 7);
+    // A BASE above the last raise wins: the effective cap never falls below the base.
+    f.commitBase(6); f.setUsed(6);
+    assert.equal(f.spawnCheck().cap.cap, 7);
   } finally { f.cleanup(); }
 });
 
