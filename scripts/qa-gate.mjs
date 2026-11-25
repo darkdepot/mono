@@ -95,7 +95,11 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
     const check = (scope, target, overrides) => {
       const dir = path.join(root, 'qa', target.issue, target.head);
       const expected = { ...read(path.join(dir, `${scope}-expected.json`)), ...overrides,
-        issue: target.issue, head: target.head, scope, mode: 'ship', recipeSource, recipeDigest: qaRecipeDigest(config) };
+        issue: target.issue, head: target.head, scope, mode: 'ship', recipeSource };
+      // The saved fingerprint is verified against the live recipe, never replaced by it;
+      // the certificate check then compares it with the prior pass.
+      if (expected.recheck !== undefined || expected.recipeDigest !== undefined)
+        need(expected.recipeDigest === qaRecipeDigest(config), 'recipe changed since the expectations were saved');
       // A scoped recheck (MONO-484) reads its prior pass only from this task's qa/<KEY>/ folder.
       const cert = validateQaCertificate(read(path.join(dir, `${scope}-report.json`)), expected,
         { taskDir: path.join(root, 'qa', target.issue) });

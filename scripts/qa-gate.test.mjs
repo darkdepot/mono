@@ -430,6 +430,22 @@ test('MONO-484 review: switching the product recipe refuses carried items', t =>
   assert.match(qaRecipeDigest({ projectName: 'Mono Agent Workflow' }), /^[a-f0-9]{64}$/);
 });
 
+test('MONO-484 review 2: the saved current fingerprint must match the live recipe, not be replaced by it', t => {
+  const f = recheckGate(t);
+  const r1 = qaRecipeDigest(f.config), r2 = '0'.repeat(64);
+  const file = path.join(f.dir(f.head), 'task-expected.json'), saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  // Prior R1, current saved R2, live config R1: refused at the gate as at the certificate check.
+  fs.writeFileSync(file, JSON.stringify({ ...saved, recipeDigest: r2 }));
+  let result = qaDeliveryState(f.input);
+  assert.equal(result.state, 'failed'); assert.match(result.reason, /recipe changed/);
+  // Missing current fingerprint on a recheck is refused too.
+  const { recipeDigest, ...missing } = saved; fs.writeFileSync(file, JSON.stringify(missing));
+  result = qaDeliveryState(f.input);
+  assert.equal(result.state, 'failed'); assert.match(result.reason, /recipe changed/);
+  fs.writeFileSync(file, JSON.stringify({ ...saved, recipeDigest: r1 }));
+  assert.equal(qaDeliveryState(f.input).state, 'passed');
+});
+
 test('MONO-484 review: an early pass on a head that never got green Ship carries but never opens the gate', t => {
   const f = recheckGate(t);
   // Head A was tested early, failed, and was replaced by B before its Ship went green: B carries from it.
