@@ -947,7 +947,9 @@ count. Round 1 and the first round after a task change read the whole change;
 later rounds read the fixes and open findings. After the strict path's third
 round the orchestrator may grant one extra round per attempt (`resume.mjs`
 `extraRound: {reason}`): only when at most one finding is open (successor
-candidates of an accepted round aside) and the last round raised no risk, found no
+candidates of an accepted round aside; findings the checker merged under one
+`mergeKey` on the same head count once at their heaviest weight, here and in the
+gate's open list and successor lines, while a closed member never closes an open one) and the last round raised no risk, found no
 out-of-contract work and left no open owner remark on the PR. Resume checks this
 before writing anything and records the grant in `dispatch/KEY-aN/extra-round.json`
 beside the launch pins under `extra-round.lock` (host-only, outside worker grants,
@@ -960,7 +962,7 @@ opening; every settlement holds launch.lock and re-reads the marker; a collectio
 with a host run reads the contract, retries and grant again only after its run
 opened); a resume writing one waits for every
 host run and, with a retry or extra round, for the attempt's round in flight); the gate's strict
-limit becomes 4 and the review round accepts a fourth (`round 4 of 4 (extra)`),
+limit becomes 4 and the review round accepts a fourth (`round 4 of 4, extra`),
 which judges like round 3. A not-converged extra round parks
 `needs-decision … (extra round used)` with no second grant. After
 the limit the orchestrator merges by the rule, splits the Issue or changes approach in a new attempt.

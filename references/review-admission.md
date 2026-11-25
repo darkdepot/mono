@@ -19,7 +19,7 @@ open findings. Same head reuses its round; new base, fresh record.
 - `worker verification missing`: run it, request again.
 - `needs-decision:` (round 3 not-converged, raised risk, round limit): park
   with that line. If the orchestrator resumes you with an extra round, fix and
-  request the next round as usual: its line reads `round 4 of 4 (extra)` and
+  request the next round as usual: its line reads `round 4 of 4, extra` and
   judges like round 3; a `needs-decision … (extra round used)` line parks again.
 - `not-reviewed:` (a role failed or coverage incomplete): no round spent;
   request this head again. `blocked:` (twice in a row): park blocked; the line
@@ -30,6 +30,8 @@ open findings. Same head reuses its round; new base, fresh record.
   files, a CLI that could not start; login only when a login failed), which
   needs a task change.
 
+One defect the checker merged under one `mergeKey` counts as one open finding
+at its heaviest weight; it closes when every merged report closes.
 A fixed finding closes when the checker verifies the fix on a new head and
 the reviewer stops reporting it. Fixed PR remarks (bot, CI, owner) go in
 `prRemarks` as open findings; a P0/P1 one needs a fix.

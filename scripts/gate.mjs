@@ -134,6 +134,19 @@ const findingLine = finding => `${finding.weight} ${finding.file}:${finding.line
 const clip = (text, limit) => { const flat = String(text ?? '').replace(/\s+/g, ' ').trim(); return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat; };
 const openLine = finding => `${findingLine(finding)} (when: ${clip(finding.trigger, 200) || 'n/a'}; why: ${clip(finding.reason, 300) || 'n/a'})`;
 const leftover = record => (record?.findings ?? []).filter(finding => !['closed', 'rejected'].includes(finding.status));
+// MONO-491: the reviewer may report one defect twice (two keys, different class wording); the checker names one common
+// cause and fix with mergeKey. Open findings it merged in one batch (same key on the same checked head) count once;
+// a record without a key is its own item. Only open members form the item, so a closed one never closes an open one;
+// it shows its heaviest open member (P0 first). Decisions about what may leave the rounds still read every member.
+const weightRank = finding => /^P[0-3]$/.test(finding.weight) ? Number(finding.weight[1]) : -1;
+const mergeGroup = (finding, index) => typeof finding.mergeKey === 'string' && finding.mergeKey && typeof finding.lastCheckedHead === 'string'
+  ? `merge\0${finding.lastCheckedHead}\0${finding.mergeKey}` : `own\0${index}`;
+const openItems = findings => {
+  const groups = new Map();
+  findings.forEach((finding, index) => { const id = mergeGroup(finding, index); groups.set(id, [...(groups.get(id) ?? []), finding]); });
+  return [...groups.values()].map(members => ({ ...members.reduce((top, item) => weightRank(item) < weightRank(top) ? item : top), members }));
+};
+const openDefects = record => openItems(leftover(record));
 // Rounds are counted per task attempt from receipt history; a task change continues the record. The strict path
 // keeps the count; the fast path has one round per contract (onContract: rounds on the current one).
 // receipts: history in evidenceRoot, any producer or issue. reuse: a completed round on this exact head.
@@ -188,9 +201,9 @@ export function extraRoundRefusal(receipts, { pins, risk, grants = [] }) {
   if (spent.length < ROUND_LIMIT) return refuse(`rounds left (${spent.length} of ${ROUND_LIMIT} spent); request the next round without extraRound`);
   const last = spent.at(-1), findings = last.review.record?.findings ?? [];
   if (findings.some(finding => finding.outOfContract || finding.riskRaised)) return refuse("the last round raised the risk or found work outside the contract; that is the orchestrator's decision, not an extra round");
-  const successors = ACCEPTED.includes(last.review.outcome) ? new Set((last.review.successors ?? []).map(item => item.key)) : new Set();
-  const open = leftover(last.review.record).filter(finding => !successors.has(finding.key));
-  if (open.some(finding => finding.class === 'pr-remark' && finding.source === 'owner')) return refuse('an owner remark on the PR is open; do it or ask the owner');
+  const successors = ACCEPTED.includes(last.review.outcome) ? new Set((last.review.successors ?? []).flatMap(item => item.keys ?? [item.key])) : new Set();
+  const open = openDefects(last.review.record).filter(item => !item.members.every(finding => successors.has(finding.key)));
+  if (open.some(item => item.members.some(finding => finding.class === 'pr-remark' && finding.source === 'owner'))) return refuse('an owner remark on the PR is open; do it or ask the owner');
   if (open.length > 1) return refuse(`${open.length} findings open; the extra round is for at most one`);
   return { refusal: null, receipt: last.runId };
 }
@@ -226,8 +239,9 @@ export function roundOutcome(record, round, strict = false) {
     !open.every(finding => older(finding) || minor(finding) || harmless(finding));
   // A clean round may still carry older harmless defects: they are listed, never dropped.
   if (!['not-converged', 'clean'].includes(record.outcome) || stands) return { outcome: record.outcome, successors: [] };
-  return { outcome: 'clean-with-successors', successors: open.map(finding => ({ key: finding.key, origin: finding.origin,
-    line: `${mustFile(finding) ? 'must-file ' : ''}${findingLine(finding)}` })) };
+  return { outcome: 'clean-with-successors', successors: openItems(open).map(item => ({ key: item.key, origin: item.origin,
+    ...(item.members.length > 1 ? { keys: item.members.map(finding => finding.key) } : {}),
+    line: `${item.members.some(mustFile) ? 'must-file ' : ''}${findingLine(item)}` })) };
 }
 function reviewRefusal(review, host = false, risk = undefined) {
   if (review.outcome === 'refused') return review.reason;
@@ -236,7 +250,7 @@ function reviewRefusal(review, host = false, risk = undefined) {
     : `not-reviewed: ${review.reason}; no round spent, request this head once more`;
   // The collector reads the last 64 KiB of gate output: keep the line inside it and say what was left out.
   const limit = review.limit ?? ROUND_LIMIT;
-  const all = leftover(review.record).map(openLine), round = roundText(review.round, limit), open = [];
+  const all = openDefects(review.record).map(openLine), round = roundText(review.round, limit), open = [];
   for (const line of all) { if (open.join('; ').length + line.length > 40000) break; open.push(line); }
   const list = `${all.length} open: ${open.join('; ')}${open.length < all.length ? `; ${all.length - open.length} more in the next round` : ''}`;
   if (review.round < limit) return `review not-converged (${round}); fix and request the next round; ${list}`;
@@ -246,7 +260,7 @@ function reviewRefusal(review, host = false, risk = undefined) {
 }
 // MONO-482: strictness comes from the pinned risk (older receipts without it: from their limit, the fast path has one round).
 const strictPath = (risk, limit) => risk === undefined ? limit >= ROUND_LIMIT : risk === 'risky';
-const roundText = (round, limit) => `round ${round} of ${limit}${round > ROUND_LIMIT ? ' (extra)' : ''}`;
+const roundText = (round, limit) => `round ${round} of ${limit}${round > ROUND_LIMIT ? ', extra' : ''}`;
 const EXTRA_HINT = 'the orchestrator may resume with extraRound for one extra round in this attempt if at most one finding is open and none raised the risk, ' +
   'left the contract or is an open owner remark on the PR; otherwise split the Issue or change approach in a new attempt';
 const FAST_FIX = 'fix, run the full verification on the final head and request it with workerVerification {head, exitCode: 0}';
