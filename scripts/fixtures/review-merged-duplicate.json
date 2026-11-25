@@ -1,0 +1,239 @@
+{
+ "source": "MONO-491: live check of MONO-482 on 25.11.2026, attempt main (MONO-982), rounds 1-3 with the real Codex reviewer and Claude checker; sanitized and trimmed",
+ "receipts": [
+  {
+   "producer": "gate-review-v3",
+   "recordedAt": "2026-11-25T15:29:44.854Z",
+   "runId": "3d1035f4-24e5-49b1-b266-21e585bfd052",
+   "pins": {
+    "file": "/root/dispatch/MONO-982-a1/pins.json",
+    "digest": "ea0c1d74388fe8503a90b4f03b7ec186240e7da8f8d75637cd5c0ee4730ab52c"
+   },
+   "head": "24cb91b9ba653aff14f1370913782c781fad2e55",
+   "base": "98f4e75af9673d7c0fbc5a126bf7e43af6f2c355",
+   "risk": "risky",
+   "consistency": {
+    "passed": true,
+    "error": null
+   },
+   "verification": {
+    "exitCode": null
+   },
+   "workerVerification": {
+    "head": "24cb91b9ba653aff14f1370913782c781fad2e55",
+    "exitCode": 0
+   },
+   "review": {
+    "outcome": "not-converged",
+    "spent": true,
+    "round": 1,
+    "limit": 3,
+    "contractDigest": "50d03486bb2a5c758ccb7687c7b1d9262b710f91a62799b0cfd1a2e26193ad2c",
+    "successors": [],
+    "record": {
+     "outcome": "not-converged",
+     "findings": [
+      {
+       "class": "missing-empty-input-validation",
+       "file": "average.mjs",
+       "anchor": "export function average(values)",
+       "line": 5,
+       "title": "Empty arrays return NaN instead of throwing RangeError",
+       "trigger": "Call average([]).",
+       "key": "5c4b41117e4eccac6e66d871042e1a5166fa161dd95eca5c7a03972f15d32fd9",
+       "weight": "P2",
+       "danger": true,
+       "dangerCase": "silent-result",
+       "origin": "introduced",
+       "mergeKey": "average.mjs:average missing empty-array length check before dividing — add a values.length===0 guard that throws RangeError",
+       "outOfContract": false,
+       "riskRaised": false,
+       "closed": false,
+       "status": "confirmed",
+       "outcome": "confirmed",
+       "lastCheckedHead": "24cb91b9ba653aff14f1370913782c781fad2e55",
+       "reason": "Verified on the pinned head (24cb91b). average.mjs:5 divides unconditionally, and sum.mjs:2-6 returns 0 for an empty iterable, so the breaking input average([]) yields 0/0 === NaN. The task contract for MONO-982 explicitly states the helper \"throws a RangeError when the array is empty\"; no guard exists anywhere in the file, and the comment on line 3 only documents the assumption rather than enfor…"
+      },
+      {
+       "class": "missing-empty-array-validation",
+       "file": "average.mjs",
+       "anchor": "average: return sum(values) / values.length",
+       "line": 5,
+       "title": "Empty arrays return NaN instead of throwing RangeError",
+       "trigger": "Call average([]).",
+       "key": "a1ac85a5e6e59ee0954ab6ad70eaf1cc008bde74edf11e184cabcd8b104ebbc9",
+       "weight": "P2",
+       "danger": true,
+       "dangerCase": "silent-result",
+       "origin": "introduced",
+       "mergeKey": "average.mjs:average missing empty-array length check before dividing — add a values.length===0 guard that throws RangeError",
+       "outOfContract": false,
+       "riskRaised": false,
+       "closed": false,
+       "status": "confirmed",
+       "outcome": "confirmed",
+       "lastCheckedHead": "24cb91b9ba653aff14f1370913782c781fad2e55",
+       "reason": "Same defect and same mechanism as F1, reported at the same line with a different class label and anchor wording; merged under one mergeKey because the single common cause (no length check before the division) has a single fix (throw RangeError when values.length === 0). Confirmed independently against the pinned head: average.mjs:5 has no guard and sum.mjs returns 0 for [], so average([]) returns…"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "producer": "gate-review-v3",
+   "recordedAt": "2026-11-25T15:31:36.631Z",
+   "runId": "24f51b4e-2247-4782-82c3-bec2a0499891",
+   "pins": {
+    "file": "/root/dispatch/MONO-982-a1/pins.json",
+    "digest": "ea0c1d74388fe8503a90b4f03b7ec186240e7da8f8d75637cd5c0ee4730ab52c"
+   },
+   "head": "ea7b7dee58818650ce7cdf6cf6169889392f3d0c",
+   "base": "98f4e75af9673d7c0fbc5a126bf7e43af6f2c355",
+   "risk": "risky",
+   "consistency": {
+    "passed": true,
+    "error": null
+   },
+   "verification": {
+    "exitCode": null
+   },
+   "workerVerification": {
+    "head": "ea7b7dee58818650ce7cdf6cf6169889392f3d0c",
+    "exitCode": 0
+   },
+   "review": {
+    "outcome": "not-converged",
+    "spent": true,
+    "round": 2,
+    "limit": 3,
+    "contractDigest": "50d03486bb2a5c758ccb7687c7b1d9262b710f91a62799b0cfd1a2e26193ad2c",
+    "successors": [],
+    "record": {
+     "outcome": "not-converged",
+     "findings": [
+      {
+       "class": "missing-empty-input-validation",
+       "file": "average.mjs",
+       "anchor": "export function average(values)",
+       "line": 6,
+       "title": "Empty arrays return NaN instead of throwing RangeError",
+       "trigger": "Call average([]).",
+       "key": "5c4b41117e4eccac6e66d871042e1a5166fa161dd95eca5c7a03972f15d32fd9",
+       "weight": "P2",
+       "danger": true,
+       "dangerCase": "silent-result",
+       "origin": "introduced",
+       "mergeKey": "average.mjs:average missing empty-array length check before dividing — add a values.length===0 guard that throws RangeError",
+       "outOfContract": false,
+       "riskRaised": false,
+       "closed": false,
+       "status": "confirmed",
+       "outcome": "confirmed",
+       "lastCheckedHead": "ea7b7dee58818650ce7cdf6cf6169889392f3d0c",
+       "reason": "Verified on pinned head ea7b7de. The only change in this round is the added JSDoc line `/** @param {number[]} values */` at average.mjs:1 (which is attached to the import, not the function, and in any case is only documentation). average.mjs:6 still divides unconditionally and sum.mjs:2-6 returns 0 for an empty iterable, so the breaking input average([]) yields 0/0 === NaN. The contract states th…"
+      },
+      {
+       "class": "missing-empty-array-validation",
+       "file": "average.mjs",
+       "anchor": "average: return sum(values) / values.length",
+       "line": 6,
+       "title": "Empty arrays return NaN instead of throwing RangeError",
+       "trigger": "Call average([]).",
+       "key": "a1ac85a5e6e59ee0954ab6ad70eaf1cc008bde74edf11e184cabcd8b104ebbc9",
+       "weight": "P2",
+       "danger": true,
+       "dangerCase": "silent-result",
+       "origin": "introduced",
+       "mergeKey": "average.mjs:average missing empty-array length check before dividing — add a values.length===0 guard that throws RangeError",
+       "outOfContract": false,
+       "riskRaised": false,
+       "closed": false,
+       "status": "confirmed",
+       "outcome": "confirmed",
+       "lastCheckedHead": "ea7b7dee58818650ce7cdf6cf6169889392f3d0c",
+       "reason": "Same mechanism and same line as F1, reported under a different class label and anchor wording; merged under one mergeKey because the single common cause (no length check before the division at average.mjs:6) has a single fix (throw RangeError when values.length === 0). Confirmed independently against pinned head ea7b7de: the round-2 diff adds only a JSDoc comment and no guard, and sum.mjs returns…"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "producer": "gate-review-v3",
+   "recordedAt": "2026-11-25T15:32:43.293Z",
+   "runId": "bfd33c4d-e2b6-47d0-bb3a-86eb9977ca31",
+   "pins": {
+    "file": "/root/dispatch/MONO-982-a1/pins.json",
+    "digest": "ea0c1d74388fe8503a90b4f03b7ec186240e7da8f8d75637cd5c0ee4730ab52c"
+   },
+   "head": "201437c2757672e4b1d0547e1bf44c086d01dde4",
+   "base": "98f4e75af9673d7c0fbc5a126bf7e43af6f2c355",
+   "risk": "risky",
+   "consistency": {
+    "passed": true,
+    "error": null
+   },
+   "verification": {
+    "exitCode": null
+   },
+   "workerVerification": {
+    "head": "201437c2757672e4b1d0547e1bf44c086d01dde4",
+    "exitCode": 0
+   },
+   "review": {
+    "outcome": "not-converged",
+    "spent": true,
+    "round": 3,
+    "limit": 3,
+    "contractDigest": "50d03486bb2a5c758ccb7687c7b1d9262b710f91a62799b0cfd1a2e26193ad2c",
+    "successors": [],
+    "record": {
+     "outcome": "not-converged",
+     "findings": [
+      {
+       "class": "missing-empty-input-validation",
+       "file": "average.mjs",
+       "anchor": "export function average(values)",
+       "line": 6,
+       "title": "Empty arrays return NaN instead of throwing RangeError",
+       "trigger": "Call average([]).",
+       "key": "5c4b41117e4eccac6e66d871042e1a5166fa161dd95eca5c7a03972f15d32fd9",
+       "weight": "P2",
+       "danger": true,
+       "dangerCase": "silent-result",
+       "origin": "introduced",
+       "mergeKey": "average.mjs:average missing empty-array length check before dividing — add a values.length===0 guard that throws RangeError",
+       "outOfContract": false,
+       "riskRaised": false,
+       "closed": false,
+       "status": "confirmed",
+       "outcome": "confirmed",
+       "lastCheckedHead": "201437c2757672e4b1d0547e1bf44c086d01dde4",
+       "reason": "Verified on pinned head 201437c. The only change this round is the comment at average.mjs:4, which now reads \"Arithmetic mean of a non-empty list (see sum.mjs).\" — documentation only, no validation. average.mjs:6 still divides unconditionally and sum.mjs:2-6 returns 0 for an empty iterable, so the breaking input average([]) yields 0/0 === NaN. The contract requires the helper to throw a RangeErro…"
+      },
+      {
+       "class": "missing-empty-array-validation",
+       "file": "average.mjs",
+       "anchor": "average: return sum(values) / values.length",
+       "line": 6,
+       "title": "Empty arrays return NaN instead of throwing RangeError",
+       "trigger": "Call average([]).",
+       "key": "a1ac85a5e6e59ee0954ab6ad70eaf1cc008bde74edf11e184cabcd8b104ebbc9",
+       "weight": "P2",
+       "danger": true,
+       "dangerCase": "silent-result",
+       "origin": "introduced",
+       "mergeKey": "average.mjs:average missing empty-array length check before dividing — add a values.length===0 guard that throws RangeError",
+       "outOfContract": false,
+       "riskRaised": false,
+       "closed": false,
+       "status": "confirmed",
+       "outcome": "confirmed",
+       "lastCheckedHead": "201437c2757672e4b1d0547e1bf44c086d01dde4",
+       "reason": "Same mechanism and same line as F1, reported under a different class label and anchor wording; merged under one mergeKey because the single common cause (no length check before the division at average.mjs:6) has a single fix (throw RangeError when values.length === 0). Confirmed independently against pinned head 201437c: the round-3 diff changes only the comment text on average.mjs:4 and adds no …"
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

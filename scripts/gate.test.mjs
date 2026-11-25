@@ -319,11 +319,11 @@ test("MONO-482 extra round: who may have one, and which grant the gate counts", 
   assert.equal(roundOutcome({ outcome: 'not-converged', findings: [reviewed()] }, 4, true).outcome, 'clean-with-successors');
   assert.equal(roundOutcome({ outcome: 'not-converged', findings: [reviewed({ danger: true })] }, 4, true).outcome, 'not-converged');
 });
-test("MONO-482 extra round lines: round 4 of 4 (extra), a not-converged extra round needs a decision, round 3 names the extra round", () => {
+test("MONO-482 extra round lines: round 4 of 4, extra; a not-converged extra round needs a decision, round 3 names the extra round", () => {
   const base = "b".repeat(40);
   const receipt = review => ({ producer: REVIEW_PRODUCER, head, base, risk: 'risky', consistency: { passed: true, error: null },
     verification: { exitCode: null }, workerVerification: { head, exitCode: 0 }, review: { outcome: 'clean', round: 4, limit: 4, successors: [], record: { findings: [reviewed()] }, ...review } });
-  assert.match(validatePreflight(receipt({}), head, base), /^review clean \(round 4 of 4 \(extra\)\) and verification verified on head$/);
+  assert.match(validatePreflight(receipt({}), head, base), /^review clean \(round 4 of 4, extra\) and verification verified on head$/);
   assert.throws(() => validatePreflight(receipt({ outcome: 'not-converged' }), head, base),
     { message: /^needs-decision: review not-converged after round 4 of 4 \(extra round used\); 1 open: P2 a\.mjs:3 Leftover/ });
   assert.throws(() => validatePreflight(receipt({ outcome: 'not-converged', round: 3, limit: 3 }), head, base),
@@ -332,6 +332,49 @@ test("MONO-482 extra round lines: round 4 of 4 (extra), a not-converged extra ro
   // A fast-path receipt never mentions the extra round.
   assert.throws(() => validatePreflight({ ...receipt({ outcome: 'not-converged', round: 1, limit: 1 }), risk: 'standard' }, head, base),
     error => /^review not-converged \(round 1 of 1\); fix, run the full verification/.test(error.message) && !/extraRound/.test(error.message));
+});
+// MONO-491: the reviewer may report one defect twice (two keys, different class wording); the checker merges them under
+// one mergeKey. Open findings count once per merge: in the extra-round check, the gate lines and the successor list.
+test("MONO-491 findings the checker merged count once; distinct ones, old receipts and closed members stay as they were", () => {
+  const live = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/review-merged-duplicate.json'), 'utf8')).receipts;
+  const pins = live[0].pins, decide = (receipts, extra = {}) => extraRoundRefusal(receipts, { pins, risk: 'risky', grants: [], ...extra });
+  const third = live[2], findings = third.review.record.findings;
+  assert.equal(findings.length, 2); assert.notEqual(findings[0].key, findings[1].key); assert.equal(findings[0].mergeKey, findings[1].mergeKey, 'the live receipt persists the checker merge key');
+  // Live: one planted defect reported twice after round 3 is one open finding, so the extra round is granted.
+  assert.deepEqual(decide(live), { refusal: null, receipt: third.runId });
+  assert.throws(() => validatePreflight(third, third.head, third.base),
+    { message: /^needs-decision: review not-converged after round 3 of 3; 1 open: P2 average\.mjs:6 Empty arrays return NaN instead of throwing RangeError \(when: [^;]*; why: Verified on pinned head 201437c[^;]*; the orchestrator may resume with extraRound/ });
+  assert.throws(() => validatePreflight(live[0], live[0].head, live[0].base), { message: /^review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 average\.mjs:5 / });
+  const withFindings = (list, receipts = live) => receipts.map((item, index) => index < receipts.length - 1 ? item : { ...item, review: { ...item.review, record: { ...item.review.record, findings: list } } });
+  // An old receipt without merge keys counts as before.
+  const old = withFindings(findings.map(({ mergeKey, ...finding }) => finding));
+  assert.match(decide(old).refusal, /^2 findings open; the extra round is for at most one$/);
+  assert.throws(() => validatePreflight(old[2], third.head, third.base), { message: /; 2 open: P2 average\.mjs:6 .*; P2 average\.mjs:6 / });
+  for (const blank of ['', null, 7]) assert.match(decide(withFindings(findings.map(finding => ({ ...finding, mergeKey: blank })))).refusal, /^2 findings open/, `merge key ${JSON.stringify(blank)}`);
+  // Two different keys stay two; the same key text from another checked head (another checker batch) never merges.
+  assert.match(decide(withFindings([findings[0], { ...findings[1], mergeKey: 'largest.mjs empty guard' }])).refusal, /^2 findings open/);
+  assert.match(decide(withFindings([findings[0], { ...findings[1], lastCheckedHead: 'e'.repeat(40) }])).refusal, /^2 findings open/);
+  // Mixed severity: the merged item shows its heaviest member.
+  const mixed = withFindings([{ ...findings[0], weight: 'P3' }, { ...findings[1], weight: 'P1' }]);
+  assert.throws(() => validatePreflight(mixed[2], third.head, third.base), { message: /; 1 open: P1 average\.mjs:6 Empty arrays/ });
+  // A closed member never closes an open one; all members closed close the merged item.
+  const halfClosed = withFindings([{ ...findings[0], status: 'closed', closed: true, outcome: 'rejected' }, findings[1]]);
+  assert.deepEqual(decide(halfClosed), { refusal: null, receipt: third.runId });
+  assert.throws(() => validatePreflight(halfClosed[2], third.head, third.base), { message: /; 1 open: P2 average\.mjs:6 .*why: Same mechanism/ });
+  assert.deepEqual(decide(withFindings(findings.map(finding => ({ ...finding, status: 'closed' })))), { refusal: null, receipt: third.runId });
+  // Round outcome: one successor line per merged item, listing every member; a blocking member is never carried out by a harmless one.
+  const merged = (extra = {}) => reviewed({ mergeKey: 'm', lastCheckedHead: head, ...extra });
+  const pair = roundOutcome({ outcome: 'not-converged', findings: [merged(), merged({ key: 'k2', weight: 'P1' })] }, 3, true);
+  assert.equal(pair.outcome, 'clean-with-successors');
+  assert.deepEqual(pair.successors.map(item => [item.line, [...item.keys].sort()]), [['P1 a.mjs:3 Leftover', ['k1', 'k2']]]);
+  assert.equal(roundOutcome({ outcome: 'not-converged', findings: [merged(), merged({ key: 'k2', danger: true })] }, 3, true).outcome, 'not-converged');
+  assert.deepEqual(roundOutcome({ outcome: 'not-converged', findings: [reviewed(), reviewed({ key: 'k2' })] }, 3, true).successors.map(item => item.key), ['k1', 'k2'], 'unmerged successors stay separate');
+  const accepted = withFindings([merged(), merged({ key: 'k2' }), reviewed({ key: 'k3' })]);
+  accepted[2] = { ...accepted[2], review: { ...accepted[2].review, outcome: 'clean-with-successors', successors: [{ key: 'k1', keys: ['k1', 'k2'], line: 'P2' }] } };
+  assert.deepEqual(decide(accepted), { refusal: null, receipt: accepted[2].runId }, 'the merged successor is not open; one other finding is');
+  const partly = withFindings([merged(), merged({ key: 'k2' }), reviewed({ key: 'k3' })]);
+  partly[2] = { ...partly[2], review: { ...partly[2].review, outcome: 'clean-with-successors', successors: [{ key: 'k1', line: 'P2' }] } };
+  assert.match(decide(partly).refusal, /^2 findings open/, 'a merged item leaves only when every open member is a successor');
 });
 test('shared review context refreshes the remote base, uses HEAD while dirty, and reads this attempt\'s current-contract rounds with delivered task changes', async () => {
   const { execFileSync } = await import('node:child_process');
@@ -1082,7 +1125,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
           await round(at(fix), 1, limit3);
           recordExtraRound(attempt, 'QA bugs fixed after a clean round 3', extraRoundCheck(pinsFile).receipt);
           const before = reviewers();
-          const receipt = await round(at(fix, 2), 0, /pass: review clean \(round 4 of 4 \(extra\)\) and verification verified on head/);
+          const receipt = await round(at(fix, 2), 0, /pass: review clean \(round 4 of 4, extra\) and verification verified on head/);
           assert.deepEqual([receipt.review.round, receipt.review.record.rounds.at(-1).scope, reviewers() - before], [4, 'fixes-and-open-findings', 1],
             'the extra round without a task change reads only the fixes and open findings');
           assert.deepEqual([receipt.pins.file, receipt.review.contractDigest], [pinsFile, third.review.contractDigest], 'same attempt and contract');
@@ -1100,7 +1143,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         const fourth = commit('export const four = 4;\n');
         await round(at(fourth), 1, limit3);
         recordExtraRound(attempt, 'task change after a clean round 3', extraRoundCheck(pinsFile).receipt);
-        const receipt = await round(at(fourth, 2), 0, /pass: review clean \(round 4 of 4 \(extra\)\) and verification verified on head/);
+        const receipt = await round(at(fourth, 2), 0, /pass: review clean \(round 4 of 4, extra\) and verification verified on head/);
         assert.deepEqual([receipt.review.round, receipt.review.limit, receipt.review.record.rounds.at(-1).scope, receipt.review.record.rounds.at(-1).reviewedFiles],
           [4, 4, 'full', ['input.mjs']], 'the extra round after a task change reads the whole change');
         assert.notEqual(receipt.review.contractDigest, third.review.contractDigest, 'the round read the changed contract');
