@@ -144,3 +144,30 @@ for(const hostName of ['claude','codex'])test(`${hostName}: owner correction inj
  assert.ok(fs.readFileSync(two.sent,'utf8').includes(JSON.stringify(correction).slice(1,-1)),'the owner text is sent verbatim, without a service marker');
  assert.deepEqual(two.check.exchanges.map(e=>e.reply),[correction,'принимаю']);
 });
+
+// Saved evidence of an earlier stage must not change when a later stage continues its conversation.
+test('codex: the first stage evidence is its own copy and stays unchanged after a continued stage',async t=>{
+ const first=setup(t,'codex',[question,'Утверждение записал.',shown]);
+ const one=await runScenario(first.request);assert.equal(one.status,'passed',JSON.stringify(one.reason));
+ assert.ok(!fs.realpathSync(one.trace).startsWith(fs.realpathSync(one.session.home)),'evidence is not the shared rollout');
+ assert.ok(one.auditedTraces.every(file=>!fs.realpathSync(file).startsWith(fs.realpathSync(one.session.home))));
+ const before=fs.readFileSync(one.trace,'utf8');
+ const two=await runScenario({...first.request,outputDir:path.join(first.dir,'out-2'),continueSession:one.session,scenario:{...first.request.scenario,prompt:'Начни handoff',expectedReplies:[inherited()]}});
+ assert.equal(two.status,'passed',JSON.stringify(two.reason));
+ assert.equal(fs.readFileSync(one.trace,'utf8'),before);
+});
+test('codex: a continued stage changes only MCP servers and keeps marketplace settings',async()=>{
+ const {codexHomeConfig}=await import('./skills-boundary.mjs');
+ const home=fs.mkdtempSync(path.join(os.tmpdir(),'mono-codex-home-'));
+ try{
+  fs.writeFileSync(path.join(home,'auth.json'),'{}');
+  fs.writeFileSync(path.join(home,'config.toml'),'model = "x"\n\n[mcp_servers.linear]\nurl = "https://mcp.linear.app/mcp"\nenabled = false\n\n[mcp_servers.stage_driver]\ncommand = "node"\nargs = ["old"]\n\n[mcp_servers.stage_driver.env]\nA = "1"\n\n[marketplaces.mono-marketplace]\nsource = "/pack"\n\n[plugins."mono@mono-marketplace"]\nenabled = true\n');
+  codexHomeConfig(home,{monotest:{url:'https://example.test/mcp'},stage_driver:{command:'node',args:['new']}});
+  const config=fs.readFileSync(path.join(home,'config.toml'),'utf8');
+  for(const kept of ['model = "x"','[marketplaces.mono-marketplace]','source = "/pack"','[plugins."mono@mono-marketplace"]','enabled = true'])assert.ok(config.includes(kept),kept);
+  assert.doesNotMatch(config,/"old"|A = "1"/);
+  assert.match(config,/\[mcp_servers\.linear\]\nurl = "https:\/\/mcp\.linear\.app\/mcp"\nenabled = false/);
+  assert.match(config,/\[mcp_servers\.stage_driver\]\ndefault_tools_approval_mode = "approve"\ncommand = "node"\nargs = \["new"\]/);
+  assert.match(config,/\[mcp_servers\.monotest\]/);
+ }finally{fs.rmSync(home,{recursive:true,force:true});}
+});

@@ -271,14 +271,20 @@ export async function runCodex(request){
     for(const file of rolloutFiles(home))baseFiles.set(file,fs.statSync(file).size);
     baseLines=fs.readFileSync(rollout,'utf8').split('\n').length-1;seenLines=baseLines;
   }
-  // The resumed rollout also holds earlier stages. This stage's evidence is its
-  // own byte-identical tail, so records never see another stage's writes.
+  // A text stage's rollout can be resumed by a later stage. Its evidence is its
+  // own byte-identical copy (a continued stage: only its tail), so saved
+  // evidence never changes and records never see another stage's writes.
+  const ownTrace=Boolean(request.scenario.expectedReplies)&&!request.readOnlyDump;
   const finalTrace=()=>{
     const file=path.join(request.outputDir,'trace.jsonl');
     fs.writeFileSync(file,fs.readFileSync(rollout,'utf8').split('\n').slice(baseLines).join('\n'));return file;
   };
-  const auditedList=()=>continued?[finalTrace(),...rolloutFiles(home).filter(file=>file!==rollout&&baseFiles.get(file)!==fs.statSync(file).size)]:[...auditedTraces];
-  const finish=run=>finishRun(request,{...run,...(continued?{trace:finalTrace(),auditedTraces:auditedList(),stageStartLine:0}:{}),...(thread?{session:{host:'codex',id:thread,home}}:{})});
+  const finish=run=>{
+    if(!ownTrace||!rollout||!fs.existsSync(rollout))return finishRun(request,{...run,...(thread?{session:{host:'codex',id:thread,home}}:{})});
+    const copy=finalTrace(),others=(continued?rolloutFiles(home).filter(file=>file!==rollout&&baseFiles.get(file)!==fs.statSync(file).size):(run.auditedTraces??[]).filter(file=>file!==rollout));
+    const helpers=others.map((file,index)=>{const target=path.join(request.outputDir,`trace-helper-${index}.jsonl`);fs.copyFileSync(file,target);return target;});
+    return finishRun(request,{...run,trace:run.trace===rollout?copy:run.trace,auditedTraces:[copy,...helpers],...(continued?{stageStartLine:0}:{}),session:{host:'codex',id:thread,home}});
+  };
   const turn=async(prompt,confirm=false,replyRecord=null)=>{
     let hostError;
     const args=thread?['exec','resume',...codexCommon(request),thread,prompt]:['exec',...codexCommon(request),'-s','read-only','-C',request.cwd,prompt];
