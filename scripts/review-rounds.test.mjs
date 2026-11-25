@@ -349,6 +349,40 @@ test("MONO-482 host runs in progress are found across the root's attempts, and t
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+// MONO-482 review round 2 (P1): host runs of one root never overlap. Overlapping, run B could snapshot run A's plant and
+// put it back after A's settlement quarantined it. Run B is refused before its snapshot while A's marker is open.
+test("MONO-482 host runs are serialized per root: B neither snapshots nor runs while A is open, so A's plant never survives", async () => {
+  const { openHostRun, extraRounds } = { ...(await import("./review-rounds.mjs")), ...(await import("./orchestrator/command-state.mjs")) };
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-serial-")), evidence = path.join(root, "evidence");
+  try {
+    const dirA = path.join(root, "dispatch", "MONO-1-a1"), dirB = path.join(root, "dispatch", "MONO-2-a1");
+    const pinsA = path.join(dirA, "pins.json"), pinsB = path.join(dirB, "pins.json");
+    for (const [dir, pins] of [[dirA, pinsA], [dirB, pinsB]]) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(pins, JSON.stringify({ evidenceRoot: evidence })); }
+    fs.writeFileSync(path.join(root, "workers.json"), JSON.stringify({ "MONO-1": { issue: "MONO-1", attempt: 1 }, "MONO-2": { issue: "MONO-2", attempt: 1 } }));
+    const idA = `preflight-collect:${"a".repeat(40)}:1`, idB = `preflight-collect:${"b".repeat(40)}:1`;
+    const markerA = openHostRun(evidence, idA, pinsA);
+    // A's run plants B's grant; B's run is refused before it snapshots anything.
+    fs.writeFileSync(path.join(dirB, "extra-round.json"), JSON.stringify([{ number: 1, reason: "planted", receipt: "run-3", recordedAt: "2026-11-25T10:00:00.000Z" }]));
+    assert.throws(() => openHostRun(evidence, idB, pinsB), error => error.code === "EHOSTRUN" && /host verification preflight-collect-a{40}-1 is running or unrecovered/.test(error.message));
+    assert.equal(fs.existsSync(hostRunMarker(evidence, idB)), false, "run B opened no marker and took no snapshot");
+    // A settles: the plant is removed. B, opened only now, snapshots a clean tree.
+    assert.match(evidenceTouched(JSON.parse(fs.readFileSync(markerA, "utf8")).snapshot, evidence, pinsA), /MONO-2-a1\/extra-round\.json/);
+    fs.rmSync(markerA);
+    const markerB = openHostRun(evidence, idB, pinsB);
+    assert.equal(evidenceTouched(JSON.parse(fs.readFileSync(markerB, "utf8")).snapshot, evidence, pinsB), null);
+    assert.deepEqual(extraRounds(dirB), [], "the forged grant did not survive");
+    fs.rmSync(markerB);
+    // A marker left by a retired attempt (its collector is gone) is settled by the next opening, never blocking forever.
+    const stale = openHostRun(evidence, idA, pinsA);
+    fs.writeFileSync(path.join(dirB, "task-changes.json"), "[]");
+    fs.writeFileSync(path.join(root, "workers.json"), JSON.stringify({ "MONO-1": { issue: "MONO-1", attempt: 2 }, "MONO-2": { issue: "MONO-2", attempt: 1 } }));
+    const reopened = openHostRun(evidence, idB, pinsB);
+    assert.equal(fs.existsSync(stale), false, "the retired attempt's marker was recovered");
+    assert.equal(fs.existsSync(path.join(dirB, "task-changes.json")), false, "its run's plant was put back");
+    assert.ok(fs.existsSync(reopened));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 // Codex review round 2 on MONO-481: a symlink anywhere in consumed/KEY-aN/screen-check/<head>.json is refused,
 // for writing and for reading.
 test("MONO-481 screen check result path: a symlink in the chain is refused", () => {

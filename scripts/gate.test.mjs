@@ -829,9 +829,18 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.equal(stuck.status, 1, stuck.stdout + stuck.stderr); assert.match(stuck.stdout, /collection consistency failed: verification descendants unverified/);
         const keptCheckout = path.join(evidence, 'verification', `preflight-collect-${fixed}-4.checkout`), keptMarker = keptCheckout.replace(/\.checkout$/, '.running');
         assert.deepEqual([fs.existsSync(keptCheckout), fs.existsSync(keptMarker)], [true, true], 'kept while the group stop is unconfirmed');
-        const { recoverHostRun } = await import('./review-rounds.mjs')
+        const { recoverHostRun, hostRunMarker } = await import('./review-rounds.mjs')
         assert.equal(typeof await recoverHostRun(evidence, `preflight-collect:${fixed}:4`, pinsFile), 'string');
         assert.deepEqual([fs.existsSync(keptCheckout), fs.existsSync(keptMarker)], [false, false], 'recovery removes the checkout after the confirmed stop');
+        // MONO-482 review: one host run per root at a time. While another collection's marker is open this one is refused
+        // before any worker code runs: no snapshot, no verification run, no review round, no round spent, not a not-reviewed.
+        const otherMarker = path.join(evidence, 'verification', `preflight-collect-${'e'.repeat(40)}-1.running`);
+        write(otherMarker, JSON.stringify({ collectionId: `preflight-collect:${'e'.repeat(40)}:1`, group: null, snapshot: [] }));
+        const runsBefore = runs().length, reviewsBefore = reviewCalls(bin).length;
+        const busy = await round(at(fixed, 5), 1, /fail: host verification preflight-collect-e{40}-1 is running or unrecovered in this orchestrator root; nothing ran and no round is spent, request this head again after it ends/);
+        assert.deepEqual([runs().length, reviewCalls(bin).length, busy.review.outcome, busy.review.spent, fs.existsSync(hostRunMarker(evidence, `preflight-collect:${fixed}:5`))],
+          [runsBefore, reviewsBefore, 'refused', false, false]);
+        fs.rmSync(otherMarker);
         // The pin decides: a receipt without the host run (older sandbox form) never passes a pinned attempt.
         const stored = path.join(evidence, `${fixed}.json`), passing = JSON.parse(fs.readFileSync(history + '/' + fs.readdirSync(history).find(name => JSON.parse(fs.readFileSync(path.join(history, name))).receipt.collectionId === `preflight-collect:${fixed}:1`)));
         passing.receipt.verification = { ...pins.verification, exitCode: 0, sandbox: { mode: 'workspace-write', probed: true } };

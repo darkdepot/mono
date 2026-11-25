@@ -8,7 +8,7 @@ import os from "node:os";
 import { workerTransport } from "../worker-transport.mjs";
 import { effectivePins, attemptState, recordTaskChange, dropTaskChange, recordReviewRetry, dropReviewRetry, voidReviewRetry, validExtraRoundRequest, recordExtraRound, dropExtraRound, voidExtraRound } from "./command-state.mjs";
 import { ensureCollector } from "./collector.mjs";
-import { hostRunsInProgress, inFlight, readLedger } from "../review-rounds.mjs";
+import { hostRunsInProgress, settleRetiredHostRunsSync, inFlight, readLedger } from "../review-rounds.mjs";
 
 function releasePin(request) {
   if (!request.pins) return false;
@@ -392,7 +392,7 @@ export async function resumeWorker(request) {
     // root (its snapshot would take the write for a planted one); a retry or extra round also for this attempt's rounds
     // in flight. Checked under launch.lock, which the host run's marker also takes, up to the write in beforeSpawn.
     if (request.taskChange !== undefined || request.reviewRetry || request.extraRound !== undefined) {
-      const running = hostRunsInProgress(request.root);
+      settleRetiredHostRunsSync(request.root); const running = hostRunsInProgress(request.root);
       if (running.length) throw new Error(`host verification ${path.basename(running[0], ".running")} is running or unrecovered; resume with a task change, review retry or extra round after it ends`);
     }
     if (request.reviewRetry || request.extraRound !== undefined) {

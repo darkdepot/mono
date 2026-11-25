@@ -266,7 +266,9 @@ const failureLines = text => text.split("\n").filter(line => /^\s*(FAIL\b|not ok
 const GIT_ROUTING = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX"];
 export async function runHostVerification({ command, args }, repo, head, evidenceRoot, collectionId, pinsFile) {
   const marker = hostRunMarker(evidenceRoot, collectionId), log = marker.replace(/\.running$/, ".log"), checkout = hostRunCheckout(evidenceRoot, collectionId);
-  openHostRun(evidenceRoot, collectionId, pinsFile);
+  // MONO-482 review: one host run per orchestrator root; another open run refuses this one before anything runs.
+  try { openHostRun(evidenceRoot, collectionId, pinsFile); }
+  catch (error) { if (error.code === "EHOSTRUN") return { command, args, host: true, head, exitCode: null, busy: error.message }; throw error; }
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-verify-"));
   const fd = fs.openSync(log, "w", 0o644);
   const startedAt = Date.now();
@@ -588,6 +590,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     // Skipped only where the answer is the blocked refusal anyway (not-reviewed twice, no stored round to reuse).
     if (hostVerify && !screen && (prior.reuse || prior.notReviewed < 2)) {
       verification = await runHostVerification(request.verification, repo, head, evidenceRoot, request.collectionId, request.pins.file);
+    }
+    if (hostVerify && verification.busy === undefined && verification.host === true) {
       const touched = evidenceTouched(readJson(hostRunMarker(evidenceRoot, request.collectionId)).snapshot, evidenceRoot, request.pins.file) ?? verification.descendants ?? null;
       if (touched) { consistency.passed = false; consistency.error = touched; }
       // Touched evidence is already put back or quarantined; a group that may still live keeps the marker.
@@ -598,7 +602,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     // result) leaves the round waiting. The receipt names the result this decision read.
     screen ??= hold();
     const passedScreen = !screen && pins?.screenCheck === true && prior.spent === 0 ? readScreenCheck(head, request.pins) : null;
-    if (!consistency.passed) review = refuse(`collection consistency failed: ${consistency.error}`);
+    if (verification.busy !== undefined) review = refuse(verification.busy);
+    else if (!consistency.passed) review = refuse(`collection consistency failed: ${consistency.error}`);
     else if (screen) review = refuse(screen.reason);
     else if (hostVerify && verification.host !== true) review = refuse(blockedTwice(prior));
     else if (verification.host && verification.exitCode !== 0) review = refuse(hostFailure(verification));

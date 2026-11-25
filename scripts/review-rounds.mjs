@@ -101,13 +101,41 @@ export function evidenceTouched(snapshot, evidenceRoot, pinsFile) {
 // MONO-482 review: the marker and its snapshot are written under the root's launch.lock, the lock every resume that
 // writes a control file holds from its check to its write; such a resume refuses while any host run of the root is
 // running or unrecovered, so a legitimate grant, retry or task change is never taken for a planted one.
+// At most one host run per orchestrator root: while another marker is open or unrecovered the run is refused
+// (EHOSTRUN) before its snapshot, so no snapshot ever holds another run's plant and no settlement can put one back.
+export class HostRunBusy extends Error { constructor(message) { super(message); this.code = "EHOSTRUN"; } }
 export function openHostRun(evidenceRoot, collectionId, pinsFile, options) {
   const marker = hostRunMarker(evidenceRoot, collectionId), root = path.dirname(path.dirname(path.dirname(pinsFile)));
-  withLockSync(path.join(root, "launch.lock"), () => {
+  return withLockSync(path.join(root, "launch.lock"), () => {
+    settleRetiredHostRunsSync(root);
+    const open = hostRunsInProgress(root);
+    if (open.length) throw new HostRunBusy(`host verification ${path.basename(open[0], ".running")} is running or unrecovered in this orchestrator root; ` +
+      "nothing ran and no round is spent, request this head again after it ends");
     fs.mkdirSync(path.dirname(marker), { recursive: true });
-    atomicJson(marker, { collectionId, group: null, startedAt: new Date().toISOString(), snapshot: evidenceSnapshot(evidenceRoot, pinsFile) });
+    atomicJson(marker, { collectionId, pinsFile, group: null, startedAt: new Date().toISOString(), snapshot: evidenceSnapshot(evidenceRoot, pinsFile) });
+    return marker;
   }, options);
-  return marker;
+}
+// A marker is recovered by its attempt's collector (recoverHostRun once its gate is dead). An attempt no longer in the
+// registry has no collector left: the next opening settles its marker here, under launch.lock. Only a marker that names
+// its pins file and whose run never registered a group, or whose group has ended, is settled; anything else stays busy.
+export function settleRetiredHostRunsSync(root) {
+  let registry = {};
+  try { registry = readJson(path.join(root, "workers.json")); } catch { return; }
+  for (const marker of hostRunsInProgress(root)) {
+    let state; try { state = readJson(marker); } catch { continue; }
+    const named = typeof state.pinsFile === "string" && /^([A-Z][A-Z0-9]*-\d+)-a([1-9][0-9]*)$/u.exec(path.basename(path.dirname(state.pinsFile)));
+    if (!named || path.dirname(path.dirname(path.dirname(state.pinsFile))) !== root || registry[named[1]]?.attempt === Number(named[2])) continue;
+    if (state.group !== null) {
+      let live = true;
+      try { live = processTable().some(row => row.group === state.group && !row.state.startsWith("Z")); } catch { continue; }
+      if (live) continue;
+    }
+    const evidenceRoot = path.dirname(path.dirname(marker));
+    removeHostCheckout(evidenceRoot, state.collectionId);
+    evidenceTouched(state.snapshot ?? [], evidenceRoot, state.pinsFile);
+    fs.rmSync(marker, { force: true });
+  }
 }
 // The host-run markers of every attempt of the root (each attempt's pinned evidence root).
 export function hostRunsInProgress(root) {

@@ -280,7 +280,8 @@ Parks:
      sees it. `reviewRetry` and `extraRound` never go in one resume, and both
      wait for this attempt's round in flight; any resume writing a control file
      (also `taskChange`) waits for every host verification run of the root,
-     whose snapshot covers the control files of all attempts. The fourth
+     whose snapshot covers the control files of all attempts; host runs of a
+     root never overlap (a second is refused, no round spent). The fourth
      round reads the fixes and open findings, or the whole change after a task
      change, and judges leftovers like round 3; its lines say
      `round 4 of 4 (extra)`. Write the grant to the journal in one line with the
