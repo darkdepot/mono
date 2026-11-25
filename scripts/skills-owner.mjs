@@ -47,6 +47,8 @@ function validateInterject(r,index,count,ids) {
   if (r.by==='orchestrator') throw new Error('owner interjection belongs to the owner');
   if (r.outcome?.approval!==false || r.outcome?.startNext!==false) throw new Error('owner interjection approves and starts nothing');
   if (r.response!==undefined) throw new Error('owner interjection answer is the next step');
+  // MONO-485: a plain continuation («дальше», «продолжай») keeps an earlier forward consent.
+  if (r.continues!==undefined && r.continues!==true) throw new Error('invalid continuation mark: continues=true or absent');
 }
 export function interjectTurn(expected, message) {
   if (typeof message!=='string' || !expected.summary.every(s=>message.includes(s))) throw new Error('interjection point summary differs from scenario');
@@ -79,6 +81,9 @@ export function validateReplies(expected) {
     if (r.outcome.approval !== (accepts && r.role==='approval') ||
         r.outcome.startNext !== (accepts && r.intent!=='defer' && r.role!=='clarification' && !delegated && (r.asksStart||r.intent==='start')) ||
         (r.stage==='research'&&r.role==='approval') || (r.stage==='handoff'&&r.role==='approval')) throw new Error('reply outcome contradicts scenario role or start authority');
+    // MONO-485: owner words at an approval that also consent to later stages up to `forward`.
+    if (r.forward!==undefined && (!['tech','package','start'].includes(r.forward) || r.by==='orchestrator' || !r.outcome.approval ||
+        !['discovery','design','tech-evaluation'].includes(r.stage))) throw new Error('forward words need an owner approval of Discovery, Design or Tech Evaluation');
     if (r.intent==='correction' && (!r.correction || (anchored(r)
       ? !r.correction.before?.trim() || !anchorPolicy(r.correction) || !strings(r.correction.descriptionAnchors) || !r.correction.descriptionAnchors.length
       : ['description','before','after'].some(k=>typeof r.correction[k]!=='string'||!r.correction[k].trim()) || r.correction.before===r.correction.after))) throw new Error('named correction required');

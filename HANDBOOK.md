@@ -91,6 +91,30 @@ Research — причина без второй модели; работа — �
 `by=orchestrator` с причиной и противовесом, итог каждого этапа владельцу. Handoff
 останавливается на Ready с вопросом о старте; старт только `by=owner`. Поправка
 владельца словами открывает этап заново, прежнее утверждение оркестратора не действует.
+Слова наперёд (`references/owner-dialog.md`, PC-016): владелец, утверждая PRD при
+`design=not-needed`, макет или страницу техлида, прямо говорит готовить дальше,
+проверять и передавать в работу. Этап пишет в заборе своего утверждения строку
+`mono-forward: granted` с объёмом `tech`, `package` или `start`, версией PRD и Design;
+слова остаются единственной строкой «Владелец: ответил». В том же разговоре
+владельца (с сессией Design и её родителем) Tech Evaluation и Handoff дальше не
+переспрашивают: показывают итог для сведения и пишут прежние записи `by=owner`
+со строкой «Согласие наперёд: <id>». Утверждение макета согласие не покрывает.
+Новое слово владельца по существу, правка PRD или макета, пункт списка владельца
+в Handoff, непустое «Тебе решить», отзыв или новый разговор заканчивают согласие:
+этап сначала пишет `mono-forward: revoked`, потом задаёт обычный вопрос. Старт по
+согласию допускают `mono:check delivery` и оркестратор перед диспатчем тем же
+чтением Linear; исполнитель принимает закреплённый `approval.md`. Стенд проверяет
+записи шага `inherited` по согласию из более ранних этапов той же цепочки
+(`forwardEvidence`) и сценарии `handoff/forward-chain`, `tech-evaluation/forward-stop`.
+
+Известные ограничения слов наперёд: защита от подделки не цель, согласие на
+том же уровне доверия, что и сегодняшние цитаты слов владельца; дописанный агентом
+`scope=start` ловят ревью и разбор сессий, а не проверки. Прод и сегодня не
+отличает механически старт по показанному итогу от старта по непоказанному:
+допуск читает прозу, показанный текст связывает только стенд. Не замеченный
+этапом конец согласия без записанного отзыва и правка комментариев задним
+числом в Linear не видны.
+
 PRD без `next=`: Handoff проверяет действующую техоценку текущего PRD и при
 годной записи идёт дальше без повторного предложения. Только без годной записи
 для среднего или большого проекта спрашивает о старте Tech Evaluation текстом; без согласия не продолжает и пакет не пишет. Старый размер читается через соответствие Discovery.
@@ -1800,7 +1824,15 @@ evidence holds only its own turns (Codex writes the rollout tail as `trace.jsonl
 A reply step with `intent: "inherited"` moves without a question and without a
 driver answer under an earlier recorded consent. It must be the last step, show
 its summary, ask nothing and pass its declared response; an undeclared skip fails
-as before. Records verification refuses inherited steps until consent binding exists.
+as before. A record under an inherited step (MONO-485) keeps its machine form and
+names outside fences («Согласие наперёд:») a `mono-forward: granted` comment of this
+Project. The suite passes every earlier passed text stage of the chain as
+`forwardEvidence`; the grant must be the write that followed a real owner reply
+declared `forward: "tech"|"package"|"start"` with the same words. Scope, PRD and Design
+versions, revokes, at most three start Issues and the words are checked against the
+fresh dump; between the words and the record only an interjection marked
+`continues: true` may be an owner reply. An approval record carries a grant only
+for a reply that declares `forward`.
 A step with `intent: "interject"` sends its `reply` as a real owner message after the
 completed turn that shows its summary and asks nothing, for example a correction in
 the middle of a chain; a later step must carry the stage's answer.

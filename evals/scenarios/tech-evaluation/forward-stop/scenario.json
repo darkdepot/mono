@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 1,
+  "id": "forward-stop",
+  "stage": "tech-evaluation",
+  "kind": "correction",
+  "seed": "seeds/prd-tech.json",
+  "next": "handoff",
+  "chain": [
+    "discovery/forward-parent",
+    "design/forward-grant"
+  ],
+  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии. Первым ходом только сверь запись Design свежим чтением и одной строкой без вопроса скажи, что запись Design сверена и дальше Tech Evaluation; ничего не записывай и закончи ход. Следующее сообщение владельца разбери по правилам этапа. После показа страницы спрашивай об утверждении и старте Handoff.",
+  "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь колонку «Источник» из поля source после имени прогона в таблицу CLI и в её графическое представление. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт. Для проверки Design используется готовый тестовый макет этой таблицы в Paper и посеянная память. Работа укладывается в три задачи.",
+  "hosts": {
+    "claude": {
+      "expectedReplies": [
+        {
+          "id": "tech-evaluation-forward-stop",
+          "stage": "tech-evaluation",
+          "role": "clarification",
+          "intent": "interject",
+          "asksStart": false,
+          "summary": [
+            "Design"
+          ],
+          "reply": "Подожди: сначала покажи мне решение техлида, хочу посмотреть сам.",
+          "outcome": {
+            "approval": false,
+            "startNext": false
+          }
+        },
+        {
+          "id": "tech-evaluation-after-stop",
+          "stage": "tech-evaluation",
+          "role": "approval",
+          "summary": [
+            "Источник"
+          ],
+          "question": {
+            "anchors": [
+              [
+                "решени",
+                "Tech",
+                "спек",
+                "подход",
+                "страниц",
+                "утвержда"
+              ],
+              [
+                "Handoff"
+              ],
+              [
+                "Handoff"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": true,
+          "reply": "поехали",
+          "intent": "agree",
+          "outcome": {
+            "approval": true,
+            "startNext": true
+          },
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд",
+                "утвержд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": [
+            "inline",
+            "document"
+          ],
+          "driverStart": [
+            "handoff"
+          ]
+        }
+      ],
+      "idleContinuation": "Продолжай."
+    },
+    "codex": {
+      "expectedReplies": [
+        {
+          "id": "tech-evaluation-forward-stop",
+          "stage": "tech-evaluation",
+          "role": "clarification",
+          "intent": "interject",
+          "asksStart": false,
+          "summary": [
+            "Design"
+          ],
+          "reply": "Подожди: сначала покажи мне решение техлида, хочу посмотреть сам.",
+          "outcome": {
+            "approval": false,
+            "startNext": false
+          }
+        },
+        {
+          "id": "tech-evaluation-after-stop",
+          "stage": "tech-evaluation",
+          "role": "approval",
+          "summary": [
+            "Источник"
+          ],
+          "question": {
+            "anchors": [
+              [
+                "решени",
+                "Tech",
+                "спек",
+                "подход",
+                "страниц",
+                "утвержда"
+              ],
+              [
+                "Handoff"
+              ],
+              [
+                "Handoff"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": true,
+          "reply": "поехали",
+          "intent": "agree",
+          "outcome": {
+            "approval": true,
+            "startNext": true
+          },
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд",
+                "утвержд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": [
+            "inline",
+            "document"
+          ],
+          "driverStart": [
+            "handoff"
+          ]
+        }
+      ]
+    }
+  },
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "type": "mono-forward: revoked",
+      "count": 1
+    },
+    {
+      "type": "mono-tech",
+      "version": "fresh-read-after-shown-version",
+      "count": 1
+    },
+    {
+      "type": "mono-brief",
+      "scope": "project",
+      "count": 1
+    }
+  ]
+}

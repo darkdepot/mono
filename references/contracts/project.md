@@ -139,11 +139,19 @@ or check output, not in the Project body.
 
 Delivery begins only after `mono:implement` verifies the Project, current PRD,
 the current package record (a legacy package: Tech Spec or explicit no-spec
-exception), execution Issue set, the start record bound to the shown summary and
-that Issue set (a legacy package: its approval), and readiness to start from those
-Issues. Ordinary Projects require `by=owner`; only Projects delegated with work
-start (PC-019, not the narrow mode) accept `by=orchestrator` with a reason and the
-countercheck verdict outside fences.
+exception), execution Issue set, the start record bound to that Issue set and,
+by one of two paths, to the owner (a legacy package: its approval), and readiness
+to start from those Issues. Path one: the start answers the shown summary. Path two:
+the start names outside fences («Согласие наперёд:») the owner's forward consent
+`mono-forward: granted scope=start` of this Project, and a Linear read finds no
+`mono-forward: revoked` for it before the start, its PRD version equal to the
+latest `mono-prd: approved` before the start and to the PRD in `mono-tech: approved`
+if any, its Design equal to the latest `mono-design: approved` before the start
+(`none` without Design), at most three Issues in `issues=`, and the consent words
+quoted verbatim in the start. A start on neither path fails. Both paths keep the
+same machine record. Ordinary Projects require `by=owner`; only Projects delegated
+with work start (PC-019, not the narrow mode) accept `by=orchestrator` with a reason
+and the countercheck verdict outside fences.
 
 ## PC-017 — Ship state ownership
 

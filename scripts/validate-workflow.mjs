@@ -774,7 +774,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "795d929247567a6c1f04f7f0fd05dd1dcfb4b4666688ac065e89942c810ff068",
+      contractFingerprint: "dd7b947c2b367e428942990c14e1491e923f870d0a6d2c0d08a2d243cd0d6e8e",
       contractConsumers: [
         "skills/initiative/SKILL.md",
         "skills/idea/SKILL.md",
@@ -5916,6 +5916,13 @@ const STRING_PINS = [
   ["skills/handoff/references/record.md", "mono-package: recorded"],
   ["skills/handoff/references/record.md", "mono-package: start"],
   ["skills/handoff/references/record.md", "by=orchestrator"],
+  // MONO-485: forward-consent record markers; the stand fixtures guard their behavior.
+  ["references/owner-dialog.md", "mono-forward: granted"],
+  ["references/owner-dialog.md", "mono-forward: revoked"],
+  ["references/owner-dialog.md", "Согласие наперёд:"],
+  ["skills/handoff/references/record.md", "Согласие наперёд:"],
+  ["skills/check/references/delivery.md", "Согласие наперёд:"],
+  ["references/contracts/project.md", "mono-forward: granted scope=start"],
   // MONO-259: entity-format consumers share a path; prose remains unpinned.
   ...["skills/handoff/references/record.md", "templates/issue.md", "references/lifecycle.md",
     "references/review-rubric.md", "references/artifact-quality.md", "references/artifact-rules.md",
@@ -6596,6 +6603,8 @@ const MACHINE_TOKENS = new Set([
   "mono-{{product}}-{{stage}}", "Владелец из задания запуска", "Idea",
 
   "design", "mono-design: approved", "design=",
+  // MONO-485: forward-consent markers.
+  "mono-forward: granted", "mono-forward: revoked", "Согласие наперёд:", "mono-forward: granted scope=start",
   "tech",
   "mono-tech: approved",
   "next=",
