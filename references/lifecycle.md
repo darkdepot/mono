@@ -213,7 +213,8 @@ approval) covers the current Issue set. Start from Ready; Discovery is accepted 
 legacy Project or a workspace without Ready, with package checks passed. It moves the
 Project to Delivery and never creates PRs, runs pre-ship review/check, deploys or
 closes out. The code review round (`mono:code-review` roles) runs inside Preflight;
-independent QA (`mono:qa`) runs after the ship green certificate, before merge.
+independent QA (`mono:qa`) runs after the ship green certificate (with product
+`qa.earlyStart: true`, from the confirmed code report), and merge waits for both.
 
 Gate: `mono:check delivery`.
 

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { qaDeliveryState, qaRecipeSource, requireQaPassed } from './qa-gate.mjs';
+import { qaDeliveryState, qaRecipeDigest, qaRecipeSource, requireQaPassed } from './qa-gate.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-qa-gate-'));
@@ -348,4 +348,114 @@ test('scenario × host failures, missing items and unavailable windows hold the 
  saved.cert.items.pop();saved.cert.verdict='passed';saved.flush();assert.match(qaDeliveryState(f.input).reason,/incomplete/);
  saved.cert.kind=saved.expected.kind='no-behavior';delete saved.cert.items;saved.cert.reason='Skill prose only';saved.flush();
  assert.match(qaDeliveryState(f.input).reason,/scenario.*no-behavior/);
+});
+
+// MONO-484: a scoped recheck after a ship-fix opens the gate only with its prior pass intact.
+function recheckGate(t) {
+  const f = fixture(t), prevHead = 'e'.repeat(40), base = 'b'.repeat(40);
+  const ship = sha => `mono-ship green certificate\nShip: green\nIssue(s): ${f.issue}\nHead SHA: ${sha}\nPR: #1`;
+  const items = [{ id: 'C1', source: 'task', expectation: 'Observable behavior' },
+    { id: 'C2', source: 'heuristic', expectation: 'Empty state' }];
+  const dir = sha => path.join(f.root, 'qa', f.issue, sha);
+  const proof = (sha, name) => { fs.mkdirSync(dir(sha), { recursive: true });
+    const file = path.join(dir(sha), name); fs.writeFileSync(file, 'scratch recording'); return file; };
+  const write = (sha, expected, cert) => {
+    fs.writeFileSync(path.join(dir(sha), 'task-expected.json'), JSON.stringify(expected));
+    fs.writeFileSync(path.join(dir(sha), 'task-report.json'), JSON.stringify({ certificate: 'mono-qa certificate\n' + JSON.stringify(cert) }));
+  };
+  const common = { scope: 'task', issue: f.issue, base, kind: 'behavior', mode: 'ship', recipeSource: 'config',
+    expectedItems: items, taskCriteria: ['C1'], purpose: 'change', recipeDigest: qaRecipeDigest(f.config) };
+  const prevCert = { ...common, head: prevHead, verdict: 'failed', gateEligible: true, items: [
+    { ...items[0], outcome: 'passed', evidence: [proof(prevHead, 'c1.cast')] },
+    { ...items[1], outcome: 'failed', reason: 'Hint missing', evidence: [proof(prevHead, 'c2.cast')] }] };
+  write(prevHead, { ...common, head: prevHead, evidenceRoot: dir(prevHead) }, prevCert);
+  const expected = { ...common, head: f.head, evidenceRoot: dir(f.head), recheck: { previousHead: prevHead,
+    previousReport: path.join(dir(prevHead), 'task-report.json'), previousExpected: path.join(dir(prevHead), 'task-expected.json'), live: [] } };
+  const cert = { ...common, head: f.head, verdict: 'passed', gateEligible: true, items: [
+    { ...prevCert.items[0], carriedFrom: prevHead },
+    { ...items[1], outcome: 'passed', evidence: [proof(f.head, 'c2.cast')] }] };
+  delete cert.expectedItems; delete cert.taskCriteria; delete cert.purpose; delete cert.recipeDigest;
+  write(f.head, expected, cert); f.saveState();
+  return { ...f, prevHead, dir, ship, prevCert };
+}
+
+test('MONO-484 gate opens on a valid scoped recheck and fails clearly when the prior pass is gone', t => {
+  const f = recheckGate(t);
+  assert.deepEqual(qaDeliveryState(f.input), { state: 'passed', reason: 'task QA passed' });
+  fs.rmSync(f.prevCert.items[0].evidence[0]);
+  let result = qaDeliveryState(f.input);
+  assert.equal(result.state, 'failed'); assert.match(result.reason, /previous QA report invalid|carried evidence/);
+  fs.rmSync(path.join(f.dir(f.prevHead), 'task-report.json'));
+  result = qaDeliveryState(f.input);
+  assert.equal(result.state, 'failed'); assert.match(result.reason, /previous QA report missing/);
+  assert.throws(() => requireQaPassed(f.input), /QA: failed: .*previous QA report missing/);
+});
+
+test('MONO-484 deploy preparation needs the green ship of the rechecked head itself', async t => {
+  const f = recheckGate(t);
+  const { prepareQa } = await import('./orchestrator/qa.mjs');
+  const configFile = path.join(f.root, 'config.json'); fs.writeFileSync(configFile, JSON.stringify(f.config));
+  const shipReport = (head, certificate) => { const file = path.join(f.root, `ship-${head.slice(0, 4)}.json`);
+    fs.writeFileSync(file, JSON.stringify({ issue: f.issue, head, certificate })); return file; };
+  const run = file => prepareQa({ root: f.root, config: f.config, issue: f.issue, head: f.head, shipReport: file });
+  assert.throws(() => run(path.join(f.root, 'absent-ship.json')));
+  assert.throws(() => run(shipReport(f.prevHead, f.ship(f.prevHead))), /differs from ship/);
+  const forged = path.join(f.root, 'ship-forged.json');
+  fs.writeFileSync(forged, JSON.stringify({ issue: f.issue, head: f.head, certificate: f.ship(f.prevHead) }));
+  assert.throws(() => run(forged));
+  assert.equal(run(shipReport(f.head, f.ship(f.head))).state, 'passed');
+});
+
+test('MONO-484 qa.earlyStart is an optional boolean and never changes the merge gate', t => {
+  const f = recheckGate(t);
+  for (const earlyStart of [undefined, true, false]) {
+    const config = { ...f.config, qa: { ...f.config.qa, ...(earlyStart === undefined ? {} : { earlyStart }) } };
+    assert.equal(qaDeliveryState({ ...f.input, config }).state, 'passed');
+    fs.renameSync(path.join(f.dir(f.head), 'task-report.json'), path.join(f.dir(f.head), 'held.json'));
+    assert.equal(qaDeliveryState({ ...f.input, config }).state, 'waiting');
+    fs.renameSync(path.join(f.dir(f.head), 'held.json'), path.join(f.dir(f.head), 'task-report.json'));
+  }
+  for (const earlyStart of ['true', 1, null])
+    assert.throws(() => qaRecipeSource({ ...f.config, qa: { ...f.config.qa, earlyStart } }), /earlyStart must be boolean/);
+});
+
+test('MONO-484 review: switching the product recipe refuses carried items', t => {
+  const f = recheckGate(t);
+  assert.equal(qaDeliveryState(f.input).state, 'passed');
+  const mobile = { ...f.config, qa: { ...f.config.qa, mode: 'mobile', start: 'run --port $QA_PORT' } };
+  const result = qaDeliveryState({ ...f.input, config: mobile });
+  assert.equal(result.state, 'failed'); assert.match(result.reason, /recipe changed/);
+  assert.notEqual(qaRecipeDigest(mobile), qaRecipeDigest(f.config));
+  assert.equal(qaRecipeDigest({ ...f.config, qa: { ...f.config.qa, earlyStart: true, beforeMerge: true } }), qaRecipeDigest(f.config));
+  assert.match(qaRecipeDigest({ projectName: 'Mono Agent Workflow' }), /^[a-f0-9]{64}$/);
+});
+
+test('MONO-484 review 2: the saved current fingerprint must match the live recipe, not be replaced by it', t => {
+  const f = recheckGate(t);
+  const r1 = qaRecipeDigest(f.config), r2 = '0'.repeat(64);
+  const file = path.join(f.dir(f.head), 'task-expected.json'), saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  // Prior R1, current saved R2, live config R1: refused at the gate as at the certificate check.
+  fs.writeFileSync(file, JSON.stringify({ ...saved, recipeDigest: r2 }));
+  let result = qaDeliveryState(f.input);
+  assert.equal(result.state, 'failed'); assert.match(result.reason, /recipe changed/);
+  // Missing current fingerprint on a recheck is refused too.
+  const { recipeDigest, ...missing } = saved; fs.writeFileSync(file, JSON.stringify(missing));
+  result = qaDeliveryState(f.input);
+  assert.equal(result.state, 'failed'); assert.match(result.reason, /recipe changed/);
+  fs.writeFileSync(file, JSON.stringify({ ...saved, recipeDigest: r1 }));
+  assert.equal(qaDeliveryState(f.input).state, 'passed');
+});
+
+test('MONO-484 review: an early pass on a head that never got green Ship carries but never opens the gate', t => {
+  const f = recheckGate(t);
+  // Head A was tested early, failed, and was replaced by B before its Ship went green: B carries from it.
+  assert.equal(qaDeliveryState(f.input).state, 'passed');
+  // A alone never opens merge: without A's own green ship certificate the gate refuses.
+  f.state.tasks[f.issue].head = f.prevHead; f.saveState();
+  for (const shipCertificate of [undefined, f.ship(f.head)]) {
+    const result = qaDeliveryState({ ...f.input, head: f.prevHead, shipCertificate });
+    assert.equal(result.state, 'failed'); assert.match(result.reason, /ship certificate|Head SHA|head/i);
+  }
+  // Even with A's ship certificate, A's own verdict is failed.
+  assert.match(qaDeliveryState({ ...f.input, head: f.prevHead, shipCertificate: f.ship(f.prevHead) }).reason, /task QA failed/);
 });

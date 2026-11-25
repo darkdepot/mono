@@ -7,7 +7,7 @@ unreconciled, and before QA, merge or deploy of a shipped Issue.
 
 ## Independent QA before merge
 
-After every confirmed green ship, resolve the recipe from the product config's
+After every confirmed green ship (by default), resolve the recipe from the product config's
 `qa` block or the product's explicit `<!-- mono-qa product: NAME -->` record in
 `references/qa-recipes.md`. Examples, `workflows.qa`, `qaAuth` and assignment
 files do not connect a product. No recipe: do not launch a tester; preserve the
@@ -21,14 +21,26 @@ worker's copy. Give it the task, approved PRD/design, current PR head, confirmed
 ship certificate, current main as test-merge base and recipe. Save its expectation
 list before actions. The tester publishes and reads back its report, certificate
 and main recording in the task; the project pass also publishes its report in the
-Project. Worker self-assessment cannot replace this pass.
+Project. Worker self-assessment cannot replace this pass. With recipe
+`earlyStart: true` (off by default) launch as soon as the code phase report is
+confirmed and the PR head is published, before green ship; the certificate is
+saved at once and checked with ship only after the same head's ship certificate is
+read back. If the head changes first, that saved report is the carry source for the
+new head (checked without ship, never a gate by itself).
+Merge still waits for green ship and green QA of one and the same head.
 
 Failed/unverified holds merge and wave installation. Send concrete bugs, steps,
 expected/actual and evidence through a ship-fix task change, preserving
-the task attempt and prior ship state. After new head passes ship, launch QA again
-on the **entire list**, with fresh evidence; do not reuse prior green items or cap
-QA attempts. Recheck disputed items yourself; keep false alarms in the report with
-the removal reason. Missing/contradictory expectations stay unverified until a
+the task attempt and prior ship state. On the new head choose a scoped recheck
+or a full pass and, before the pass, write `purpose`, `recipeDigest` (`qa.mjs digest`,
+saved for every pass) and the `recheck` block
+(prior head, its report/expectations, live items with reasons) into
+`task-expected.json` per `mono:qa`: failed/unverified, new or changed and touched
+items run live, the rest carry with the prior head's evidence. Full pass when the
+fix changes the task/expectations or shared surfaces; project and release passes
+stay full. Never narrow `expectedItems` by hand: the script cannot catch that,
+the host is the trusted boundary. Do not cap QA attempts. Recheck disputed items
+yourself; keep false alarms in the report with the removal reason. Missing/contradictory expectations stay unverified until a
 recorded decision; changed user-visible behavior goes to the owner before rerun.
 
 ### Current host inputs
