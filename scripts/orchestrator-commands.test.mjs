@@ -1309,7 +1309,7 @@ test("preapply AE12 named contracts on installed scratch", async t => {
     await t.test("preapply-launch-lock-covers-commit-through-registration", async () => {
       const gate = path.join(runtime, "gate.mjs"), original = fs.readFileSync(gate, "utf8"), backup = path.join(runtime, "gate-original.mjs"), probe = path.join(scratch, "competing-launch.json");
       write(backup, original);
-      write(gate, `import fs from "node:fs"; import path from "node:path"; import {spawnSync,execFileSync} from "node:child_process"; import {isMain} from "./runtime.mjs"; export {startGate,reviewEnvironment} from "./gate-original.mjs";
+      write(gate, `import fs from "node:fs"; import path from "node:path"; import {spawnSync,execFileSync} from "node:child_process"; import {isMain} from "./runtime.mjs"; export {startGate,reviewEnvironment,extraRoundCheck} from "./gate-original.mjs";
 if(isMain(import.meta.url)){ const args=process.argv.slice(2), request=path.join(path.dirname(args[args.indexOf("--request")+1]),"spawn.json"); const other=spawnSync(process.execPath,[${JSON.stringify(path.join(runtime, "orchestrator/spawn.mjs"))},"--request",request],{encoding:"utf8"}); fs.writeFileSync(${JSON.stringify(probe)},JSON.stringify({status:other.status,stderr:other.stderr})); if(other.status===0)process.kill(JSON.parse(other.stdout).pid,"SIGTERM"); process.stdout.write(execFileSync(process.execPath,[${JSON.stringify(backup)},...args],{encoding:"utf8"})); }
 `);
       try {
