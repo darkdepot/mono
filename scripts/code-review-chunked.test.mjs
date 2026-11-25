@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { runReviewRound, findingKey, resolveReviewRoles, formatReviewReport } from './code-review.mjs';
+import { runReviewRound, runRemarkCheck, stderrReason, findingKey, resolveReviewRoles, formatReviewReport } from './code-review.mjs';
 
 // An oversize change is reviewed in file groups instead of failing (MONO-486).
 const packRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -55,9 +55,12 @@ function fakeClis(t, { stderrExtra = '', fail = false } = {}) {
  ${common}
  if(process.argv.includes('auth')){console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}));process.exit(0);}
  let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',d=>input+=d);process.stdin.on('end',()=>{
-  fs.appendFileSync(log,JSON.stringify({engine:'claude',length:[...input].length})+'\\n');
+  fs.appendFileSync(log,JSON.stringify({engine:'claude',length:[...input].length,files:contextOf(input).group?.files??null})+'\\n');
   const c=contextOf(input);
   console.log(JSON.stringify({type:'system',subtype:'init',tools:['Read','Glob','Grep','StructuredOutput'],mcp_servers:[]}));
+  // Like a real model, a prompt far past the context window is refused.
+  if([...input].length>1000000){console.log(JSON.stringify({type:'result',subtype:'error_during_execution',is_error:true}));process.stderr.write('Prompt is too long\\n');process.exit(1);}
+  if(c.remarks){console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,structured_output:{completed:true,verdicts:c.remarks.map(r=>({id:r.id,verdict:r.id==='B1'&&c.diff.includes('NEEDS_FIX_MARKER')?'needs-fix':'confirmed',reason:'Checked against '+(c.group?.files??['whole diff']).join(', ')}))}}));return;}
   console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,structured_output:{completed:true,verdicts:c.findings.map(f=>({id:f.id,outcome:'confirmed',weight:'P2',danger:false,dangerCase:null,dangerReason:'Diagnostic-only path with no data, security or gate effect.',origin:'introduced',mergeKey:f.class+' '+f.file,outOfContract:false,riskRaised:false,reason:'Still reachable.',closed:false,newEvidence:false,codeQuote:''}))}}));
  });`;
   fs.writeFileSync(path.join(bin, 'codex'), codex, { mode: 0o700 }); fs.writeFileSync(path.join(bin, 'claude'), claude, { mode: 0o700 });
@@ -84,14 +87,15 @@ test('MONO-486: the engine stderr reason reaches the receipt, trimmed and withou
   const token = 'ghp_' + 'Z'.repeat(36), bearer = 'Bearer ' + 'q'.repeat(40);
   const f = fixture(t, { 'alpha.mjs': body('alpha', 10) });
   // Noise first (trimmed away), then the secrets right before the engine's reason (kept, redacted).
-  fakeClis(t, { fail: true, stderrExtra: `${'noise line\n'.repeat(400)}auth ${token} ${bearer} api_key=hunter2secretvalue\n` });
+  fakeClis(t, { fail: true, stderrExtra: `${'noise line\n'.repeat(400)}auth ${token} ${bearer} api_key=hunter2secretvalue\nfetch https://alice:short-password@example.test/x\nCookie: session=first-cookie-value; sid=second-secret-cookie\n` });
   const record = await runReviewRound(f.request);
   assert.equal(record.outcome, 'not-reviewed');
   const reason = record.failures.at(-1).reason;
   assert.match(reason, /role failed \(1\); no response admitted; stderr: .*input_too_large/);
   assert.ok(reason.length < 1200, `trimmed reason, got ${reason.length}`);
   const whole = JSON.stringify(record);
-  for (const secret of [token, 'q'.repeat(40), 'hunter2secretvalue']) assert.ok(!whole.includes(secret), secret);
+  for (const secret of [token, 'q'.repeat(40), 'hunter2secretvalue', 'short-password', 'alice', 'first-cookie-value', 'second-secret-cookie']) assert.ok(!whole.includes(secret), secret);
+  assert.match(reason, /https:\/\/\[redacted\]@example\.test/);
   assert.match(reason, /\[redacted\]/);
   assert.match(formatReviewReport(record), /input_too_large/);
 });
@@ -217,4 +221,50 @@ test('MONO-486 (b): a finding in a file whose own diff is over the checker limit
   const c2 = checkerOf(second); assert.ok(c2.size <= limit); assert.equal(c2.context.diffNote, undefined, 'a different scoped diff is not deduplicated away');
   assert.equal(c2.context.scope, 'fixes-and-open-findings'); assert.equal(c2.context.diffScope, 'hunks around findings only');
   assert.match(c2.context.baseDiff, /flagged_001499 /); assert.ok(!c2.context.baseDiff.includes('flagged_000100 '));
+});
+
+test('MONO-486 review fix: URL userinfo and every cookie value are redacted from engine stderr', () => {
+  const reason = stderrReason('GET https://alice:short-password@example.test/repo failed\nCookie: session=first; sid=second-secret-cookie; theme="dark mode"\nSet-Cookie: token=abc; Path=/; HttpOnly\nssh://bob@host.test:22 refused');
+  for (const secret of ['alice', 'short-password', 'first', 'second-secret-cookie', 'dark mode', 'abc', 'bob']) assert.ok(!reason.includes(secret), `${secret} in ${reason}`);
+  assert.match(reason, /https:\/\/\[redacted\]@example\.test\/repo/); assert.match(reason, /Cookie: session=\[redacted\]; sid=\[redacted\]; theme=\[redacted\]/);
+});
+
+test('MONO-486 review fix: the remark check of an oversize change goes in file groups through the real transport; one needs-fix decides', async t => {
+  const f = fixture(t, { 'alpha.mjs': body('alpha', 6000), 'beta.mjs': body('beta', 6000), 'gamma.mjs': body('gamma', 6000).replace('gamma_003000', 'NEEDS_FIX_MARKER') });
+  const cli = fakeClis(t);
+  const remark = (id, extra = {}) => ({ id, source: 'bot', title: `Remark ${id}`, body: 'Body', urgent: false, head: f.request.head, decision: 'rejected', evidence: 'No defect here.', ...extra });
+  const result = await runRemarkCheck({ worktree: f.worktree, head: f.request.head, base: f.request.base, remarks: [remark('B1'), remark('T2')], packRoot });
+  const prompts = cli.prompts().filter(prompt => prompt.engine === 'claude');
+  assert.ok(result.groups >= 2 && prompts.length === result.groups, JSON.stringify(prompts));
+  assert.ok(prompts.every(prompt => prompt.length <= 800000));
+  assert.deepEqual([...new Set(prompts.flatMap(prompt => prompt.files))].sort(), ['alpha.mjs', 'beta.mjs', 'gamma.mjs']);
+  assert.deepEqual(result.verdicts.map(verdict => [verdict.id, verdict.verdict]), [['B1', 'needs-fix'], ['T2', 'confirmed']]);
+  assert.match(result.verdicts[0].reason, /^group \d\/\d: Checked against .*gamma\.mjs/);
+  // A single hunk that cannot fit is named before any role runs.
+  let calls = 0;
+  await assert.rejects(runRemarkCheck({ worktree: f.worktree, head: f.request.head, base: f.request.base, remarks: [remark('B1')], packRoot },
+    { runRole: async () => { calls++; return { response: { completed: true, verdicts: [] } }; }, promptLimits: { claude: 300000 } }),
+  /file (alpha|beta|gamma)\.mjs: one diff hunk of \d+ bytes does not fit the claude input limit of 300000 bytes for remark-check; the change cannot be split further/);
+  assert.equal(calls, 0);
+});
+
+test('MONO-486 review fix: checker trimming keeps base-side lines of a deleted file and of removed lines', async t => {
+  const rows = tag => Array.from({ length: 1000 }, (_, index) => `export const ${tag}_${String(index).padStart(6, '0')} = 'deleted file evidence row of some width';`).join('\n') + '\n';
+  const f = fixture(t, { 'gone.mjs': rows('gone'), 'kept.mjs': rows('kept') });
+  fs.unlinkSync(path.join(f.worktree, 'gone.mjs'));
+  // In kept.mjs lines 600..619 are removed: a finding at old line 610 points at removed code.
+  fs.writeFileSync(path.join(f.worktree, 'kept.mjs'), rows('kept').split('\n').filter((_, index) => index < 599 || index > 618).join('\n'));
+  f.git('add', '-A'); f.git('commit', '-qm', 'delete');
+  const request = { ...f.request, base: f.request.head, head: f.git('rev-parse', 'HEAD') };
+  const answer = (role, c) => role === 'code-review' ? review([finding('gone.mjs', 500), finding('kept.mjs', 610)], c.focusFiles ?? c.files) : { completed: true, verdicts: c.findings.map((item, index) => verdictFor(item, index)) };
+  const limit = 40000, runner = recorder(answer), record = await runReviewRound(request, { ...runner, promptLimits: { claude: limit } });
+  assert.equal(record.outcome, 'not-converged', JSON.stringify(record.failures));
+  const c = runner.calls.find(call => call.role === 'code-review-checker');
+  assert.ok(c.size <= limit); assert.equal(c.context.diffScope, 'hunks around findings only');
+  const gone = c.context.baseEvidence.find(item => item.file === 'gone.mjs');
+  assert.ok(gone.excerpts.some(excerpt => excerpt.text.includes('gone_000499 ')), JSON.stringify(gone).slice(0, 300));
+  assert.ok(c.context.headEvidence.find(item => item.file === 'gone.mjs').deletionEvidence, 'deletion evidence kept');
+  assert.match(c.context.baseDiff, /^-export const gone_000499 /m); assert.ok(!c.context.baseDiff.includes('gone_000100 '));
+  assert.match(c.context.baseDiff, /^-export const kept_000609 /m);
+  assert.ok(c.context.baseEvidence.find(item => item.file === 'kept.mjs').excerpts.some(excerpt => excerpt.text.includes('kept_000609 ')));
 });

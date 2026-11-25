@@ -29,16 +29,20 @@ export const PROMPT_LIMITS = Object.freeze({ codex: 1000000, claude: 800000 });
 const promptSize = prompt => Buffer.byteLength(prompt);
 // A failed role names the engine's own reason: the tail of its stderr, without anything that looks like a secret.
 const SECRET_SHAPES = [
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
-  /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, /\bAIza[0-9A-Za-z_-]{35}\b/g, /\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}/g,
-  /\bsk-[A-Za-z0-9_-]{16,}/g, /\bxox[abprs]-[A-Za-z0-9-]{10,}/g, /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.?[A-Za-z0-9_-]*/g,
-  /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi,
-  /\b((?:[A-Za-z_-]*(?:api[_-]?key|token|secret|passw(?:or)?d|authorization|cookie|credential)[A-Za-z_-]*)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|\S+)/gi,
-  /[A-Za-z0-9_+=-]{32,}/g,
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[redacted]'],
+  // URL userinfo: scheme://user:password@host keeps only the scheme and host.
+  [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]*@/gi, '$1[redacted]@'],
+  // Every value of a cookie header, not only the first pair.
+  [/\b((?:set-)?cookie\s*[:=]\s*)([^\r\n]*)/gi, (match, prefix, rest) => prefix + rest.replace(/=\s*("[^"]*"|[^;\s]*)/g, '=[redacted]')],
+  [/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, '[redacted]'], [/\bAIza[0-9A-Za-z_-]{35}\b/g, '[redacted]'], [/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}/g, '[redacted]'],
+  [/\bsk-[A-Za-z0-9_-]{16,}/g, '[redacted]'], [/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, '[redacted]'], [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.?[A-Za-z0-9_-]*/g, '[redacted]'],
+  [/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '[redacted]'],
+  [/\b((?:[A-Za-z_-]*(?:api[_-]?key|token|secret|passw(?:or)?d|authorization|credential|session)[A-Za-z_-]*)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s;,&]+)/gi, '$1[redacted]'],
+  [/[A-Za-z0-9_+=-]{32,}/g, '[redacted]'],
 ];
 export function stderrReason(stderr, max = 600) {
   let value = String(stderr ?? '').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
-  for (const shape of SECRET_SHAPES) value = value.replace(shape, (match, prefix) => typeof prefix === 'string' && shape.source.startsWith('\\b((') ? `${prefix}[redacted]` : '[redacted]');
+  for (const [shape, replacement] of SECRET_SHAPES) value = value.replace(shape, replacement);
   value = value.split(/\r?\n/).map(line => line.replace(/[\x00-\x1f\x7f]/g, ' ').trim()).filter(Boolean).join(' | ');
   return value.length > max ? '…' + value.slice(-max) : value;
 }
@@ -538,11 +542,40 @@ function pinnedDiff(worktree, base, head, files) {
 const ORDINARY_INSTRUCTION = 'Review this change for bugs.';
 const GROUP_NOTE = 'The change is too large for one request, so it is reviewed in file groups. This request carries one group: review its files and diff completely, reading any other repository file as needed, list them in reviewedFiles, and check every open finding. A file whose diff is split by hunks appears in parts (partialFiles).';
 const jsonBytes = value => Buffer.byteLength(JSON.stringify(value));
+const REMARK_GROUP_NOTE = 'The change is too large for one request, so it is checked in file groups. This request carries one group of the diff: judge every remark against this part and any repository file you read; answer needs-fix whenever this part or the files show the decision does not hold. A file whose diff is split by hunks appears in parts (partialFiles).';
 // A file diff: its header lines, then hunks that each start with «@@ ». Concatenation gives the diff back exactly.
 export function splitHunks(text) {
   const starts = [...text.matchAll(/^@@ /gm)].map(match => match.index);
   if (!starts.length) return { header: text, hunks: [] };
   return { header: text.slice(0, starts[0]), hunks: starts.map((start, index) => text.slice(start, starts[index + 1] ?? text.length)) };
+}
+// A file diff over the budget becomes pieces of its header plus whole hunks; a hunk that cannot fit alone is named.
+function hunkPieces(unit, budget, cost, where) {
+  if (cost(unit) <= budget) return [unit];
+  const { header, hunks } = splitHunks(unit.diff), chunks = [];
+  const piece = list => ({ file: unit.file, diff: header + list.join(''), part: 999999, of: 999999 });
+  requireValue(hunks.length > 0, `file ${unit.file}: its diff has no hunks and does not fit the ${where}`);
+  let current = [];
+  for (const hunk of hunks) {
+    requireValue(cost(piece([hunk])) <= budget, `file ${unit.file}: one diff hunk of ${cost(piece([hunk]))} bytes does not fit the ${where}; the change cannot be split further for review`);
+    if (current.length && cost(piece([...current, hunk])) > budget) { chunks.push(current); current = []; }
+    current.push(hunk);
+  }
+  if (current.length) chunks.push(current);
+  return chunks.map((list, index) => ({ file: unit.file, diff: header + list.join(''), part: index + 1, of: chunks.length }));
+}
+// Pieces packed in order into groups under the budget.
+function packGroups(units, budget, cost, where) {
+  const groups = [];
+  let current = [], used = 0;
+  for (const unit of units) {
+    const size = cost(unit);
+    requireValue(size <= budget, `file ${unit.file}: its diff does not fit the ${where}`);
+    if (current.length && used + size > budget) { groups.push(current); current = []; used = 0; }
+    current.push(unit); used += size;
+  }
+  if (current.length) groups.push(current);
+  return groups;
 }
 // The head line of a finding mapped to the base side through the file's hunks.
 function baseLine(fileDiff, line) {
@@ -560,7 +593,7 @@ function evidenceExcerpts(evidence, findings, radius, mapLine) {
   return evidence.map(item => {
     if (typeof item.content !== 'string') return item;
     const lines = item.content.split('\n'), windows = [];
-    const centers = findings.filter(finding => finding.file === item.file).map(finding => mapLine(item.file, finding.line)).sort((a, b) => a - b);
+    const centers = [...new Set(findings.filter(finding => finding.file === item.file).flatMap(finding => mapLine(item.file, finding.line)))].sort((a, b) => a - b);
     for (const center of centers) {
       const from = Math.max(1, center - radius), to = Math.min(lines.length, center + radius);
       if (windows.length && from <= windows.at(-1)[1] + 1) windows.at(-1)[1] = Math.max(windows.at(-1)[1], to); else windows.push([from, to]);
@@ -577,30 +610,38 @@ function boundedCheckerPrompt({ build, extra, limit, engine, findings, scopedDif
   const findingFiles = new Set(findings.map(finding => finding.file));
   const onlyFindingFiles = result => result.parts.filter(part => !binary.has(part.file) && findingFiles.has(part.file)).map(part => part.diff).join('');
   const fullDiff = file => full.parts.find(part => part.file === file)?.diff;
-  // Each file's diff kept only around its findings: whole hunks near a finding, a long hunk cut to its lines near it.
+  // A finding's line is a head line, or a base line when it points at removed code (a deleted file has only base lines):
+  // the head side keeps the line itself, the base side the line itself and its head line mapped through the hunks.
+  const baseCenters = (fileDiff, line) => [...new Set([line, baseLine(fileDiff, line)])];
+  // Each file's diff kept only around its findings: whole hunks near a finding on either side, a long hunk cut to its rows near it.
   const aroundFindings = (result, radius) => result.parts.filter(part => !binary.has(part.file) && findingFiles.has(part.file)).map(part => {
-    const windows = findings.filter(finding => finding.file === part.file).map(finding => [finding.line - radius, finding.line + radius]);
-    const near = line => windows.some(([from, to]) => line >= from && line <= to);
+    const lines = findings.filter(finding => finding.file === part.file).map(finding => finding.line);
+    const headWindows = lines.map(line => [line - radius, line + radius]), baseWindows = lines.flatMap(line => baseCenters(part.diff, line)).map(line => [line - radius, line + radius]);
+    const near = (windows, line) => windows.some(([from, to]) => line >= from && line <= to);
+    const overlaps = (windows, start, count) => count > 0 && windows.some(([from, to]) => start <= to && start + count - 1 >= from);
     const { header, hunks } = splitHunks(part.diff);
     return header + hunks.flatMap(hunk => {
-      const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(hunk);
+      const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(hunk);
       if (!match) return [];
-      const start = Number(match[1]), count = Number(match[2] ?? 1);
-      if (!windows.some(([from, to]) => start <= to && start + Math.max(count, 1) - 1 >= from)) return [];
+      const [oldStart, oldCount, newStart, newCount] = [match[1], match[2] ?? 1, match[3], match[4] ?? 1].map(Number);
+      if (!overlaps(headWindows, newStart, newCount) && !overlaps(baseWindows, oldStart, oldCount)) return [];
       const rows = hunk.replace(/\n$/, '').split('\n'), kept = [rows[0]];
-      // A removed row sits at the head line where it was removed; context and added rows advance the head line.
-      let line = start, skipped = false;
+      // Context rows advance both sides, removed rows the base side, added rows the head side.
+      let oldLine = oldStart, newLine = newStart, skipped = false;
       for (const row of rows.slice(1)) {
-        if (near(line)) { if (skipped) kept.push('… (lines cut to fit the input limit)'); kept.push(row); skipped = false; }
+        const removed = row.startsWith('-'), added = row.startsWith('+'), marker = row.startsWith('\\');
+        const keep = marker ? !skipped : (!removed && near(headWindows, newLine)) || (!added && near(baseWindows, oldLine));
+        if (keep) { if (skipped) kept.push('… (lines cut to fit the input limit)'); kept.push(row); skipped = false; }
         else skipped = true;
-        if (!row.startsWith('-') && !row.startsWith('\\')) line++;
+        if (!marker && !added) oldLine++;
+        if (!marker && !removed) newLine++;
       }
       if (skipped) kept.push('… (lines cut to fit the input limit)');
       return [kept.join('\n') + '\n'];
     }).join('');
   }).join('');
-  const head = radius => evidenceExcerpts(extra.headEvidence, findings, radius, (file, line) => line);
-  const base = radius => evidenceExcerpts(extra.baseEvidence, findings, radius, (file, line) => baseLine(fullDiff(file), line));
+  const head = radius => evidenceExcerpts(extra.headEvidence, findings, radius, (file, line) => [line]);
+  const base = radius => evidenceExcerpts(extra.baseEvidence, findings, radius, (file, line) => baseCenters(fullDiff(file), line));
   const note = 'Input limit: evidence and diffs are cut to fit; read head files directly for more context.';
   const steps = [
     // Lossless: on a full-scope round the scoped diff is the same text as baseDiff.
@@ -726,20 +767,10 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
       if (split) return; split = true;
       const limit = limitFor('code-review'), overhead = overheadOf({ openFindings: open, pass: 'all-defects', instruction: ORDINARY_INSTRUCTION }, true), budget = limit - overhead;
       requireValue(budget > 0, `code-review input without any diff is ${overhead} bytes, over the ${roles['code-review'].engine} input limit of ${limit} bytes (contract, rules and open findings)`);
+      const where = `${roles['code-review'].engine} input limit of ${limit} bytes for code-review`;
       units = units.flatMap(unit => {
-        if (unitCost(unit, true, true) <= budget) return [unit];
-        const pieces = splitHunks(unit.diff), header = pieces.header, chunks = [];
-        let current = [];
-        const cost = hunks => unitCost({ file: unit.file, diff: header + hunks.join(''), of: 2 }, true, true);
-        requireValue(pieces.hunks.length > 0, `file ${unit.file}: its diff has no hunks and does not fit the ${roles['code-review'].engine} input limit of ${limit} bytes for code-review`);
-        for (const hunk of pieces.hunks) {
-          requireValue(cost([hunk]) <= budget, `file ${unit.file}: one diff hunk of ${cost([hunk])} bytes does not fit the ${roles['code-review'].engine} input limit of ${limit} bytes for code-review; the change cannot be split further for review`);
-          if (current.length && cost([...current, hunk]) > budget) { chunks.push(current); current = []; }
-          current.push(hunk);
-        }
-        if (current.length) chunks.push(current);
-        const children = chunks.map((hunks, index) => ({ file: unit.file, diff: header + hunks.join(''), part: index + 1, of: chunks.length }));
-        if (coveredUnits.has(unit)) children.forEach(child => coveredUnits.add(child));
+        const children = hunkPieces(unit, budget, piece => unitCost(piece, true, true), where);
+        if (children[0] !== unit && coveredUnits.has(unit)) children.forEach(child => coveredUnits.add(child));
         return children;
       });
     };
@@ -748,15 +779,8 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
       if (promptSize(whole) <= limitFor('code-review')) return absorb(await call('code-review', whole, parseReviewer), units);
       splitUnits();
       const focus = Object.hasOwn(extra, 'focusFiles'), pending = focus ? units.filter(unit => !coveredUnits.has(unit)) : units;
-      const limit = limitFor('code-review'), budget = limit - overheadOf(extra, focus), groups = [];
-      let current = [], used = 0;
-      for (const unit of pending) {
-        const cost = unitCost(unit, true, focus);
-        requireValue(cost <= budget, `file ${unit.file}: its diff does not fit the ${roles['code-review'].engine} input limit of ${limit} bytes for code-review`);
-        if (current.length && used + cost > budget) { groups.push(current); current = []; used = 0; }
-        current.push(unit); used += cost;
-      }
-      if (current.length) groups.push(current);
+      const limit = limitFor('code-review');
+      const groups = packGroups(pending, limit - overheadOf(extra, focus), unit => unitCost(unit, true, focus), `${roles['code-review'].engine} input limit of ${limit} bytes for code-review`);
       for (const [index, group] of groups.entries()) {
         const prompt = build('code-review', groupExtra(extra, group, index + 1, groups.length, focus));
         absorb(await call('code-review', prompt, parseReviewer, `${extra.pass} ${index + 1}/${groups.length}`), group);
@@ -858,7 +882,7 @@ export function parseRemarkCheck(value, remarks) {
 }
 // The digest of what was checked: the remark's own text, never a value the worker supplies.
 export const remarkDigest = remark => digest([remark.id, remark.source, remark.title, remark.body, remark.urgent, remark.head]);
-export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin = ensureClaudeLogin } = {}) {
+export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin = ensureClaudeLogin, promptLimits = {} } = {}) {
   const { worktree, head, base, remarks = [], config = {}, packRoot = runtimePackRoot() } = input;
   requireValue(path.isAbsolute(worktree ?? '') && /^[a-f0-9]{40}$/.test(head) && /^[a-f0-9]{40}$/.test(base), 'absolute worktree and immutable head/base required');
   requireValue(Array.isArray(remarks) && remarks.length > 0 && remarks.length <= 100, 'remarks required');
@@ -879,19 +903,53 @@ export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin
   try {
     exported = exportReviewTree(worktree, head, binary);
     const context = { worktree: exported.root, head, base, diff: changed.parts.map(part => part.diff).join(''), binaryFiles: [...binary], remarks };
-    const launch = login => runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt: promptFor(packRoot, 'remark-check', context), ensureLogin, ...(login ? { login } : {}) });
-    let result;
-    // Only a login failure is retried here: one login refresh, one relaunch.
-    try { result = await launch(); }
-    catch (error) {
-      if (!error?.loginFailure || error?.interrupted === true) throw error;
-      const login = await refreshAfterLoginFailure(error, ensureLogin);
-      try { result = await launch(login); }
-      catch (second) { if (second?.loginFailure) second.message = `${second.message}; after one login refresh (${error.message})`; throw second; }
+    const own = promptLimits?.[route.engine], limit = Math.min(PROMPT_LIMITS[route.engine] ?? 0, Number.isSafeInteger(own) && own > 0 ? own : Infinity);
+    const launch = (prompt, login) => runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt, ensureLogin, ...(login ? { login } : {}) });
+    const run = async prompt => {
+      requireValue(promptSize(prompt) <= limit, `remark-check input of ${promptSize(prompt)} bytes is over the ${route.engine} input limit of ${limit} bytes`);
+      // Only a login failure is retried here: one login refresh, one relaunch.
+      try { return await launch(prompt); }
+      catch (error) {
+        if (!error?.loginFailure || error?.interrupted === true) throw error;
+        const login = await refreshAfterLoginFailure(error, ensureLogin);
+        try { return await launch(prompt, login); }
+        catch (second) { if (second?.loginFailure) second.message = `${second.message}; after one login refresh (${error.message})`; throw second; }
+      }
+    };
+    const summary = { head, base, engine: route.engine, model: route.model, remarks: remarks.map(remark => ({ id: remark.id, digest: remarkDigest(remark), decision: remark.decision })) };
+    const whole = promptFor(packRoot, 'remark-check', context);
+    if (promptSize(whole) <= limit) {
+      const result = await run(whole);
+      return { ...summary, ...parseRemarkCheck(result.response, remarks), elapsedMs: result.elapsedMs ?? null, usage: result.usage ?? null };
     }
-    return { head, base, engine: route.engine, model: route.model, remarks: remarks.map(remark => ({ id: remark.id, digest: remarkDigest(remark), decision: remark.decision })),
-      ...parseRemarkCheck(result.response, remarks),
-      elapsedMs: result.elapsedMs ?? null, usage: result.usage ?? null };
+    // An oversize change is checked in file groups, each with every remark and decision; every changed piece is sent once.
+    // A remark is confirmed only when every group confirms it; one needs-fix decides.
+    const groupContext = (group, number, of) => {
+      const parts = group.filter(unit => unit.of > 1).map(({ file, part, of: total }) => ({ file, part, of: total }));
+      return { ...context, diff: group.map(unit => unit.diff).join(''),
+        group: { number, of, note: REMARK_GROUP_NOTE, files: [...new Set(group.map(unit => unit.file))], ...(parts.length ? { partialFiles: parts } : {}) } };
+    };
+    const overhead = promptSize(promptFor(packRoot, 'remark-check', groupContext([], 99999, 99999))) + jsonBytes({ partialFiles: [] }), budget = limit - overhead;
+    requireValue(budget > 0, `remark-check input without any diff is ${overhead} bytes, over the ${route.engine} input limit of ${limit} bytes (remarks and their evidence)`);
+    const cost = unit => jsonBytes(unit.diff) - 2 + jsonBytes(unit.file) + 1 + (unit.of > 1 ? jsonBytes({ file: unit.file, part: 999999, of: 999999 }) + 1 : 0);
+    const where = `${route.engine} input limit of ${limit} bytes for remark-check`;
+    const units = changed.parts.filter(part => !binary.has(part.file)).flatMap(part => hunkPieces({ file: part.file, diff: part.diff, part: 1, of: 1 }, budget, cost, where));
+    const groups = packGroups(units, budget, cost, where);
+    requireValue(groups.flat().length === units.length, 'remark check groups do not cover the change');
+    const verdicts = new Map(), usage = [];
+    let elapsedMs = 0;
+    for (const [index, group] of groups.entries()) {
+      const result = await run(promptFor(packRoot, 'remark-check', groupContext(group, index + 1, groups.length)));
+      const parsed = parseRemarkCheck(result.response, remarks), label = `group ${index + 1}/${groups.length}`;
+      elapsedMs += result.elapsedMs ?? 0; usage.push(result.usage ?? null);
+      for (const verdict of parsed.verdicts) {
+        const prior = verdicts.get(verdict.id), reason = `${label}: ${verdict.reason}`;
+        if (!prior) verdicts.set(verdict.id, { ...verdict, reason });
+        else if (prior.verdict === verdict.verdict) prior.reason = `${prior.reason} | ${reason}`;
+        else if (verdict.verdict === 'needs-fix') verdicts.set(verdict.id, { ...verdict, reason });
+      }
+    }
+    return { ...summary, verdicts: remarks.map(remark => verdicts.get(remark.id)), groups: groups.length, elapsedMs, usage };
   } finally { if (exported) removeReviewTree(exported.root); }
 }
 export function formatReviewReport(record) {
