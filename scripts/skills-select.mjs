@@ -47,7 +47,7 @@ export function selectScenarios({indexFile, worktree, base, head = 'HEAD', hosts
   for (const id of affected) {
     const stage = catalog.stages.get(id);
     for (const scenario of catalog.scenarios.values()) if (scenario.stage === id) {
-      const chain = scenario.id === stage.main ? stage.chain.map(s => `${s}/${catalog.stages.get(s).main}`) : [`${id}/${scenario.id}`];
+      const chain = scenario.chain ? [...scenario.chain, `${id}/${scenario.id}`] : scenario.id === stage.main ? stage.chain.map(s => `${s}/${catalog.stages.get(s).main}`) : [`${id}/${scenario.id}`];
       units.push({id:`${id}-${scenario.id}`,target:`${id}/${scenario.id}`,scenarios:chain,
         ...(scenario.id === stage.main && stage.chainSeed ? {seed:stage.chainSeed} : {})});
       chain.forEach(key => covered.add(key));

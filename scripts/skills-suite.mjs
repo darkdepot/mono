@@ -52,7 +52,7 @@ export function scenarioPrompt({scenario,host,seed,seedProjectFile,projectName,p
     `Этап под проверкой: ${scenario.stage}. Следующий этап после завершения (followingStage): ${next ?? 'none'}. Это выход текущего этапа, не маршрут его посева. ${routeHint ?? ''}`,
     `Начни ${skillPrefix}:${scenario.stage}. ${scenario.prompt}`,
     'Для проверяемых записей Codex каждый monotest MCP вызывай отдельным exec строго в форме const r = await tools.<имя>(<JSON>); text(r); с буквальным JSON аргументов. Не объединяй MCP-вызовы в один exec. Это сохраняет связь запроса, ответа и свежего чтения.',
-    `Проверяем только этот этап до результата разговора с владельцем. Соблюдай правила установленной версии этапа. Не выполняй сам следующий этап: для вызова следующего этапа после разрешающего ответа используй mcp__stage_driver__start_stage с stage=followingStage и projectId текущего проекта. Это перехват вызова, следующий этап выполнит драйвер${scenario.continuation==='same-session'&&scenario.stage!=='design'?' в этом же разговоре: после вызова закончи ход':''}. Нет согласия на старт или нет этого инструмента — следующего вызова нет. Собственная запись старта Handoff остаётся в Handoff. Не начинай реализацию, доставку или установку.`
+    `Проверяем только этот этап до результата разговора с владельцем. Соблюдай правила установленной версии этапа. Не выполняй сам следующий этап: для вызова следующего этапа после разрешающего ответа используй mcp__stage_driver__start_stage с stage=followingStage и projectId текущего проекта. Это перехват вызова, следующий этап выполнит драйвер${scenario.continuation==='same-session'?next==='design'?'; после отдельной сессии Design владелец вернётся в этот разговор':' в этом же разговоре: после вызова закончи ход':''}. Нет согласия на старт или нет этого инструмента — следующего вызова нет. Собственная запись старта Handoff остаётся в Handoff. Не начинай реализацию, доставку или установку.`
   ].filter(Boolean).join('\n\n');
 }
 
@@ -80,7 +80,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
     const chain=catalog.index.release?.stages.map(id=>`${id}/${catalog.stages.get(id).main}`);
     if(!chain||JSON.stringify(selection.units[0].scenarios)!==JSON.stringify(chain)||selection.units[0].target!==chain[0])throw new Error('release selection differs from the complete catalog plan');
   }
-  const releaseDesignStart=(previous,next)=>previous?.stage==='design'&&previous.status==='passed'&&(release&&next==='tech-evaluation'||previous.continuation==='same-session');
+  const releaseDesignStart=(previous,next,parentContinues)=>previous?.stage==='design'&&previous.status==='passed'&&(release&&next==='tech-evaluation'||parentContinues);
   const proof=request.workspaceProof ?? {tool:'mcp__monotest__get_workspace',input:{},path:['name'],equals:'Mono Test'};
   if (proof.equals !== 'Mono Test' || JSON.stringify(proof.path) !== '["name"]' || proof.tool !== 'mcp__monotest__get_workspace') throw new Error('suite requires the pinned Mono Test workspace proof');
   if (request.mcpServers?.paper) throw new Error('Paper must be configured through the file guard');
@@ -119,6 +119,8 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
   runs: for (const unit of selection.units) for (const host of selection.hosts) {
     const projectName=`monotest-${request.runId}-${host}-${unit.id}`;
     let project=null,previousResult=null;const chainExchanges=[],sessions=[];
+    // After Design the parent conversation continues; Design itself asks no start.
+    const parentContinues=()=>sessions.findLast(s=>s.stage!=='design')?.continuation==='same-session';
     for (const [position,key] of unit.scenarios.entries()) {
       const outputDir=path.join(request.outputDir,`${unit.id}-${host}-${position}`);
       let result,paperLog,runRequest,scenario,observedProject,seedProject;const stageStart=Date.now();
@@ -128,22 +130,20 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
       try {
         // A same-session scenario hands its conversation to the next stage, as
         // in the owner's session; after Design the parent conversation continues.
-        const previousScenario=position>0?catalog.scenarios.get(unit.scenarios[position-1]):null;
-        if(previousScenario?.continuation==='same-session'){
-          if(catalog.scenarios.get(key)?.stage==='design')throw new Error('same-session continuation: Design runs in its own session');
-          const source=previousScenario.stage==='design'?sessions.slice(0,-1).findLast(s=>s.stage!=='design'):sessions.at(-1);
-          if(!source?.session)throw new Error(previousScenario.stage==='design'?'same-session continuation after Design needs its parent conversation in the chain':'same-session continuation: previous stage session missing');
-          continueSession=source.session;continued=previousScenario.stage==='design'?'parent':'self';
+        const parent=catalog.scenarios.get(key)?.stage==='design'?null:sessions.findLast(s=>s.stage!=='design');
+        if(parent?.continuation==='same-session'){
+          if(!parent.session)throw new Error('same-session continuation: parent conversation session missing');
+          continueSession=parent.session;continued=sessions.at(-1).stage==='design'?'parent':'self';
         }
         if(prior) {
           scenario=catalog.scenarios.get(key);runRequest=prior.runRequest;result=prior.run;
           observedProject=prior.project;project=observedProject??project;
           if(result.status==='passed') {chainExchanges.push(...result.check.exchanges);checkEndings(chainExchanges);}
-          if(position>0&&previousResult?.anchored&&!releaseDesignStart(previousResult,scenario.stage)&&(previousResult.status!=='passed'||!previousResult.records?.starts?.some(signal=>signal.stage===scenario.stage)))throw new Error('driver start blocked: passed rubric, scenario permission and post-reply stage signal required');
+          if(position>0&&previousResult?.anchored&&!releaseDesignStart(previousResult,scenario.stage,parentContinues())&&(previousResult.status!=='passed'||!previousResult.records?.starts?.some(signal=>signal.stage===scenario.stage)))throw new Error('driver start blocked: passed rubric, scenario permission and post-reply stage signal required');
         } else {
         manifestDir ??= fs.mkdtempSync(path.join(request.cwd,`.mono-skills-${request.runId}-`));
         scenario=catalog.scenarios.get(key);
-        if(position>0&&previousResult?.anchored&&!releaseDesignStart(previousResult,catalog.scenarios.get(key)?.stage)) {
+        if(position>0&&previousResult?.anchored&&!releaseDesignStart(previousResult,catalog.scenarios.get(key)?.stage,parentContinues())) {
           if(previousResult.status!=='passed'||!previousResult.records?.starts?.some(signal=>signal.stage===scenario.stage))throw new Error('driver start blocked: passed rubric, scenario permission and post-reply stage signal required');
         }
         if (!scenario) throw new Error(`selected scenario removed: ${key}`);
@@ -173,7 +173,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         const target=catalog.scenarios.get(unit.target);
         if (!target) throw new Error('selected unit target missing');
         const brief=(release?catalog.index.release.brief:target.brief)+` Идентификатор тестового проекта этой правки: ${projectName}. Название колонки всегда «Источник», имя прогона в него не добавляй.`;
-        if(flow.expectedReplies.some(anchored)&&nextKey&&!(scenario.stage==='design'&&(release&&catalog.scenarios.get(nextKey)?.stage==='tech-evaluation'||scenario.continuation==='same-session'))) {
+        if(flow.expectedReplies.some(anchored)&&nextKey&&!(scenario.stage==='design'&&(release&&catalog.scenarios.get(nextKey)?.stage==='tech-evaluation'||sessions.findLast(s=>s.stage!=='design')?.continuation==='same-session'))) {
           const destination=catalog.scenarios.get(nextKey)?.stage;
           if(!flow.expectedReplies.some(r=>r.outcome.startNext&&permittedStages(r).includes(destination)))throw new Error('chain has no predefined next-stage permission');
         }
@@ -235,7 +235,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         }catch(error){result={...result,status:result.status==='failed'||prior?.records?.status==='failed'?'failed':'unverified',records:{...prior?.records,status:prior?.records?.status==='failed'?'failed':'unverified',reason:error.message}};}
       }
       previousResult={...result,stage:scenario?.stage,continuation:scenario?.continuation,anchored:runRequest?.scenario.expectedReplies?.some(anchored)};
-      sessions.push({stage:scenario?.stage,session:result?.session});
+      sessions.push({stage:scenario?.stage,session:result?.session,continuation:scenario?.continuation});
       const item={durationMs:Date.now()-stageStart,monotestTasks:result.records?.monotestTasks??null,unit:unit.id,scenario:key,host,status:result.status,outputDir,result};results.push(item);
       const files=[outputDir+'-request.json',outputDir+'-project.json',result.records?.reviewEvidence].filter(file=>file&&fs.existsSync(file)).map(file=>[file,rubricDigest(fs.readFileSync(file,'utf8'))]);
       checkpoints.push({unit:unit.id,scenario:key,host,run:stageRun,runRequest,project:observedProject??project??seedProject,reviewEvidence:result.records?.reviewEvidence??prior?.reviewEvidence,records:result.records,files});saveState();

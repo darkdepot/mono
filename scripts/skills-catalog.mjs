@@ -46,9 +46,11 @@ export function loadCatalog(indexFile) {
       }
       if (!read(catalogFile(root, path.posix.join(path.posix.dirname(relative), 'rubric.md'))).trim()) fail(`missing rubric ${key}`);
       if (scenario.next !== null && !stages.has(scenario.next)) fail(`unknown next ${key}`);
-      // Production route: the next stage continues in this conversation, after
-      // Design in its parent; Design itself always opens its own session.
-      if (scenario.continuation !== undefined && (scenario.continuation !== 'same-session' || scenario.next === 'design')) fail(`invalid continuation ${key}`);
+      // Production route: this conversation carries the next non-Design stage; a
+      // Design in between runs in its own session and returns here. Design itself
+      // never owns a continued conversation.
+      if (scenario.continuation !== undefined && (scenario.continuation !== 'same-session' || scenario.stage === 'design')) fail(`invalid continuation ${key}`);
+      if (scenario.chain !== undefined && (!Array.isArray(scenario.chain) || !scenario.chain.length || !unique(scenario.chain) || scenario.chain.some(k => !text(k)))) fail(`invalid scenario chain ${key}`);
       for (const host of ['claude','codex']) {
         const flow = scenario.hosts?.[host];
         if(!flow?.expectedReplies || Object.hasOwn(flow,'windows') || Object.hasOwn(flow,'expectedWindows'))fail(`text replies required for ${host} ${key}`);
@@ -61,6 +63,13 @@ export function loadCatalog(indexFile) {
         !Array.isArray(stage.chain) || !stage.chain.includes(stage.id) || !unique(stage.chain) ||
         stage.chain.some(id => id !== stage.id && !stage.neighbors.includes(id))) fail(`invalid main/chain ${stage.id}`);
     if (stage.chain.length > 3 || stage.chain.indexOf(stage.id) > 1 || stage.chain.length - stage.chain.indexOf(stage.id) > 2) fail(`chain is not short ${stage.id}`);
+  }
+  // An explicit scenario chain runs earlier scenarios first, in pipeline order,
+  // for example Discovery, Design, Tech Evaluation and then this Handoff.
+  const order = [...stages.keys()];
+  for (const [key, scenario] of scenarios) if (scenario.chain) {
+    const keys = [...scenario.chain, key];
+    if (scenario.chain.some(k => !scenarios.has(k)) || keys.some((k, i) => i && order.indexOf(scenarios.get(k).stage) <= order.indexOf(scenarios.get(keys[i-1]).stage))) fail(`invalid scenario chain ${key}`);
   }
   if(index.release!==undefined) {
     const release=index.release;

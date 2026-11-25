@@ -108,3 +108,39 @@ test('claude: a resumed session that changes its id fails',async t=>{
  assert.equal(result.status,'failed');assert.match(result.reason,/session changed/);
  assert.ok(fs.existsSync(dir));
 });
+
+// Owner interjection: a real owner message at a defined point, without a stage question.
+const correction='Поправка: колонку назови «Откуда».';
+const interject=(extra={})=>({id:'owner-correction',stage:'tech-evaluation',role:'clarification',asksStart:false,summary:['Пакет:'],intent:'interject',reply:correction,outcome:{approval:false,startNext:false},...extra});
+const afterCorrection={...agree,id:'after-correction',summary:['Откуда']};
+const asksAgain='Что: колонка Откуда.\nУтверждаем и начинаем Handoff?';
+test('interject: declared owner message validates; malformed declarations fail',()=>{
+ assert.doesNotThrow(()=>validateReplies([interject(),afterCorrection]));
+ for(const [label,steps,pattern] of [
+  ['last',[interject()],/later step/],
+  ['question',[interject({question:'Что?'}),afterCorrection],/owner interjection/],
+  ['no text',[interject({reply:''}),afterCorrection],/owner interjection/],
+  ['approves',[interject({outcome:{approval:true,startNext:false}}),afterCorrection],/approves and starts nothing/],
+  ['orchestrator',[interject({by:'orchestrator',reason:'x'}),afterCorrection],/belongs to the owner/],
+ ])assert.throws(()=>validateReplies(steps),pattern,label);
+});
+for(const hostName of ['claude','codex'])test(`${hostName}: probe binds the owner interjection and the stage question that answers it`,t=>{
+ const ok=probeText({host:hostName,trace:trace(t,hostName,[['a',shown],['u',correction],['a',asksAgain],['u','принимаю'],['a','Утверждение записал.']]),expectedReplies:[interject(),afterCorrection]});
+ assert.equal(ok.status,'passed',ok.reason);assert.equal(ok.exchanges[0].reply,correction);assert.equal(ok.exchanges[0].question,null);
+ const asked=probeText({host:hostName,trace:trace(t,hostName,[['a',shown+'\nНачинаем?'],['u',correction],['a',asksAgain],['u','принимаю'],['a','Утверждение записал.']]),expectedReplies:[interject(),afterCorrection]});
+ assert.equal(asked.status,'failed');assert.equal(asked.reason,'stage asked before the owner interjection');
+ const other=probeText({host:hostName,trace:trace(t,hostName,[['a',shown],['u','Другие слова'],['a',asksAgain],['u','принимаю'],['a','Утверждение записал.']]),expectedReplies:[interject(),afterCorrection]});
+ assert.equal(other.status,'failed');
+});
+for(const hostName of ['claude','codex'])test(`${hostName}: owner correction injected into a continued conversation is a real owner message`,async t=>{
+ const first=setup(t,hostName,hostName==='codex'?[question,'Утверждение записал.',shown,asksAgain,'Утверждение записал.']:[question,'Утверждение записал.']);
+ const one=await runScenario(first.request);assert.equal(one.status,'passed',JSON.stringify(one.reason));
+ const secondPlan=path.join(first.dir,'plan-2.json');fs.writeFileSync(secondPlan,JSON.stringify({messages:[shown,asksAgain,'Утверждение записал.']}));
+ const second={...first.request,outputDir:path.join(first.dir,'out-2'),continueSession:one.session,binary:{command:process.execPath,args:[host,'agree','--plan',hostName==='codex'?path.join(first.dir,'plan.json'):secondPlan]},
+  scenario:{...first.request.scenario,prompt:'Начни tech-evaluation',expectedReplies:[interject(),afterCorrection]}};
+ const two=await runScenario(second);
+ assert.equal(two.status,'passed',JSON.stringify(two.reason));assert.deepEqual(two.session,one.session);
+ assert.deepEqual(two.replies.map(r=>r.reply),[correction,'принимаю']);
+ assert.ok(fs.readFileSync(two.sent,'utf8').includes(JSON.stringify(correction).slice(1,-1)),'the owner text is sent verbatim, without a service marker');
+ assert.deepEqual(two.check.exchanges.map(e=>e.reply),[correction,'принимаю']);
+});

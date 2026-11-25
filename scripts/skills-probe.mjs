@@ -124,7 +124,7 @@ export function textExchanges(host, rows, expectedReplies, {startLine=0,idleCont
       exchanges.push({...turn,question:null,inherited:true,expected,response:turn,...(!index&&nudges.length?{nudges}:{})});continue;
     }
     textReply({expectedReplies},turn.text,index);
-    turn.question=stageQuestion(expected,turn.text);
+    turn.question=expected.intent==='interject'?null:stageQuestion(expected,turn.text);
     if (turn.reply===undefined) throw new Error(`actual owner reply missing for ${expected.id}`);
     if (turn.reply!==expected.reply) throw new Error(`actual owner reply differs from scenario for ${expected.id}`);
     const response=turns.find(t=>t.line>turn.replyLine);

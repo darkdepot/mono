@@ -871,37 +871,50 @@ test('continue9 six-stage release can prepare each saved stage and reach Handoff
 });
 
 // MONO-492: production route. A same-session scenario hands its conversation to
-// the next stage; Design keeps its own session and its parent continues after it.
+// the next non-Design stage; Design keeps its own session and returns to it.
 test('same-session continuation resumes the production conversation for the next stage',async t=>{
  const f=fixture(t);
- for(const key of ['tech-evaluation/approve','design/approve']){const file=path.join(f.catalogDir,key,'scenario.json');write(file,JSON.stringify({...json(file),continuation:'same-session'},null,2)+'\n');}
- for(const stage of ['design','tech-evaluation'])write(path.join(f.dir,`skills/${stage}/SKILL.md`),'changed');
+ const edit=(key,change)=>{const file=path.join(f.catalogDir,key,'scenario.json');write(file,JSON.stringify({...json(file),...change},null,2)+'\n');};
+ edit('discovery/approve',{continuation:'same-session'});edit('tech-evaluation/approve',{continuation:'same-session'});
+ // forward-chain shape: Discovery, Design in its own session, then Tech Evaluation and Handoff in the parent.
+ edit('handoff/correction',{chain:['discovery/approve','design/approve','tech-evaluation/approve']});
+ for(const stage of ['design','tech-evaluation','handoff'])write(path.join(f.dir,`skills/${stage}/SKILL.md`),'changed');
  f.commit();
- const calls=[];const result=await runSuite(suiteRequest(f,f.select(),{paper:{fileIds:['fixture','second-fixture'],command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'design/memory.md')}),async r=>{
+ const selection=f.select();
+ assert.deepEqual(selection.units.find(u=>u.id==='handoff-correction').scenarios,['discovery/approve','design/approve','tech-evaluation/approve','handoff/correction']);
+ const calls=[];const result=await runSuite(suiteRequest(f,selection,{paper:{fileIds:['fixture','second-fixture'],command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'design/memory.md')}),async r=>{
   calls.push(r);write(r.context.projectFile,JSON.stringify(runProject(r)));
-  return {...passedStage(r),session:{host:r.host,id:`${path.basename(r.outputDir)}-session`,home:path.join(f.dir,'home')}};
+  return {...passedStage(r),session:r.continueSession??{host:r.host,id:`${path.basename(r.outputDir)}-session`,home:path.join(f.dir,'home')}};
  });
  assert.equal(result.status,'passed',JSON.stringify(result.items.filter(i=>i.status!=='passed')));
  const call=(unit,host,position)=>calls.find(r=>path.basename(r.outputDir)===`${unit}-${host}-${position}`);
  for(const host of ['claude','codex']){
-  // design-approve: discovery -> design (own session) -> handoff in the Discovery conversation.
-  assert.equal(call('design-approve',host,1).context.entryStage,'design');
-  assert.equal(call('design-approve',host,1).continueSession,undefined,'Design opens its own session');
-  assert.equal(call('design-approve',host,2).continueSession.id,`design-approve-${host}-0-session`,'the parent continues after Design');
-  assert.match(call('design-approve',host,2).scenario.prompt,/родительскую сессию после отдельной сессии Design/);
-  // tech-evaluation-approve: discovery -> tech-evaluation (fresh) -> handoff in the same conversation.
-  assert.equal(call('tech-evaluation-approve',host,1).continueSession,undefined,'Discovery declares no continuation');
+  const parent=`handoff-correction-${host}-0-session`;
+  assert.match(call('handoff-correction',host,0).scenario.prompt,/после отдельной сессии Design владелец вернётся в этот разговор/);
+  assert.equal(call('handoff-correction',host,1).context.entryStage,'design');
+  assert.equal(call('handoff-correction',host,1).continueSession,undefined,'Design opens its own session');
+  assert.equal(call('handoff-correction',host,2).continueSession.id,parent,'the parent continues after Design');
+  assert.match(call('handoff-correction',host,2).scenario.prompt,/родительскую сессию после отдельной сессии Design/);
+  assert.equal(call('handoff-correction',host,3).continueSession.id,parent,'Handoff stays in the parent conversation');
+  assert.match(call('handoff-correction',host,3).scenario.prompt,/Это тот же разговор владельца/);
+  assert.equal(call('handoff-correction',host,3).seed,undefined);
+  // tech-evaluation-approve: discovery declares, so Tech Evaluation and Handoff share its conversation.
+  assert.equal(call('tech-evaluation-approve',host,1).continueSession.id,`tech-evaluation-approve-${host}-0-session`);
   assert.match(call('tech-evaluation-approve',host,1).scenario.prompt,/в этом же разговоре: после вызова закончи ход/);
-  assert.equal(call('tech-evaluation-approve',host,2).continueSession.id,`tech-evaluation-approve-${host}-1-session`);
-  assert.match(call('tech-evaluation-approve',host,2).scenario.prompt,/Это тот же разговор владельца/);
-  assert.equal(call('tech-evaluation-approve',host,2).seed,undefined);
+  assert.equal(call('tech-evaluation-approve',host,2).continueSession.id,`tech-evaluation-approve-${host}-0-session`);
  }
  for(const r of calls.filter(r=>!r.continueSession))assert.match(r.scenario.prompt,/Это отдельная сессия владельца/);
 });
-test('same-session continuation never continues into Design',t=>{
- const f=fixture(t),file=path.join(f.catalogDir,'discovery/approve/scenario.json');
- write(file,JSON.stringify({...json(file),continuation:'same-session'},null,2)+'\n');
- assert.throws(()=>loadCatalog(path.join(f.catalogDir,'index.json')),/invalid continuation discovery\/approve/);
- write(file,JSON.stringify({...json(file),continuation:'one-session'},null,2)+'\n');
- assert.throws(()=>loadCatalog(path.join(f.catalogDir,'index.json')),/invalid continuation/);
+test('Design never owns a continued conversation; scenario chains keep pipeline order',t=>{
+ const f=fixture(t),index=path.join(f.catalogDir,'index.json');
+ const edit=(key,change)=>{const file=path.join(f.catalogDir,key,'scenario.json');const before=fs.readFileSync(file,'utf8');write(file,JSON.stringify({...json(file),...change},null,2)+'\n');return ()=>write(file,before);};
+ let undo=edit('design/approve',{continuation:'same-session'});
+ assert.throws(()=>loadCatalog(index),/invalid continuation design\/approve/);undo();
+ undo=edit('discovery/approve',{continuation:'one-session'});
+ assert.throws(()=>loadCatalog(index),/invalid continuation/);undo();
+ undo=edit('handoff/correction',{chain:['tech-evaluation/approve','discovery/approve']});
+ assert.throws(()=>loadCatalog(index),/invalid scenario chain handoff\/correction/);undo();
+ undo=edit('handoff/correction',{chain:['discovery/missing']});
+ assert.throws(()=>loadCatalog(index),/invalid scenario chain/);undo();
+ assert.doesNotThrow(()=>loadCatalog(index));
 });

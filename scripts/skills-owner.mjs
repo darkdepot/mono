@@ -34,6 +34,25 @@ function validateInherited(r,index,count,ids) {
     if (r.outcome.startNext!==(r.driverStart!==null&&permittedStages(r).length>0)) throw new Error('reply outcome contradicts scenario role or start authority');
   } else if (!Array.isArray(r.response)||!r.response.length||r.response.some(text=>typeof text!=='string'||!text.trim())) throw new Error('invalid declared stage response');
 }
+// An interjection is a real owner message at a defined point: after the completed
+// turn that shows the step's summary, even though the stage asked nothing. The
+// stage must answer it, so a later step always follows in the same run.
+function validateInterject(r,index,count,ids) {
+  if (typeof r.id!=='string' || !r.id.trim() || ids.has(r.id) ||
+      !['idea','research','discovery','design','tech-evaluation','handoff'].includes(r.stage) || !['approval','transition','clarification'].includes(r.role) ||
+      !Array.isArray(r.summary) || !r.summary.length || r.summary.some(s=>typeof s!=='string'||!s.trim()) ||
+      r.question!==undefined || typeof r.reply!=='string' || !r.reply.trim() || r.correction!==undefined || r.asksStart!==false || r.framing!==undefined) throw new Error('invalid owner interjection: summary, owner text, no question and asksStart=false required');
+  ids.add(r.id);
+  if (index===count-1) throw new Error('owner interjection needs a later step for the stage answer');
+  if (r.by==='orchestrator') throw new Error('owner interjection belongs to the owner');
+  if (r.outcome?.approval!==false || r.outcome?.startNext!==false) throw new Error('owner interjection approves and starts nothing');
+  if (r.response!==undefined) throw new Error('owner interjection answer is the next step');
+}
+export function interjectTurn(expected, message) {
+  if (typeof message!=='string' || !expected.summary.every(s=>message.includes(s))) throw new Error('interjection point summary differs from scenario');
+  if (/\?(?![\p{L}\p{N}=&%#/])/u.test(message)) throw new Error('stage asked before the owner interjection');
+  return expected.reply;
+}
 // The completed turn of an inherited step shows its summary and asks nothing.
 export function inheritedTurn(expected, message) {
   if (typeof message!=='string' || !expected.summary.every(s=>message.includes(s))) throw new Error('inherited step summary differs from scenario');
@@ -45,6 +64,7 @@ export function validateReplies(expected) {
   const ids=new Set();
   for (const [index,r] of expected.entries()) {
     if (r?.intent==='inherited') { validateInherited(r,index,expected.length,ids); continue; }
+    if (r?.intent==='interject') { validateInterject(r,index,expected.length,ids); continue; }
     if (!r || typeof r.id!=='string' || !r.id.trim() || ids.has(r.id) ||
         !['idea','research','discovery','design','tech-evaluation','handoff'].includes(r.stage) ||
         !['approval','transition','clarification'].includes(r.role) ||
@@ -92,6 +112,7 @@ export function stageQuestion(expected,lastMessage) {
 export function textReply(scenario, lastMessage, index) {
   const expected=validateReplies(scenario.expectedReplies)[index];
   if (!expected) throw new Error('unexpected text question without scenario policy');
+  if (expected.intent==='interject') return interjectTurn(expected,lastMessage);
   stageQuestion(expected,lastMessage);
   return expected.reply;
 }
