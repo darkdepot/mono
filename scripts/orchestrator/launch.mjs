@@ -6,7 +6,7 @@ import { startGate } from "../gate.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
 import { workerTransport } from "../worker-transport.mjs";
-import { effectivePins, attemptState, recordTaskChange, dropTaskChange } from "./command-state.mjs";
+import { effectivePins, attemptState, recordTaskChange, dropTaskChange, recordReviewRetry, dropReviewRetry } from "./command-state.mjs";
 import { ensureCollector } from "./collector.mjs";
 
 function releasePin(request) {
@@ -353,12 +353,16 @@ async function startCollector(root, entry) {
   try { const holder = await ensureCollector({ root, issue: entry.issue, attempt: entry.attempt }); return { status: "running", pid: holder.pid }; }
   catch (error) { return { status: "not-started", reason: error.message }; }
 }
-// Resume carries text only: a task change («Изменение задачи» comment, taskChange = its link) or recovery input.
+// Resume carries text only: a task change («Изменение задачи» comment, taskChange = its link), a review retry
+// (reviewRetry: true, after restoring the environment of an environmental not-reviewed streak) or recovery input.
 // Risk, critical and grants come from the immutable launch pins; changing them is a new attempt on the same branch.
 export async function resumeWorker(request) {
   checkRequest(request); guard(request.root, true);
-  const extra = Object.keys(request).filter(key => !["root", "issue", "resumeFile", "taskChange"].includes(key));
-  if (extra.length) throw new Error(`resume takes only root, issue, resumeFile and taskChange; ${extra.join(", ")}: a risk or grant change is a new attempt on the same branch`);
+  const extra = Object.keys(request).filter(key => !["root", "issue", "resumeFile", "taskChange", "reviewRetry"].includes(key));
+  if (extra.length) throw new Error(`resume takes only root, issue, resumeFile, taskChange and reviewRetry; ${extra.join(", ")}: a risk or grant change is a new attempt on the same branch`);
+  if (request.reviewRetry !== undefined && request.reviewRetry !== true) throw new Error("reviewRetry must be true when given");
+  if (request.reviewRetry && request.taskChange !== undefined)
+    throw new Error("reviewRetry and taskChange are exclusive: a review retry is for an environmental not-reviewed streak, a task change for everything else");
   const launched = await withLock(path.join(request.root, "launch.lock"), async () => {
     guard(request.root, true);
     requireWatcher(request.root);
@@ -376,6 +380,7 @@ export async function resumeWorker(request) {
     requireCompatiblePack(installed, entry);
     const prompt = fs.readFileSync(request.resumeFile, "utf8");
     if (request.taskChange !== undefined && !entry.pins) throw new Error("taskChange requires a pinned attempt");
+    if (request.reviewRetry && !entry.pins) throw new Error("reviewRetry requires a pinned attempt");
     const roots = effectiveGrants(entry, request.root);
     const transport = workerTransport(entry.transport) ?? workerTransport("codex-cli");
     transport.assertStopped?.(entry);
@@ -390,12 +395,15 @@ export async function resumeWorker(request) {
     if (prepared?.credentialPaths) updated.githubCredentialPaths = [...new Set([...(entry.githubCredentialPaths ?? []), ...prepared.credentialPaths])];
     const registry = readJson(path.join(request.root, "workers.json")); registry[request.issue] = updated;
     atomicJson(path.join(request.root, "workers.json"), registry);
-    let change = null;
+    let change = null, retry = null;
     return { entry: updated, ...await launchTransport(request.root, updated, prompt, true, prepared, { beforeSpawn() {
       // Recorded at delivery: the review round reads every delivered task change with the Issue.
       if (request.taskChange !== undefined) change = recordTaskChange(path.dirname(entry.pins.file), request.taskChange, prompt);
+      // A review retry is recorded at delivery too; the gate reads it only against an environmental streak.
+      if (request.reviewRetry) retry = recordReviewRetry(path.dirname(entry.pins.file));
     }, onRefusal() {
       if (change) dropTaskChange(path.dirname(entry.pins.file), change);
+      if (retry) dropReviewRetry(path.dirname(entry.pins.file), retry);
     } }) };
   });
   const collector = await startCollector(request.root, launched.entry);

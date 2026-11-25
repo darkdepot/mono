@@ -418,28 +418,33 @@ function observeServedModels(boundary, stdout, phase = 'task') {
       }
   }
 }
-function runInvocation(invocation, prompt, timeoutMs) {
+// MONO-483: a narrow list of network failure signs in a role CLI's stderr (unresolved host, reset or dropped connection).
+export const NETWORK_SIGNS = /could not resolve host|failed to lookup address|getaddrinfo|ENOTFOUND|EAI_AGAIN|nodename nor servname|name or service not known|temporary failure in name resolution|dns error|ECONNRESET|connection reset|ECONNABORTED|connection aborted|ECONNREFUSED|connection refused|ENETUNREACH|network is unreachable|EHOSTUNREACH|socket hang up|stream disconnected|error sending request|connection closed before/i;
+export function runInvocation(invocation, prompt, timeoutMs) {
   return new Promise((resolve, reject) => {
       const child = spawn(invocation.command, invocation.args, { cwd: invocation.cwd, env: invocation.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
       const stdout = [], stderr = [];
-      let stdoutBytes = 0, stderrBytes = 0, exceeded = false, interrupted = false;
+      // timedOut: the role timer fired; outputLimit: the role wrote more than its output bounds. Both kill the role.
+      let stdoutBytes = 0, stderrBytes = 0, timedOut = false, outputLimit = false, interrupted = false;
       const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
       const interrupt = () => { interrupted = true; kill(); };
       process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
       let drain;
       const cleanup = () => { clearTimeout(timer); clearTimeout(drain); process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', interrupt); };
-      const timer = setTimeout(() => { exceeded = true; kill(); }, timeoutMs);
+      const timer = setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
       // A helper outside the role's group may keep its pipes open after it exits: close them shortly after exit.
       child.once('exit', () => { drain = setTimeout(() => { kill(); child.stdout.destroy(); child.stderr.destroy(); }, 5000); });
-      child.stdout.on('data', data => { stdoutBytes += data.length; if (stdoutBytes > 16 * 1024 * 1024) { exceeded = true; kill(); } else stdout.push(data); });
-      child.stderr.on('data', data => { stderrBytes += data.length; if (stderrBytes > 1024 * 1024) { exceeded = true; kill(); } else stderr.push(data); });
+      child.stdout.on('data', data => { stdoutBytes += data.length; if (stdoutBytes > 16 * 1024 * 1024) { outputLimit = true; kill(); } else stdout.push(data); });
+      child.stderr.on('data', data => { stderrBytes += data.length; if (stderrBytes > 1024 * 1024) { outputLimit = true; kill(); } else stderr.push(data); });
       child.stdin.on('error', error => { if (error.code !== 'EPIPE') reject(new Error('role process input failed')); });
       child.once('error', () => { cleanup(); reject(new Error('role process could not start')); });
       child.once('close', code => { cleanup(); kill();
         try {
           const result = { stdout: decodeChildBytes(Buffer.concat(stdout)), stderr: decodeChildBytes(Buffer.concat(stderr)) };
           if (interrupted) throw Object.assign(new Error('review interrupted; role process group stopped'), { rawAnswer: result.stdout });
-          if (code !== 0 || exceeded) throw Object.assign(new Error(`role failed (${exceeded ? 'timeout/output limit' : code}); no response admitted`), { rawAnswer: result.stdout, stderrText: result.stderr, exceeded });
+          const exceeded = timedOut || outputLimit;
+          if (code !== 0 || exceeded) throw Object.assign(new Error(`role failed (${timedOut ? 'timeout' : outputLimit ? 'output limit' : code}); no response admitted`),
+            { rawAnswer: result.stdout, stderrText: result.stderr, exceeded, timedOut, outputLimit, processFailure: true, network: !exceeded && NETWORK_SIGNS.test(result.stderr) });
           resolve(result);
         } catch (error) { error.interrupted = interrupted; reject(error); }
       });
@@ -517,6 +522,22 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
     error.boundary = boundary; throw error;
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
+// MONO-483: why a role attempt failed. Environmental causes (timeout, host-slept, network, login) let the orchestrator
+// retry the review after restoring the host without a task change; everything else (a malformed answer, a CLI that
+// could not start, an output limit, an interruption) is 'other' and stays with the work.
+export const ENVIRONMENT_CAUSES = ['timeout', 'host-slept', 'network', 'login'];
+export const SLEEP_GAP_MS = 60_000;
+export function roleFailureCause(error, { answered = false, slept = false } = {}) {
+  if (answered || error?.interrupted === true) return 'other';
+  if (error?.loginFailure) return 'login';
+  if (error?.processFailure && slept) return 'host-slept';
+  if (error?.timedOut) return 'timeout';
+  if (error?.processFailure && error?.network) return 'network';
+  return 'other';
+}
+// Wall clock against monotonic clock: on macOS the monotonic clock stands still while the host sleeps.
+const systemClock = { wall: () => Date.now(), mono: () => performance.now() };
+const hostLoad = () => ({ load1: os.loadavg()[0], cpus: os.cpus().length });
 // One login refresh after a role failed on its login; the caller then relaunches the role once.
 async function refreshAfterLoginFailure(error, ensureLogin) {
   const refresh = await ensureLogin({ force: true });
@@ -712,16 +733,26 @@ function boundedCheckerPrompt({ build, extra, limit, engine, findings, scopedDif
   throw new Error(`code-review-checker input of ${promptSize(prompt)} bytes is over the ${engine} input limit of ${limit} bytes even with evidence cut to the regions of its ${findings.length} findings`);
 }
 // The only round boundary. Callers persist/sign the returned record; manual mode only prints it.
-export async function runReviewRound(input, { runRole = executeRole, ensureLogin = ensureClaudeLogin, promptLimits = {} } = {}) {
+export async function runReviewRound(input, { runRole = executeRole, ensureLogin = ensureClaudeLogin, promptLimits = {}, clock = systemClock, load = hostLoad } = {}) {
   const { worktree, head, base, contract, risk = 'standard', config = {}, packRoot = runtimePackRoot() } = input;
   const record = structuredClone(input.stageRecord ?? { schemaVersion: 1, rounds: [], findings: [], failures: [] });
   requireValue(object(record) && ['rounds', 'findings', 'failures'].every(key => Array.isArray(record[key] ?? [])), 'stage record unreadable');
   record.rounds ??= []; record.findings ??= []; record.failures ??= [];
   // unreviewedFiles: a finding names a path that exists at head but has no readable text.
   const costs = [], binaryFiles = [], unreviewedFiles = new Set(), number = record.rounds.length + 1;
-  let exported;
-  const fail = (reason, interrupted = false) => ({ ...record, outcome: 'not-reviewed', round: null, interrupted, binaryFiles, unreviewedFiles: [...unreviewedFiles],
-    failures: [...record.failures, { head, round: number, reason, costs, interrupted }], costs });
+  // MONO-483: facts for diagnosis, not a threshold: host load at the start and end of the round and whether the host slept.
+  const gap = (wall, mono) => (clock.wall() - wall) - (clock.mono() - mono) > SLEEP_GAP_MS;
+  const roundWall = clock.wall(), roundMono = clock.mono(), loadStart = load();
+  const host = () => ({ start: loadStart, end: load(), slept: gap(roundWall, roundMono) });
+  // roleFailure: the round stopped because a role failed both attempts (not on coverage, input size or the tree).
+  let exported, roleFailure = false;
+  const fail = (reason, interrupted = false) => {
+    const failures = [...record.failures, { head, round: number, reason, costs, interrupted }];
+    const attempts = failures.filter(failure => failure.head === head && failure.round === number && failure.role);
+    // Environmental only when a role failed and every failed attempt of this round has an environmental cause.
+    const cause = roleFailure && !interrupted && !unreviewedFiles.size && attempts.length && attempts.every(failure => ENVIRONMENT_CAUSES.includes(failure.cause)) ? 'environment' : 'review';
+    return { ...record, outcome: 'not-reviewed', round: null, interrupted, binaryFiles, unreviewedFiles: [...unreviewedFiles], failures, costs, cause, host: host() };
+  };
   try {
     requireValue(path.isAbsolute(worktree ?? '') && /^[a-f0-9]{40}$/.test(head) && /^[a-f0-9]{40}$/.test(base) && text(contract), 'absolute worktree, immutable head/base and task contract required');
     requireValue(['tiny', 'standard', 'deep', 'risky', 'riskyCritical'].includes(risk), 'unknown risk class');
@@ -777,7 +808,7 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
       const cost = { role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id, ...(group ? { group } : {}) };
       let login = null;
       for (let attempt = 1; attempt <= 2; attempt++) {
-        const started = Date.now();
+        const started = Date.now(), wall = clock.wall(), mono = clock.mono();
         let result, answered = false;
         try {
           result = await runRole({ role, route: roles[role], worktree: exported.root, packRoot, prompt, ensureLogin, ...(login ? { login } : {}) });
@@ -789,9 +820,10 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
           // A login failure gets one login refresh before that single retry.
           if (error?.loginFailure && attempt === 1 && error?.interrupted !== true) login = await refreshAfterLoginFailure(error, ensureLogin);
           const reason = clipped(String(error?.message ?? error)).text, interrupted = error?.interrupted === true;
+          const cause = roleFailureCause(error, { answered, slept: gap(wall, mono) });
           if (!answered) costs.push({ ...cost, attempt, elapsedMs: Date.now() - started, usage: null, boundary: error?.boundary ?? null, failure: true });
-          record.failures.push({ head, round: number, role, attempt, reason, answer: error?.answerDiagnostic ?? clipped(answered ? result?.response : error?.rawAnswer) });
-          if (attempt === 2 || interrupted) throw Object.assign(new Error(reason), { interrupted });
+          record.failures.push({ head, round: number, role, attempt, reason, cause, answer: error?.answerDiagnostic ?? clipped(answered ? result?.response : error?.rawAnswer) });
+          if (attempt === 2 || interrupted) { roleFailure = true; throw Object.assign(new Error(reason), { interrupted }); }
         }
       }
     };
@@ -915,7 +947,7 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     const outcome = unreviewedFiles.size ? 'not-reviewed' : blocking.length || current.some(finding => finding.outOfContract || finding.riskRaised) || successors.length ? 'not-converged' : 'clean';
     const round = { number, head, base, scope: context.scope, checkerMergesSeparated: checker.mergesSeparated, binaryFiles, reviewedFiles: [...covered].filter(file => !unreviewedFiles.has(file)), findingKeys: checked.map(verdict => verdict.key), outcome, costs };
     return { ...record, schemaVersion: 1, interrupted: false, base, contractDigest, rounds: [...record.rounds, round], findings: current, round, outcome,
-      successorKeys: successors.map(finding => finding.key), binaryFiles, unreviewedFiles: [...unreviewedFiles], costs };
+      successorKeys: successors.map(finding => finding.key), binaryFiles, unreviewedFiles: [...unreviewedFiles], costs, host: host(), ...(outcome === 'not-reviewed' ? { cause: 'review' } : {}) };
   } catch (error) { return fail(clipped(String(error?.message ?? error)).text, !!error?.interrupted); }
   finally { if (exported) removeReviewTree(exported.root); }
 }

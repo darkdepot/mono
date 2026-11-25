@@ -38,7 +38,7 @@ third round, leftovers both roles call harmless pass as successor candidates;
 anything else left after the third round parks `needs-decision` for the
 orchestrator to narrow the contract, split the Issue or change the approach. The collector host needs both the Codex and Claude CLIs logged in by
 subscription, from different model families; a single-family setup gives
-`not-reviewed`, and so does a logged-out CLI whose role has to run. The Claude login refreshes itself: before each Claude role on the host, and every five minutes from the watcher while a worker is registered; a role that fails on an expired login names it («вход Claude истёк или не найден»), gets one refresh and one relaunch. See [review rounds](references/orchestration-delivery.md#review-rounds).
+`not-reviewed`, and so does a logged-out CLI whose role has to run. The Claude login refreshes itself: before each Claude role on the host, and every five minutes from the watcher while a worker is registered; a role that fails on an expired login names it («вход Claude истёк или не найден»), gets one refresh and one relaunch. A `not-reviewed` receipt names its cause: `environment` when every failed role attempt timed out, met a sleeping host, the network or a login still failing after its refresh, otherwise `review`, with the host load and a sleep flag; two in a row on one head park `blocked`, and an environmental pair is retried by resuming the worker with `reviewRetry` after the host is restored, without a task change. See [review rounds](references/orchestration-delivery.md#review-rounds).
 A change too large for one role request (over the engine's input limit: Codex 1,000,000 bytes, Claude 800,000) is reviewed in file groups, a file over the limit by its hunks, with the same contract and open findings in every group (the PR remark check likewise, where one group's needs-fix decides); every changed file must still be covered, the checker's evidence is cut to the findings' regions to fit, and what cannot fit fails with its reason, as does a role failure, which keeps the engine's trimmed stderr.
 Every collection requires a pinned request and correlated admission; unpinned
 legacy requests cannot start collections. Receipts of the previous format are not accepted.
@@ -802,7 +802,11 @@ their fingerprint (`effectivePins`, round binding); `pins.v<n>.json` and
 task change is an «Изменение задачи» comment on the Issue plus `resume.mjs` with
 `taskChange` set to its link (the resume file repeats the comment's words and link): resume records the
 delivered text in `dispatch/KEY-aN/task-changes.json` and the review round reads it
-with the Issue. Resume carries no grants or network override; a risk, critical or
+with the Issue. After an environmental `not-reviewed` streak, `resume.mjs` with
+`reviewRetry: true` (never with `taskChange`) records a retry in
+`dispatch/KEY-aN/review-retries.json` instead, dropped when the launch is refused;
+it lets the next collection on the same head run a round and changes neither the
+contract nor the round count. Resume carries no grants or network override; a risk, critical or
 grant change is a new attempt on the same branch. Registry changes and collector
 admissions use `launch.lock`. The collector admits each round request into the
 host-owned ledger (`consumed/KEY-aN/rounds/`): a new collectionId only after every
@@ -928,7 +932,9 @@ verification exit 0 on that head (`workerVerification`), or with host
 verification the collection's own run exit 0 on that head; receipts of older
 attempts keep their sandbox verification. Rounds are counted from receipts per task
 attempt: three at most, the same head reuses its round,
-`not-reviewed` spends nothing, a task change continues the record (on the
+`not-reviewed` spends nothing (two in a row on a head park `blocked`: an
+`environment` pair is retried with `reviewRetry` after restoring the host, a
+`review` pair needs a task change), a task change continues the record (on the
 strict path it keeps the count; the fast path gets one round on the changed task,
 inside the record's three), and a changed base starts a fresh record with the same
 count. Round 1 and the first round after a task change read the whole change;
@@ -1595,7 +1601,7 @@ node scripts/verify.mjs
 The entry point includes `git diff --check`, syntax checks, artifact/workflow checks and isolated plugin runtime fixtures.
 Its session-audit step runs every `*.test.mjs` of the project skill `.claude/skills/session-audit/scripts/` (not part of the pack) on synthetic fixtures without listing the files.
 It also runs the recorded code-review round and evaluation fixtures:
-`node --test scripts/code-review.test.mjs scripts/code-review-eval.test.mjs scripts/code-review-real.test.mjs scripts/code-review-login.test.mjs scripts/claude-login.test.mjs`.
+`node --test scripts/code-review.test.mjs scripts/code-review-eval.test.mjs scripts/code-review-real.test.mjs scripts/code-review-login.test.mjs scripts/code-review-cause.test.mjs scripts/claude-login.test.mjs`.
 These prove parsing, coverage, launch boundaries and result calculation; host
 isolation and live model quality remain host checks, as described in the
 [review dataset](evals/code-review/README.md).

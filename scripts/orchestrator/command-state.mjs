@@ -336,6 +336,31 @@ export function dropTaskChange(pinsDirectory, change) {
   const changes = taskChanges(pinsDirectory);
   if (canonical(changes.at(-1) ?? null) === canonical(change)) atomicJson(taskChangesFile(pinsDirectory), changes.slice(0, -1));
 }
+// MONO-483: a review retry is a resume with reviewRetry after the orchestrator restored the environment
+// (a role timeout, a sleeping host, the network, a login). Resume records it append-only beside the launch pins,
+// outside every worker grant like task-changes.json; the gate lets it cut only an environmental not-reviewed streak.
+// It never changes the contract, the round count or the acceptance of a head.
+const reviewRetriesFile = pinsDirectory => path.join(pinsDirectory, "review-retries.json");
+export function reviewRetries(pinsDirectory) {
+  const file = reviewRetriesFile(pinsDirectory);
+  if (!fs.existsSync(file)) return [];
+  const retries = readJson(file);
+  if (!Array.isArray(retries) || retries.some((retry, index) => retry?.number !== index + 1 || Object.keys(retry).length !== 2 ||
+      typeof retry.recordedAt !== "string" || Number.isNaN(Date.parse(retry.recordedAt)) || new Date(retry.recordedAt).toISOString() !== retry.recordedAt))
+    throw new Error("invalid review-retries.json");
+  return retries;
+}
+export function recordReviewRetry(pinsDirectory) {
+  const retries = reviewRetries(pinsDirectory);
+  const retry = { number: retries.length + 1, recordedAt: new Date().toISOString() };
+  atomicJson(reviewRetriesFile(pinsDirectory), [...retries, retry]);
+  return retry;
+}
+// A proven refused spawn delivered nothing: drop exactly the retry it recorded.
+export function dropReviewRetry(pinsDirectory, retry) {
+  const retries = reviewRetries(pinsDirectory);
+  if (canonical(retries.at(-1) ?? null) === canonical(retry)) atomicJson(reviewRetriesFile(pinsDirectory), retries.slice(0, -1));
+}
 export function recordTaskChange(pinsDirectory, url, text) {
   if (!LINEAR_URL.test(url ?? "") || !text.includes(url))
     throw new Error("taskChange must be the Linear URL of the «Изменение задачи» comment, quoted in the resume file");

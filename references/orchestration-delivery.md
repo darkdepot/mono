@@ -224,6 +224,15 @@ Claude CLIs logged in by subscription; a single-family setup gives
 runs only when the reviewer reports findings). The Claude login refreshes itself
 on the host (before each Claude role and from the watcher); a role failed on it
 reads «вход Claude истёк или не найден» and gets one refresh and one relaunch.
+Every failed role attempt names its cause in the receipt: `timeout` (the role
+timer), `host-slept` (the wall clock ran more than 60 s ahead of the monotonic
+one), `network` (an unresolved host, a reset or dropped connection in the CLI's
+stderr), `login` (still failing after its refresh) or `other` (a malformed
+answer, an output limit, a CLI that could not start). A `not-reviewed` receipt
+carries `review.cause`: `environment` when a role failed and every failed
+attempt of the round has one of the first four causes with every file read,
+otherwise `review` (also every older receipt); and `review.host`, the host load
+at the start and end of the round with a sleep flag, as facts, not a threshold.
 
 Between rounds do nothing: the worker fixes open findings and requests the next
 round itself. The pinned risk sets the completed rounds per task attempt (`risky`
@@ -259,8 +268,19 @@ Parks:
   task change keeps the count and adds no rounds.
 - needs-decision, `verification failed on the reviewed head` (older attempts):
   decide whether the code or the environment is wrong.
-- blocked, `not-reviewed twice in a row`: restore both CLI logins, then resume
-  the worker with a task change (the streak belongs to one contract; the count stays).
+- blocked, `not-reviewed twice in a row on this head (environment: …)`: restore
+  the environment (wait for the host to wake and the load to drop, the network,
+  the CLI login), then resume the worker with `reviewRetry: true` and no task
+  change; the next collection on the same head runs a round. The retry is
+  recorded in `dispatch/KEY-aN/review-retries.json` beside the launch pins,
+  outside every worker grant; it cuts only a streak recorded before it whose
+  receipts all say `environment`, never accepts a head, and changes neither the
+  contract nor the round count.
+- blocked, `not-reviewed twice in a row on this head (review)`: the work itself
+  kept the review from happening (unreadable or binary files, incomplete
+  coverage, a malformed answer, one model family): fix it, then resume the
+  worker with a task change (the streak belongs to one contract; the count
+  stays); a review retry does not clear it.
 
 `clean-with-successors` passes. Its candidates are older defects (on the strict
 path only harmless ones), minor P3
@@ -432,6 +452,10 @@ resumeFile, taskChange: <comment link>}`; the resume file repeats the comment's
 words and its link, since reviewers cannot open Linear.
 Resume records the delivered text append-only in `dispatch/KEY-aN/task-changes.json`
 and the review round reads it with the Issue; a refused resume records nothing.
+After an environmental `not-reviewed` streak the request is `{root, issue,
+resumeFile, reviewRetry: true}` instead (never both): resume records
+`{number, recordedAt}` in `dispatch/KEY-aN/review-retries.json`, drops it when
+the launch is refused, and the contract stays unchanged.
 Resume carries no grants or network override: a risk, critical or grant change is
 a new attempt on the same branch.
 

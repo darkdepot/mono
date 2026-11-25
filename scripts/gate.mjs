@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import os from "node:os";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, flags, identity, isMain, processStart, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER, REVIEW_ROUND_ROLES } from "./runtime.mjs";
-import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges } from "./orchestrator/command-state.mjs";
+import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges, reviewRetries } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
 import { hostRunMarker, hostRunCheckout, removeHostCheckout, evidenceSnapshot, evidenceTouched, stopHostGroup, screenCheckHold, readScreenCheck } from './review-rounds.mjs';
@@ -138,7 +138,9 @@ const leftover = record => (record?.findings ?? []).filter(finding => !['closed'
 // keeps the count; the fast path has one round per contract (onContract: rounds on the current one).
 // receipts: history in evidenceRoot, any producer or issue. reuse: a completed round on this exact head.
 const sameAttempt = (file, pinsFile) => typeof file === 'string' && path.dirname(file) === path.dirname(pinsFile);
-export function reviewHistory(receipts, { pins, head, base, contractDigest }) {
+// MONO-483: a not-reviewed receipt names its cause; an old one without it counts as the work's own.
+const notReviewedCause = receipt => receipt.review.cause === 'environment' ? 'environment' : 'review';
+export function reviewHistory(receipts, { pins, head, base, contractDigest, retries = [] }) {
   const mine = receipts.filter(receipt => receipt?.producer === REVIEW_PRODUCER && sameAttempt(receipt.pins?.file, pins.file) && receipt.review)
     .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)));
   const completed = mine.filter(receipt => receipt.review.spent === true);
@@ -146,9 +148,21 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest }) {
   // A not-reviewed streak belongs to one contract: a task change after restoring the CLIs may try again.
   const onHead = mine.filter(receipt => receipt.head === head && receipt.pins.file === pins.file && receipt.review.outcome !== 'refused' &&
     receipt.review.contractDigest === contractDigest);
-  let notReviewed = 0;
-  for (let index = onHead.length - 1; index >= 0 && onHead[index].review.outcome === 'not-reviewed'; index--) notReviewed++;
-  return { spent: completed.length, onContract: completed.filter(receipt => receipt.review.contractDigest === contractDigest).length, notReviewed, reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,
+  let start = onHead.length;
+  while (start > 0 && onHead[start - 1].review.outcome === 'not-reviewed') start--;
+  // MONO-483: a review retry (resume with reviewRetry, recorded on the host) cuts the streak where it was recorded,
+  // only when everything before it in the streak failed on the environment. It never accepts a head or spends a round.
+  let streak = onHead.slice(start);
+  for (let index = streak.length - 1; index >= 0; index--) {
+    const after = streak[index].recordedAt, next = streak[index + 1]?.recordedAt;
+    const cut = retries.some(retry => String(retry.recordedAt) > String(after) && (next === undefined || String(retry.recordedAt) < String(next)));
+    if (cut && streak.slice(0, index + 1).every(receipt => notReviewedCause(receipt) === 'environment')) { streak = streak.slice(index + 1); break; }
+  }
+  const causes = streak.flatMap(receipt => (receipt.review.failures ?? []).filter(failure => failure?.role && failure.cause).map(failure => failure.cause));
+  return { spent: completed.length, onContract: completed.filter(receipt => receipt.review.contractDigest === contractDigest).length, notReviewed: streak.length,
+    notReviewedCause: streak.length ? (streak.every(receipt => notReviewedCause(receipt) === 'environment') ? 'environment' : 'review') : null,
+    notReviewedCauses: [...new Set(causes)],
+    reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,
     record: completed.findLast(receipt => receipt.base === base)?.review.record ?? null };
 }
 // What may leave the rounds as a successor candidate instead of blocking the PR:
@@ -176,7 +190,7 @@ export function roundOutcome(record, round, strict = false) {
 function reviewRefusal(review, host = false) {
   if (review.outcome === 'refused') return review.reason;
   if (review.outcome === 'not-reviewed') return review.repeated
-    ? `blocked: not-reviewed twice in a row on this head: ${review.reason}`
+    ? `blocked: ${notReviewedTwice(review.streakCause ?? review.cause, review.causes)}: ${review.reason}`
     : `not-reviewed: ${review.reason}; no round spent, request this head once more`;
   // The collector reads the last 64 KiB of gate output: keep the line inside it and say what was left out.
   const limit = review.limit ?? ROUND_LIMIT;
@@ -296,7 +310,12 @@ export function validatePreflight(receipt, head, base) {
 const ROUND_LIMIT_REACHED = `review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); split the Issue or change approach in a new attempt`;
 // Fast path: the spent round needs the worker's full verification on the final head instead of another round.
 const limitRefusal = (limit, host = false) => limit === ROUND_LIMIT ? `needs-decision: ${ROUND_LIMIT_REACHED}` : `review round spent (1 of 1 on this task attempt); ${host ? HOST_FAST_FIX : FAST_FIX}`;
-const NOT_REVIEWED_TWICE = "not-reviewed twice in a row on this head; check that both review CLIs are logged in, then resume with a task change";
+// MONO-483: the refusal names the cause and the next step. The environment (a role timeout, a sleeping host, the network,
+// a login still failing after its refresh) is restored and retried without a task change; the work's own cause needs one.
+const notReviewedTwice = (cause, causes = []) => cause === 'environment'
+  ? `not-reviewed twice in a row on this head (environment${causes.length ? `: ${causes.join(', ')}` : ''}); restore the environment (host awake, load down, network, CLI login) and resume the worker with reviewRetry, without a task change`
+  : "not-reviewed twice in a row on this head (review); check that both review CLIs are logged in, then resume with a task change";
+const blockedTwice = prior => `blocked: ${notReviewedTwice(prior.notReviewedCause, prior.notReviewedCauses)}`;
 // Other issues' and older receipts share this folder: only this attempt's pins files are read further;
 // unreadable or irregular files are skipped, never counted. No worker grant reaches evidenceRoot.
 function receiptHistory(evidenceRoot, pinsFile) {
@@ -361,8 +380,9 @@ export function reviewContext(request, pins, liveTip = null) {
   for (const change of taskChanges(path.dirname(request.pins.file)))
     contract += `\n\n## Изменение задачи ${change.number} (${change.url})\n${change.text}`;
   contractDigest = digest(contract);
+  // Review retries live beside the launch pins too, outside every worker grant; they never enter the contract.
   return { head, base, contract, contractDigest, history: reviewHistory(receiptHistory(request.evidenceRoot, request.pins.file),
-    { pins: request.pins, head, base, contractDigest }) };
+    { pins: request.pins, head, base, contractDigest, retries: reviewRetries(path.dirname(request.pins.file)) }) };
 }
 async function verifyPreflight(request, live = null, allowPending = false) {
   const pins = checkCollectionRequest(request);
@@ -448,7 +468,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       // Refuse here, before the worker publishes a request that could only be refused.
       const prior = history;
       if (prior && !prior.reuse) {
-        requireThat(prior.notReviewed < 2, `blocked: ${NOT_REVIEWED_TWICE}`);
+        requireThat(prior.notReviewed < 2, blockedTwice(prior));
         // With host verification the collection itself verifies the fixed head.
         requireThat(roundOpen(prior) || workerFixed(prior, hostVerify || workerVerified), closedRefusal(prior));
       }
@@ -525,20 +545,27 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     const passedScreen = !screen && pins?.screenCheck === true && prior.spent === 0 ? readScreenCheck(head, request.pins) : null;
     if (!consistency.passed) review = refuse(`collection consistency failed: ${consistency.error}`);
     else if (screen) review = refuse(screen.reason);
-    else if (hostVerify && verification.host !== true) review = refuse(`blocked: ${NOT_REVIEWED_TWICE}`);
+    else if (hostVerify && verification.host !== true) review = refuse(blockedTwice(prior));
     else if (verification.host && verification.exitCode !== 0) review = refuse(hostFailure(verification));
     else if (prior.reuse) review = { ...prior.reuse.review, ...roundOutcome(prior.reuse.review.record, prior.reuse.review.round, strict), spent: false, reusedFrom: prior.reuse.runId };
-    else if (prior.notReviewed >= 2) review = refuse(`blocked: ${NOT_REVIEWED_TWICE}`);
+    else if (prior.notReviewed >= 2) review = refuse(blockedTwice(prior));
     else if (!roundOpen(prior)) review = workerFixed(prior, hostVerify ? verification.exitCode === 0 : workerVerified) ?? refuse(closedRefusal(prior));
     else {
       const record = await runReviewRound({ worktree: repo, head, base, contract, risk: request.critical ? 'riskyCritical' : request.risk,
         config: baseModelConfig(repo, request.modelRoutes?.base ?? base), packRoot: path.resolve(scriptDir, '..'), ...(prior.record ? { stageRecord: prior.record } : {}),
         ...(request.prRemarks?.length ? { remarks: request.prRemarks } : {}) });
-      const { costs, ...stageRecord } = record;
+      const { costs, host, cause: _cause, ...stageRecord } = record;
+      // MONO-483: environment only when every failed role attempt of the round failed on the environment and every file was read.
+      const cause = record.cause === 'environment' && !record.unreviewedFiles?.length ? 'environment' : 'review';
+      const repeated = prior.notReviewed > 0, number = (record.rounds?.length ?? 0) + 1;
+      const roleCauses = record.failures.filter(failure => failure.head === head && failure.round === number && failure.role && failure.cause).map(failure => failure.cause);
       review = record.outcome === 'not-reviewed'
-        ? { outcome: 'not-reviewed', spent: false, round: null, repeated: prior.notReviewed > 0, reason: record.failures.at(-1)?.reason ?? `no readable text for ${record.unreviewedFiles.join(', ') || 'the review'}`,
-          successors: [], record: null, failures: record.failures.slice(-6), costs }
-        : { ...roundOutcome(record, roundsUsed(prior) + 1, strict), spent: true, round: roundsUsed(prior) + 1, record: stageRecord };
+        ? { outcome: 'not-reviewed', spent: false, round: null, repeated, cause, reason: record.failures.at(-1)?.reason ?? `no readable text for ${record.unreviewedFiles.join(', ') || 'the review'}`,
+          // The refusal line of a second one names the streak's cause: environment only when the whole streak is.
+          ...(repeated ? { streakCause: prior.notReviewedCause === 'environment' && cause === 'environment' ? 'environment' : 'review',
+            causes: [...new Set([...prior.notReviewedCauses, ...roleCauses])] } : {}),
+          successors: [], record: null, failures: record.failures.slice(-6), costs, ...(host ? { host } : {}) }
+        : { ...roundOutcome(record, roundsUsed(prior) + 1, strict), spent: true, round: roundsUsed(prior) + 1, record: stageRecord, ...(host ? { host } : {}) };
     }
     review.contractDigest = contractDigest; review.limit = limit;
     checkConsistency();
@@ -872,6 +899,9 @@ preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,ri
   Pinned hostVerification (BASE orchestration.delivery.hostVerification): collect:true first runs the pinned verification in a clean checkout of the head
   outside the worker sandbox (log in <evidenceRoot>/verification/); exit 0 passes in place of workerVerification, a red head spends no round.
   Rounds per task attempt from the pinned risk (risky 3 with task changes counted, else 1 per contract: a task change gets one round), counted from receipt history; rounds after the first review only the fixes and open findings; the same head reuses its round; not-reviewed spends nothing.
+  not-reviewed names review.cause: environment (every failed role attempt timed out, met a sleeping host, the network or a login still failing after its refresh)
+  or review (anything else, and older receipts); with host load at the start and end of the round and a sleep flag. Twice in a row on a head is blocked:
+  environment -> restore it and resume the worker with reviewRetry (no task change, no round, same contract); review -> resume with a task change.
   Refusals are receipts too: fix and request the next round, or park on a needs-decision:/blocked: line.
   The sandbox write boundary is the trust anchor: evidenceRoot is outside every worker grant, so receipts are not worker-writable.
 ship request: {preflight:<complete preflight collect:false request>, repo:"owner/repo", number:123, attempt:1, stateFile:"/absolute/file", judgmentFile:"/absolute/file", config:"/project/.agents/mono-workflow.config.json", watch:true, policy:{requiredChecks:[],nonBlockingChecks:[{name,reason}],botChecks:["Greptile Review"],botUnavailable:null}}

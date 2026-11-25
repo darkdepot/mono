@@ -2,7 +2,8 @@
 // owner's real CLIs: install this pair in every bin directory that drives a collection.
 // Behaviour is read from review.json next to the binaries, because role launches
 // receive only an allowlisted environment:
-//   {findings:[reviewer finding], verdict:{checker fields}, loggedOut:'claude'|'codex'|null}
+//   {findings:[reviewer finding], verdict:{checker fields}, loggedOut:'claude'|'codex'|null,
+//    failRole:'network'|'malformed'|null (MONO-483: the Codex role launch itself fails; catalog, login and probe still answer)}
 // Every role launch appends its role to review.log.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,6 +30,9 @@ if(process.argv[2]!=='sandbox'){
   if(process.argv[2]==='debug'){console.log(JSON.stringify({models:[{slug:state().model}]}));process.exit(0);}
   if(process.argv[2]==='login'){console.error(state().loggedOut==='codex'?'Not logged in':'Logged in using ChatGPT');process.exit(0);}
   onInput(input=>{
+    const fail=input.startsWith('Boundary audit')?null:state().failRole;
+    if(fail==='network'){console.error('error: Could not resolve host: api.openai.com');process.exit(1);}
+    if(fail==='malformed'){console.log(JSON.stringify({type:'turn.completed'}));process.exit(0);}
     const value=input.startsWith('Boundary audit')?{tools:['exec_command','write_stdin'],mcpServers:[]}:roleAnswer(input);
     console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(value)}}));console.log(JSON.stringify({type:'turn.completed'}));
   });

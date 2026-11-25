@@ -207,7 +207,7 @@ test("review rounds are counted per task attempt from receipt history", () => {
   const receipt = (at, outcome, extra = {}) => ({ producer: REVIEW_PRODUCER, recordedAt: new Date(Date.UTC(2026, 10, 10, 0, clock++)).toISOString(), runId: `run-${clock}`, pins, head: at, base,
     ...extra, review: { outcome, spent: !['not-reviewed', 'refused'].includes(outcome), contractDigest, record: { run: clock }, ...extra.review } });
   const read = (receipts, at = heads[0], other = {}) => reviewHistory(receipts, { pins, head: at, base, contractDigest, ...other });
-  assert.deepEqual(read([]), { spent: 0, onContract: 0, notReviewed: 0, reuse: null, record: null });
+  assert.deepEqual(read([]), { spent: 0, onContract: 0, notReviewed: 0, notReviewedCause: null, notReviewedCauses: [], reuse: null, record: null });
   const three = [receipt(heads[0], 'not-converged'), receipt(heads[1], 'not-converged'), receipt(heads[2], 'clean-with-successors')];
   assert.equal(read(three, heads[3]).spent, 3, 'a fourth head finds the limit spent');
   assert.equal(read(three, heads[3]).reuse, null);
@@ -221,14 +221,44 @@ test("review rounds are counted per task attempt from receipt history", () => {
   assert.equal(read([...failed, receipt(heads[0], 'refused')]).notReviewed, 2, 'a refusal is not a review attempt');
   const changedContract = 'f'.repeat(64);
   assert.equal(read(failed, heads[0], { contractDigest: changedContract }).notReviewed, 0, 'a task change clears the failure streak');
-  assert.deepEqual(read(three, heads[3], { contractDigest: changedContract }), { spent: 3, onContract: 0, notReviewed: 0, reuse: null, record: three[2].review.record },
+  assert.deepEqual(read(three, heads[3], { contractDigest: changedContract }), { spent: 3, onContract: 0, notReviewed: 0, notReviewedCause: null, notReviewedCauses: [], reuse: null, record: three[2].review.record },
     'a task change keeps the count, starts the count on its contract and continues the record');
   assert.equal(read(three, heads[2], { contractDigest: changedContract }).reuse, null, 'a changed contract never reuses a round');
-  assert.deepEqual(read(three.slice(0, 2), heads[1], { contractDigest: changedContract }), { spent: 2, onContract: 0, notReviewed: 0, reuse: null, record: three[1].review.record }, 'a new contract continues the record');
-  assert.deepEqual(read(three.slice(0, 2), heads[1], { base: 'e'.repeat(40) }), { spent: 2, onContract: 2, notReviewed: 0, reuse: null, record: null }, 'a new base starts a fresh record and keeps the count');
+  assert.deepEqual(read(three.slice(0, 2), heads[1], { contractDigest: changedContract }), { spent: 2, onContract: 0, notReviewed: 0, notReviewedCause: null, notReviewedCauses: [], reuse: null, record: three[1].review.record }, 'a new contract continues the record');
+  assert.deepEqual(read(three.slice(0, 2), heads[1], { base: 'e'.repeat(40) }), { spent: 2, onContract: 2, notReviewed: 0, notReviewedCause: null, notReviewedCauses: [], reuse: null, record: null }, 'a new base starts a fresh record and keeps the count');
   const foreign = [{ ...three[0], producer: 'gate-autoreview-v2' }, { ...three[1], pins: { file: '/root/dispatch/MONO-2-a1/pins.json', digest: 'd' } },
     { ...three[2], pins: { file: '/root/dispatch/MONO-1-a2/pins.json', digest: 'd' } }, { producer: REVIEW_PRODUCER, pins }, null];
   assert.equal(read(foreign).spent, 0, 'old receipts, other tasks and other attempts are never counted');
+});
+test("a review retry clears only an environmental not-reviewed streak recorded before it (MONO-483)", () => {
+  const pins = { file: '/root/dispatch/MONO-1-a1/pins.json', digest: 'd' }, base = 'b'.repeat(40), contractDigest = 'c'.repeat(64), at = '1'.repeat(40);
+  let clock = 0;
+  const time = () => new Date(Date.UTC(2026, 10, 10, 0, clock++)).toISOString();
+  const receipt = (outcome, cause, extra = {}) => ({ producer: REVIEW_PRODUCER, recordedAt: time(), runId: `run-${clock}`, pins, head: at, base,
+    review: { outcome, spent: outcome !== 'not-reviewed', contractDigest, record: { run: clock }, ...(cause ? { cause } : {}),
+      failures: cause === 'environment' ? [{ role: 'code-review', attempt: 1, cause: 'timeout' }, { role: 'code-review', attempt: 2, cause: 'network' }] : [], ...extra } });
+  const retry = number => ({ number, recordedAt: time() });
+  const read = (receipts, retries = []) => reviewHistory(receipts, { pins, head: at, base, contractDigest, retries });
+  const env = [receipt('not-reviewed', 'environment'), receipt('not-reviewed', 'environment')];
+  assert.deepEqual([read(env).notReviewed, read(env).notReviewedCause], [2, 'environment']);
+  assert.deepEqual(read(env).notReviewedCauses, ['timeout', 'network'], 'the streak names its environmental causes');
+  const marked = retry(1);
+  assert.equal(read(env, [marked]).notReviewed, 0, 'a retry after an environmental streak clears it');
+  const again = [...env, receipt('not-reviewed', 'environment')];
+  assert.equal(read(again, [marked]).notReviewed, 1, 'the streak starts again after the retry');
+  assert.equal(read([...again, receipt('not-reviewed', 'environment')], [marked]).notReviewed, 2, 'two more after the retry block again');
+  const before = retry(9), late = [receipt('not-reviewed', 'environment'), receipt('not-reviewed', 'environment')];
+  assert.equal(read(late, [before]).notReviewed, 2, 'a retry recorded before the last receipt of the streak does not cut it');
+  const work = [receipt('not-reviewed', 'review'), receipt('not-reviewed', 'review')];
+  assert.deepEqual([read(work, [retry(1)]).notReviewed, read(work).notReviewedCause], [2, 'review'], 'a streak caused by the work is not cleared');
+  const mixed = [receipt('not-reviewed', 'environment'), receipt('not-reviewed', 'review')];
+  assert.deepEqual([read(mixed, [retry(1)]).notReviewed, read(mixed).notReviewedCause], [2, 'review'], 'one work cause in the streak keeps it');
+  const legacy = [receipt('not-reviewed', null), receipt('not-reviewed', null)];
+  assert.deepEqual([read(legacy, [retry(1)]).notReviewed, read(legacy).notReviewedCause], [2, 'review'], 'an old receipt without a cause counts as the work');
+  const spentFirst = [receipt('not-converged', null), ...[receipt('not-reviewed', 'environment'), receipt('not-reviewed', 'environment')]];
+  const plain = read(spentFirst), retried = read(spentFirst, [retry(1)]);
+  assert.deepEqual([retried.spent, retried.onContract, retried.record], [plain.spent, plain.onContract, plain.record], 'a retry changes no round count and no record');
+  assert.deepEqual([plain.spent, plain.onContract, retried.notReviewed], [1, 1, 0]);
 });
 test('shared review context refreshes the remote base, uses HEAD while dirty, and reads this attempt\'s current-contract rounds with delivered task changes', async () => {
   const { execFileSync } = await import('node:child_process');
@@ -289,7 +319,9 @@ test("preflight accepts only a v3 receipt with an accepted review, exact head/ba
     [{ review: { outcome: 'not-converged' } }, /^review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 a\.mjs:3 Leftover \(when: /],
     [{ review: { outcome: 'not-converged', round: 3 } }, /^needs-decision: review not-converged after round 3 of 3; 1 open/],
     [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed' } }, /^not-reviewed: role failed; no round spent, request this head once more$/],
-    [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed', repeated: true } }, /^blocked: not-reviewed twice in a row on this head: role failed$/],
+    [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed', repeated: true } }, /^blocked: not-reviewed twice in a row on this head \(review\); check that both review CLIs are logged in, then resume with a task change: role failed$/],
+    [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed (timeout)', repeated: true, cause: 'environment', causes: ['timeout', 'host-slept'] } },
+      /^blocked: not-reviewed twice in a row on this head \(environment: timeout, host-slept\); restore the environment \(host awake, load down, network, CLI login\) and resume the worker with reviewRetry, without a task change: role failed \(timeout\)$/],
     [{ review: { outcome: 'refused', round: null, reason: 'needs-decision: review round limit reached' } }, /^needs-decision: review round limit reached$/],
     [{ verification: { exitCode: 1, sandbox: { mode: "workspace-write", probed: true } } }, /^needs-decision: verification failed/],
     [{ verification: { exitCode: null } }, /^worker verification missing on this head/],
@@ -353,7 +385,7 @@ test("named collection fixtures through the gate CLI", async t => {
   const fs = await import("node:fs"), path = await import("node:path"), os = await import("node:os"), crypto = await import("node:crypto");
   const { spawnSync } = await import("node:child_process");
   const { atomicJson, canonical, digest } = await import("./runtime.mjs");
-  const { sha256File, recordTaskChange } = await import("./orchestrator/command-state.mjs");
+  const { sha256File, recordTaskChange, recordReviewRetry } = await import("./orchestrator/command-state.mjs");
   const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collection-idea|collection-review)-.*\.json$/u.test(name));
   for (const name of files) await t.test(name, async () => {
     const fixture = JSON.parse(fs.readFileSync(path.join("scripts/fixtures", name), "utf8"));
@@ -588,6 +620,59 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         git('checkout', '-q', third);
         const stale = call(at(third)); assert.equal(stale.status, 1, 'a clean round from before the task change no longer counts');
         assert.match(stale.stdout, /the task changed after this review round/);
+        return;
+      }
+      if (fixture.mode === 'review-environment') {
+        // MONO-483: a review that did not happen because of the environment (here: the Codex role cannot resolve its host)
+        // is retried by a plain resume with reviewRetry, without a task change; one that did not happen because of the
+        // work itself (a malformed answer) still needs a task change.
+        const author = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid'];
+        const commit = text => { fs.appendFileSync(path.join(repo, 'input.mjs'), text); git('add', 'input.mjs'); git(...author, 'commit', '-m', text.trim()); return git('rev-parse', 'HEAD'); };
+        const at = (tip, n = 1) => ({ ...request, head: tip, collectionId: `preflight-collect:${tip}:${n}`, workerVerification: { head: tip, exitCode: 0 } });
+        const round = async (value, status, line) => {
+          await admit(value);
+          for (const result of [call({ ...value, collect: true }), call(value)]) { assert.equal(result.status, status, result.stdout + result.stderr); assert.match(result.stdout, line); }
+          return JSON.parse(fs.readFileSync(path.join(evidence, `${value.head}.json`), 'utf8')).receipt;
+        };
+        const attempt = path.dirname(pinsFile), changes = path.join(attempt, 'task-changes.json'), retries = path.join(attempt, 'review-retries.json');
+        const leftover = [reviewFinding('input.mjs', { anchor: 'Leftover', title: 'Leftover' })];
+        // Control first: a malformed answer is the work's own cause; a review retry does not clear its streak.
+        setReview(bin, { failRole: 'malformed', findings: leftover });
+        const broken = commit('export const broken = 1;\n');
+        let receipt = await round(at(broken), 1, /fail: not-reviewed: /);
+        assert.equal(receipt.review.cause, 'review');
+        assert.ok(receipt.review.failures.filter(item => item.role).every(item => item.cause === 'other'));
+        await round(at(broken, 2), 1, /fail: blocked: not-reviewed twice in a row on this head \(review\);.*resume with a task change/);
+        recordReviewRetry(attempt);
+        const still = call(at(broken, 3)); assert.equal(still.status, 1); assert.match(still.stdout, /fail: blocked: not-reviewed twice in a row on this head \(review\)/);
+        const calls = reviewCalls(bin).length;
+        await round(at(broken, 3), 1, /fail: blocked: not-reviewed twice in a row on this head \(review\)/);
+        assert.equal(reviewCalls(bin).length, calls, 'no role runs on a blocked work streak');
+        // The environment: the Codex role cannot resolve its host on a new head.
+        setReview(bin, { failRole: 'network' });
+        const offline = commit('export const offline = 0;\n');
+        receipt = await round(at(offline), 1, /fail: not-reviewed: .*Could not resolve host.*no round spent, request this head once more/);
+        assert.deepEqual([receipt.review.spent, receipt.review.cause], [false, 'environment']);
+        assert.deepEqual(receipt.review.failures.filter(item => item.role).map(item => item.cause), ['network', 'network'], 'each failed role attempt names its cause');
+        for (const side of ['start', 'end']) assert.ok(Number.isFinite(receipt.review.host[side].load1) && receipt.review.host[side].cpus > 0, `host load at the ${side} of the round`);
+        assert.equal(typeof receipt.review.host.slept, 'boolean');
+        const contractDigest = receipt.review.contractDigest;
+        receipt = await round(at(offline, 2), 1, /fail: blocked: not-reviewed twice in a row on this head \(environment: network\); restore the environment .*resume the worker with reviewRetry, without a task change/);
+        assert.equal(receipt.review.cause, 'environment');
+        const parked = call(at(offline, 3)); assert.equal(parked.status, 1); assert.match(parked.stdout, /fail: blocked: not-reviewed twice in a row on this head \(environment: network\).*reviewRetry/);
+        // The orchestrator restored the network and resumed the worker with reviewRetry: the next collection on the same head runs a round.
+        setReview(bin, { failRole: null });
+        recordReviewRetry(attempt);
+        receipt = await round(at(offline, 3), 1, /fail: review not-converged \(round 1 of 1\)/);
+        assert.deepEqual([receipt.review.spent, receipt.review.round, receipt.review.contractDigest], [true, 1, contractDigest], 'a review retry keeps the contract');
+        assert.ok(receipt.review.host && receipt.review.record && !Object.hasOwn(receipt.review.record, 'host'), 'host facts sit on the review, not in the stage record');
+        assert.equal(fs.existsSync(changes), false, 'no task change was recorded');
+        assert.deepEqual(JSON.parse(fs.readFileSync(retries, 'utf8')).map(item => item.number), [1, 2]);
+        // The fast path gets no extra round from a retry: the fixed head passes on the worker's verification, no role runs.
+        recordReviewRetry(attempt);
+        const fixed = commit('export const fixed = 1;\n'), before = reviewCalls(bin).length;
+        receipt = await round(at(fixed), 0, /pass: review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification/);
+        assert.deepEqual([reviewCalls(bin).length, receipt.review.spent], [before, false]);
         return;
       }
       if (fixture.mode === 'review-host') {
