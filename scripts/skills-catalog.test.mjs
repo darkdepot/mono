@@ -921,6 +921,11 @@ test('forward scenarios declare the medium route with Design and Tech Evaluation
  assert.match(parent.routeHint,/design=needed/);assert.match(parent.routeHint,/«средний»/);assert.match(parent.routeHint,/Tech Evaluation/);
  assert.equal(grant.next,'tech-evaluation');assert.match(grant.routeHint,/Tech Evaluation/);
  for(const key of ['tech-evaluation/forward-inherited','tech-evaluation/forward-stop','handoff/forward-chain'])assert.deepEqual(catalog.scenarios.get(key).chain.slice(0,2),['discovery/forward-parent','design/forward-grant']);
+ // Live run: an unreleased header in the test product's code differs from the mockup and
+ // became «Тебе решить». The owner's decision is stated up front so the page can be empty of it.
+ for(const key of ['discovery/forward-parent','design/forward-grant','tech-evaluation/forward-inherited','tech-evaluation/forward-stop','handoff/forward-chain'])
+  assert.match(catalog.scenarios.get(key).brief,/Подпись первой колонки в этот проект не входит, владелец это уже решил/,key);
+ assert.match(parent.prompt,/«Не берём»/);
 });
 // MONO-485: a chained stage verifies its records with every earlier passed text
 // stage of the same chain as forward evidence (the Design session included).
