@@ -32,11 +32,16 @@ function projectIdentity(data, name) {
   return data;
 }
 
-export function scenarioPrompt({scenario,host,seed,seedProjectFile,projectName,projectFile,project,next,packRoot,paper,designMemoryFile,designMemory,productName,skillPrefix,routeHint}) {
+export function scenarioPrompt({scenario,host,seed,seedProjectFile,projectName,projectFile,project,next,packRoot,paper,designMemoryFile,designMemory,productName,skillPrefix,routeHint,continued}) {
   for (const [key,value] of Object.entries({projectFile,packRoot})) if (!path.isAbsolute(value ?? '') || path.basename(value)==='undefined') throw new Error(`absolute ${key} required`);
   if (seed && !project && !path.isAbsolute(seedProjectFile ?? '')) throw new Error('absolute seedProjectFile required');
   if (!projectName?.trim()) throw new Error('projectName required');
-  const owner=`Это отдельная сессия владельца тестового продукта: проверяем скиллы ${productName} с имитированным владельцем. Драйвер отвечает обычным текстом на последнее сообщение завершённого хода. Владелец явно начинает указанный этап; правила проверяемой версии не меняй.`;
+  if (continued!==undefined && !['self','parent'].includes(continued)) throw new Error('continued must be self or parent');
+  const owner=continued==='parent'
+    ? `Владелец вернулся в эту родительскую сессию после отдельной сессии Design: проверяем скиллы ${productName} с имитированным владельцем. Сверь запись Design свежим чтением. Драйвер отвечает обычным текстом на последнее сообщение завершённого хода. Владелец явно начинает указанный этап в этом же разговоре; правила проверяемой версии не меняй.`
+    : continued==='self'
+    ? `Это тот же разговор владельца тестового продукта: проверяем скиллы ${productName} с имитированным владельцем. Предыдущий этап завершён в этом разговоре, следующий идёт здесь же. Драйвер отвечает обычным текстом на последнее сообщение завершённого хода. Владелец явно начинает указанный этап; правила проверяемой версии не меняй.`
+    : `Это отдельная сессия владельца тестового продукта: проверяем скиллы ${productName} с имитированным владельцем. Драйвер отвечает обычным текстом на последнее сообщение завершённого хода. Владелец явно начинает указанный этап; правила проверяемой версии не меняй.`;
   const entry=project
     ? `Проект уже существует: ${JSON.stringify(project)}. Перед записью прочитай его через monotest; id, имя и пространство обязаны совпасть. Используй только этот проект, новый не создавай.`
     : seed ? `Посев уже выполнен отдельным ходом. Прочитай указатель ${seedProjectFile}, затем свежий get_project этого проекта monotest. Используй только его; новый проект не создавай. Не переписывай маршрут посева из-за поля followingStage.`
@@ -47,7 +52,7 @@ export function scenarioPrompt({scenario,host,seed,seedProjectFile,projectName,p
     `Этап под проверкой: ${scenario.stage}. Следующий этап после завершения (followingStage): ${next ?? 'none'}. Это выход текущего этапа, не маршрут его посева. ${routeHint ?? ''}`,
     `Начни ${skillPrefix}:${scenario.stage}. ${scenario.prompt}`,
     'Для проверяемых записей Codex каждый monotest MCP вызывай отдельным exec строго в форме const r = await tools.<имя>(<JSON>); text(r); с буквальным JSON аргументов. Не объединяй MCP-вызовы в один exec. Это сохраняет связь запроса, ответа и свежего чтения.',
-    'Проверяем только этот этап до результата разговора с владельцем. Соблюдай правила установленной версии этапа. Не выполняй сам следующий этап: для вызова следующего этапа после разрешающего ответа используй mcp__stage_driver__start_stage с stage=followingStage и projectId текущего проекта. Это перехват вызова, следующий этап выполнит драйвер. Нет согласия на старт или нет этого инструмента — следующего вызова нет. Собственная запись старта Handoff остаётся в Handoff. Не начинай реализацию, доставку или установку.'
+    `Проверяем только этот этап до результата разговора с владельцем. Соблюдай правила установленной версии этапа. Не выполняй сам следующий этап: для вызова следующего этапа после разрешающего ответа используй mcp__stage_driver__start_stage с stage=followingStage и projectId текущего проекта. Это перехват вызова, следующий этап выполнит драйвер${scenario.continuation==='same-session'?next==='design'?'; после отдельной сессии Design владелец вернётся в этот разговор':' в этом же разговоре: после вызова закончи ход':''}. Нет согласия на старт или нет этого инструмента — следующего вызова нет. Собственная запись старта Handoff остаётся в Handoff. Не начинай реализацию, доставку или установку.`
   ].filter(Boolean).join('\n\n');
 }
 
@@ -75,7 +80,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
     const chain=catalog.index.release?.stages.map(id=>`${id}/${catalog.stages.get(id).main}`);
     if(!chain||JSON.stringify(selection.units[0].scenarios)!==JSON.stringify(chain)||selection.units[0].target!==chain[0])throw new Error('release selection differs from the complete catalog plan');
   }
-  const releaseDesignStart=(previous,next)=>release&&previous?.stage==='design'&&next==='tech-evaluation'&&previous.status==='passed';
+  const releaseDesignStart=(previous,next,parentContinues)=>previous?.stage==='design'&&previous.status==='passed'&&(release&&next==='tech-evaluation'||parentContinues);
   const proof=request.workspaceProof ?? {tool:'mcp__monotest__get_workspace',input:{},path:['name'],equals:'Mono Test'};
   if (proof.equals !== 'Mono Test' || JSON.stringify(proof.path) !== '["name"]' || proof.tool !== 'mcp__monotest__get_workspace') throw new Error('suite requires the pinned Mono Test workspace proof');
   if (request.mcpServers?.paper) throw new Error('Paper must be configured through the file guard');
@@ -113,22 +118,32 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
   const results=[],exportLeftovers=new Set(saved.exportLeftovers??[]);
   runs: for (const unit of selection.units) for (const host of selection.hosts) {
     const projectName=`monotest-${request.runId}-${host}-${unit.id}`;
-    let project=null,previousResult=null;const chainExchanges=[];
+    let project=null,previousResult=null;const chainExchanges=[],sessions=[];
+    // After Design the parent conversation continues; Design itself asks no start.
+    const parentContinues=()=>sessions.findLast(s=>s.stage!=='design')?.continuation==='same-session';
     for (const [position,key] of unit.scenarios.entries()) {
       const outputDir=path.join(request.outputDir,`${unit.id}-${host}-${position}`);
       let result,paperLog,runRequest,scenario,observedProject,seedProject;const stageStart=Date.now();
       const prior=saved.results.find(r=>r.unit===unit.id&&r.scenario===key&&r.host===host);
       if(prepareReview&&!prior)break;
+      let continueSession,continued;
       try {
+        // A same-session scenario hands its conversation to the next stage, as
+        // in the owner's session; after Design the parent conversation continues.
+        const parent=catalog.scenarios.get(key)?.stage==='design'?null:sessions.findLast(s=>s.stage!=='design');
+        if(parent?.continuation==='same-session'){
+          if(!parent.session)throw new Error('same-session continuation: parent conversation session missing');
+          continueSession=parent.session;continued=sessions.at(-1).stage==='design'?'parent':'self';
+        }
         if(prior) {
           scenario=catalog.scenarios.get(key);runRequest=prior.runRequest;result=prior.run;
           observedProject=prior.project;project=observedProject??project;
           if(result.status==='passed') {chainExchanges.push(...result.check.exchanges);checkEndings(chainExchanges);}
-          if(position>0&&previousResult?.anchored&&!releaseDesignStart(previousResult,scenario.stage)&&(previousResult.status!=='passed'||!previousResult.records?.starts?.some(signal=>signal.stage===scenario.stage)))throw new Error('driver start blocked: passed rubric, scenario permission and post-reply stage signal required');
+          if(position>0&&previousResult?.anchored&&!releaseDesignStart(previousResult,scenario.stage,parentContinues())&&(previousResult.status!=='passed'||!previousResult.records?.starts?.some(signal=>signal.stage===scenario.stage)))throw new Error('driver start blocked: passed rubric, scenario permission and post-reply stage signal required');
         } else {
         manifestDir ??= fs.mkdtempSync(path.join(request.cwd,`.mono-skills-${request.runId}-`));
         scenario=catalog.scenarios.get(key);
-        if(position>0&&previousResult?.anchored&&!releaseDesignStart(previousResult,catalog.scenarios.get(key)?.stage)) {
+        if(position>0&&previousResult?.anchored&&!releaseDesignStart(previousResult,catalog.scenarios.get(key)?.stage,parentContinues())) {
           if(previousResult.status!=='passed'||!previousResult.records?.starts?.some(signal=>signal.stage===scenario.stage))throw new Error('driver start blocked: passed rubric, scenario permission and post-reply stage signal required');
         }
         if (!scenario) throw new Error(`selected scenario removed: ${key}`);
@@ -137,6 +152,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         const seedProjectFile=projectFile+'.seed.json',dumpDir=projectFile+'.route';
         const seedPath=position===0 && unit.seed ? unit.seed : scenario.seed;
         if(release&&position>0&&!project)throw new Error('release lost its run project; no seeding permitted');
+        if(continueSession&&!project)throw new Error('same-session continuation lost its run project');
         const seed=!release && !project && seedPath ? JSON.parse(JSON.stringify(json(catalogFile(catalog.root,seedPath))).replaceAll('<projectName>',projectName)) : null;
         const nextKey=unit.scenarios[position+1], next=nextKey ? catalog.scenarios.get(nextKey)?.stage : scenario.next;
         const servers={...request.mcpServers};
@@ -157,14 +173,14 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         const target=catalog.scenarios.get(unit.target);
         if (!target) throw new Error('selected unit target missing');
         const brief=(release?catalog.index.release.brief:target.brief)+` Идентификатор тестового проекта этой правки: ${projectName}. Название колонки всегда «Источник», имя прогона в него не добавляй.`;
-        if(flow.expectedReplies.some(anchored)&&nextKey&&!(release&&scenario.stage==='design'&&catalog.scenarios.get(nextKey)?.stage==='tech-evaluation')) {
+        if(flow.expectedReplies.some(anchored)&&nextKey&&!(scenario.stage==='design'&&(release&&catalog.scenarios.get(nextKey)?.stage==='tech-evaluation'||sessions.findLast(s=>s.stage!=='design')?.continuation==='same-session'))) {
           const destination=catalog.scenarios.get(nextKey)?.stage;
           if(!flow.expectedReplies.some(r=>r.outcome.startNext&&permittedStages(r).includes(destination)))throw new Error('chain has no predefined next-stage permission');
         }
         const prompt=scenarioPrompt({scenario:{...scenario,brief},host,seed,seedProjectFile,projectName,projectFile,project,next,packRoot:request.packRoot,paper:scenario.stage==='design'?request.paper:null,designMemoryFile:request.designMemoryFile,
           designMemory,
-          productName:catalog.index.productName,skillPrefix:catalog.index.skillPrefix,routeHint:release?catalog.index.release.routeHint:catalog.index.routeHints?.[next]});
-        runRequest={host,cwd:request.cwd,packRoot:request.packRoot,outputDir,authFile:request.authFile,
+          productName:catalog.index.productName,skillPrefix:catalog.index.skillPrefix,routeHint:release?catalog.index.release.routeHint:catalog.index.routeHints?.[next],continued});
+        runRequest={host,cwd:request.cwd,packRoot:request.packRoot,outputDir,authFile:request.authFile,...(continueSession?{continueSession}:{}),
           ...(scenario.stage==='design'?{writableRoots:[path.dirname(request.designMemoryFile),path.join(path.dirname(request.designMemoryFile),'approved'),exportRunDir]}:{}),
           timeoutMs:request.timeoutMs ?? 1_800_000,idleMs:20_000,maxTurns:request.maxTurns??128,mcpServers:servers,
           workspaceProof:proof,
@@ -218,7 +234,8 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
           if(prepareTarget&&result.status==='passed')result={...result,status:'unverified',reason:'review preparation requires ordinary resume before certification'};
         }catch(error){result={...result,status:result.status==='failed'||prior?.records?.status==='failed'?'failed':'unverified',records:{...prior?.records,status:prior?.records?.status==='failed'?'failed':'unverified',reason:error.message}};}
       }
-      previousResult={...result,stage:scenario?.stage,anchored:runRequest?.scenario.expectedReplies?.some(anchored)};
+      previousResult={...result,stage:scenario?.stage,continuation:scenario?.continuation,anchored:runRequest?.scenario.expectedReplies?.some(anchored)};
+      sessions.push({stage:scenario?.stage,session:result?.session,continuation:scenario?.continuation});
       const item={durationMs:Date.now()-stageStart,monotestTasks:result.records?.monotestTasks??null,unit:unit.id,scenario:key,host,status:result.status,outputDir,result};results.push(item);
       const files=[outputDir+'-request.json',outputDir+'-project.json',result.records?.reviewEvidence].filter(file=>file&&fs.existsSync(file)).map(file=>[file,rubricDigest(fs.readFileSync(file,'utf8'))]);
       checkpoints.push({unit:unit.id,scenario:key,host,run:stageRun,runRequest,project:observedProject??project??seedProject,reviewEvidence:result.records?.reviewEvidence??prior?.reviewEvidence,records:result.records,files});saveState();
