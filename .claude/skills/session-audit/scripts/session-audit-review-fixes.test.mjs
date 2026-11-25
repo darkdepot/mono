@@ -211,7 +211,8 @@ test("a returned finding over the limit stays queued with its issue and is reope
   const later = at(NOW, 24 * 60);
   const next = ok(w.env, ["collect", "--session", ME, "--now", later]).passUuid;
   ok(w.env, ["signals", "--session", ME, "--now", later]);
-  ok(w.env, ["register", "--session", ME, "--now", later]);
+  assert.equal(run(w.env, ["register", "--session", ME, "--now", later]).status, 2, "a queued reopen needs a fresh Linear read");
+  ok(w.env, ["register", "--linear", save(w, next, "linear-again.json", [{ id: "MONO-912", identifier: "MONO-912", status: "Done", statusType: "completed" }]), "--session", ME, "--now", later]);
   const carried = ok(w.env, ["select", "--session", ME, "--now", later]);
   assert.deepEqual(carried.triage.map((entry) => [entry.id, entry.action, entry.carried]), [[registry[1].id, "reopen", true]]);
   ok(w.env, ["plan", "--session", ME, "--now", later]);
@@ -445,4 +446,76 @@ test("earlier encounters that were never confirmed do not count toward two sessi
   };
   assert.equal(sessionsTotal(false), 1);
   assert.equal(sessionsTotal(true), 2);
+});
+
+// ---------------------------------------------------------------- review round 3
+
+test("a later sameAs wins over the id cached by an earlier register, unless that id was already sent", (t) => {
+  const registry = [registryEntry("F-12121212-0000-4000-8000-000000000001", null, "review", { outcome: "report" })];
+  const w = world(t, { registry });
+  const passUuid = ok(w.env, ["collect", "--session", ME, "--now", NOW]).passUuid;
+  const first = analyse(w, passUuid, [finding(w, "late")]);
+  assert.notEqual(first.registered.findings[0].id, registry[0].id);
+  const second = analyse(w, passUuid, [finding(w, "late", { sameAs: registry[0].id })]);
+  assert.deepEqual(second.registered.findings.map((one) => one.id), [registry[0].id], "the corrected link wins, no second finding");
+
+  const w2 = world(t, { registry });
+  const pass2 = ok(w2.env, ["collect", "--session", ME, "--now", NOW]).passUuid;
+  const newId = analyse(w2, pass2, [finding(w2, "late")]).registered.findings[0].id;
+  ok(w2.env, ["plan", "--session", ME, "--now", NOW]);
+  ok(w2.env, ["op", "sent", newId, "--session", ME, "--now", NOW]);
+  ok(w2.env, ["check", save(w2, pass2, "relink.json", [finding(w2, "late", { sameAs: registry[0].id })]), "--session", ME, "--now", NOW]);
+  const refused = run(w2.env, ["register", "--session", ME, "--now", NOW]);
+  assert.equal(refused.status, 2);
+  assert.match(refused.err.error, /already sent to Linear/);
+});
+
+test("a finding dropped after its issue was sent keeps its stored entry; plan and commit go on", (t) => {
+  const w = world(t);
+  const passUuid = ok(w.env, ["collect", "--session", ME, "--now", NOW]).passUuid;
+  const id = analyse(w, passUuid, [finding(w, "gone")]).registered.findings[0].id;
+  ok(w.env, ["plan", "--session", ME, "--now", NOW]);
+  const linear = fakeLinear();
+  const sent = ok(w.env, ["op", "sent", id, "--session", ME, "--now", NOW]);
+  const issue = linear.call(sent.call, NOW);
+  analyse(w, passUuid, [finding(w, "gone", { quote: "Never said." })]);
+  const selection = readJson(path.join(w.data, "runs", passUuid, "selection.json"));
+  assert.deepEqual(selection.triage, [{ id, action: "create", stored: true }]);
+  ok(w.env, ["plan", "--session", ME, "--now", NOW]);
+  ok(w.env, ["op", "confirm", id, "--response", save(w, passUuid, "issue.json", issue), "--session", ME, "--now", NOW]);
+  apply(w, passUuid, linear);
+  ok(w.env, ["commit", "--session", ME, "--now", NOW]);
+  assert.equal(readJson(path.join(w.data, "findings.json")).findings.find((one) => one.id === id).issue, issue.identifier);
+});
+
+test("a queued reopen is read again: a cancel by the owner wins, a Duplicate goes to its main issue", (t) => {
+  const queued = (id, issue) => registryEntry(id, issue, "review", { outcome: "queued", queuedAction: "reopen", sessionsTotal: 2, versions: { tags: ["v0.2.0"], range: "v0.2.0" }, latest: { tag: "v0.2.0", canHappen: true, alreadyChanged: false }, cost: { stops: measured(1), interventions: measured(0), extraRounds: unknown, minutes: unknown }, pointer: `runs/01d00000-0000-4000-8000-000000000000/${id}` });
+  const registry = [queued("F-34343434-0000-4000-8000-000000000001", "MONO-941"), queued("F-34343434-0000-4000-8000-000000000002", "MONO-942")];
+  const w = world(t, { registry });
+  const passUuid = ok(w.env, ["collect", "--session", ME, "--now", NOW]).passUuid;
+  const { selected } = analyse(w, passUuid, [], [
+    { id: "MONO-941", status: "Canceled", statusType: "canceled" },
+    { id: "MONO-942", status: "Duplicate", statusType: "canceled", duplicateOf: "MONO-943" },
+    { id: "MONO-943", identifier: "MONO-943", status: "Done", statusType: "completed" },
+  ]);
+  assert.deepEqual(selected.rows.map((row) => [row.id, row.row]), [[registry[0].id, "rejected"]], "no reopen of a canceled issue");
+  assert.deepEqual(selected.triage.map((entry) => [entry.id, entry.action]), [[registry[1].id, "reopen"]]);
+  ok(w.env, ["plan", "--session", ME, "--now", NOW]);
+  const ops = readJson(path.join(w.data, "runs", passUuid, "plan.json")).ops;
+  assert.deepEqual(ops.filter((op) => op.type === "update-issue").map((op) => op.target), ["MONO-943"]);
+});
+
+test("queued findings alone start a pass when nothing else is new", (t) => {
+  const root = scratch(t);
+  const repo = makePackRepo(path.join(root, "pack-repo"));
+  const home = path.join(root, "home");
+  fs.mkdirSync(home);
+  const data = path.join(root, "data");
+  fs.mkdirSync(data);
+  const env = { PATH: process.env.PATH, HOME: home, SESSION_AUDIT_HOME: data, SESSION_AUDIT_REPO: repo };
+  assert.equal(ok(env, ["collect", "--session", ME, "--now", NOW]).nothingNew, true);
+  fs.writeFileSync(path.join(data, "findings.json"), JSON.stringify({ findings: [registryEntry("F-56565656-0000-4000-8000-000000000001", null, "review", { outcome: "queued" })] }));
+  const started = ok(env, ["collect", "--session", ME, "--now", NOW]);
+  assert.equal(started.nothingNew, undefined);
+  assert.ok(started.passUuid);
 });

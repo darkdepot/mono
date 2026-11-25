@@ -768,8 +768,11 @@ export function register(options = {}) {
     const byProposal = new Map(checked.map((finding) => [finding.id, finding]));
     // Ids: kept from an earlier run of this pass, else the registry id the
     // model named, else the id of the proposal it named, else a new F-<uuid>.
+    const plan = runFile(dataRoot, passUuid, "plan.json", null);
+    const sentCreates = new Set((plan?.ops || []).filter((op) => op.type === "create-issue" && op.status !== "planned").map((op) => op.finding));
     const resolve = (finding, trail = new Set()) => {
-      if (assigned[finding.id]) return assigned[finding.id];
+      const cached = assigned[finding.id];
+      if (cached && !finding.sameAs) return cached;
       let id;
       if (finding.sameAs && /^F-/.test(finding.sameAs)) {
         if (!byId.has(finding.sameAs)) throw new AuditError(`${finding.id} names ${finding.sameAs}, which is not in the registry`);
@@ -781,6 +784,9 @@ export function register(options = {}) {
         id = resolve(other, trail);
       } else {
         id = `F-${crypto.randomUUID()}`;
+      }
+      if (cached && cached !== id && sentCreates.has(cached)) {
+        throw new AuditError(`${finding.id} was already sent to Linear as ${cached}; it cannot be joined to ${id} in this pass. Remove the sameAs or reconcile ${cached} first`, { finding: finding.id, sent: cached, sameAs: id });
       }
       assigned[finding.id] = id;
       return id;
@@ -837,7 +843,13 @@ export function register(options = {}) {
     for (const finding of findings) {
       write(["runs", passUuid, finding.id, "finding.json"], { ...finding, members: groups.get(finding.id) });
     }
-    const result = { passUuid, assigned, findings };
+    // Queued returns of earlier passes: their issue is read again now; an
+    // owner's cancel or a Duplicate since then wins over the reopen.
+    const carriedLinear = {};
+    for (const entry of registry.findings) {
+      if (entry.outcome === "queued" && entry.queuedAction === "reopen" && entry.issue && !groups.has(entry.id)) carriedLinear[entry.id] = linearState(entry.issue, issues);
+    }
+    const result = { passUuid, assigned, findings, carriedLinear };
     write(["runs", passUuid, "findings.json"], result);
     log(`register ${findings.map((finding) => `${finding.id}:${finding.outcome}`).join(" ")}`);
     return result;
@@ -865,7 +877,7 @@ export function recheckLatest(entry, index) {
   return { tag, canHappen: has(entry.places.latest), alreadyChanged: has(entry.places.changed) && !has(entry.places.rule) };
 }
 
-export function selectFindings(findings, registry, passUuid, limit, index = null) {
+export function selectFindings(findings, registry, passUuid, limit, index = null, carriedLinear = {}) {
   const rows = [];
   const triage = [];
   const seen = new Set(findings.map((finding) => finding.id));
@@ -885,14 +897,21 @@ export function selectFindings(findings, registry, passUuid, limit, index = null
     // A queued return keeps its issue and is reopened; others are created.
     const action = entry.queuedAction === "reopen" && entry.issue ? "reopen" : entry.issue ? null : "create";
     if (!action) continue;
+    let linear = null;
+    if (action === "reopen") {
+      linear = carriedLinear[entry.id];
+      if (!linear) throw new AuditError(`the Linear status of ${entry.issue} is needed before ${entry.id} is reopened: run register with its get_issue answer`, { issue: entry.issue });
+      if (linear.state === "rejected") { rows.push({ id: entry.id, row: "rejected", carried: true, linear }); continue; }
+      if (linear.state === "open") { rows.push({ id: entry.id, row: "repeat-open", carried: true, linear }); continue; }
+    }
     const latest = recheckLatest(entry, index);
-    const carried = { ...entry, latest, carried: true, action };
+    const carried = { ...entry, latest, carried: true, action, ...(linear ? { linear } : {}) };
     if (latest?.alreadyChanged) { rows.push({ id: entry.id, row: "already-changed", carried: true }); continue; }
     if (action === "create" && !eligibleForTriage(carried)) { rows.push({ id: entry.id, row: "report-only", carried: true }); continue; }
     triage.push(carried);
   }
   const ordered = triage.map((finding) => ({ ...finding, tieBreak: finding.id })).sort(compareTriage);
-  const brief = (finding) => ({ id: finding.id, action: finding.action, carried: Boolean(finding.carried), ...(finding.carried ? { latest: finding.latest } : {}) });
+  const brief = (finding) => ({ id: finding.id, action: finding.action, carried: Boolean(finding.carried), ...(finding.carried ? { latest: finding.latest, ...(finding.linear ? { linear: finding.linear } : {}) } : {}) });
   const chosen = ordered.slice(0, limit).map(brief);
   const queued = ordered.slice(limit).map(brief);
   return { passUuid, limit, triage: chosen, queued, rows };
@@ -903,7 +922,7 @@ export function select(options = {}) {
     const pass = runFile(dataRoot, passUuid, "findings.json", null);
     if (!pass) throw new AuditError("run register before select");
     const plan = runFile(dataRoot, passUuid, "plan.json", null);
-    const result = selectFindings(pass.findings, readRegistry(dataRoot), passUuid, config.triageLimit, new TagIndex(repo));
+    const result = selectFindings(pass.findings, readRegistry(dataRoot), passUuid, config.triageLimit, new TagIndex(repo), pass.carriedLinear || {});
     const order = [...result.triage, ...result.queued].map((entry) => entry.id);
     if (plan) {
       // Triage ops that may have reached Linear (sent or later) keep their
@@ -913,7 +932,14 @@ export function select(options = {}) {
       const rest = [...result.triage, ...result.queued].filter((entry) => !planned.includes(entry.id)).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
       const free = Math.max(0, config.triageLimit - planned.length);
       const all = [...result.triage, ...result.queued];
-      result.triage = [...planned.map((id) => keep.find((entry) => entry.id === id) || all.find((entry) => entry.id === id) || { id, action: "planned" }), ...rest.slice(0, free)];
+      // A finding dropped after its operation was sent stays, from its stored
+      // finding file, so the plan can carry the operation as it is.
+      const stored = (id) => {
+        if (!runFile(dataRoot, passUuid, path.join(id, "finding.json"), null)) throw new AuditError(`operation for ${id} was sent but its finding file is missing`);
+        const op = plan.ops.find((candidate) => candidate.finding === id && (candidate.type === "create-issue" || candidate.type === "update-issue"));
+        return { id, action: op.type === "update-issue" ? "reopen" : "create", stored: true };
+      };
+      result.triage = [...planned.map((id) => keep.find((entry) => entry.id === id) || all.find((entry) => entry.id === id) || stored(id)), ...rest.slice(0, free)];
       result.queued = rest.slice(free);
     }
     write(["runs", passUuid, "selection.json"], result);

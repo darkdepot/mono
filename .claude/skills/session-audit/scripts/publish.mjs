@@ -312,9 +312,16 @@ function passInputs(dataRoot, passUuid) {
   if (!findings || !selection) throw new AuditError("run register and select before plan");
   const registry = readRegistry(dataRoot);
   const carriedIds = new Map(selection.triage.concat(selection.queued, selection.rows).filter((chosen) => chosen.carried).map((chosen) => [chosen.id, chosen]));
-  selection.carried = registry.findings.filter((entry) => carriedIds.has(entry.id)).map((entry) => ({ ...entry, latest: carriedIds.get(entry.id).latest || entry.latest }));
+  selection.carried = registry.findings.filter((entry) => carriedIds.has(entry.id)).map((entry) => ({ ...entry, latest: carriedIds.get(entry.id).latest || entry.latest, linear: carriedIds.get(entry.id).linear || entry.linear }));
+  // Findings dropped after their operation was sent: from their stored file.
+  const stored = selection.triage.filter((chosen) => chosen.stored).map((chosen) => {
+    const { members: _members, ...finding } = runFile(dataRoot, passUuid, path.join(chosen.id, "finding.json"), null) || {};
+    return finding;
+  });
+  selection.carried.push(...stored);
   return {
     findings: findings.findings,
+    stored,
     selection,
     signals: runFile(dataRoot, passUuid, "signals.json", null),
     opened: runFile(dataRoot, passUuid, "opened.json", { signals: [], sessions: [] }),
@@ -688,7 +695,7 @@ export function commit(options = {}) {
     const signalsFile = runFile(dataRoot, passUuid, "signals.json", { signals: [] });
     const reviewed = new Set([...(inputs.opened.sessions || []), ...(signalsFile.signals || []).filter((signal) => (inputs.opened.signals || []).includes(signal.id)).map((signal) => signal.session).filter(Boolean)]);
     const seen = new Set();
-    for (const finding of inputs.findings) {
+    for (const finding of [...inputs.findings, ...inputs.stored]) {
       seen.add(finding.id);
       const entry = byId.get(finding.id) || { id: finding.id, encounters: [], issue: null, fixedIn: null, cleanSessions: [], fixConfirmed: false };
       const issue = created.get(finding.id);
