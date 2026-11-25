@@ -813,7 +813,14 @@ contract nor the round count. On the strict path after its three rounds,
 `resume.mjs` with `extraRound: {reason}` (with or without `taskChange`, never with
 `reviewRetry`) checks the right to one extra round and records it in
 `dispatch/KEY-aN/extra-round.json`, bound to the last spent receipt. Resume carries no grants or network override; a risk, critical or
-grant change is a new attempt on the same branch. Registry changes and collector
+grant change is a new attempt on the same branch. The attempt cap is the config
+`attemptCap` (the base for every task) plus the raises recorded for that Issue in
+`attempt-cap-raises.json` beside `attempts.json`, outside every worker grant;
+`orchestrator/attempt-cap.mjs raise` records one raise only while the cap is
+exhausted, with a reason, and above 6 attempts only with the owner's verbatim
+words; otherwise it refuses and writes nothing. A local config with a higher
+`attemptCap` is not the way to raise one task's cap; the ceiling of 6 is not
+configurable. See [attempt cap raises](references/orchestration-delivery.md#monitoring-protocol). Registry changes and collector
 admissions use `launch.lock`. The collector admits each round request into the
 host-owned ledger (`consumed/KEY-aN/rounds/`): a new collectionId only after every
 earlier round has a result, the same collectionId never with another request, and

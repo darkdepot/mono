@@ -6,7 +6,7 @@ import { startGate, extraRoundCheck } from "../gate.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
 import { workerTransport } from "../worker-transport.mjs";
-import { effectivePins, attemptState, recordTaskChange, dropTaskChange, recordReviewRetry, dropReviewRetry, voidReviewRetry, validExtraRoundRequest, recordExtraRound, dropExtraRound, voidExtraRound } from "./command-state.mjs";
+import { effectivePins, attemptState, recordTaskChange, dropTaskChange, recordReviewRetry, dropReviewRetry, voidReviewRetry, validExtraRoundRequest, recordExtraRound, dropExtraRound, voidExtraRound, attemptCapState, ATTEMPT_CAP_CEILING } from "./command-state.mjs";
 import { ensureCollector } from "./collector.mjs";
 import { hostRunsInProgress, settleRetiredHostRunsSync, inFlight, readLedger } from "../review-rounds.mjs";
 
@@ -275,7 +275,11 @@ export function checkSpawnAvailability(request) {
   const used = attempts[request.issue] ?? 0;
   if (!Number.isInteger(used) || used < 0) throw new Error("invalid attempt registry");
   if (request.attempt !== undefined && request.attempt !== used + 1) throw new Error('stale dispatch attempt');
-  if (used >= deliveryConfig(request.config).attemptCap) throw new Error("attempt cap reached");
+  // MONO-490: the cap is the config base plus the raises recorded for this issue by attempt-cap.mjs raise.
+  const cap = attemptCapState(request.root, request.issue, request.config);
+  if (used >= cap.cap) throw new Error(`attempt cap reached: ${used} of ${cap.cap} used (base ${cap.baseCap}, raises ${cap.raises.length}); ` +
+    `a raise is a recorded step: attempt-cap.mjs raise --root <root> --config <config> --issue ${request.issue} --reason <why>` +
+    ` (above ${ATTEMPT_CAP_CEILING} also --owner-words <the owner's words>)`);
   return { file, registry, attemptsFile, attempts, used };
 }
 export async function spawnWorker(request, preparation = {}) {

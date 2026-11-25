@@ -3,7 +3,7 @@ import { validateShipCertificate } from "../ship-certificate.mjs";
 import { qaDeliveryState, requireQaPassed } from '../qa-gate.mjs';
 import path from "node:path";
 import crypto from "node:crypto";
-import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, withLockSync, shipBotChecks, baseModelConfig, processStart } from "../runtime.mjs";
+import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, withLockSync, shipBotChecks, baseModelConfig, processStart, deliveryConfig } from "../runtime.mjs";
 import { validatePhase, requirePredecessors } from "../delivery-state.mjs";
 import { readLedger, inFlight, admissionFor, admitRound, requestDigest, validRoundRequest } from "../review-rounds.mjs";
 import { checkIdea, IDEA_GATE_DEFAULT_SINCE } from '../idea-gate.mjs';
@@ -434,6 +434,60 @@ export function voidExtraRound(pinsDirectory, grant, reason, options) {
     grants[index] = { ...grants[index], void: String(reason || "startup refused").replace(/\s+/g, " ").slice(0, 300) };
     atomicJson(extraRoundsFile(pinsDirectory), grants);
     return true;
+  }, options);
+}
+// MONO-490: a task's attempt cap is raised only through a recorded host step (attempt-cap.mjs raise), never by a
+// local config. attempt-cap-raises.json sits beside attempts.json in the orchestrator root, outside every worker grant
+// (only reports/ is worker-writable there): {ISSUE: [{number, reason, recordedAt, ownerWords?}]}. A raise adds one
+// attempt, only while the cap is exhausted, with a reason; a cap above ATTEMPT_CAP_CEILING needs the owner's verbatim
+// words. The ceiling is not configurable; orchestration.delivery.attemptCap stays the base for every task.
+// Every read-modify-write holds attempt-cap-raises.lock.
+export const ATTEMPT_CAP_CEILING = 6;
+const CAP_REASON_LIMIT = 500, OWNER_WORDS_LIMIT = 2000;
+export const capRaisesFile = root => path.join(root, "attempt-cap-raises.json");
+export const capRaisesLock = root => path.join(root, "attempt-cap-raises.lock");
+const ISSUE_KEY = /^[A-Z][A-Z0-9]*-\d+$/;
+const filledText = (value, limit) => typeof value === "string" && value.trim() !== "" && value.length <= limit;
+const validCapRaise = (raise, index) => raise?.number === index + 1 && filledText(raise.reason, CAP_REASON_LIMIT) &&
+  typeof raise.recordedAt === "string" && !Number.isNaN(Date.parse(raise.recordedAt)) && new Date(raise.recordedAt).toISOString() === raise.recordedAt &&
+  Object.keys(raise).every(key => ["number", "reason", "recordedAt", "ownerWords"].includes(key)) &&
+  (raise.ownerWords === undefined || filledText(raise.ownerWords, OWNER_WORDS_LIMIT));
+function capRaises(root) {
+  const file = capRaisesFile(root);
+  if (!fs.existsSync(file)) return {};
+  const all = readJson(file);
+  if (!all || typeof all !== "object" || Array.isArray(all) ||
+      Object.entries(all).some(([issue, raises]) => !ISSUE_KEY.test(issue) || !Array.isArray(raises) || !raises.every(validCapRaise)))
+    throw new Error("invalid attempt-cap-raises.json");
+  return all;
+}
+// The issue's attempt state: used attempts, the config base cap, recorded raises and the effective cap.
+export function attemptCapState(root, issue, config) {
+  const baseCap = deliveryConfig(config).attemptCap, raises = capRaises(root)[issue] ?? [];
+  raises.forEach((raise, index) => {
+    if (baseCap + index + 1 > ATTEMPT_CAP_CEILING && raise.ownerWords === undefined)
+      throw new Error(`invalid attempt-cap-raises.json: raise ${raise.number} of ${issue} lifts the cap to ${baseCap + index + 1} above ${ATTEMPT_CAP_CEILING} without owner words`);
+  });
+  const attemptsFile = path.join(root, "attempts.json");
+  const used = (fs.existsSync(attemptsFile) ? readJson(attemptsFile) : {})[issue] ?? 0;
+  if (!Number.isInteger(used) || used < 0) throw new Error("invalid attempt registry");
+  const cap = baseCap + raises.length;
+  return { issue, used, baseCap, cap, ceiling: ATTEMPT_CAP_CEILING, exhausted: used >= cap, raises };
+}
+export function raiseAttemptCap(root, issue, config, { reason, ownerWords } = {}, options) {
+  if (!path.isAbsolute(root ?? "") || !ISSUE_KEY.test(issue ?? "")) throw new Error("attempt cap raise refused: an absolute --root and an issue key are required");
+  if (!filledText(reason, CAP_REASON_LIMIT)) throw new Error(`attempt cap raise refused: a non-empty --reason of at most ${CAP_REASON_LIMIT} characters is required`);
+  const words = typeof ownerWords === "string" && ownerWords.trim() !== "" ? ownerWords : undefined;
+  if (words !== undefined && words.length > OWNER_WORDS_LIMIT) throw new Error(`attempt cap raise refused: --owner-words over ${OWNER_WORDS_LIMIT} characters`);
+  return withLockSync(capRaisesLock(root), () => {
+    const state = attemptCapState(root, issue, config);
+    if (!state.exhausted) throw new Error(`attempt cap raise refused: ${issue} cap is not exhausted: ${state.used} of ${state.cap} used`);
+    const cap = state.cap + 1;
+    if (cap > ATTEMPT_CAP_CEILING && words === undefined)
+      throw new Error(`attempt cap raise refused: ${issue} would go to ${cap} attempts, above the ceiling of ${ATTEMPT_CAP_CEILING}; record the owner's verbatim words with --owner-words`);
+    const raise = { number: state.raises.length + 1, reason: reason.trim(), recordedAt: new Date().toISOString(), ...(words === undefined ? {} : { ownerWords: words }) };
+    atomicJson(capRaisesFile(root), { ...capRaises(root), [issue]: [...state.raises, raise] });
+    return { issue, used: state.used, baseCap: state.baseCap, cap, raise };
   }, options);
 }
 export function recordTaskChange(pinsDirectory, url, text) {

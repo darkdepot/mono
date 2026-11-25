@@ -219,7 +219,9 @@ Workflow states:
      permits lifecycle replay; poll both mailbox and fallback.
    - Use active control for dispatch, draining for existing work only, idle only
      with empty registry. halt refuses spawn/resume without stopping workers.
-     Keep attempts.json when an entry retires; never reset the cap.
+     Keep attempts.json when an entry retires; never reset the cap. Raise one
+     Issue's cap only with `attempt-cap.mjs raise` (+1 while exhausted, reason;
+     above 6 the owner's verbatim words), never a local config: [cap](../../references/orchestration-delivery.md#monitoring-protocol).
 5. `monitor`
    - Apply the durable late-bot-feedback cursor
      in references/orchestration-delivery.md on restore and each deploy; P1/P2

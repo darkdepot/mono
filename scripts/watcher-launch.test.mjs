@@ -92,6 +92,11 @@ test('launch-watcher-required', async t => {
     assert.equal(Object.hasOwn(read(path.join(launched, 'pins.json')), 'screenCheck'), false);
     assert.match(fs.readFileSync(path.join(launched, 'dispatch.md'), 'utf8'), /## Проверка на хосте\n\nPinned `hostVerification: true`/);
     const entry = f.entry(); await stopped(entry.pid);
+    // MONO-490: the attempt-cap raise record sits beside attempts.json, outside every write grant of a launched worker.
+    const raises = path.join(f.root, 'attempt-cap-raises.json');
+    assert.ok(entry.workerWritableRoots.length > 0);
+    for (const grant of [...entry.workerWritableRoots, ...entry.writable_roots])
+      assert.ok(raises !== grant && !raises.startsWith(grant + path.sep), `${grant} grants ${raises}`);
     const resumeFile = path.join(f.scratch, 'resume.md'); put(resumeFile, 'Continue the same issue.');
     const resumeRequest = path.join(f.scratch, 'resume.json'); atomicJson(resumeRequest, { root: f.root, issue: f.issue, resumeFile });
     for (const name of ['missing', 'stale', 'future', 'dead', 'reused']) await t.test(`resume-${name}`, () => {
