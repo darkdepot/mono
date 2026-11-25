@@ -33,9 +33,8 @@ const SECRET_SHAPES = [
   // URL userinfo: scheme://user:password@host keeps only the scheme and host.
   [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]*@/gi, '$1[redacted]@'],
   // Every value of a cookie header, not only the first pair.
-  // JSON first: "Cookie":"a=b; c=d", an escaped \"Cookie\":\"…\", or "Set-Cookie":["a=b","c=d"]; the value ends at its quote.
-  [/((?:set-)?cookie\\?["']\s*:\s*)(\[[^\]\r\n]*\]|\\?["'](?:[^"'\\\r\n]|\\(?!["']))*)/gi,
-    (match, prefix, value) => prefix + value.replace(/=\s*[^;"'\\,\]\s]*/g, '=[redacted]')],
+  // JSON first (see redactJsonCookies), then a plain header line.
+  [null, value => redactJsonCookies(value)],
   [/\b((?:set-)?cookie\s*[:=]\s*)([^\r\n]*)/gi, (match, prefix, rest) => prefix + rest.replace(/=\s*("[^"]*"|[^;\s]*)/g, '=[redacted]')],
   [/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, '[redacted]'], [/\bAIza[0-9A-Za-z_-]{35}\b/g, '[redacted]'], [/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}/g, '[redacted]'],
   [/\bsk-[A-Za-z0-9_-]{16,}/g, '[redacted]'], [/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, '[redacted]'], [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.?[A-Za-z0-9_-]*/g, '[redacted]'],
@@ -43,9 +42,33 @@ const SECRET_SHAPES = [
   [/\b((?:[A-Za-z_-]*(?:api[_-]?key|token|secret|passw(?:or)?d|authorization|credential|session)[A-Za-z_-]*)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s;,&]+)/gi, '$1[redacted]'],
   [/[A-Za-z0-9_+=-]{32,}/g, '[redacted]'],
 ];
+// Cookie values inside JSON: "Cookie":"a=b; c=d", the same JSON escaped inside a string (\"Cookie\":\"…\") or
+// "Set-Cookie":["a=b","c=d"]. A string value runs to its closing quote, past escaped quotes inside it; every name=value is cut.
+function redactJsonCookies(text) {
+  const key = /(?:set-)?cookie(\\*)(["'])\s*:\s*/gi;
+  let out = '', from = 0, match;
+  while ((match = key.exec(text))) {
+    const start = key.lastIndex, escape = match[1], quote = match[2], opener = escape + quote;
+    let end = -1, value;
+    if (text[start] === '[') {
+      end = text.indexOf(']', start); end = end < 0 ? text.length : end + 1;
+      value = text.slice(start, end).replace(/=(?:\\.|[^;"'\\\]])*/g, '=[redacted]');
+    } else if (text.startsWith(opener, start)) {
+      // The closing quote is preceded by exactly as many backslashes as the opening one.
+      for (let at = text.indexOf(quote, start + opener.length); at >= 0; at = text.indexOf(quote, at + 1)) {
+        let slashes = 0; while (text[at - 1 - slashes] === '\\') slashes++;
+        if (slashes === escape.length) { end = at - escape.length; break; }
+      }
+      if (end < 0) end = text.length;
+      value = text.slice(start, start + opener.length) + text.slice(start + opener.length, end).replace(/=[^;]*/g, '=[redacted]');
+    } else continue;
+    out += text.slice(from, start) + value; from = end; key.lastIndex = Math.max(end, start);
+  }
+  return out + text.slice(from);
+}
 export function stderrReason(stderr, max = 600) {
   let value = String(stderr ?? '').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
-  for (const [shape, replacement] of SECRET_SHAPES) value = value.replace(shape, replacement);
+  for (const [shape, replacement] of SECRET_SHAPES) value = shape ? value.replace(shape, replacement) : replacement(value);
   value = value.split(/\r?\n/).map(line => line.replace(/[\x00-\x1f\x7f]/g, ' ').trim()).filter(Boolean).join(' | ');
   return value.length > max ? '…' + value.slice(-max) : value;
 }
@@ -580,8 +603,11 @@ function packGroups(units, budget, cost, where) {
   if (current.length) groups.push(current);
   return groups;
 }
-// The head line of a finding mapped to the base side through the file's hunks.
-function baseLine(fileDiff, line) {
+// The base range a head line stands for, walking the hunk that holds it. Context rows advance both sides, removed rows
+// the base side, added rows the head side. An added line in a run that directly replaces a removed run stands for that
+// whole removed run: which old line it replaces is ambiguous, so the whole run is kept (centre placed proportionally).
+// A pure insertion stands for the base line it follows.
+function baseRange(fileDiff, line) {
   let offset = 0;
   for (const hunk of splitHunks(fileDiff ?? '').hunks) {
     const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(hunk);
@@ -589,27 +615,41 @@ function baseLine(fileDiff, line) {
     const [oldStart, oldCount, newStart, newCount] = [match[1], match[2] ?? 1, match[3], match[4] ?? 1].map(Number);
     if (line < newStart) break;
     if (line >= newStart + newCount) { offset += oldCount - newCount; continue; }
-    // Inside the hunk: walk its rows. Context rows advance both sides, removed rows the base side, added rows the head side;
-    // an added head line maps to the base line where it was inserted.
-    let oldLine = oldStart, newLine = newStart;
-    for (const row of hunk.replace(/\n$/, '').split('\n').slice(1)) {
-      if (row.startsWith('\\')) continue;
-      if (row.startsWith('-')) { oldLine++; continue; }
-      if (newLine === line) return Math.max(1, row.startsWith('+') ? oldLine - 1 : oldLine);
-      newLine++; if (!row.startsWith('+')) oldLine++;
+    const rows = hunk.replace(/\n$/, '').split('\n').slice(1).filter(row => !row.startsWith('\\'));
+    let oldLine = oldStart, newLine = newStart, removedStart = null, removed = 0;
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+      if (row.startsWith('-')) {
+        if (index === 0 || !rows[index - 1].startsWith('-')) { removedStart = oldLine; removed = 0; }
+        removed++; oldLine++; continue;
+      }
+      if (row.startsWith('+')) {
+        const runStart = rows.slice(0, index).findLastIndex(item => !item.startsWith('+')) + 1;
+        const replaces = runStart > 0 && rows[runStart - 1].startsWith('-');
+        if (newLine === line) {
+          if (!replaces) { const at = Math.max(1, oldLine - 1); return { center: at, from: at, to: at }; }
+          let added = 0; while (runStart + added < rows.length && rows[runStart + added].startsWith('+')) added++;
+          const from = removedStart, to = removedStart + removed - 1;
+          return { center: Math.max(1, from + Math.floor((index - runStart) * removed / added)), from: Math.max(1, from), to: Math.max(1, to) };
+        }
+        newLine++; continue;
+      }
+      if (newLine === line) return { center: oldLine, from: oldLine, to: oldLine };
+      newLine++; oldLine++;
     }
-    return Math.max(1, oldLine);
+    const at = Math.max(1, oldLine); return { center: at, from: at, to: at };
   }
-  return Math.max(1, line + offset);
+  const at = Math.max(1, line + offset); return { center: at, from: at, to: at };
 }
 // Evidence cut to the regions around each finding, for the prompt only: a distinct shape, never content:null.
-function evidenceExcerpts(evidence, findings, radius, mapLine) {
+// rangesFor gives each finding's [from, to] lines on this side; the radius widens each of them.
+function evidenceExcerpts(evidence, findings, radius, rangesFor) {
   return evidence.map(item => {
     if (typeof item.content !== 'string') return item;
     const lines = item.content.split('\n'), windows = [];
-    const centers = [...new Set(findings.filter(finding => finding.file === item.file).flatMap(finding => mapLine(item.file, finding.line)))].sort((a, b) => a - b);
-    for (const center of centers) {
-      const from = Math.max(1, center - radius), to = Math.min(lines.length, center + radius);
+    const ranges = findings.filter(finding => finding.file === item.file).flatMap(finding => rangesFor(item.file, finding.line))
+      .map(([from, to]) => [Math.max(1, from - radius), Math.min(lines.length, to + radius)]).filter(([from, to]) => from <= to).sort((x, y) => x[0] - y[0]);
+    for (const [from, to] of ranges) {
       if (windows.length && from <= windows.at(-1)[1] + 1) windows.at(-1)[1] = Math.max(windows.at(-1)[1], to); else windows.push([from, to]);
     }
     return { file: item.file, trimmed: true, totalLines: lines.length, excerpts: windows.map(([from, to]) => ({ fromLine: from, toLine: to, text: lines.slice(from - 1, to).join('\n') })),
@@ -626,11 +666,12 @@ function boundedCheckerPrompt({ build, extra, limit, engine, findings, scopedDif
   const fullDiff = file => full.parts.find(part => part.file === file)?.diff;
   // A finding's line is a head line, or a base line when it points at removed code (a deleted file has only base lines):
   // the head side keeps the line itself, the base side the line itself and its head line mapped through the hunks.
-  const baseCenters = (fileDiff, line) => [...new Set([line, baseLine(fileDiff, line)])];
+  // The base side keeps the finding line itself (it may name removed code) and the whole base range its head line stands for.
+  const baseRanges = (fileDiff, line) => { const range = baseRange(fileDiff, line); return [[line, line], [range.from, range.to], [range.center, range.center]]; };
   // Each file's diff kept only around its findings: whole hunks near a finding on either side, a long hunk cut to its rows near it.
   const aroundFindings = (result, radius) => result.parts.filter(part => !binary.has(part.file) && findingFiles.has(part.file)).map(part => {
     const lines = findings.filter(finding => finding.file === part.file).map(finding => finding.line);
-    const headWindows = lines.map(line => [line - radius, line + radius]), baseWindows = lines.flatMap(line => baseCenters(part.diff, line)).map(line => [line - radius, line + radius]);
+    const headWindows = lines.map(line => [line - radius, line + radius]), baseWindows = lines.flatMap(line => baseRanges(part.diff, line)).map(([from, to]) => [from - radius, to + radius]);
     const near = (windows, line) => windows.some(([from, to]) => line >= from && line <= to);
     const overlaps = (windows, start, count) => count > 0 && windows.some(([from, to]) => start <= to && start + count - 1 >= from);
     const { header, hunks } = splitHunks(part.diff);
@@ -654,8 +695,8 @@ function boundedCheckerPrompt({ build, extra, limit, engine, findings, scopedDif
       return [kept.join('\n') + '\n'];
     }).join('');
   }).join('');
-  const head = radius => evidenceExcerpts(extra.headEvidence, findings, radius, (file, line) => [line]);
-  const base = radius => evidenceExcerpts(extra.baseEvidence, findings, radius, (file, line) => baseCenters(fullDiff(file), line));
+  const head = radius => evidenceExcerpts(extra.headEvidence, findings, radius, (file, line) => [[line, line]]);
+  const base = radius => evidenceExcerpts(extra.baseEvidence, findings, radius, (file, line) => baseRanges(fullDiff(file), line));
   const note = 'Input limit: evidence and diffs are cut to fit; read head files directly for more context.';
   const steps = [
     // Lossless: on a full-scope round the scoped diff is the same text as baseDiff.

@@ -293,3 +293,32 @@ test('MONO-486 review fix: a head line inside a mixed hunk maps to its base line
   assert.ok(c.context.baseEvidence[0].excerpts.some(excerpt => excerpt.fromLine <= 4201 && excerpt.toLine >= 4201 && excerpt.text.includes('row_004200 ')),
     JSON.stringify(c.context.baseEvidence[0].excerpts.map(excerpt => [excerpt.fromLine, excerpt.toLine])));
 });
+
+test('MONO-486 review fix: a head line in a block that replaces a removed block keeps the whole removed block, at production limits', async t => {
+  const row = index => `export const row_${String(index).padStart(6, '0')} = '${'v'.repeat(30)}';`;
+  const added = index => `export const new_${String(index).padStart(6, '0')} = '${'n'.repeat(570)}';`;
+  const base = Array.from({ length: 4500 }, (_, index) => row(index)).join('\n') + '\n';
+  // 4000 lines deleted and the next 400 replaced: one removed run of 4400 lines directly followed by 400 added lines.
+  const headText = [...Array.from({ length: 400 }, (_, index) => added(index)), ...Array.from({ length: 100 }, (_, index) => row(4400 + index))].join('\n') + '\n';
+  const f = fixture(t, { 'replaced.mjs': base });
+  fs.writeFileSync(path.join(f.worktree, 'replaced.mjs'), headText); f.git('add', '.'); f.git('commit', '-qm', 'replacement');
+  const request = { ...f.request, base: f.request.head, head: f.git('rev-parse', 'HEAD') };
+  // Head line 201 replaces something in base lines 1..4400; base line 4201 (row_004200) must stay visible.
+  const answer = (role, c) => role === 'code-review' ? review([finding('replaced.mjs', 201)], c.focusFiles ?? c.files) : { completed: true, verdicts: c.findings.map((item, index) => verdictFor(item, index)) };
+  const runner = recorder(answer), record = await runReviewRound(request, runner);
+  assert.equal(record.outcome, 'not-converged', JSON.stringify(record.failures));
+  const c = runner.calls.find(call => call.role === 'code-review-checker');
+  assert.ok(c.size <= 800000); assert.equal(c.context.diffScope, 'hunks around findings only');
+  assert.ok(!c.context.baseDiff.includes('new_000010 '), 'added lines far from the finding are cut');
+  for (const index of [0, 4200, 4399]) assert.match(c.context.baseDiff, new RegExp(`^-export const row_${String(index).padStart(6, '0')} `, 'm'));
+  const excerpts = c.context.baseEvidence[0].excerpts;
+  assert.ok(excerpts.some(excerpt => excerpt.fromLine <= 4201 && excerpt.toLine >= 4201 && excerpt.text.includes('row_004200 ')), JSON.stringify(excerpts.map(excerpt => [excerpt.fromLine, excerpt.toLine])));
+  assert.ok(excerpts.some(excerpt => excerpt.fromLine === 1 && excerpt.toLine >= 4400), 'the whole removed run stays in the base excerpt');
+});
+
+test('MONO-486 review fix: a JSON cookie value with escaped quotes is redacted to its closing quote', () => {
+  const reason = stderrReason('"Cookie":"sid=\\"short-cookie\\"; other=second-cookie"');
+  assert.equal(reason, '"Cookie":"sid=[redacted]; other=[redacted]"');
+  const nested = stderrReason('{"request":"{\\"Cookie\\":\\"sid=\\\\\\"inner-cookie\\\\\\"; other=nested-cookie\\"}"}');
+  for (const secret of ['inner-cookie', 'nested-cookie']) assert.ok(!nested.includes(secret), nested);
+});
