@@ -543,8 +543,16 @@ export function extract({ env = process.env, sessionId, target, from, to } = {})
     assertOwner(state, sessionId);
     const passUuid = checkName(state.pending.uuid, "pass uuid");
     const map = readMap(dataRoot, passUuid);
-    const mapSession = map.sessions.find((session) => session.id === target || session.ids.includes(target));
-    if (!mapSession) throw new AuditError(`session ${target} is not in the map of pass ${passUuid}`);
+    let mapSession = map.sessions.find((session) => session.id === target || session.ids.includes(target));
+    if (!mapSession) {
+      // A queued signal of an earlier pass: its session may have no new
+      // events now and so is not in this map; the queue keeps what is needed
+      // to open its own range.
+      const queued = readQueue(dataRoot).find((signal) => signal.sessionRef && (signal.sessionRef.id === target || signal.sessionRef.ids.includes(target)));
+      if (!queued) throw new AuditError(`session ${target} is not in the map of pass ${passUuid}`);
+      if (!from && !to) throw new AuditError(`session ${target} comes from the queue: give its range with --from and --to`, { range: queued.range });
+      mapSession = queued.sessionRef;
+    }
     checkName(mapSession.id, "session id");
     const entries = digestItems(mapSession, mapSession, config);
     const window = map.window;
