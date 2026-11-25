@@ -6229,10 +6229,16 @@ const STRING_PINS = [
   ["references/review-rubric.md","`advisory-ready`"],
   ["references/review-rubric.md","`needs-fixes`"],
   ["references/review-rubric.md","`blocked`"],
-  ["references/orchestration-delivery.md","EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|parked|green|gate-ack|halt|idle>"],
+  ["references/orchestration-delivery.md","EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|screen-check|parked|green|gate-ack|halt|idle>"],
   ["references/orchestration.md","`recorded-late`"],
   ["skills/design/references/approval.md", "mono-design: approved"],
   ["references/lifecycle.md", "design="],
+  // MONO-481: the host, not Deploy or the worker, compares screens with the mockups when the recipe turns it on.
+  ["references/ui-implementation.md", "screenCheck"],
+  ["references/worker-contract.md", "screenCheck"],
+  ["skills/implement/SKILL.md", "screenCheck"],
+  ["skills/qa/SKILL.md", "screenCheck"],
+  ["references/qa-recipes.md", "screenCheck"],
 ];
 const REQUIRED_HEADINGS = [
   ["references/qa-skills.md", "Драйверы"],
@@ -6240,6 +6246,7 @@ const REQUIRED_HEADINGS = [
   ["references/orchestration-delivery.md", "Independent QA before merge"],
   ["references/orchestration-delivery.md", "Current host inputs"],
   ["references/orchestration-delivery.md", "Final project pass"],
+  ["references/orchestration-delivery.md", "Screen check before review"],
   ["skills/qa/SKILL.md", "Вход"],
   ["skills/qa/SKILL.md", "Ожидания до первого действия"],
   ["skills/qa/SKILL.md", "Копия и данные"],
@@ -6575,6 +6582,8 @@ const MACHINE_TOKENS = new Set([
   "qa", "mono:qa", "mono-qa certificate", "given-version", "expectedItems", "taskCriteria",
   "scripts/orchestrator/qa.mjs", "qa/state.json", "heldIssues", "finalIssue",
   "<!-- mono-qa product: Mono Agent Workflow -->",
+  // MONO-481: recipe switch and host result path of the screen check before review; behavior lives in gate/collector fixtures.
+  "screenCheck", "screen-check/<head>.json",
   "head", "phase_result",
   // Shared dialogue path; no-window behavior is covered by native text fixtures.
   "owner-dialog.md",
@@ -6747,7 +6756,7 @@ const MACHINE_TOKENS = new Set([
   "Documentation workflow",
   "Drift candidate:",
   "EVENT:",
-  "EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|parked|green|gate-ack|halt|idle>",
+  "EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|screen-check|parked|green|gate-ack|halt|idle>",
   "Exit disposition:",
   "Expansion destination:",
   "Frozen slice disposition:",
@@ -7143,6 +7152,10 @@ function validateDocumentSkeleton() {
   for (const [file, heading] of REQUIRED_HEADINGS) {
     if (!read(file).split("\n").some((line) => /^#{1,6}\s+/.test(line) && line.replace(/^#{1,6}\s+/, "").trim() === heading)) fail(`${file}: missing required heading ${heading}`);
   }
+  // MONO-481: the screen check section names the pin and the host result it waits for.
+  const screenSection = documentSection(read("references/orchestration-delivery.md"), "Screen check before review");
+  for (const token of ["screenCheck", "screen-check/<head>.json"])
+    if (requireMachineToken(token) && !(screenSection ?? []).join("\n").includes(token)) fail(`references/orchestration-delivery.md: Screen check before review missing ${token}`);
   failures.push(...laneFieldFaults(read("references/issue-only-lane.md")));
   console.log(`Prose-pin counter = ${rejectedStringPins}; machine-token list self-check ${rejectedStringPins ? "red" : "green"}.`);
 }

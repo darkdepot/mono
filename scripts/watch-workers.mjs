@@ -4,7 +4,7 @@
 // "## Heartbeat"). Watches one orchestrator mailbox root and prints one
 // stable line per worker liveness event to stdout:
 //
-//   <ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|parked|green|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>
+//   <ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|screen-check|parked|green|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>
 //
 // Checks per scan (log checks apply only to Issues present in workers.json,
 // the active registry; logs of retired Issues are history and are skipped
@@ -54,7 +54,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { validatePhase, correlatedDeliveryReport, PARKED_REASONS } from "./delivery-state.mjs";
-import { readLedger, admissionFor, collectorAlive, roundRequestName } from "./review-rounds.mjs";
+import { readLedger, admissionFor, collectorAlive, roundRequestName, screenCheckRequestFile } from "./review-rounds.mjs";
 import { atomicJson, deliveryConfig, processStart, IDENTITY_FIELDS, identity, packLayout, runtimePackRoot } from "./runtime.mjs";
 
 import { workerTransport } from "./worker-transport.mjs";
@@ -99,7 +99,7 @@ function usage(exitCode = 2) {
   console.error("");
   console.error("Watch an orchestrator mailbox root (logs/, reports/, workers.json) and");
   console.error("print one line per worker liveness event to stdout:");
-  console.error("  <ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|parked|green|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>");
+  console.error("  <ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|screen-check|parked|green|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>");
   console.error("");
   console.error("Options:");
   console.error("  --root <dir>        Orchestrator root, e.g. ~/.mono-agent-workflow/orchestrator/<product> (required)");
@@ -1178,6 +1178,13 @@ function checkPhase(log, entry, nowMs) {
     }
   }
   phases.sort((a, b) => b.publishedAtMs - a.publishedAtMs || b.report.sequence - a.report.sequence);
+  // MONO-481: a round held for the host's screen check needs the orchestrator; the collector notes it in the
+  // host-owned ledger until a result for that head exists. Repeats every --repeat-sec while the note stands.
+  try {
+    const note = JSON.parse(fs.readFileSync(screenCheckRequestFile(args.root, log.issue, entry.attempt), "utf8"));
+    if (/^[a-f0-9]{40}$/.test(note.head ?? "") && note.issue === log.issue && note.attempt === entry.attempt)
+      emitEvent("screen-check", log.issue, `screen check needed: ${log.issue} head ${note.head} attempt ${entry.attempt}`, `screen-check:${log.issue}:${entry.attempt}:${note.head}`, nowMs);
+  } catch {}
   // A review round in flight: the worker's round request has no result yet. It waits only
   // while the collector of this attempt lives; a stopped collector is a stall to report.
   const roundFile = [path.join(roots[0], "reports", roundRequestName(log.issue, entry.attempt)),

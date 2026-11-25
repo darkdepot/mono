@@ -88,6 +88,8 @@ test('launch-watcher-required', async t => {
     // MONO-457: BASE hostVerification (Mono's own config) is pinned for the attempt and adds the dispatch block.
     const launched = path.join(f.root, 'dispatch', `${f.issue}-a1`);
     assert.equal(read(path.join(launched, 'pins.json')).hostVerification, true);
+    // MONO-481: no mockup in the snapshot and no recipe switch: the attempt is not pinned with screenCheck.
+    assert.equal(Object.hasOwn(read(path.join(launched, 'pins.json')), 'screenCheck'), false);
     assert.match(fs.readFileSync(path.join(launched, 'dispatch.md'), 'utf8'), /## Проверка на хосте\n\nPinned `hostVerification: true`/);
     const entry = f.entry(); await stopped(entry.pid);
     const resumeFile = path.join(f.scratch, 'resume.md'); put(resumeFile, 'Continue the same issue.');

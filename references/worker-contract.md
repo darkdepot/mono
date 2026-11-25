@@ -204,7 +204,8 @@ report/log: delivery-root.
 not_built:[{what,reason}]; not_verified:[{what,why,risk}], one per unverified
 criterion, what=criterion. unverified/done:true built/untested; done:false unfinished;
 broken never becomes unverified. Screen visibility without browser: unverified,
-even with HTML tests passing. Summary: «экран в браузере не проверен».
+even with HTML tests passing. Summary: «экран в браузере не проверен». Pin
+`screenCheck`: why «сверка экранов на хосте»; confirmed only by a host report naming the same head.
 Tiny text-only: verbatim «поведение не меняется» (no inserted words) in pre-edit evidence and summary line 2, with reason/check boundary; summary exactly 3 lines: result / exception / Preflight handoff; evidence excluded.
 Issue comment: summary → «Не проверено» → «Найдена поломка» → evidence
 (criteria, significant-state table before edits, exclusions, decisions).

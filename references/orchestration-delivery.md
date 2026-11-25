@@ -248,7 +248,8 @@ changes it cannot run from its sandbox: the orchestrator runs them in the test
 Linear workspace after the first code report, before review. No separate gate:
 Preflight checks the proof in the code report before its first collection, and
 pre-ship review (`mono:review`) reports a missing run; the collection's review
-round never sees the code report.
+round never sees the code report. Screens of a task with a mockup: [Screen check
+before review](#screen-check-before-review).
 
 Parks:
 - needs-decision, `review not-converged after round 3` or `review round limit
@@ -273,6 +274,59 @@ list. A round takes up to 25 minutes on a large risky change; every reviewer rol
 has its own time limit, so a hung CLI ends the round instead of a window; a gate
 stuck outside them (a blocking Git read) is stopped after a fixed two-hour safety
 ceiling, also when its collector died, and the round fails.
+
+### Screen check before review
+
+A product whose recipe sets `screenCheck: true` (off by default; it builds and
+runs worker code on the host before any review) gets its screens compared with
+the approved mockups before the first review round. Dispatch pins `screenCheck`
+from BASE, like `hostVerification`, only when the task snapshot holds
+`design.json`; the worker never takes screenshots and gets no new park. It never
+runs with `hostVerification`: with both on BASE the config check and dispatch refuse,
+since host verification runs worker code with host rights and could forge the check.
+
+- Who and when: the orchestrator on the host runs `mono:qa` in `given-version`
+  (never gate-eligible) on the head of the attempt's first preflight collection
+  request: the first point where everything in the code report is committed and
+  pushed. Never start it from the code report alone; it may describe uncommitted
+  edits. Trigger: `EVENT:screen-check KEY screen check needed: KEY head <SHA>`
+  from the watcher, repeated while the collector's note
+  `consumed/KEY-aN/screen-check-request.json` stands (the collector log also
+  says `screen check waiting: <head>`); stall and dead stay quiet meanwhile.
+- What: only the PNG items for the snapshot's artboards and the taste rules
+  from «Снимок контекста».
+- Order: while the attempt's receipt history has no spent round, the collector
+  keeps the round in flight without a gate launch until
+  `consumed/KEY-aN/screen-check/<head>.json` exists for that head (the worker
+  keeps waiting on `wait-round`; no collection retry is used, nothing counts
+  toward `not-reviewed`). The result lives only in this host-owned ledger,
+  outside every worker grant and outside evidenceRoot; only the host writes it:
+  `node '<pack-root>/scripts/orchestrator/qa.mjs' screen-check --pins
+  <dispatch/KEY-aN/pins.json> --head <SHA> --outcome passed|mismatches --report
+  <link>` with the registered `<root>/dispatch/KEY-aN/pins.json` path. It binds
+  the result to that file and digest, the attempt number and the digest of the
+  snapshot's approved design (`design.json` and PNGs); a symlink anywhere in the
+  path is refused. A result for another head, attempt or design does not count.
+  The gate reads it fresh again after any host verification, right before the
+  round, so a run that changes the approved design leaves the round waiting:
+  no result refuses with «no result for this head yet», `mismatches` refuses
+  with the report link; neither spends a round or runs the reviewer or host
+  verification. `passed` lets the first round run. From the first spent round
+  on, task changes included, the collection no longer waits.
+- Result: write the mismatches (artboard, expected/actual, snapshot) as one
+  «Изменение задачи» comment on the Issue and pass its link as `--report`: the
+  live worker gets it in the gate line and fixes without a resume (a stopped
+  worker is resumed with that `taskChange` as usual). The fixed head is checked
+  again before its first round. A
+  `passed` result needs no write: the first round's gate line ends with
+  «screen check on the host passed on this head (report <link>)».
+- Queue: the screen check and QA passes share one stand and simulator; at most
+  one of them runs on the host at a time, in one queue by request time, with no
+  priority.
+- Proof: the report names its head. The worker and Preflight count it as the
+  visibility check only for the same head; otherwise the item stays
+  `unverified` («сверка экранов на хосте»).
+- QA after Ship is unchanged and checks the full list again.
 
 ## Delivery Write Barriers
 
@@ -413,10 +467,12 @@ state and, in persistent mode, atomically writes its own `watcher.json` each tic
 procStart, packVersion, startedAt, beatAt, intervalSec; while `workers.json` names a
 worker it also keeps the Claude login fresh every five minutes (stderr only). It emits one stable
 line per watcher event to stdout —
-`<ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|parked|green|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
+`<ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|screen-check|parked|green|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
 `phase-rejected` names the task and mismatched identity fields when a phase
 report fails strict report-to-task correlation. It never accepts the report or
 suppresses liveness on its strength.
+`screen-check` («screen check needed: KEY head SHA») repeats while a round waits
+for the host's screen check ([Screen check before review](#screen-check-before-review)).
 The watcher observes the active registry (`workers.json`), not the
 directory's history; retired Issues' logs are outside its scope.
 

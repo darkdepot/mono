@@ -15,7 +15,7 @@ import { digest, readJson, atomicJson, withLock, canonical, REVIEW_PRODUCER } fr
 import { publishPhase } from "./delivery-state.mjs";
 import { effectivePins, admitCollection, collectionPinsBinding, checkCollectionRequest, pinnedShipPolicy } from "./orchestrator/command-state.mjs";
 import { acceptAck } from "./orchestrator/accept.mjs";
-import { readLedger, recordResult, roundRequestName } from "./review-rounds.mjs";
+import { readLedger, recordResult, roundRequestName, writeScreenCheck } from "./review-rounds.mjs";
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixture = name => fs.readFileSync(path.join(checkout, "scripts/fixtures", name), "utf8");
@@ -818,14 +818,14 @@ test("collector ignores phase reports and refuses a round request before the cod
   });
 });
 
-async function collectorAttentionFixture(runFixture, plugin = false) {
+async function collectorAttentionFixture(runFixture, plugin = false, extraPins = {}) {
   const { collectOnce } = await import("./orchestrator/collector.mjs");
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-attention-"));
   const root = path.join(scratch, "root"), repo = path.join(scratch, "repo"), skillsRoot = path.join(scratch, "skills"), evidenceRoot = path.join(scratch, "evidence");
   const issue = "MONO-999", head = "d".repeat(40), options = { root, issue, attempt: 1 };
   const identity = { packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4 };
   const pins = { ...(plugin ? { packRoot: path.join(scratch, "task-plugin") } : {}), product: "fixture", root, worktree: repo, skillsRoot, evidenceRoot, baseRef: "origin/main", risk: "standard", critical: null,
-    verification: { command: "node", args: ["verify.mjs"] }, workerWritableRoots: [repo] };
+    verification: { command: "node", args: ["verify.mjs"] }, workerWritableRoots: [repo], ...extraPins };
   const pinsFile = path.join(root, "dispatch", `${issue}-a1`, "pins.json");
   const log = path.join(root, "reports", `${issue}-collector-a1.log`);
   const roundFile = path.join(root, "reports", roundRequestName(issue, 1)), registry = path.join(root, "workers.json");
@@ -857,7 +857,7 @@ async function collectorAttentionFixture(runFixture, plugin = false) {
       atomicJson(file, { receipt });
       return { receipt: file, receiptDigest: digest({ receipt }) };
     };
-    await runFixture({ poll, lines, roundFile, round, registry, entry, phase, request, signedHistory, options, scratch });
+    await runFixture({ poll, lines, roundFile, round, registry, entry, phase, request, signedHistory, options, scratch, evidenceRoot, head, skillsRoot, pinsFile });
   } finally { process.env.PATH = oldPath; fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 
@@ -871,6 +871,37 @@ test("plugin collector executes the task folder gate with a separate helper root
     assert.equal(only.result.receipt, history.receipt);
     assert.notEqual(f.request(1).packRoot, f.request(1).skillsRoot);
   }, true);
+});
+
+test("MONO-481 collector keeps the first round in flight without a gate launch until the host's screen check of the head", async () => {
+  await collectorAttentionFixture(async f => {
+    const launches = path.join(f.scratch, "gate-launches");
+    write(path.join(f.skillsRoot, "scripts/gate.mjs"), `import fs from 'node:fs'; fs.appendFileSync(${JSON.stringify(launches)}, 'gate\\n'); console.log('gate preflight: pass: fixture admission');\n`);
+    atomicJson(f.roundFile, f.round(1));
+    await f.poll(); await f.poll();
+    const [waiting] = readLedger(f.options.root, f.options.issue, 1);
+    assert.equal(waiting.result ?? null, null, "the round stays in flight: the worker keeps waiting, no new park");
+    assert.equal(fs.existsSync(launches), false, "no gate launch, no collection retry consumed");
+    assert.deepEqual(f.lines().map(line => line.replace(/^\S+ /u, "")),
+      [`attention: screen check waiting: ${f.head}: run mono:qa given-version on this head, then qa.mjs screen-check`], "logged once for the orchestrator");
+    // The note the watcher turns into EVENT:screen-check, in the host-owned ledger.
+    const note = path.join(f.options.root, "consumed", `${f.options.issue}-a1`, "screen-check-request.json"), noted = JSON.parse(fs.readFileSync(note, "utf8"));
+    assert.deepEqual([noted.head, noted.collectionId], [f.head, `preflight-collect:${f.head}:1`]);
+    // Another head's result, or this head's result bound to other pins (a forgery), does not release it.
+    const binding = f.entry.pins;
+    writeScreenCheck("e".repeat(40), "passed", "report", binding); await f.poll();
+    writeScreenCheck(f.head, "passed", "report", { file: f.pinsFile, digest: "0".repeat(64) }); await f.poll();
+    assert.equal(fs.existsSync(launches), false);
+    // Results live only in the host-owned ledger, never in evidenceRoot.
+    assert.equal(fs.existsSync(path.join(f.evidenceRoot, "screen-check")), false);
+    // The host's result for this head releases the round to the gate (mismatches too: the gate refuses them with a receipt).
+    writeScreenCheck(f.head, "mismatches", "https://linear.app/x#comment-1", binding);
+    await f.poll();
+    assert.ok(fs.readFileSync(launches, "utf8").length > 0, "the gate runs once the head has a result");
+    assert.equal(fs.existsSync(note), false, "the note is removed once the head has a result");
+    // The stub gate writes no receipt, so the round ends like any receipt-less collection.
+    assert.match(readLedger(f.options.root, f.options.issue, 1)[0].result.reason, /collection retries exhausted/);
+  }, false, { screenCheck: true });
 });
 
 test("collector records a refused round once for a request off the launch pins, also after a restart", async () => {

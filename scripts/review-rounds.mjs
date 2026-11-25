@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { atomicJson, canonical, digest, readJson, lockTreeDead, syncDir, processTable } from "./runtime.mjs";
+import { atomicJson, canonical, digest, readJson, lockTreeDead, syncDir, processTable, REVIEW_PRODUCER } from "./runtime.mjs";
 
 export const TERMINAL = ["done", "refused", "failed"];
 export const roundRequestName = (issue, attempt) => `${issue}-round-a${attempt}.json`;
@@ -99,6 +99,90 @@ export async function recoverHostRun(evidenceRoot, collectionId, pinsFile) {
     }
   fs.rmSync(marker, { force: true });
   return touched ?? "host run interrupted";
+}
+
+// MONO-481 pinned screenCheck: before the attempt's first spent review round the host compares the screens of
+// exactly the requested committed head with the approved mockups (mono:qa given-version) and writes the result
+// into the attempt's host-owned ledger, consumed/KEY-aN/screen-check/<head>.json: outside every worker grant and
+// outside the evidence root a host verification run is judged on. Only the host writes it (`qa.mjs screen-check`).
+export const SCREEN_OUTCOMES = ["passed", "mismatches"];
+// The ledger directory resolved under the real orchestrator root; a symlink anywhere below it is refused.
+function screenCheckDir(pinsFile, create = false) {
+  const attemptDir = path.basename(path.dirname(pinsFile));
+  if (!/^[A-Z][A-Z0-9]*-\d+-a[1-9][0-9]*$/.test(attemptDir) || path.basename(path.dirname(path.dirname(pinsFile))) !== "dispatch")
+    throw new Error("screen check: pins must be the registered <root>/dispatch/KEY-aN/pins.json");
+  let dir = fs.realpathSync(path.dirname(path.dirname(path.dirname(pinsFile))));
+  for (const part of ["consumed", attemptDir, "screen-check"]) {
+    dir = path.join(dir, part);
+    let stat = null; try { stat = fs.lstatSync(dir); } catch {}
+    if (!stat) { if (!create) return null; fs.mkdirSync(dir, { mode: 0o700 }); stat = fs.lstatSync(dir); }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`screen check: symlink or non-directory in the result path: ${dir}`);
+  }
+  return dir;
+}
+export const screenCheckFile = (pinsFile, head, create = false) => { const dir = screenCheckDir(pinsFile, create); return dir && path.join(dir, `${head}.json`); };
+// The approved mockup lives in the attempt's dispatch snapshot (design.json and design/*.png beside the pins), not in
+// the commit: its digest binds a result to the images it was checked against.
+export function screenDesignDigest(pinsFile) {
+  const snapshot = path.join(path.dirname(pinsFile), "snapshot"), hash = crypto.createHash("sha256");
+  const manifest = path.join(snapshot, "design.json"), images = path.join(snapshot, "design");
+  hash.update(fs.existsSync(manifest) ? fs.readFileSync(manifest) : "no design.json").update("\0");
+  for (const name of fs.existsSync(images) ? fs.readdirSync(images).sort() : [])
+    hash.update(name).update("\0").update(fs.readFileSync(path.join(images, name))).update("\0");
+  return hash.digest("hex");
+}
+const attemptNumber = pinsFile => Number(/-a([1-9][0-9]*)$/.exec(path.basename(path.dirname(pinsFile)))?.[1] ?? NaN);
+// The result is bound to the attempt (its launch pins file and digest, attempt number) and to the approved design
+// digest: it counts for that attempt and those images only.
+export function writeScreenCheck(head, outcome, report, pins) {
+  if (!/^[a-f0-9]{40}$/.test(head ?? "")) throw new Error("screen check: head must be a full commit SHA");
+  if (!SCREEN_OUTCOMES.includes(outcome)) throw new Error(`screen check: outcome must be ${SCREEN_OUTCOMES.join(" or ")}`);
+  if (typeof report !== "string" || !report.trim() || /[\r\n]/.test(report)) throw new Error("screen check: report must name the check report on one line");
+  if (!path.isAbsolute(pins?.file ?? "") || !/^[a-f0-9]{64}$/.test(pins?.digest ?? "")) throw new Error("screen check: launch pins binding {file, digest} required");
+  const file = screenCheckFile(pins.file, head, true);
+  try { if (fs.lstatSync(file).isSymbolicLink()) throw new Error(`screen check: symlink in the result path: ${file}`); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  atomicJson(file, { head, outcome, report, pins: { file: pins.file, digest: pins.digest }, attempt: attemptNumber(pins.file),
+    design: screenDesignDigest(pins.file), recordedAt: new Date().toISOString() });
+  return file;
+}
+// The collector's note that a round waits for the host's screen check, in the host-owned ledger (outside worker
+// grants); the watcher reports it as EVENT:screen-check until the collector removes it.
+export const screenCheckRequestFile = (root, issue, attempt) => path.join(root, "consumed", `${issue}-a${attempt}`, "screen-check-request.json");
+// Completed (spent) review rounds of this attempt in the receipt history; unreadable files are not rounds.
+export function spentRounds(evidenceRoot, pinsFile) {
+  const history = path.join(evidenceRoot, "history");
+  if (!fs.existsSync(history)) return 0;
+  return fs.readdirSync(history).filter(name => name.endsWith(".json")).filter(name => {
+    try {
+      const file = path.join(history, name), stat = fs.lstatSync(file);
+      const receipt = stat.isFile() && !stat.isSymbolicLink() ? readJson(file).receipt : null;
+      return receipt?.producer === REVIEW_PRODUCER && attemptOf(receipt.pins?.file, pinsFile) && receipt.review?.spent === true;
+    } catch { return false; }
+  }).length;
+}
+// What holds the attempt's first round: null when it may run, otherwise {state: waiting|mismatches, reason}.
+// A result that is not a regular file, is unreadable, names another head, another attempt or other launch pins, or
+// was checked against other approved images counts as no result. Read fresh at every decision, never cached.
+export function readScreenCheck(head, binding) {
+  try {
+    const file = screenCheckFile(binding.file, head), stat = file ? fs.lstatSync(file) : null;
+    if (!stat) return null;
+    const result = stat.isFile() && !stat.isSymbolicLink() ? readJson(file) : null;
+    return result?.head === head && SCREEN_OUTCOMES.includes(result.outcome) && typeof binding?.file === "string" &&
+      result.pins?.file === binding.file && result.pins?.digest === binding.digest && result.attempt === attemptNumber(binding.file) &&
+      result.design === screenDesignDigest(binding.file) ? result : null;
+  } catch { return null; }
+}
+export function screenCheckHold({ pins, binding, spent, head }) {
+  if (pins?.screenCheck !== true || spent > 0) return null;
+  const result = readScreenCheck(head, binding);
+  if (!result)
+    return { state: "waiting", reason: "screen check on the host has no result for this head yet; no round spent, request this head again after a few minutes" };
+  if (result.outcome === "mismatches")
+    return { state: "mismatches", reason: `screen check on the host found mismatches with the mockup on this head (report ${String(result.report ?? "").replace(/\s+/g, " ").slice(0, 500)}); ` +
+      "fix them from the task change and request the new head; no round spent" };
+  return null;
 }
 
 export function validRoundRequest(round) {

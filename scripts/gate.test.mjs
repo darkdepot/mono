@@ -387,7 +387,7 @@ test("named collection fixtures through the gate CLI", async t => {
         if (fixture.mode === "review-rounds") pins.risk = "risky";
         pins.verification.args = ["-e", `const fs=require('node:fs');fs.mkdirSync('.orchestrator',{recursive:true});fs.writeFileSync('.orchestrator/verify-saw',fs.readFileSync(${JSON.stringify(path.join(bin, "review.log"))},'utf8'))`];
       }
-      if (fixture.mode === "review-host") {
+      if (fixture.mode.startsWith("review-host")) {
         // MONO-462: Git routing inherited by the collection never reaches the command (it would read the worker's copy).
         Object.assign(env, { GIT_DIR: path.join(repo, ".git"), GIT_WORK_TREE: repo });
         // MONO-457: the verification exits with the code in verify-exit, logs where and how it ran, and on verify-tamper
@@ -401,6 +401,7 @@ fs.appendFileSync(p.join(d,'verify-runs'),JSON.stringify({cwd:process.cwd(),tmp:
 if(read('verify-psfail'))fs.writeFileSync(p.join(d,'ps-fail'),'1');
 const w=read('verify-probe');if(w){const f=p.join(w,'input.mjs'),kept=fs.readFileSync(f);fs.writeFileSync(f,kept+'// uncommitted fix\\n');const seen=fs.readFileSync('input.mjs','utf8');fs.writeFileSync(f,kept);if(!seen.includes('uncommitted fix')){console.log('FAIL add broken');process.exit(1);}}
 const t=read('verify-tamper');if(t){const x=JSON.parse(t);fs.writeFileSync(p.join(${history},'planted.json'),JSON.stringify({receipt:{producer:'gate-review-v3',pins:{file:x.pins},collectionId:x.collectionId,verification:{host:true,exitCode:0}}}));fs.appendFileSync(x.edit,' ');}
+const sc=read('verify-screen');if(sc){const x=JSON.parse(sc);fs.mkdirSync(p.dirname(x.file),{recursive:true});fs.writeFileSync(x.file,JSON.stringify(x.body));}
 if(read('verify-child')){const c=require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>require("node:fs").writeFileSync('+JSON.stringify(read('verify-child'))+',"{}"),1500)'],{stdio:'ignore'});c.unref();}
 const code=Number(read('verify-exit')??0);if(code)console.log('FAIL fixture step');console.log('host verify output: process table read');process.exit(code);`];
       }
@@ -421,6 +422,8 @@ const code=Number(read('verify-exit')??0);if(code)console.log('FAIL fixture step
               approval: { ...input.approval, body: input.body }, issueContext: input.context, since: '2026-10-17' }));
         }
       }
+      // MONO-481: the screen check before the first review round, pinned like hostVerification.
+      if (fixture.mode.endsWith("-screen")) pins.screenCheck = true;
       atomicJson(pinsFile, pins);
       const binding = { file: pinsFile, digest: sha256File(pinsFile) };
       const entry = { issue: "MONO-999", attempt: 1, stage: "mono-deliver", worktree: repo,
@@ -675,6 +678,84 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         passing.receipt.verification = { ...pins.verification, exitCode: 0, sandbox: { mode: 'workspace-write', probed: true } };
         atomicJson(stored, passing);
         const sandboxed = call(at(fixed)); assert.equal(sandboxed.status, 1); assert.match(sandboxed.stdout, /host verification missing on this head/);
+        return;
+      }
+      if (fixture.mode === 'review-screen' || fixture.mode === 'review-host-screen') {
+        // MONO-481: pinned screenCheck. Before the attempt's first spent round the collection waits for the host's screen
+        // check of exactly this head: waiting and mismatches run no reviewer, spend no round and never count toward
+        // not-reviewed; from the first spent round on (task changes included) the collection no longer waits.
+        const author = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid'];
+        const commit = text => { fs.appendFileSync(path.join(repo, 'input.mjs'), text); git('add', 'input.mjs'); git(...author, 'commit', '-m', text.trim()); return git('rev-parse', 'HEAD'); };
+        const host = fixture.mode === 'review-host-screen', { workerVerification: _, ...unverified } = request;
+        const at = (tip, n = 1, extra = {}) => ({ ...(host ? unverified : { ...request, workerVerification: { head: tip, exitCode: 0 } }),
+          head: tip, collectionId: `preflight-collect:${tip}:${n}`, ...extra });
+        const round = async (value, status, line) => {
+          await admit(value);
+          for (const result of [call({ ...value, collect: true }), call(value)]) { assert.equal(result.status, status, result.stdout + result.stderr); assert.match(result.stdout, line); }
+          return JSON.parse(fs.readFileSync(path.join(evidence, `${value.head}.json`), 'utf8')).receipt;
+        };
+        const screen = (tip, outcome) => {
+          const r = spawnSync(process.execPath, ['scripts/orchestrator/qa.mjs', 'screen-check', '--pins', pinsFile, '--head', tip, '--outcome', outcome,
+            '--report', `https://linear.app/darkdepot/issue/MONO-999/x#comment-screen-${outcome}`], { env, encoding: 'utf8' });
+          assert.equal(r.status, 0, r.stdout + r.stderr);
+        };
+        const waiting = /fail: screen check on the host has no result for this head yet; no round spent/;
+        const reviewers = () => reviewCalls(bin).filter(role => role === 'reviewer').length;
+        const runs = () => fs.existsSync(path.join(scratch, 'verify-runs')) ? fs.readFileSync(path.join(scratch, 'verify-runs'), 'utf8').trim().split('\n').length : 0;
+        setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'First leftover', title: 'First leftover' })] });
+        const first = commit('export const one = 1;\n');
+        if (host) {
+          // With host verification pinned too, a waiting head runs neither the verification nor the reviewer.
+          let receipt = await round(at(first), 1, waiting);
+          assert.deepEqual([runs(), reviewers(), receipt.review.spent, receipt.verification.exitCode], [0, 0, false, null]);
+          screen(first, 'passed'); setReview(bin, { findings: [] });
+          // Dispatch never pins both switches (round 3); these pins only exercise the gate's re-validation after a run.
+          // Codex review round 2: a worker-authored host run that changes the approved design and exits 0 does not get
+          // the round; the result is re-validated against the current snapshot after the run, never from a cached read.
+          const design = path.join(path.dirname(pinsFile), 'snapshot/design.json');
+          write(path.join(scratch, 'verify-screen'), JSON.stringify({ file: design, body: { forged: true } }));
+          receipt = await round(at(first, 2), 1, waiting);
+          assert.deepEqual([runs(), reviewers(), receipt.review.spent], [1, 0, false], 'the run happened, the round did not');
+          fs.unlinkSync(path.join(scratch, 'verify-screen')); fs.unlinkSync(design);
+          // The result lives in the host-owned ledger, not in evidenceRoot: nothing a host run is judged on, nothing to quarantine.
+          assert.equal(fs.existsSync(path.join(evidence, 'screen-check')), false);
+          receipt = await round(at(first, 3), 0, /pass: review clean \(round 1 of 1\) and host verification verified on head; screen check on the host passed on this head \(report .*#comment-screen-passed\)$/m);
+          assert.deepEqual([runs(), reviewers(), receipt.review.spent], [2, 1, true]);
+          return;
+        }
+        let receipt = await round(at(first), 1, waiting);
+        assert.deepEqual([receipt.review.outcome, receipt.review.spent, reviewCalls(bin).length], ['refused', false, 0]);
+        // Another head's result does not count: a file for another head, or this head's file naming another head.
+        const other = 'e'.repeat(40);
+        screen(other, 'passed'); await round(at(first, 2), 1, waiting);
+        atomicJson(path.join(fs.realpathSync(root), 'consumed/MONO-999-a1/screen-check', `${first}.json`), { head: other, outcome: 'passed', report: 'x' });
+        await round(at(first, 3), 1, waiting);
+        // A result without the host's binding to this attempt's launch pins (hand-written) does not count either.
+        atomicJson(path.join(fs.realpathSync(root), 'consumed/MONO-999-a1/screen-check', `${first}.json`), { head: first, outcome: 'passed', report: 'x' });
+        await round(at(first, 5), 1, waiting);
+        screen(first, 'mismatches');
+        receipt = await round(at(first, 4), 1, /fail: screen check on the host found mismatches with the mockup on this head .*#comment-screen-mismatches\); fix them from the task change and request the new head; no round spent/);
+        assert.deepEqual([receipt.review.spent, reviewCalls(bin).length], [false, 0]);
+        // The fixed head needs its own screen check before the first round.
+        const second = commit('export const second = 2;\n');
+        await round(at(second), 1, waiting);
+        screen(second, 'passed');
+        // Waiting refusals never count toward not-reviewed: the first one after them is not yet blocked.
+        setReview(bin, { loggedOut: 'codex' });
+        receipt = await round(at(second, 2), 1, /fail: not-reviewed: .*no round spent, request this head once more/);
+        setReview(bin, { loggedOut: null });
+        // The round's line carries the host's result for this head: the worker cannot read evidenceRoot.
+        receipt = await round(at(second, 3), 1, /fail: review not-converged \(round 1 of 1\).*; screen check on the host passed on this head \(report .*#comment-screen-passed\)$/m);
+        assert.deepEqual([receipt.review.spent, reviewers(), receipt.screenCheck.head], [true, 1, second]);
+        // From the first spent round on no screen check is needed: the fixed head passes on the worker's verification.
+        const third = commit('export const third = 3;\n');
+        await round(at(third), 0, /pass: review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification/);
+        // A task change after the spent round gets its round without a screen check either.
+        const url = 'https://linear.app/darkdepot/issue/MONO-999/x#comment-7';
+        recordTaskChange(path.dirname(pinsFile), url, `Изменение задачи: ${url}\nRound the result.`);
+        setReview(bin, { findings: [], verdict: reviewVerdict({ outcome: 'rejected', closed: true }) });
+        await round(at(third, 2), 0, /pass: review clean \(round 1 of 1\) and verification verified on head/);
+        assert.equal(reviewers(), 2);
         return;
       }
       if (fixture.mode === 'review-fast') {

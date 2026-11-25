@@ -9,7 +9,7 @@ import { atomicJson, canonical, digest, readJson, flags, identity, isMain, proce
 import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
-import { hostRunMarker, hostRunCheckout, removeHostCheckout, evidenceSnapshot, evidenceTouched, stopHostGroup } from './review-rounds.mjs';
+import { hostRunMarker, hostRunCheckout, removeHostCheckout, evidenceSnapshot, evidenceTouched, stopHostGroup, screenCheckHold, readScreenCheck } from './review-rounds.mjs';
 
 export { reviewEnvironment } from "./model-environment.mjs";
 
@@ -267,7 +267,9 @@ if(r.error)console.error(r.error.message);process.exit(r.status??(r.signal?128:1
 export function validatePreflight(receipt, head, base) {
   requireThat(receipt?.producer === REVIEW_PRODUCER && receipt.review, "missing review receipt or old receipt format; request a new collection");
   requireThat(receipt.head === head && receipt.base === base, "missing or stale review receipt/head/base");
-  requireThat(ACCEPTED.includes(receipt.review.outcome), reviewRefusal(receipt.review, receipt.verification?.host === true));
+  // MONO-481: the worker cannot read the host ledger; the round's line carries the host's screen check of this head.
+  const screen = receipt.screenCheck?.head === head ? `; screen check on the host passed on this head (report ${receipt.screenCheck.report})` : '';
+  requireThat(ACCEPTED.includes(receipt.review.outcome), reviewRefusal(receipt.review, receipt.verification?.host === true) + screen);
   requireThat(receipt.consistency?.passed === true && receipt.consistency.error === null, `collection consistency failed or missing: ${receipt.consistency?.error ?? "no record"}`);
   // Host verification (pinned hostVerification): the collection ran the full verification of this head outside the sandbox.
   // Otherwise the collection does not verify (exitCode null): only the worker's full verification of this head, exit 0, passes it.
@@ -288,7 +290,7 @@ export function validatePreflight(receipt, head, base) {
   requireThat(!worker || (worker.head === head && worker.exitCode === 0), "worker verification is not on this head");
   const fixes = receipt.review.hostVerified ? ', fixes after it confirmed by the full verification on the host,' : worker ? ', fixes after it confirmed by the worker\'s full verification,' : '';
   return `review ${receipt.review.outcome} (round ${receipt.review.round} of ${receipt.review.limit ?? ROUND_LIMIT})${fixes} and ${host ? 'host ' : ''}verification verified on head` +
-    (successors.length ? `; successor candidates: ${successors.map(item => item.line).join('; ')}` : '');
+    (successors.length ? `; successor candidates: ${successors.map(item => item.line).join('; ')}` : '') + screen;
 }
 
 const ROUND_LIMIT_REACHED = `review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); split the Issue or change approach in a new attempt`;
@@ -504,8 +506,12 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     // New PR remarks on the same head are not covered by the stored round: they need a round of their own.
     if (prior.reuse && canonical(prior.reuse.prRemarks ?? null) !== canonical(request.prRemarks?.length ? request.prRemarks : null)) prior.reuse = null;
     let verification = { command: request.verification.command, args: request.verification.args, exitCode: null };
+    // MONO-481 pinned screenCheck: until the attempt's first spent round the round waits for the host's screen check of
+    // this head. Waiting and mismatches are refusals: no round, no reviewer, no host run, never a not-reviewed.
+    const hold = () => screenCheckHold({ pins, binding: request.pins, spent: prior.spent, head });
+    let screen = hold();
     // Skipped only where the answer is the blocked refusal anyway (not-reviewed twice, no stored round to reuse).
-    if (hostVerify && (prior.reuse || prior.notReviewed < 2)) {
+    if (hostVerify && !screen && (prior.reuse || prior.notReviewed < 2)) {
       verification = await runHostVerification(request.verification, repo, head, evidenceRoot, request.collectionId, request.pins.file);
       const touched = evidenceTouched(readJson(hostRunMarker(evidenceRoot, request.collectionId)).snapshot, evidenceRoot, request.pins.file) ?? verification.descendants ?? null;
       if (touched) { consistency.passed = false; consistency.error = touched; }
@@ -513,7 +519,12 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       if (!verification.descendants) fs.rmSync(hostRunMarker(evidenceRoot, request.collectionId), { force: true });
       checkConsistency();
     }
+    // Re-validated fresh after any host run, right before the round: a run that changed the approved design (or the
+    // result) leaves the round waiting. The receipt names the result this decision read.
+    screen ??= hold();
+    const passedScreen = !screen && pins?.screenCheck === true && prior.spent === 0 ? readScreenCheck(head, request.pins) : null;
     if (!consistency.passed) review = refuse(`collection consistency failed: ${consistency.error}`);
+    else if (screen) review = refuse(screen.reason);
     else if (hostVerify && verification.host !== true) review = refuse(`blocked: ${NOT_REVIEWED_TWICE}`);
     else if (verification.host && verification.exitCode !== 0) review = refuse(hostFailure(verification));
     else if (prior.reuse) review = { ...prior.reuse.review, ...roundOutcome(prior.reuse.review.record, prior.reuse.review.round, strict), spent: false, reusedFrom: prior.reuse.runId };
@@ -534,6 +545,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     receipt = { producer: REVIEW_PRODUCER, recordedAt, ...binding, runId: crypto.randomUUID(), head, base, review,
       // Without host verification the worker runs the full verification; the collection records the pinned command unrun.
       verification, consistency };
+    // The screen check this round waited for, named in the round's line (validatePreflight).
+    if (passedScreen?.outcome === 'passed') receipt.screenCheck = { head, report: passedScreen.report };
     atomicJson(path.join(evidenceRoot, "history", `${receipt.runId}.json`), { receipt });
     atomicJson(receiptFile, { receipt });
   }

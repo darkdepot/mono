@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { readJson, isMain } from '../runtime.mjs';
-import { commandFlags, allowedFlags } from './command-state.mjs';
+import path from 'node:path';
+import { commandFlags, allowedFlags, sha256File } from './command-state.mjs';
 import { qaRecipeSource, qaDeliveryState, qaRecipeDigest, requireQaPassed } from '../qa-gate.mjs';
 import { validateShipCertificate } from '../ship-certificate.mjs';
+import { writeScreenCheck } from '../review-rounds.mjs';
 
 // Read-only deploy preparation; the caller supplies the freshly read PR head.
 export function prepareQa({ root, config, issue, head, shipReport }) {
@@ -13,14 +15,26 @@ export function prepareQa({ root, config, issue, head, shipReport }) {
   return requireQaPassed({ root, config, issue, head, shipCertificate: report.certificate });
 }
 
+// MONO-481: the host records its screen check of one committed head for an attempt pinned with screenCheck.
+export function recordScreenCheck({ pins, head, outcome, report }) {
+  const file = path.resolve(pins), launch = readJson(file);
+  if (launch.screenCheck !== true) throw new Error('screen check: the attempt is not pinned with screenCheck');
+  return writeScreenCheck(head, outcome, report, { file, digest: sha256File(file) });
+}
+
 if (isMain(import.meta.url)) {
   try {
     const [command, ...argv] = process.argv.slice(2), args = commandFlags(argv);
-    const usage = 'Usage: qa.mjs prepare --config <file> [--root <root> --issue <KEY> --head <SHA> --ship-report <file>] | digest --config <file>';
+    const usage = 'Usage: qa.mjs prepare --config <file> [--root <root> --issue <KEY> --head <SHA> --ship-report <file>] | digest --config <file>' +
+      ' | screen-check --pins <dispatch/KEY-aN/pins.json> --head <SHA> --outcome passed|mismatches --report <link>';
     if (command === 'digest') {
       allowedFlags(args, ['config']);
       if (!args.config) throw new Error(`${usage}\nmissing --config`);
       console.log(JSON.stringify({ recipeDigest: qaRecipeDigest(readJson(args.config)) }));
+    } else if (command === 'screen-check') {
+      allowedFlags(args, ['pins', 'head', 'outcome', 'report']);
+      for (const key of ['pins', 'head', 'outcome', 'report']) if (!args[key]) throw new Error(`${usage}\nmissing --${key}`);
+      console.log(JSON.stringify({ file: recordScreenCheck(args) }));
     } else {
       if (command !== 'prepare') throw new Error(usage);
       allowedFlags(args, ['root', 'config', 'issue', 'head', 'ship-report']);
