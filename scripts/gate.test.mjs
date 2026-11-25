@@ -286,6 +286,8 @@ test("MONO-482 extra round: who may have one, and which grant the gate counts", 
   const clean = spent([]); assert.deepEqual(decide(clean), { refusal: null, receipt: clean[2].runId }, 'a clean third round and a later fix: granted');
   const accepted = spent([open('k1'), open('k2')]); accepted[2].review = { ...accepted[2].review, outcome: 'clean-with-successors', successors: [{ key: 'k1', line: 'P2' }, { key: 'k2', line: 'P2' }] };
   assert.equal(decide(accepted).refusal, null, 'successor candidates of an accepted round are not open findings');
+  // In a round that did not converge every leftover counts, an older defect the worker did not fix too.
+  assert.match(decide(spent([open('k1', { danger: true }), open('k2', { origin: 'pre-existing' })])).refusal, /2 findings open/);
   for (const [name, receipts, extra, refusal] of [
     ['rounds left', spent([open()]).slice(0, 2), {}, /rounds left \(2 of 3 spent\)/],
     ['two open findings', spent([open('k1'), open('k2')]), {}, /2 findings open; the extra round is for at most one/],
@@ -307,6 +309,12 @@ test("MONO-482 extra round: who may have one, and which grant the gate counts", 
   assert.equal(extraRoundGranted(one, { pins, grants: [{ ...grant, recordedAt: '2099-01-01T00:00:00.000Z' }], now }), false, 'dated after the collection');
   assert.equal(extraRoundGranted(otherAttempt, { pins, grants: [grant], now }), false, 'never carried into a new attempt');
   assert.equal(extraRoundGranted(one.slice(0, 2), { pins, grants: [grant], now }), false);
+  // A review retry after the grant (an environmental not-reviewed pair on the fourth round's head) neither spends
+  // a round nor touches the grant: the two stay independent, only never in one resume.
+  const fourthHead = '9'.repeat(40), env = () => ({ ...receipt('not-reviewed'), head: fourthHead, review: { outcome: 'not-reviewed', spent: false, cause: 'environment', contractDigest,
+    failures: [{ role: 'code-review', attempt: 1, cause: 'timeout' }] } });
+  const streak = [...one, env(), env()], retried = reviewHistory(streak, { pins, head: fourthHead, base, contractDigest, retries: [{ number: 1, recordedAt: time() }], now: time() });
+  assert.deepEqual([retried.spent, retried.notReviewed, extraRoundGranted(streak, { pins, grants: [grant], now: time() })], [3, 0, true]);
   // The fourth round judges leftovers like the third.
   assert.equal(roundOutcome({ outcome: 'not-converged', findings: [reviewed()] }, 4, true).outcome, 'clean-with-successors');
   assert.equal(roundOutcome({ outcome: 'not-converged', findings: [reviewed({ danger: true })] }, 4, true).outcome, 'not-converged');
@@ -1024,6 +1032,24 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
           assert.throws(() => extraRoundCheck(pinsFile), /extraRound refused: one extra round per attempt/);
           assert.throws(() => recordExtraRound(attempt, 'again', bound), /one extra round per attempt/);
           assert.equal(extraRounds(attempt).length, 1, 'a refused second grant writes nothing');
+          return;
+        }
+        if (fixture.mode === 'review-extra-fix') {
+          // A clean round 3, then a QA fix on a new head without a task change: the extra round reads only the fixes and
+          // open findings and a clean result is ready in the same attempt.
+          setReview(bin, { findings: leftover, verdict: dangerous });
+          await round(at(commit('export const one = 1;\n')), 1, /fail: review not-converged \(round 1 of 3\)/);
+          setReview(bin, { findings: [], verdict: reviewVerdict({ outcome: 'rejected', closed: true }) });
+          await round(at(commit('export const two = 2;\n')), 0, /pass: review clean \(round 2 of 3\)/);
+          const third = await round(at(commit('export const three = 3;\n')), 0, /pass: review clean \(round 3 of 3\)/);
+          const fix = commit('export const qaFix = 4;\n');
+          await round(at(fix), 1, limit3);
+          recordExtraRound(attempt, 'QA bugs fixed after a clean round 3', extraRoundCheck(pinsFile).receipt);
+          const before = reviewers();
+          const receipt = await round(at(fix, 2), 0, /pass: review clean \(round 4 of 4 \(extra\)\) and verification verified on head/);
+          assert.deepEqual([receipt.review.round, receipt.review.record.rounds.at(-1).scope, reviewers() - before], [4, 'fixes-and-open-findings', 1],
+            'the extra round without a task change reads only the fixes and open findings');
+          assert.deepEqual([receipt.pins.file, receipt.review.contractDigest], [pinsFile, third.review.contractDigest], 'same attempt and contract');
           return;
         }
         // review-extra-change: the main path of an outside fix. A clean round 3, then a task change and a new head; the

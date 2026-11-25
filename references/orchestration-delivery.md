@@ -310,8 +310,8 @@ Parks:
 
 `clean-with-successors` passes. Its candidates are older defects (on the strict
 path only harmless ones), minor P3
-leftovers from round 2 on (never data, security or gate bypass) and, on round 3,
-leftovers both roles call harmless. After merge the task's Linear writer (the
+leftovers from round 2 on (never data, security or gate bypass) and, on round 3
+and the extra round 4, leftovers both roles call harmless. After merge the task's Linear writer (the
 worker through Linear MCP when it has access, otherwise the orchestrator) files
 every `must-file` entry of the receipt's `review.successors` list (an older dangerous defect; a minor one
 only for data, security or gate bypass) and decide
