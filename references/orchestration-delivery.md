@@ -284,7 +284,7 @@ Parks:
      root never overlap (a second is refused, no round spent). The fourth
      round reads the fixes and open findings, or the whole change after a task
      change, and judges leftovers like round 3; its lines say
-     `round 4 of 4 (extra)`. Write the grant to the journal in one line with the
+     `round 4 of 4, extra`. Write the grant to the journal in one line with the
      reason; no separate Linear record.
   2. Merge: green CI, passed required checks and no open finding harming the
      main path, data or the owner's install.
