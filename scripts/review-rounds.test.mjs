@@ -255,6 +255,40 @@ test("MONO-483 review retries: restoring touched evidence never undoes a void re
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+// MONO-482: the extra round grant beside the launch pins is host-only like a review retry: a host verification run that
+// plants, edits or removes it is touched evidence and the grant is put back, keeping a void recorded meanwhile.
+test("MONO-482 host run: a planted, edited or removed extra round grant is touched evidence and put back, a void survives", async () => {
+  const { recordExtraRound, voidExtraRound, extraRounds } = await import("./orchestrator/command-state.mjs");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-extra-round-")), evidence = path.join(root, "evidence");
+  try {
+    const dir = path.join(root, "dispatch", "MONO-999-a1"), pinsFile = path.join(dir, "pins.json"), file = path.join(dir, "extra-round.json");
+    fs.mkdirSync(dir, { recursive: true }); fs.mkdirSync(path.join(evidence, "history"), { recursive: true }); fs.writeFileSync(pinsFile, "{}");
+    const planted = JSON.stringify([{ number: 1, reason: "planted", receipt: "run-3", recordedAt: "2026-11-25T10:00:00.000Z" }]);
+    let snapshot = evidenceSnapshot(evidence, pinsFile);
+    fs.writeFileSync(file, planted);
+    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /evidence changed during host verification: extra-round\.json/);
+    assert.equal(fs.existsSync(file), false, "a planted grant is moved aside");
+    const grant = recordExtraRound(dir, "QA fix after round 3", "run-3");
+    snapshot = evidenceSnapshot(evidence, pinsFile);
+    fs.rmSync(file);
+    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /extra-round\.json/);
+    assert.deepEqual(extraRounds(dir), [grant], "a removed grant is put back");
+    // During the run: the run edits the grant to another receipt and a refused startup voids the real one.
+    snapshot = evidenceSnapshot(evidence, pinsFile);
+    fs.writeFileSync(file, JSON.stringify([{ ...grant, receipt: "run-9" }]));
+    assert.equal(voidExtraRound(dir, grant, "startup refused: fixture"), true);
+    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /extra-round\.json/);
+    assert.deepEqual(extraRounds(dir), [{ ...grant, void: "startup refused: fixture" }], "the edit is gone and the void stays");
+    assert.equal(fs.existsSync(path.join(dir, "extra-round.lock")), false, "the lock is released");
+    // A voided grant leaves the attempt its extra round; an effective one refuses a second.
+    const again = recordExtraRound(dir, "after the refused startup", "run-3");
+    assert.equal(again.number, 2);
+    assert.throws(() => recordExtraRound(dir, "third", "run-3"), /one extra round per attempt/);
+    fs.writeFileSync(file, JSON.stringify([{ ...grant }, { ...again }]));
+    assert.throws(() => extraRounds(dir), /invalid extra-round\.json/, "two effective grants are never read");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 // Codex review round 2 on MONO-481: a symlink anywhere in consumed/KEY-aN/screen-check/<head>.json is refused,
 // for writing and for reading.
 test("MONO-481 screen check result path: a symlink in the chain is refused", () => {

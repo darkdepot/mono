@@ -30,9 +30,12 @@ const attemptOf = (receiptPins, pinsFile) => typeof receiptPins === "string" && 
 // While the run is going only this attempt's collection writes receipts bound to its pins, so a changed
 // history file, or a new or changed receipt bound to these pins, means the run touched the evidence.
 // Head receipts of other attempts may be replaced legitimately meanwhile and are not judged.
-// MONO-483: the attempt's host-owned control files beside the launch pins (task-changes.json, review-retries.json)
-// are judged too: the run has host rights, and a planted task change or review retry would steer the review gate.
-const CONTROL_FILES = ["task-changes.json", "review-retries.json"];
+// MONO-483: the attempt's host-owned control files beside the launch pins (task-changes.json, review-retries.json,
+// MONO-482 extra-round.json) are judged too: the run has host rights, and a planted task change, review retry or
+// extra round would steer the review gate.
+const CONTROL_FILES = ["task-changes.json", "review-retries.json", "extra-round.json"];
+// Control files whose entries a refused startup may void during the run: each is restored under its own lock.
+const VOIDABLE = { "review-retries.json": "review-retries.lock", "extra-round.json": "extra-round.lock" };
 export function evidenceSnapshot(evidenceRoot, pinsFile) {
   const files = [];
   for (const name of CONTROL_FILES) {
@@ -52,10 +55,10 @@ export function evidenceSnapshot(evidenceRoot, pinsFile) {
   }
   return files;
 }
-// The snapshot of review-retries.json goes back under its own lock, but a void the current file carries for the same
-// retry is kept: a void only narrows what a retry may do (a refused startup may void it during the host run).
-function restoreRetries(file, bytes) {
-  withLockSync(path.join(path.dirname(file), "review-retries.lock"), () => {
+// The snapshot of review-retries.json (and extra-round.json) goes back under its own lock, but a void the current file
+// carries for the same entry is kept: a void only narrows what an entry may do (a refused startup may void it during the host run).
+function restoreVoidable(file, bytes) {
+  withLockSync(path.join(path.dirname(file), VOIDABLE[path.basename(file)]), () => {
     const old = JSON.parse(Buffer.from(bytes, "base64").toString("utf8"));
     let current = []; try { current = fs.lstatSync(file).isFile() ? JSON.parse(fs.readFileSync(file, "utf8")) : []; } catch {}
     const voided = new Map((Array.isArray(current) ? current : []).filter(item => typeof item?.void === "string").map(item => [`${item.number}@${item.recordedAt}`, item.void]));
@@ -72,7 +75,7 @@ export function evidenceTouched(snapshot, evidenceRoot, pinsFile) {
     const now = after.get(file);
     if (now?.hash === old.hash || (!old.history && !old.control && !now?.ours)) continue;
     touched.push(old.control ? path.basename(file) : path.relative(evidenceRoot, file));
-    if (old.control && path.basename(file) === "review-retries.json" && old.bytes !== undefined) restoreRetries(file, old.bytes);
+    if (old.control && VOIDABLE[path.basename(file)] && old.bytes !== undefined) restoreVoidable(file, old.bytes);
     else if (old.ours && old.bytes !== undefined) { fs.rmSync(file, { recursive: true, force: true }); fs.writeFileSync(file, Buffer.from(old.bytes, "base64"), { flag: "wx" }); }
     else if (old.control) fs.rmSync(file, { recursive: true, force: true });
     else if (now?.ours) quarantineEvidence(evidenceRoot, file);

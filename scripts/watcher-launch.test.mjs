@@ -217,6 +217,70 @@ test('review-retry resume: recorded beside the launch pins, dropped when the lau
   } finally { await f.cleanup(); }
 });
 
+// MONO-482: resume extraRound grants one extra review round in the same attempt. The host checks the right to it
+// before anything is written; it is recorded beside the launch pins (outside every worker grant), dropped by a refused
+// spawn, never twice per attempt and never with reviewRetry; a task change in the same resume is fine.
+test('extra-round resume: checked before anything is written, recorded beside the launch pins once per attempt (MONO-482)', async () => {
+  const f = fixture();
+  try {
+    pulse(f.root); pass(f.dispatch()); const entry = f.entry(); await stopped(entry.pid);
+    const attempt = path.join(f.root, 'dispatch', `${f.issue}-a1`), pinsFile = path.join(attempt, 'pins.json'), grants = path.join(attempt, 'extra-round.json');
+    const pins = read(pinsFile); assert.equal(pins.risk, 'risky');
+    const resumeFile = path.join(f.scratch, 'extra-round.md'); put(resumeFile, 'One extra round: fix the last finding and request the next round.\n');
+    const request = path.join(f.scratch, 'extra-round.json'), resume = body => { atomicJson(request, body); return f.call('orchestrator/resume.mjs', '--request', request); };
+    const registryBefore = () => fs.readFileSync(path.join(f.root, 'workers.json'), 'utf8');
+    let clock = 0;
+    const seal = (outcome, findings) => { clock++;
+      atomicJson(path.join(pins.evidenceRoot, 'history', `run-${clock}.json`), { receipt: { producer: 'gate-review-v3', pins: { file: pinsFile, digest: 'd' }, runId: `run-${clock}`,
+        recordedAt: new Date(Date.UTC(2026, 10, 25, 0, clock)).toISOString(), head: String(clock).repeat(40), base: 'b'.repeat(40),
+        review: { outcome, spent: true, successors: [], record: { outcome, findings } } } }); return `run-${clock}`; };
+    const finding = (key, extra = {}) => ({ key, weight: 'P2', file: 'a.mjs', line: 1, title: key, status: 'confirmed', outcome: 'confirmed', danger: true, origin: 'introduced', outOfContract: false, riskRaised: false, ...extra });
+    const refused = (body, line) => {
+      const before = registryBefore(), r = resume({ root: f.root, issue: f.issue, resumeFile, ...body });
+      assert.notEqual(r.status, 0); assert.match(r.stderr, line);
+      assert.equal(fs.existsSync(grants), false, 'a refusal writes no grant'); assert.equal(registryBefore(), before, 'a refusal leaves the registry as it was');
+      assert.equal(fs.existsSync(path.join(attempt, 'task-changes.json')), false, 'a refusal records no task change');
+    };
+    const url = `https://linear.app/fixture/issue/${f.issue}/x#comment-1`;
+    for (const extraRound of [true, {}, { reason: ' ' }, { reason: 'x', extra: 1 }, { reason: 'x'.repeat(501) }]) refused({ extraRound }, /extraRound must be \{reason\}/);
+    refused({ extraRound: { reason: 'retry' }, reviewRetry: true }, /reviewRetry and extraRound are exclusive/);
+    seal('not-converged', [finding('k1')]); seal('not-converged', [finding('k1')]);
+    refused({ extraRound: { reason: 'too early' } }, /extraRound refused: rounds left \(2 of 3 spent\)/);
+    refused({ extraRound: { reason: 'too early' }, taskChange: url }, /extraRound refused: rounds left/);
+    const third = seal('not-converged', [finding('k1'), finding('k2')]);
+    refused({ extraRound: { reason: 'two open' } }, /extraRound refused: 2 findings open; the extra round is for at most one/);
+    fs.rmSync(path.join(pins.evidenceRoot, 'history', `${third}.json`));
+    const risky = seal('not-converged', [finding('k1'), finding('k2', { status: 'closed', riskRaised: true })]);
+    refused({ extraRound: { reason: 'risk' } }, /extraRound refused: the last round raised the risk or found work outside the contract/);
+    fs.rmSync(path.join(pins.evidenceRoot, 'history', `${risky}.json`));
+    const owner = seal('not-converged', [finding('k1', { class: 'pr-remark', source: 'owner' })]);
+    refused({ extraRound: { reason: 'owner' } }, /extraRound refused: an owner remark on the PR is open/);
+    fs.rmSync(path.join(pins.evidenceRoot, 'history', `${owner}.json`));
+    const last = seal('not-converged', [finding('k1')]);
+    // A spawn that fails after the grant was recorded drops exactly that grant (and the task change with it).
+    const launch = path.join(f.pack, 'scripts/orchestrator/launch.mjs'), source = fs.readFileSync(launch, 'utf8'), spawnLine = 'child = spawn(command, args, options);';
+    put(launch, source.replace(spawnLine, `throw new Error('fixture spawn refused'); ${spawnLine}`));
+    let r = resume({ root: f.root, issue: f.issue, resumeFile, extraRound: { reason: 'QA fix after round 3' } });
+    assert.notEqual(r.status, 0); assert.match(r.stderr, /fixture spawn refused/);
+    assert.deepEqual(read(grants), [], 'a refused spawn drops the grant it recorded');
+    put(launch, source);
+    // Granted together with a task change: both recorded, the same attempt resumes.
+    put(resumeFile, `Изменение задачи: ${url}\nAlso accept zero.\n`);
+    pass(resume({ root: f.root, issue: f.issue, resumeFile, extraRound: { reason: 'task change after round 3' }, taskChange: url }));
+    const [grant] = read(grants);
+    assert.deepEqual([read(grants).length, grant.number, grant.reason, grant.receipt, grant.void], [1, 1, 'task change after round 3', last, undefined], 'bound to the last spent receipt');
+    assert.equal(read(path.join(attempt, 'task-changes.json')).length, 1);
+    assert.ok(!f.entry().workerWritableRoots.some(root => attempt === root || attempt.startsWith(root + path.sep)), 'the grant is outside every worker grant');
+    assert.equal(read(path.join(f.root, 'attempts.json'))[f.issue], 1, 'the same attempt resumes');
+    await stopped(f.entry().pid);
+    // A second extra round in the same attempt refuses before anything is written.
+    const before = fs.readFileSync(grants, 'utf8');
+    r = resume({ root: f.root, issue: f.issue, resumeFile: path.join(f.scratch, 'extra-round.md'), extraRound: { reason: 'again' } });
+    assert.notEqual(r.status, 0); assert.match(r.stderr, /extraRound refused: one extra round per attempt/);
+    assert.equal(fs.readFileSync(grants, 'utf8'), before, 'the second request writes nothing');
+  } finally { await f.cleanup(); }
+});
+
 test('dispatch creates only active launch pins', async () => {
   const f = fixture();
   try {

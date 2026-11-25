@@ -36,7 +36,10 @@ harmless ones), minor leftovers from the
 second round on (never about data, security or a gate bypass) and, after the
 third round, leftovers both roles call harmless pass as successor candidates;
 anything else left after the third round parks `needs-decision` for the
-orchestrator to narrow the contract, split the Issue or change the approach. The collector host needs both the Codex and Claude CLIs logged in by
+orchestrator: first one extra round in the same attempt (resume with `extraRound`,
+once per attempt, only with at most one open finding and no raised risk,
+out-of-contract work or open owner remark), then merge by the rule, split the
+Issue or change the approach. The collector host needs both the Codex and Claude CLIs logged in by
 subscription, from different model families; a single-family setup gives
 `not-reviewed`, and so does a logged-out CLI whose role has to run. The Claude login refreshes itself: before each Claude role on the host, and every five minutes from the watcher while a worker is registered; a role that fails on an expired login names it («вход Claude истёк или не найден»), gets one refresh and one relaunch. A `not-reviewed` receipt names its cause: `environment` when every failed role attempt timed out, met a sleeping host, the network or a login still failing after its refresh, otherwise `review`, with the host load and a sleep flag; two in a row on one head park `blocked`, and an environmental pair is retried by resuming the worker with `reviewRetry` after the host is restored, without a task change. See [review rounds](references/orchestration-delivery.md#review-rounds).
 A change too large for one role request (over the engine's input limit: Codex 1,000,000 bytes, Claude 800,000) is reviewed in file groups, a file over the limit by its hunks, with the same contract and open findings in every group (the PR remark check likewise, where one group's needs-fix decides); every changed file must still be covered, the checker's evidence is cut to the findings' regions to fit, and what cannot fit fails with its reason, as does a role failure, which keeps the engine's trimmed stderr.
@@ -806,7 +809,10 @@ with the Issue. After an environmental `not-reviewed` streak, `resume.mjs` with
 `reviewRetry: true` (never with `taskChange`) records a retry in
 `dispatch/KEY-aN/review-retries.json` instead, dropped when the launch is refused;
 it lets the next collection on the same head run a round and changes neither the
-contract nor the round count. Resume carries no grants or network override; a risk, critical or
+contract nor the round count. On the strict path after its three rounds,
+`resume.mjs` with `extraRound: {reason}` (with or without `taskChange`, never with
+`reviewRetry`) checks the right to one extra round and records it in
+`dispatch/KEY-aN/extra-round.json`, bound to the last spent receipt. Resume carries no grants or network override; a risk, critical or
 grant change is a new attempt on the same branch. Registry changes and collector
 admissions use `launch.lock`. The collector admits each round request into the
 host-owned ledger (`consumed/KEY-aN/rounds/`): a new collectionId only after every
@@ -938,8 +944,19 @@ attempt: three at most, the same head reuses its round,
 strict path it keeps the count; the fast path gets one round on the changed task,
 inside the record's three), and a changed base starts a fresh record with the same
 count. Round 1 and the first round after a task change read the whole change;
-later rounds read the fixes and open findings. After
-the limit the orchestrator splits the Issue or changes approach in a new attempt.
+later rounds read the fixes and open findings. After the strict path's third
+round the orchestrator may grant one extra round per attempt (`resume.mjs`
+`extraRound: {reason}`): only when at most one finding is open (successor
+candidates of an accepted round aside) and the last round raised no risk, found no
+out-of-contract work and left no open owner remark on the PR. Resume checks this
+before writing anything and records the grant in `dispatch/KEY-aN/extra-round.json`
+beside the launch pins under `extra-round.lock` (host-only, outside worker grants,
+bound to the attempt's third spent receipt; dropped on a refused spawn, voided on
+a refused startup, guarded by the host-run evidence snapshot); the gate's strict
+limit becomes 4 and the review round accepts a fourth (`round 4 of 4 (extra)`),
+which judges like round 3. A not-converged extra round parks
+`needs-decision … (extra round used)` with no second grant. After
+the limit the orchestrator merges by the rule, splits the Issue or changes approach in a new attempt.
 Refusals are receipts too and reach the worker as a `gate preflight: fail:`
 line. With pin `screenCheck` the attempt's first round waits for the host's
 screen check of the same head; waiting and mismatches spend no round. The orchestrator approves nothing between rounds and after merge decides

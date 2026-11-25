@@ -759,7 +759,10 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
   try {
     requireValue(path.isAbsolute(worktree ?? '') && /^[a-f0-9]{40}$/.test(head) && /^[a-f0-9]{40}$/.test(base) && text(contract), 'absolute worktree, immutable head/base and task contract required');
     requireValue(['tiny', 'standard', 'deep', 'risky', 'riskyCritical'].includes(risk), 'unknown risk class');
-    requireValue(number <= 3, 'three-round limit reached for this task attempt');
+    // MONO-482: the gate passes the limit it allows: 3, or 4 when the attempt holds its one extra round.
+    const roundLimit = input.roundLimit === undefined ? 3 : input.roundLimit;
+    requireValue(roundLimit === 3 || roundLimit === 4, 'invalid round limit: 3, or 4 with the attempt\'s extra round');
+    requireValue(number <= roundLimit, roundLimit === 3 ? 'three-round limit reached for this task attempt' : 'four-round limit (extra round) reached for this task attempt');
     const contractDigest = digest(contract);
     // A changed contract (a delivered task change) continues the record: open findings stay open.
     requireValue(!record.base || record.base === base, 'stage base changed');
@@ -946,7 +949,7 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     // An owner's instruction on the PR stays blocking until it is done, whatever its origin.
     const blocking = active.filter(finding => finding.outcome === 'unresolved' || finding.origin !== 'pre-existing' || (finding.class === 'pr-remark' && finding.source === 'owner'));
     // A round only lists successors; after merge the task's Linear writer files them (references/review-admission.md).
-    const successors = active.filter(finding => (finding.origin === 'pre-existing' && finding.danger) || (number === 3 && blocking.includes(finding) && !finding.danger));
+    const successors = active.filter(finding => (finding.origin === 'pre-existing' && finding.danger) || (number >= 3 && blocking.includes(finding) && !finding.danger));
     const outcome = unreviewedFiles.size ? 'not-reviewed' : blocking.length || current.some(finding => finding.outOfContract || finding.riskRaised) || successors.length ? 'not-converged' : 'clean';
     const round = { number, head, base, scope: context.scope, checkerMergesSeparated: checker.mergesSeparated, binaryFiles, reviewedFiles: [...covered].filter(file => !unreviewedFiles.has(file)), findingKeys: checked.map(verdict => verdict.key), outcome, costs };
     return { ...record, schemaVersion: 1, interrupted: false, base, contractDigest, rounds: [...record.rounds, round], findings: current, round, outcome,
