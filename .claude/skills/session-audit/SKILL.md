@@ -48,8 +48,9 @@ its lock on release.
 
 - `config.json` here holds shared values only. `<data root>/config.json`
   overrides them key by key: `runPrefixes`, `standCodexHomes`,
-  `excludedSessions`, `projectId` (Linear project of the weekly report) and
-  `triageTeam` (Linear team for Triage). Without `projectId` and `triageTeam`
+  `excludedSessions`, `reportTeam` (Linear team whose document is the weekly
+  report; an older `projectId` is only a fallback) and `triageTeam` (Linear
+  team for Triage). Without `reportTeam` (or `projectId`) and `triageTeam`
   `plan` stops loudly and nothing is written to Linear.
 - `state.json`: `boundary` (end of the last finished pass), `deferredTails`
   and `pending` (`uuid`, `windowStart`, `windowEnd`, `startedAt`, `sessionId`,
@@ -109,10 +110,14 @@ parent item and come in the copy burst at the fork's start.
 - `schema`, `passUuid`, `startedAt`, `window` (`start`, `end`), `tags`.
 - `sessions[]`: `id`, `ids` (all session ids joined by resume copies), `host`
   (`claude`, `codex`), `profile` (Claude profile directory or Codex home),
-  `files`, `cwd`, `product` (repository folder of the work folder, `orchestrator/<product>`
-  for a worker found there, else `unknown`), `kind` (`owner`, `orchestrator`,
-  `stage-agent`, `worker`, `review`), `run` (`marked`, `reasons`: `qa-load`,
-  `prefix:<p>`, `stand-home:<h>`), `loads[]` (`skill`, `at`, `path`,
+  `files`, `cwd`, `product` (repository of the work folder: a linked worktree
+  such as `.claude/worktrees/*`, `~/Worktrees/*` or `~/.codex/worktrees/*`
+  gives the repository its `.git` file points to, a folder that is gone keeps
+  the folder name; `orchestrator/<product>` for a worker found there, else
+  `unknown`), `kind` (`owner`, `orchestrator`, `stage-agent`, `worker`,
+  `review`), `run` (`marked`, `reasons`: `qa-load` (a tester load in a session
+  that does not load orchestrate: an orchestrator runs the tester as an
+  ordinary step), `prefix:<p>`, `stand-home:<h>`), `loads[]` (`skill`, `at`, `path`,
   `partial`, `version`), `links` (`parent` `{id, via}`, `orchestrator`
   `{product, via}`, `task`, `stages`), `linkStatus` (`linked` or `none`:
   «без связи»), `newEvents`, `forkedFrom`, `forkTime`, `forkCopiesSkipped`,
@@ -144,7 +149,9 @@ parent item and come in the copy burst at the fork's start.
 Digest of the new events of a map session, or of `--from`/`--to` (an event key
 or ISO time, for a queued signal), written to `runs/<uuid>/extract/<session>/`
 and listed as `chunks[]` (`file`, `bytes`, `contextBytes`, `entries`, `first`,
-`last`). Lines are `[time] kind: text`: `owner` (or `prompt` in subagents and
+`last`). Lines are `[time #key] kind: text`, where `key` is the event of the
+line (Claude record uuid or Codex item id), the `event` of a finding pointer
+as it is (`check` takes it with or without `#`): `owner` (or `prompt` in subagents and
 headless runs) verbatim with commands, `assistant` visible text, `question`
 (when asked, with options and `status`: unanswered until a reply; Claude
 `AskUserQuestion`, Codex `request_user_input_async` with its reply message and
@@ -153,7 +160,7 @@ time), `load` with version, `op` (plan, helper and write
 tools by name only), `second-model` (`codex exec` or `claude -p` command and
 output at the output's own time, at most 20 KB). No other tool results and no
 reasoning. Above 200 KB the digest is cut at stage loads and at 200 KB inside a
-stage; an entry above 200 KB continues as `[part i/n]` pieces. Each chunk has up
+stage; an entry above 200 KB continues as `[part i/n #key]` pieces. Each chunk has up
 to 20 KB of context (last stage load and earlier owner words), which is not new.
 
 ## cost
@@ -161,7 +168,11 @@ to 20 KB of context (last stage load and earlier owner words), which is not new.
 Claude usage of the pass sessions (found by the pass uuid in their text) or of
 given session ids, with their `subagents/`, each `message.id` once (the record
 with the largest usage wins). Fields and sums follow `scripts/token-usage.mjs`:
-`usage`, `tokens` (full input plus output) and `cacheReadTokens` apart.
+`usage`, `tokens` (full input plus output) and `cacheReadTokens` apart. With
+`--pass` only records from the pass start count. The opening budget and the
+summary count the session holding the pass (and the one it was taken over
+from) with its subagents from the pass start, as `budgetTokens`: `tokens`
+without cache reads, which are shown apart.
 
 ## Weekly pass
 
@@ -173,12 +184,15 @@ each finding with its own id.
 
 1. `collect`. `nothingNew: true`: say so and stop; nothing is opened or
    written. A resumed pass continues where it stopped (its plan included).
-2. Mandatory layer, read whole by subagents in parts: the ledger lines and
-   reports of `map.sources`, and the owner words of top-level `owner` and
+2. Mandatory layer, read whole by subagents in parts: the ledger lines of
+   `map.sources.ledger` and the owner words of top-level `owner` and
    `orchestrator` sessions (`extract` of each; `owner` lines only, without
-   notifications, service records or tool results). The subagents return
-   interventions they find as `[{session, from, to, reason: "intervention"}]`;
-   save that list to `runs/<uuid>/inbox/extra.json`.
+   notifications, service records or tool results). Phase, candidate, review
+   and tester reports are not read by subagents (tens of megabytes a week):
+   `signals` handles them mechanically in step 3. The subagents return
+   interventions they find as `[{session, from, to, reason: "intervention"}]`
+   (`from` and `to` are keys or times from the digest lines); save that list
+   to `runs/<uuid>/inbox/extra.json`.
 3. `signals --extra <file>`: mechanical signals (park, `phase_result` blocked
    or needs-human, `not-converged` receipts, a tester report whose
    `mono-qa certificate` says `failed`, attempt ≥ 2, long phase: from the
@@ -194,9 +208,11 @@ each finding with its own id.
    `extract <session>` (a queued signal of an earlier pass: `extract <session>
    --from <range.first.ts> --to <range.last.ts>`). Each opening is one
    subagent (`openModel` of the config, empty: this session's model) with the
-   digest chunks, `SKILL.md` and references of the stage at every tag of the
-   range (`git show <tag>:<path>`), and the registry candidates
-   (`candidates --stage <s> --kind <k> --rule <text>`). After each, `opened
+   brief `references/opening-brief.md`, the digest chunks, `SKILL.md` and
+   references of the stage at every tag of the range (`git show <tag>:<path>`),
+   and the registry candidates (`candidates --stage <s> --kind <k> --rule
+   <text>`). Signals without a session («без связи») are opened together by
+   one subagent that looks for repeating failures across their source lines. After each, `opened
    <signal or session id>`; stop opening signals when `budget.exhausted`.
    Unopened signals stay in the queue for the next pass and are named in the
    summary.
@@ -206,12 +222,13 @@ each finding with its own id.
    pack|product|host, stage, pointer, quote, mechanism, proposal, rule,
    latest, changed, screen, cost, sameAs}`. `stage` is a pack skill name;
    anything else is kept and published as `other`. `pointer` is `{session,
-   event}` (event = record uuid or Codex item id; its time and the stage
+   event}` (event = the `#key` of the digest line; its time and the stage
    version are read from the file) or, without a session, `{source, line,
    ts}` (a ledger line or report of the map). `quote`: at most two lines,
-   copied from that event or line. `mechanism` and `proposal`: own words in
-   pack terms (rule, reference, step, script), at most 300 characters, no
-   paths, no issue keys of other teams, no quotes. `rule`/`latest`/`changed`:
+   copied from that event or line. `mechanism` and `proposal`: in Russian, the
+   language of Linear, own words in pack terms (rule, reference, step,
+   script), at most 300 characters, no paths, no issue keys of other teams, no
+   quotes. `rule`/`latest`/`changed`:
    `{file, text}` in the pack (`latest`: where the last release still allows
    it; `changed`: where the last release says otherwise). `cost`: `stops`,
    `interventions`, `extraRounds`, `minutes`, each `{value, mark:
@@ -256,14 +273,19 @@ each finding with its own id.
    update only if its content changed.
 10. Apply the plan one operation at a time, never two at once:
     `op next` gives the key and the exact MCP call; `op sent <key>` before the
-    call (it re-checks the text); send `call.args` verbatim; read the object
-    back (`get_document`, `get_issue`, the comment), save the answer to the
-    inbox and `op confirm <key> --response <file>`. An error, timeout or
-    unclear answer: `op lost <key>`, then reconcile, never create again: save
-    `list_documents` of the project or `list_issues` of the team created since
-    the pass start, or all `list_comments` of the target issue, as full
-    objects with their text (`content`, `description` or `body`), and run
-    `op reconcile <key> --listing <file>`; text search is only a helper. Not
+    call (it re-checks the text); send `call.args` verbatim. `op sent` and the
+    MCP call are made by the same executor right one after the other, with
+    nothing in between. Read the object back (`get_document`, `get_issue`, the
+    comment), save the answer to the inbox and `op confirm <key> --response
+    <file>`; the report must come back as a document of `reportTeam` (an
+    older plan: of its project). An error, timeout or unclear answer: `op lost
+    <key>`, then reconcile, never create again: save `list_documents` of the
+    report team (by its id, with fields `content` and `team`) or
+    `list_issues` of the team created since the pass start, or all
+    `list_comments` of the target issue, as full objects with their text
+    (`content`, `description` or `body`), and run `op reconcile <key>
+    --listing <file>`; it checks the target team the same way. Text search is
+    only a helper. Not
     found: wait a minute and reconcile again. After three misses the pass
     stops with the marker `session-audit op=<uuid>/<key>`: tell the owner;
     only after their words that the object is not in Linear run

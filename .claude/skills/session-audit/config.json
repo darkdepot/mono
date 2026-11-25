@@ -36,6 +36,7 @@
   "runPrefixes": [],
   "standCodexHomes": [],
   "excludedSessions": [],
+  "reportTeam": "",
   "projectId": "",
   "triageTeam": "",
   "signals": {

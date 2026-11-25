@@ -495,7 +495,7 @@ test("without project and team in the personal config nothing is planned", (t) =
   analyse(w, passUuid, [ownerFinding(w, "one")]);
   const result = run(w.env, ["plan", "--session", ME, "--now", NOW]);
   assert.equal(result.status, 2);
-  assert.match(result.err.error, /projectId and triageTeam/);
+  assert.match(result.err.error, /reportTeam \(or the older projectId\) and triageTeam/);
 });
 
 // ---------------------------------------------------------------- AE4
@@ -674,7 +674,7 @@ test("the summary names sessions and versions, new, repeats, returns, Triage, wh
   assert.equal(s.sessions.counted, readJson(path.join(w.data, "runs", passUuid, "map.json")).counters.sessions);
   assert.ok(s.sessions.byVersion["v0.2.0"] >= 1);
   assert.equal(s.findings.new.length, 2);
-  assert.deepEqual(Object.keys(s.sessions.openedBy).sort(), ["byKind", "byProduct", "byVersion", "sessions"]);
+  assert.deepEqual(Object.keys(s.sessions.openedBy).sort(), ["byKind", "byProduct", "byVersion", "sampleSessions", "sessions", "signalSessions"]);
   assert.equal(s.time.minutes, 50);
   assert.equal(typeof s.tokens.tokens, "number");
   assert.equal(s.report.url, linear.documents[0].url);

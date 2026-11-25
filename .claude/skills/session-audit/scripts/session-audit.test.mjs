@@ -384,5 +384,27 @@ test("cost adds a session and its subagents once per message id; a pass is found
   assert.equal(pass.status, 0, pass.stderr);
   assert.deepEqual(pass.out.sessions, [AUDIT_SESSION]);
   assert.equal(pass.out.files.length, 2, "the pass session and its subagent");
-  assert.equal(pass.out.messages, 2, "the pass session's say and its subagent's say");
+  assert.equal(pass.out.messages, 0, "the pass session's say and its subagent's say were before the pass start");
+});
+
+test("AC4: the pass budget counts only records from the pass start, without cache reads", (t) => {
+  const w = world(t);
+  const passUuid = collectOk(w.env).passUuid;
+  const auditFile = path.join(w.projectDir, `${AUDIT_SESSION}.jsonl`);
+  const template = JSON.parse(fs.readFileSync(auditFile, "utf8").split("\n")[0]);
+  const usage = { input_tokens: 2, cache_creation_input_tokens: 3, cache_read_input_tokens: 500, output_tokens: 7 };
+  const say = (uuid, msgId, ts) => ({ ...template, type: "assistant", uuid, timestamp: ts, isMeta: undefined, message: { id: msgId, role: "assistant", content: [{ type: "text", text: "t" }], usage } });
+  // One answer long before the pass (the session's own history), one after its start.
+  fs.appendFileSync(auditFile, [say("b1", "msg_before", at(NOW, -600)), say("b2", "msg_after", at(NOW, 2))].map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const later = new Date(Date.parse(NOW) + 5 * 60000);
+  fs.utimesSync(auditFile, later, later);
+  const opened = run(w.env, ["opened", "--session", AUDIT_SESSION, "--now", at(NOW, 5)]);
+  assert.equal(opened.status, 0, opened.stderr);
+  assert.equal(opened.out.budget.tokens.used, 2 + 3 + 7, "input, cache writes and output of the record after the start");
+  assert.equal(opened.out.budget.tokens.cacheReadApart, 500);
+  const pass = run(w.env, ["cost", "--pass", passUuid]);
+  assert.equal(pass.out.messages, 0, "the pass uuid is not in the session text yet");
+  const ids = run(w.env, ["cost", AUDIT_SESSION]);
+  assert.equal(ids.out.budgetTokens, ids.out.tokens - ids.out.cacheReadTokens);
+  assert.ok(ids.out.messages >= 2, "without a pass the whole session counts");
 });

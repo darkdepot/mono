@@ -357,8 +357,17 @@ export function signals(options = {}) {
   });
 }
 
+// Spend of the pass itself: the session holding it (and the one it was taken
+// over from) with their subagents, records from the pass start only, cache
+// reads apart and not in the budget.
+export function passSpend(env, pending) {
+  const ids = [...new Set([pending.sessionId, pending.takenOverFrom].filter(Boolean))];
+  const spent = cost({ env, ids, since: pending.startedAt });
+  return { tokens: spent.budgetTokens, cacheReadTokens: spent.cacheReadTokens };
+}
+
 // Marks signals or sample sessions as opened and reports what is left of the
-// opening budget (minutes since the pass start, tokens of the pass sessions).
+// opening budget (minutes since the pass start, tokens the pass spent).
 export function opened(options = {}) {
   return withPass(options, ({ env, dataRoot, config, passUuid, state, at, write, log }) => {
     const record = runFile(dataRoot, passUuid, "opened.json", { signals: [], sessions: [] });
@@ -374,14 +383,14 @@ export function opened(options = {}) {
       log(`opened ${options.ids.join(" ")}`);
     }
     const minutes = Math.max(0, Math.round((Date.parse(at) - Date.parse(state.pending.startedAt)) / 60000));
-    const spent = cost({ env, passUuid });
+    const spent = passSpend(env, state.pending);
     const budget = config.budget;
     return {
       passUuid,
       opened: record,
       budget: {
         minutes: { used: minutes, limit: budget.minutes, left: budget.minutes - minutes },
-        tokens: { used: spent.tokens, limit: budget.tokens, left: budget.tokens - spent.tokens },
+        tokens: { used: spent.tokens, limit: budget.tokens, left: budget.tokens - spent.tokens, cacheReadApart: spent.cacheReadTokens },
         exhausted: minutes >= budget.minutes || spent.tokens >= budget.tokens,
       },
       unopened: (known?.order || []).filter((id) => !record.signals.includes(id)),
@@ -520,7 +529,14 @@ export function knownStage(stage, stages) {
   return typeof stage === "string" && stages.has(stage) ? stage : OTHER_STAGE;
 }
 
-export function checkProposal(raw, { dataRoot, map, config, index, stages = new Set(index.skillNames()) }) {
+// A pointer event copied from a digest line keeps its "#" (`[time #key]`).
+export function digestPointer(pointer) {
+  if (!pointer || typeof pointer !== "object" || typeof pointer.event !== "string") return pointer;
+  return { ...pointer, event: pointer.event.trim().replace(/^#/, "") };
+}
+
+export function checkProposal(input, { dataRoot, map, config, index, stages = new Set(index.skillNames()) }) {
+  const raw = input && typeof input === "object" ? { ...input, pointer: digestPointer(input.pointer) } : input;
   validateProposal(raw);
   const proposal = { ...raw, stage: knownStage(raw.stage, stages) };
   const drop = (reason, extra = {}) => ({ status: "dropped", id: proposal.id, kind: proposal.kind, stage: proposal.stage, reason, ...extra });
@@ -583,7 +599,8 @@ export function checkProposal(raw, { dataRoot, map, config, index, stages = new 
 export function check(options = {}) {
   return withPass(options, ({ dataRoot, repo, config, passUuid, map, write, log }) => {
     const input = passInput(dataRoot, passUuid, options.file, "check");
-    const proposals = Array.isArray(input) ? input : input.findings || [input];
+    const proposals = (Array.isArray(input) ? input : input.findings || [input])
+      .map((proposal) => (proposal && typeof proposal === "object" ? { ...proposal, pointer: digestPointer(proposal.pointer) } : proposal));
     const index = new TagIndex(repo);
     const stages = new Set(index.skillNames());
     const checks = runFile(dataRoot, passUuid, "checks.json", { kept: [], dropped: [] });

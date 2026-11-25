@@ -454,8 +454,10 @@ export function digestItems(sessionEntry, mapSession, config) {
   return entries;
 }
 
+// `[time #key] kind: text`: the key is the event of the line (Claude record
+// uuid or Codex item id), the `event` of a finding pointer without the "#".
 export function renderEntry(entry) {
-  return `[${entry.ts}] ${entry.kind}: ${entry.text}\n`;
+  return `[${entry.ts} #${entry.key}] ${entry.kind}: ${entry.text}\n`;
 }
 
 function contextFor(entries, startIndex, limit) {
@@ -516,8 +518,10 @@ export function chunkEntries(entries, selected, config) {
       const lines = [];
       if (byteLength(line) <= chunkBytes) lines.push(line);
       else {
-        const pieces = splitBytes(line, chunkBytes - 64);
-        pieces.forEach((piece, i) => lines.push(`[part ${i + 1}/${pieces.length}] ${piece}${piece.endsWith("\n") ? "" : "\n"}`));
+        // Every piece names its event, so a pointer can be taken from any of them.
+        const tag = `#${item.entry.key}`;
+        const pieces = splitBytes(line, chunkBytes - 64 - byteLength(tag));
+        pieces.forEach((piece, i) => lines.push(`[part ${i + 1}/${pieces.length} ${tag}] ${piece}${piece.endsWith("\n") ? "" : "\n"}`));
       }
       for (const text of lines) {
         if (size + byteLength(text) > chunkBytes) flush();
@@ -634,22 +638,25 @@ function usageTotal(usage) {
 
 // U10: usage of Claude sessions of the pass (found by the pass uuid in their
 // text, or given ids) and their subagents, each message.id counted once.
-export function cost({ env = process.env, passUuid, ids = [] } = {}) {
+// With a pass (or `since`) only records from the pass start count.
+// `budgetTokens` is `tokens` without cache reads: what the opening budget spends.
+export function cost({ env = process.env, passUuid, ids = [], since = null } = {}) {
   const { dataRoot, config } = setup(env);
   if (!passUuid && !ids.length) throw new AuditError("cost needs --pass <uuid> or session ids");
   if (passUuid) checkName(passUuid, "pass uuid");
   ids.forEach((id) => checkName(id, "session id"));
   const all = listClaudeFiles(config, env);
   const topLevel = all.filter((entry) => path.basename(path.dirname(entry.file)) !== "subagents");
-  let sessionIds = [...ids];
+  let sessionIds = [...ids].filter(Boolean);
+  let from = since ? Date.parse(since) : null;
+  if (since && !Number.isFinite(from)) throw new AuditError(`not a time: ${since}`);
   if (passUuid) {
-    let since = 0;
     const mapFile = path.join(dataRoot, "runs", passUuid, "map.json");
-    if (isFile(mapFile)) since = Date.parse(readJson(mapFile).startedAt) || 0;
+    if (from === null && isFile(mapFile)) from = Date.parse(readJson(mapFile).startedAt) || null;
     for (const entry of topLevel) {
       let modified = 0;
       try { modified = fs.statSync(entry.file).mtimeMs; } catch { continue; }
-      if (modified < since) continue;
+      if (modified < (from ?? 0)) continue;
       if (fileHas(entry.file, passUuid)) sessionIds.push(path.basename(entry.file, ".jsonl"));
     }
   }
@@ -670,6 +677,7 @@ export function cost({ env = process.env, passUuid, ids = [] } = {}) {
   for (const file of unique) {
     for (const item of claudeItems(file, problems, config)) {
       if (item.kind !== "usage") continue;
+      if (from !== null && !(Date.parse(item.ts) >= from)) continue;
       const previous = best.get(item.messageId);
       if (!previous || usageTotal(item.usage) > usageTotal(previous)) best.set(item.messageId, item.usage);
     }
@@ -692,7 +700,9 @@ export function cost({ env = process.env, passUuid, ids = [] } = {}) {
     files: unique,
     messages: best.size,
     usage,
+    since: from === null ? null : new Date(from).toISOString(),
     tokens: usage.non_overlapping_total_tokens,
     cacheReadTokens: usage.cached_input_tokens,
+    budgetTokens: usage.non_overlapping_total_tokens - usage.cached_input_tokens,
   };
 }
