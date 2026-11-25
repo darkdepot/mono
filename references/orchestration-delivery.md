@@ -287,9 +287,10 @@ from BASE, like `hostVerification`, only when the task snapshot holds
   (never gate-eligible) on the head of the attempt's first preflight collection
   request: the first point where everything in the code report is committed and
   pushed. Never start it from the code report alone; it may describe uncommitted
-  edits. Trigger: the line `attention: screen check waiting: <head>` in
-  `reports/KEY-collector-aN.log` (no watcher event; the watcher stays quiet
-  while the round is in flight and the collector lives).
+  edits. Trigger: `EVENT:screen-check KEY screen check needed: KEY head <SHA>`
+  from the watcher, repeated while the collector's note
+  `consumed/KEY-aN/screen-check-request.json` stands (the collector log also
+  says `screen check waiting: <head>`); stall and dead stay quiet meanwhile.
 - What: only the PNG items for the snapshot's artboards and the taste rules
   from «Снимок контекста».
 - Order: while the attempt's receipt history has no spent round, the collector
@@ -299,7 +300,11 @@ from BASE, like `hostVerification`, only when the task snapshot holds
   toward `not-reviewed`). Only the host writes it, outside every worker grant:
   `node '<pack-root>/scripts/orchestrator/qa.mjs' screen-check --pins
   <dispatch/KEY-aN/pins.json> --head <SHA> --outcome passed|mismatches --report
-  <link>`. A result for another head does not count. The gate checks it again:
+  <link>` with the registered `<root>/dispatch/KEY-aN/pins.json` path; it binds
+  the result to that file and digest and refuses while a host verification runs.
+  A result for another head or other pins does not count, and a host
+  verification run that changes `screen-check/` fails consistency and is put
+  back. The gate checks it again:
   no result refuses with «no result for this head yet», `mismatches` refuses
   with the report link; neither spends a round or runs the reviewer or host
   verification. `passed` lets the first round run. From the first spent round
@@ -458,10 +463,12 @@ state and, in persistent mode, atomically writes its own `watcher.json` each tic
 procStart, packVersion, startedAt, beatAt, intervalSec; while `workers.json` names a
 worker it also keeps the Claude login fresh every five minutes (stderr only). It emits one stable
 line per watcher event to stdout —
-`<ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|parked|green|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
+`<ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|screen-check|parked|green|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
 `phase-rejected` names the task and mismatched identity fields when a phase
 report fails strict report-to-task correlation. It never accepts the report or
 suppresses liveness on its strength.
+`screen-check` («screen check needed: KEY head SHA») repeats while a round waits
+for the host's screen check ([Screen check before review](#screen-check-before-review)).
 The watcher observes the active registry (`workers.json`), not the
 directory's history; retired Issues' logs are outside its scope.
 

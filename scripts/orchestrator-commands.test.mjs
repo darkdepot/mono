@@ -884,13 +884,23 @@ test("MONO-481 collector keeps the first round in flight without a gate launch u
     assert.equal(fs.existsSync(launches), false, "no gate launch, no collection retry consumed");
     assert.deepEqual(f.lines().map(line => line.replace(/^\S+ /u, "")),
       [`attention: screen check waiting: ${f.head}: run mono:qa given-version on this head, then qa.mjs screen-check`], "logged once for the orchestrator");
-    // Another head's result does not release it.
-    writeScreenCheck(f.evidenceRoot, "e".repeat(40), "passed", "report"); await f.poll();
+    // The note the watcher turns into EVENT:screen-check, in the host-owned ledger.
+    const note = path.join(f.options.root, "consumed", `${f.options.issue}-a1`, "screen-check-request.json"), noted = JSON.parse(fs.readFileSync(note, "utf8"));
+    assert.deepEqual([noted.head, noted.collectionId], [f.head, `preflight-collect:${f.head}:1`]);
+    // Another head's result, or this head's result bound to other pins (a forgery), does not release it.
+    const binding = f.entry.pins;
+    writeScreenCheck(f.evidenceRoot, "e".repeat(40), "passed", "report", binding); await f.poll();
+    writeScreenCheck(f.evidenceRoot, f.head, "passed", "report", { file: f.pinsFile, digest: "0".repeat(64) }); await f.poll();
     assert.equal(fs.existsSync(launches), false);
+    // The host never writes a result while a host verification runs in the evidence root.
+    write(path.join(f.evidenceRoot, "verification", "x.running"), "{}");
+    assert.throws(() => writeScreenCheck(f.evidenceRoot, f.head, "passed", "report", binding), /host verification is running/);
+    fs.unlinkSync(path.join(f.evidenceRoot, "verification", "x.running"));
     // The host's result for this head releases the round to the gate (mismatches too: the gate refuses them with a receipt).
-    writeScreenCheck(f.evidenceRoot, f.head, "mismatches", "https://linear.app/x#comment-1");
+    writeScreenCheck(f.evidenceRoot, f.head, "mismatches", "https://linear.app/x#comment-1", binding);
     await f.poll();
     assert.ok(fs.readFileSync(launches, "utf8").length > 0, "the gate runs once the head has a result");
+    assert.equal(fs.existsSync(note), false, "the note is removed once the head has a result");
     // The stub gate writes no receipt, so the round ends like any receipt-less collection.
     assert.match(readLedger(f.options.root, f.options.issue, 1)[0].result.reason, /collection retries exhausted/);
   }, false, { screenCheck: true });

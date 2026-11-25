@@ -401,6 +401,7 @@ fs.appendFileSync(p.join(d,'verify-runs'),JSON.stringify({cwd:process.cwd(),tmp:
 if(read('verify-psfail'))fs.writeFileSync(p.join(d,'ps-fail'),'1');
 const w=read('verify-probe');if(w){const f=p.join(w,'input.mjs'),kept=fs.readFileSync(f);fs.writeFileSync(f,kept+'// uncommitted fix\\n');const seen=fs.readFileSync('input.mjs','utf8');fs.writeFileSync(f,kept);if(!seen.includes('uncommitted fix')){console.log('FAIL add broken');process.exit(1);}}
 const t=read('verify-tamper');if(t){const x=JSON.parse(t);fs.writeFileSync(p.join(${history},'planted.json'),JSON.stringify({receipt:{producer:'gate-review-v3',pins:{file:x.pins},collectionId:x.collectionId,verification:{host:true,exitCode:0}}}));fs.appendFileSync(x.edit,' ');}
+const sc=read('verify-screen');if(sc){const x=JSON.parse(sc);fs.mkdirSync(p.dirname(x.file),{recursive:true});fs.writeFileSync(x.file,JSON.stringify(x.body));}
 if(read('verify-child')){const c=require('node:child_process').spawn(process.execPath,['-e','setTimeout(()=>require("node:fs").writeFileSync('+JSON.stringify(read('verify-child'))+',"{}"),1500)'],{stdio:'ignore'});c.unref();}
 const code=Number(read('verify-exit')??0);if(code)console.log('FAIL fixture step');console.log('host verify output: process table read');process.exit(code);`];
       }
@@ -708,8 +709,21 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
           let receipt = await round(at(first), 1, waiting);
           assert.deepEqual([runs(), reviewers(), receipt.review.spent, receipt.verification.exitCode], [0, 0, false, null]);
           screen(first, 'passed'); setReview(bin, { findings: [] });
-          receipt = await round(at(first, 2), 0, /pass: review clean \(round 1 of 1\) and host verification verified on head; screen check on the host passed on this head \(report .*#comment-screen-passed\)$/m);
-          assert.deepEqual([runs(), reviewers(), receipt.review.spent], [1, 1, true]);
+          // Codex review P2: a worker-authored host run on one head plants a bound "passed" result for the next head and
+          // fails. The change in screen-check/ fails consistency and is put back, so the next head still waits.
+          const second = commit('export const second = 2;\n'); git('checkout', '-q', first);
+          const result = file => path.join(evidence, 'screen-check', `${file}.json`), bound = JSON.parse(fs.readFileSync(result(first), 'utf8'));
+          write(path.join(scratch, 'verify-screen'), JSON.stringify({ file: result(second), body: { ...bound, head: second } }));
+          write(path.join(scratch, 'verify-exit'), '1');
+          receipt = await round(at(first, 2), 1, /fail: collection consistency failed: evidence changed during host verification: screen-check\/[a-f0-9]{40}\.json/);
+          assert.deepEqual([fs.existsSync(result(second)), reviewers(), runs()], [false, 0, 1], 'the planted result is put back');
+          fs.unlinkSync(path.join(scratch, 'verify-screen')); write(path.join(scratch, 'verify-exit'), '0');
+          git('checkout', '-q', second);
+          await round(at(second), 1, waiting);
+          assert.equal(runs(), 1, 'the next head waits for its own screen check: no host run');
+          git('checkout', '-q', first);
+          receipt = await round(at(first, 3), 0, /pass: review clean \(round 1 of 1\) and host verification verified on head; screen check on the host passed on this head \(report .*#comment-screen-passed\)$/m);
+          assert.deepEqual([runs(), reviewers(), receipt.review.spent], [2, 1, true]);
           return;
         }
         let receipt = await round(at(first), 1, waiting);
@@ -719,6 +733,9 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         screen(other, 'passed'); await round(at(first, 2), 1, waiting);
         atomicJson(path.join(evidence, 'screen-check', `${first}.json`), { head: other, outcome: 'passed', report: 'x' });
         await round(at(first, 3), 1, waiting);
+        // A result without the host's binding to this attempt's launch pins (hand-written) does not count either.
+        atomicJson(path.join(evidence, 'screen-check', `${first}.json`), { head: first, outcome: 'passed', report: 'x' });
+        await round(at(first, 5), 1, waiting);
         screen(first, 'mismatches');
         receipt = await round(at(first, 4), 1, /fail: screen check on the host found mismatches with the mockup on this head .*#comment-screen-mismatches\); fix them from the task change and request the new head; no round spent/);
         assert.deepEqual([receipt.review.spent, reviewCalls(bin).length], [false, 0]);

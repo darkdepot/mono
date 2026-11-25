@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readJson, isMain } from '../runtime.mjs';
-import { commandFlags, allowedFlags } from './command-state.mjs';
+import path from 'node:path';
+import { commandFlags, allowedFlags, sha256File } from './command-state.mjs';
 import { qaRecipeSource, qaDeliveryState, qaRecipeDigest, requireQaPassed } from '../qa-gate.mjs';
 import { validateShipCertificate } from '../ship-certificate.mjs';
 import { writeScreenCheck } from '../review-rounds.mjs';
@@ -16,9 +17,9 @@ export function prepareQa({ root, config, issue, head, shipReport }) {
 
 // MONO-481: the host records its screen check of one committed head for an attempt pinned with screenCheck.
 export function recordScreenCheck({ pins, head, outcome, report }) {
-  const launch = readJson(pins);
+  const file = path.resolve(pins), launch = readJson(file);
   if (launch.screenCheck !== true) throw new Error('screen check: the attempt is not pinned with screenCheck');
-  return writeScreenCheck(launch.evidenceRoot, head, outcome, report);
+  return writeScreenCheck(launch.evidenceRoot, head, outcome, report, { file, digest: sha256File(file) });
 }
 
 if (isMain(import.meta.url)) {

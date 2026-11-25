@@ -671,6 +671,13 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
       assert.doesNotMatch(rejectedPhase.stdout, /EVENT:phase MONO-999/);
     }
     write(codeReportPath, report);
+    // MONO-481: a round held for the host's screen check reaches the orchestrator as a watcher event, not only the collector log.
+    const screenNote = path.join(state, "consumed/MONO-999-a1/screen-check-request.json");
+    write(screenNote, { issue: request.issue, attempt: 1, head, collectionId: `preflight-collect:${head}:1`, pins: "fixture", requestedAt: new Date().toISOString() });
+    const screenWatch = pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env));
+    assert.ok(screenWatch.stdout.includes(`EVENT:screen-check MONO-999 screen check needed: MONO-999 head ${head} attempt 1`), screenWatch.stdout);
+    fs.unlinkSync(screenNote);
+    assert.doesNotMatch(pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env)).stdout, /EVENT:screen-check/);
     const preflightReport = publishPhase({ ...report, phase: "preflight", capsule: { ...report.capsule, phase: "preflight" } }, path.join(state, "reports/MONO-999-phase-preflight.json"));
     const laterPhaseWatch = pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env));
     assert.match(laterPhaseWatch.stdout, /EVENT:phase.*phase preflight sequence 1/);

@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, isMain, withLock, reclaimLock, lockTreeDead, processStart, resolvedLocation, validateEvidenceGrants, packLayout, deliveryConfig, REVIEW_PRODUCER } from "../runtime.mjs";
 import { commandFlags, allowedFlags, registryEntry, admitCollection, CollectionAdmissionRefusal, effectivePins } from "./command-state.mjs";
-import { readLedger, inFlight, admissionFor, recordResult, roundRequestName, collectorLock, requestDigest, hostRunMarker, recoverHostRun, screenCheckHold, spentRounds } from "../review-rounds.mjs";
+import { readLedger, inFlight, admissionFor, recordResult, roundRequestName, collectorLock, requestDigest, hostRunMarker, recoverHostRun, screenCheckHold, spentRounds, screenCheckRequestFile } from "../review-rounds.mjs";
 
 const lockPath = ({ root, issue, attempt }) => collectorLock(root, issue, attempt);
 const logPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.log`);
@@ -154,11 +154,20 @@ async function collection(options, entry, admission) {
   let found = historyReceipt(request);
   // MONO-481 pinned screenCheck: until the host has a result for this head the round stays in flight without a gate
   // launch (the worker keeps waiting on wait-round); mismatches go to the gate, which refuses them with a receipt.
+  // While it waits, a note in the host-owned ledger makes the watcher report EVENT:screen-check to the orchestrator.
+  const note = screenCheckRequestFile(options.root, options.issue, options.attempt);
   if (!found && entry.pins) {
     const pins = effectivePins(entry);
-    const hold = screenCheckHold({ pins, spent: spentRounds(evidenceRoot, entry.pins.file), evidenceRoot, head: request.head });
-    if (hold?.state === "waiting") throw new RoundWaiting(`screen check waiting: ${request.head}: run mono:qa given-version on this head, then qa.mjs screen-check`);
+    const hold = screenCheckHold({ pins, binding: entry.pins, spent: spentRounds(evidenceRoot, entry.pins.file), evidenceRoot, head: request.head });
+    if (hold?.state === "waiting") {
+      const prior = fs.existsSync(note) ? readJson(note) : null;
+      if (prior?.head !== request.head || prior?.collectionId !== request.collectionId)
+        atomicJson(note, { issue: options.issue, attempt: options.attempt, head: request.head, collectionId: request.collectionId,
+          pins: entry.pins.file, requestedAt: new Date().toISOString() });
+      throw new RoundWaiting(`screen check waiting: ${request.head}: run mono:qa given-version on this head, then qa.mjs screen-check`);
+    }
   }
+  fs.rmSync(note, { force: true });
   while (!found) {
     const prior = fs.existsSync(started) ? readJson(started) : null;
     if (prior && prior.requestDigest !== admission.requestDigest) throw new Error("collection retry admission mismatch");

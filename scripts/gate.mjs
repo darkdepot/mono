@@ -508,7 +508,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     let verification = { command: request.verification.command, args: request.verification.args, exitCode: null };
     // MONO-481 pinned screenCheck: until the attempt's first spent round the round waits for the host's screen check of
     // this head. Waiting and mismatches are refusals: no round, no reviewer, no host run, never a not-reviewed.
-    const screen = screenCheckHold({ pins, spent: prior.spent, evidenceRoot, head });
+    const screen = screenCheckHold({ pins, binding: request.pins, spent: prior.spent, evidenceRoot, head });
     // Skipped only where the answer is the blocked refusal anyway (not-reviewed twice, no stored round to reuse).
     if (hostVerify && !screen && (prior.reuse || prior.notReviewed < 2)) {
       verification = await runHostVerification(request.verification, repo, head, evidenceRoot, request.collectionId, request.pins.file);
@@ -541,7 +541,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       // Without host verification the worker runs the full verification; the collection records the pinned command unrun.
       verification, consistency };
     // The screen check this round waited for, named in the round's line (validatePreflight).
-    const passedScreen = pins?.screenCheck === true && prior.spent === 0 && !screen ? readScreenCheck(evidenceRoot, head) : null;
+    const passedScreen = pins?.screenCheck === true && prior.spent === 0 && !screen ? readScreenCheck(evidenceRoot, head, request.pins) : null;
     if (passedScreen?.outcome === 'passed') receipt.screenCheck = { head, report: passedScreen.report };
     atomicJson(path.join(evidenceRoot, "history", `${receipt.runId}.json`), { receipt });
     atomicJson(receiptFile, { receipt });
