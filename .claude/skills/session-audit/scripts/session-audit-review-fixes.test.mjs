@@ -356,3 +356,93 @@ test("only sessions opened in the pass count toward a confirmed fix", (t) => {
   const entry2 = readJson(path.join(w2.data, "findings.json")).findings.find((one) => one.id === registry[0].id);
   assert.deepEqual(entry2.cleanSessions, [IDS.worker]);
 });
+
+// ---------------------------------------------------------------- review round 2
+
+test("guard: credentials in quoted JSON keys are refused", () => {
+  const privateSet = { sequences: new Set(), quotes: [] };
+  const check = (text) => guardText(text, { passUuid: "c0000000-0000-4000-8000-000000000001", pointers: [], config: CONFIG, privateSet }).join(" | ");
+  assert.match(check('{"password":"short-secret"}'), /credential assignment/);
+  assert.match(check("{'token': 'abc123def456'}"), /credential assignment/);
+});
+
+test("a create confirm needs the server id and issue key; reconcile applies the same checks", (t) => {
+  const w = world(t);
+  const passUuid = ok(w.env, ["collect", "--session", ME, "--now", NOW]).passUuid;
+  analyse(w, passUuid, [finding(w, "one")]);
+  ok(w.env, ["plan", "--session", ME, "--now", NOW]);
+  const linear = fakeLinear();
+  const report = ok(w.env, ["op", "sent", "report", "--session", ME, "--now", NOW]);
+  const doc = linear.call(report.call, NOW);
+  const { id: _id, ...noId } = doc;
+  assert.equal(run(w.env, ["op", "confirm", "report", "--response", save(w, passUuid, "noid.json", noId), "--session", ME, "--now", NOW]).status, 2, "no id, no confirmation");
+  ok(w.env, ["op", "confirm", "report", "--response", save(w, passUuid, "doc.json", doc), "--session", ME, "--now", NOW]);
+  const next = ok(w.env, ["op", "next", "--session", ME, "--now", NOW]);
+  const sent = ok(w.env, ["op", "sent", next.key, "--session", ME, "--now", NOW]);
+  const issue = linear.call(sent.call, NOW);
+  const { identifier: _k, ...noKey } = { ...issue, id: "aaaa0000-0000-4000-8000-0000000000bb" };
+  assert.equal(run(w.env, ["op", "confirm", next.key, "--response", save(w, passUuid, "nokey.json", noKey), "--session", ME, "--now", NOW]).status, 2, "no issue key, no confirmation");
+  ok(w.env, ["op", "lost", next.key, "--session", ME, "--now", NOW]);
+  // Marker and text match, but the issue is not in Triage: not this operation.
+  const outside = ok(w.env, ["op", "reconcile", next.key, "--listing", save(w, passUuid, "backlog.json", [{ ...issue, statusType: "backlog" }]), "--session", ME, "--now", NOW]);
+  assert.equal(outside.found, false);
+  const found = ok(w.env, ["op", "reconcile", next.key, "--listing", save(w, passUuid, "triage.json", [issue]), "--session", ME, "--now", at(NOW, 2)]);
+  assert.equal(found.status, "confirmed");
+});
+
+test("a Duplicate reopened through its main issue keeps the main key in the registry", (t) => {
+  const registry = [registryEntry("F-dddddddd-0000-4000-8000-000000000002", "MONO-905", "implement")];
+  const w = world(t, { changelog: { "0.2.0": ["MONO-908"] }, registry });
+  const passUuid = ok(w.env, ["collect", "--session", ME, "--now", NOW]).passUuid;
+  const linearAnswers = [
+    { id: "MONO-905", status: "Duplicate", statusType: "canceled", duplicateOf: "aaaa0000-0000-4000-8000-0000000000aa" },
+    { id: "aaaa0000-0000-4000-8000-0000000000aa", identifier: "MONO-908", status: "Done", statusType: "completed" },
+  ];
+  analyse(w, passUuid, [{ ...finding(w, "dup", { sameAs: registry[0].id }), stage: "implement", pointer: workerPointer(w), quote: "Implemented." }], linearAnswers);
+  ok(w.env, ["plan", "--session", ME, "--now", NOW]);
+  const linear = fakeLinear();
+  linear.seedIssue({ id: "MONO-908", identifier: "MONO-908", status: "Done", statusType: "completed" });
+  apply(w, passUuid, linear);
+  ok(w.env, ["commit", "--session", ME, "--now", NOW]);
+  assert.equal(readJson(path.join(w.data, "findings.json")).findings[0].issue, "MONO-908");
+});
+
+test("rechecking a finding with the documented {session, event} pointer is not another place", (t) => {
+  const w = world(t);
+  const passUuid = ok(w.env, ["collect", "--session", ME, "--now", NOW]).passUuid;
+  const pointer = { session: IDS.owner, event: eventKey(file(w, IDS.owner), "Continuing after the boundary.") };
+  ok(w.env, ["check", save(w, passUuid, "a.json", [finding(w, "one", { pointer })]), "--session", ME, "--now", NOW]);
+  ok(w.env, ["check", save(w, passUuid, "b.json", [finding(w, "one", { pointer, proposal: "Another proposal." })]), "--session", ME, "--now", NOW]);
+});
+
+test("a carried finding already sent keeps its entry when a new finding outranks it", (t) => {
+  const carried = {
+    ...registryEntry("F-cccccccc-0000-4000-8000-000000000001", null, "review"),
+    outcome: "queued", sessionsTotal: 2, versions: { tags: ["v0.2.0"], range: "v0.2.0" },
+    latest: { tag: "v0.2.0", canHappen: true, alreadyChanged: false },
+    cost: { stops: measured(1), interventions: measured(0), extraRounds: unknown, minutes: unknown },
+    pointer: "runs/01d00000-0000-4000-8000-000000000000/F-cccccccc-0000-4000-8000-000000000001",
+  };
+  const w = world(t, { personal: { triageLimit: 1 }, registry: [carried] });
+  const passUuid = ok(w.env, ["collect", "--session", ME, "--now", NOW]).passUuid;
+  const first = analyse(w, passUuid, []);
+  assert.deepEqual(first.selected.triage.map((entry) => [entry.id, entry.carried]), [[carried.id, true]]);
+  ok(w.env, ["plan", "--session", ME, "--now", NOW]);
+  ok(w.env, ["op", "sent", carried.id, "--session", ME, "--now", NOW]);
+  const second = analyse(w, passUuid, [finding(w, "big", { cost: { stops: measured(5), interventions: measured(0), extraRounds: unknown, minutes: unknown } })]);
+  assert.equal(second.selected.triage[0].id, carried.id);
+  assert.equal(second.selected.triage[0].carried, true, "the kept entry is the original one");
+  ok(w.env, ["plan", "--session", ME, "--now", NOW]);
+});
+
+test("earlier encounters that were never confirmed do not count toward two sessions", (t) => {
+  const zero = { stops: measured(0), interventions: measured(0), extraRounds: unknown, minutes: unknown };
+  const sessionsTotal = (confirmed) => {
+    const registry = [{ ...registryEntry(`F-99999999-0000-4000-8000-00000000000${confirmed ? 1 : 2}`, null, "review"), outcome: "report", encounters: [{ pass: "01d00000-0000-4000-8000-000000000000", session: "s-old", versions: ["v0.1.0"], confirmed }] }];
+    const w = world(t, { registry });
+    const passUuid = ok(w.env, ["collect", "--session", ME, "--now", NOW]).passUuid;
+    return analyse(w, passUuid, [finding(w, "again", { sameAs: registry[0].id, cost: zero })]).registered.findings[0].sessionsTotal;
+  };
+  assert.equal(sessionsTotal(false), 1);
+  assert.equal(sessionsTotal(true), 2);
+});

@@ -71,7 +71,7 @@ function linkAllowed(url, patterns) {
 // Shapes of personal data and credentials that never go to Linear.
 const SECRET_SHAPES = [
   ["e-mail address", /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/],
-  ["credential assignment", /\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|authorization)\s*[:=]\s*\S+/i],
+  ["credential assignment", /["']?\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|authorization)\b["']?\s*[:=]\s*["']?[^\s"']+/i],
   ["bearer token", /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/i],
   ["provider key", /\b(?:sk|pk|rk)[-_](?:live|test|proj|ant)?[-_]?[A-Za-z0-9_-]{16,}/],
   ["GitHub token", /\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{20,}/],
@@ -523,6 +523,10 @@ function checkReadBack(op, item, current) {
   else if (!sameText(op.body, bodyOf(item))) problems.push("the saved text differs from the planned text");
   if (op.title !== undefined && item.title !== undefined && words(item.title).join(" ") !== words(op.title).join(" ")) problems.push("the saved title differs");
   if (op.type === "create-issue" && item.statusType !== "triage") problems.push(`status is ${item.statusType ?? "unknown"}, not triage`);
+  // A created object must come back with its server id (and team key for an
+  // issue), or a later pass could not find it and might create it again.
+  if (op.type.startsWith("create-") && !item.id) problems.push("the answer has no id");
+  if (op.type === "create-issue" && ![item.identifier, item.id].some((value) => /^[A-Z][A-Z0-9]*-\d+$/.test(String(value || "")))) problems.push("the answer has no issue key");
   return problems;
 }
 
@@ -603,9 +607,8 @@ export function opCommand(options = {}) {
       const scoped = op.type === "create-comment" || op.type === "update-issue" || op.type === "update-document"
         ? items
         : items.filter((item) => !item.createdAt || Date.parse(item.createdAt) >= since);
-      const found = op.type === "update-issue"
-        ? scoped.filter((item) => [item.id, item.identifier].includes(op.target) && item.statusType === "triage")
-        : scoped.filter((item) => hasMarker(item, op) && sameText(op.body, bodyOf(item)));
+      // The same checks as a direct read-back: target, state, marker, text, id.
+      const found = scoped.filter((item) => checkReadBack(op, item, current).length === 0);
       op.checks = (op.checks || 0) + 1;
       op.lastCheckAt = at;
       if (found.length) {
@@ -693,7 +696,8 @@ export function commit(options = {}) {
         mechanism: finding.mechanism, proposal: finding.proposal, kind: finding.kind, scope: finding.scope, stage: finding.stage,
         features: finding.features, cost: finding.cost, versions: finding.versions, latest: finding.latest,
         sessionsTotal: finding.sessionsTotal, pointer: finding.pointer,
-        issue: issue ? (issue.identifier || issue.id) : entry.issue,
+        // A Duplicate is kept as its resolved main issue.
+        issue: issue ? (issue.identifier || issue.id) : (finding.linear?.issue || entry.issue),
         outcome: registryOutcome(finding, inputs.selection),
         queuedAction: inputs.selection.queued.find((entry) => entry.id === finding.id)?.action || null,
         places: finding.places || entry.places || null,
@@ -701,8 +705,8 @@ export function commit(options = {}) {
         status: finding.status,
       });
       entry.encounters = [...(entry.encounters || []).filter((encounter) => encounter.pass !== passUuid),
-        ...finding.sessions.map((session) => ({ pass: passUuid, session, versions: finding.versions.tags, at })),
-        ...(finding.sessions.length ? [] : [{ pass: passUuid, session: null, versions: finding.versions.tags, at }])];
+        ...finding.sessions.map((session) => ({ pass: passUuid, session, versions: finding.versions.tags, at, confirmed: finding.status === "confirmed" })),
+        ...(finding.sessions.length ? [] : [{ pass: passUuid, session: null, versions: finding.versions.tags, at, confirmed: finding.status === "confirmed" }])];
       byId.set(entry.id, entry);
     }
     for (const chosen of [...inputs.selection.triage, ...inputs.selection.queued, ...inputs.selection.rows]) {

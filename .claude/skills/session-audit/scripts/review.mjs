@@ -592,7 +592,8 @@ export function check(options = {}) {
     for (const proposal of proposals) {
       const earlier = typeof proposal?.id === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(proposal.id)
         ? runFile(dataRoot, passUuid, path.join("checked", `${proposal.id}.json`), null) : null;
-      if (earlier && JSON.stringify(earlier.pointer) !== JSON.stringify(proposal.pointer)) {
+      const place = (pointer) => JSON.stringify(pointer?.source ? [pointer.source, pointer.line ?? null] : [pointer?.session ?? null, pointer?.event ?? null]);
+      if (earlier && place(earlier.pointer) !== place(proposal.pointer)) {
         throw new AuditError(`finding id ${proposal.id} is already used for another place in this pass; give it a new id`);
       }
     }
@@ -805,7 +806,7 @@ export function register(options = {}) {
       const versionUnknown = basis.some((member) => !member.version.tags.length);
       const outcome = outcomeOf(entry, versionUnknown ? [] : tags, issues, fixedIn);
       const sessions = [...new Set(basis.map((member) => member.session).filter(Boolean))];
-      const priorSessions = new Set((entry?.encounters || []).filter((encounter) => encounter.pass !== passUuid).map((encounter) => encounter.session).filter(Boolean));
+      const priorSessions = new Set((entry?.encounters || []).filter((encounter) => encounter.pass !== passUuid && encounter.confirmed !== false).map((encounter) => encounter.session).filter(Boolean));
       findings.push({
         id,
         proposals: members.map((member) => member.id),
@@ -911,7 +912,8 @@ export function select(options = {}) {
       const keep = result.triage.filter((entry) => planned.includes(entry.id));
       const rest = [...result.triage, ...result.queued].filter((entry) => !planned.includes(entry.id)).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
       const free = Math.max(0, config.triageLimit - planned.length);
-      result.triage = [...planned.map((id) => keep.find((entry) => entry.id === id) || { id, action: "planned" }), ...rest.slice(0, free)];
+      const all = [...result.triage, ...result.queued];
+      result.triage = [...planned.map((id) => keep.find((entry) => entry.id === id) || all.find((entry) => entry.id === id) || { id, action: "planned" }), ...rest.slice(0, free)];
       result.queued = rest.slice(free);
     }
     write(["runs", passUuid, "selection.json"], result);
