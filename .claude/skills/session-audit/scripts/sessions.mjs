@@ -408,8 +408,44 @@ export function loadVersions(session) {
   });
 }
 
+// The repository a folder belongs to: a linked worktree (`.claude/worktrees/*`,
+// `~/Worktrees/*`, `~/.codex/worktrees/*`) has a `.git` file whose `gitdir:`
+// points into `<repo>/.git/worktrees/<name>`, so its product is `<repo>`.
+// Folders that are gone or not linked worktrees keep the folder rule.
+const productCache = new Map();
+
+function mainRepoOf(dir) {
+  let text;
+  try { text = fs.readFileSync(path.join(dir, ".git"), "utf8"); } catch { return null; }
+  const match = /^gitdir:\s*(.+)$/m.exec(text);
+  if (!match) return null;
+  const gitdir = path.resolve(dir, match[1].trim());
+  const linked = /^(.*)\/worktrees\/[^/]+\/?$/.exec(gitdir);
+  if (!linked) return null;
+  const common = linked[1];
+  const name = path.basename(common) === ".git" ? path.basename(path.dirname(common)) : path.basename(common).replace(/\.git$/, "");
+  return name || null;
+}
+
 export function productOf(cwd) {
   if (!cwd) return "unknown";
+  if (productCache.has(cwd)) return productCache.get(cwd);
+  let product = null;
+  for (let dir = cwd; ; dir = path.dirname(dir)) {
+    let stat = null;
+    try { stat = fs.lstatSync(path.join(dir, ".git")); } catch { stat = null; }
+    if (stat) {
+      if (stat.isFile()) product = mainRepoOf(dir);
+      break;
+    }
+    if (path.dirname(dir) === dir) break;
+  }
+  if (!product) product = folderProduct(cwd);
+  productCache.set(cwd, product);
+  return product;
+}
+
+function folderProduct(cwd) {
   const repo = cwd.replace(/\/\.worktrees\/[^/]+(?:\/.*)?$/, "").replace(/\/\.claude\/worktrees\/[^/]+(?:\/.*)?$/, "");
   for (let dir = repo; ; dir = path.dirname(dir)) {
     try { if (fs.lstatSync(path.join(dir, ".git"))) return path.basename(dir); } catch { /* keep walking */ }
@@ -438,7 +474,10 @@ export function kindOf(session, skills, config) {
 
 function runMark(session, skills, config, env) {
   const reasons = [];
-  if (skills.some((skill) => config.runSkills.includes(skill))) reasons.push("qa-load");
+  // An orchestrator runs the tester as an ordinary step before merge and
+  // release; only sessions that load the tester without orchestrate are runs.
+  const orchestrates = skills.some((skill) => config.kinds.orchestratorSkills.includes(skill));
+  if (!orchestrates && skills.some((skill) => config.runSkills.includes(skill))) reasons.push("qa-load");
   const places = [session.cwd, session.home].filter(Boolean).map((place) => realpathDeep(place));
   for (const prefix of config.runPrefixes || []) {
     for (const dir of expandPath(prefix, env)) {

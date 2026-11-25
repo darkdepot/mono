@@ -11,8 +11,8 @@ import path from "node:path";
 import {
   AuditError, compareTags, isFile, isoNow, readJson, readQueue, readState, TagIndex,
 } from "./lib.mjs";
-import { cost, setup } from "./commands.mjs";
-import { METRICS, normalizeSpace, passInput, readRegistry, runFile, withPass } from "./review.mjs";
+import { setup } from "./commands.mjs";
+import { METRICS, normalizeSpace, passInput, passSpend, readRegistry, runFile, withPass } from "./review.mjs";
 
 const OP_TYPES = ["create-document", "update-document", "create-issue", "update-issue", "create-comment"];
 const RECREATE_SAFE = new Set(["update-document", "update-issue"]);
@@ -145,10 +145,12 @@ export function guardText(text, { passUuid, pointers = [], config, privateSet })
 
 // Opened sessions (signal sessions and the sample) by product, kind and version.
 export function openedBreakdown(map, signals, opened) {
-  const ids = new Set(opened?.sessions || []);
+  const sample = new Set(opened?.sessions || []);
+  const bySignal = new Set();
   for (const signal of signals?.signals || []) {
-    if ((opened?.signals || []).includes(signal.id) && signal.session) ids.add(signal.session);
+    if ((opened?.signals || []).includes(signal.id) && signal.session) bySignal.add(signal.session);
   }
+  const ids = new Set([...sample, ...bySignal]);
   const byProduct = {}, byKind = {}, byVersion = {};
   const add = (bucket, key) => { bucket[key] = (bucket[key] || 0) + 1; };
   for (const id of ids) {
@@ -159,7 +161,7 @@ export function openedBreakdown(map, signals, opened) {
     add(byKind, session.kind || "unknown");
     for (const key of new Set((session.loads || []).map((load) => (load.version?.status === "confirmed" ? load.version.range : "unconfirmed")))) add(byVersion, key);
   }
-  return { sessions: ids.size, byProduct, byKind, byVersion };
+  return { sessions: ids.size, signalSessions: bySignal.size, sampleSessions: [...sample].filter((id) => !bySignal.has(id)).length, byProduct, byKind, byVersion };
 }
 
 // ---------------------------------------------------------------- render
@@ -232,12 +234,14 @@ export function renderReport({ passUuid, map, findings, selection, signals, open
   const byId = new Map(findings.map((finding) => [finding.id, finding]));
   const lines = [];
   lines.push(`Проход ${passUuid}${revision ? `, правка ${revision}` : ""}. Окно ${map.window.start} — ${map.window.end}.`);
-  const openedCount = (opened?.signals?.length || 0) + (opened?.sessions?.length || 0);
-  lines.push(`Сессии: учтено ${map.counters.sessions}, открыто ${openedCount} (по сигналам ${opened?.signals?.length || 0}, выборка ${opened?.sessions?.length || 0}); сигналов ${signals?.order?.length || 0}, неоткрытых ${(signals?.order || []).filter((id) => !(opened?.signals || []).includes(id)).length}.`);
+  // Sessions and signals are counted apart: one session can carry many signals.
+  const openedBy = openedBreakdown(map, signals, opened);
+  const openedSignals = opened?.signals?.length || 0;
+  const totalSignals = signals?.order?.length || 0;
+  lines.push(`Сессии: учтено ${map.counters.sessions}, открыто сессий ${openedBy.sessions} (по сигналам ${openedBy.signalSessions}, выборка ${openedBy.sampleSessions}). Сигналы: всего ${totalSignals}, открыто ${openedSignals}, неоткрытых ${(signals?.order || []).filter((id) => !(opened?.signals || []).includes(id)).length}.`);
   lines.push(`По продуктам: ${counts(map.counters.byProduct)}.`);
   lines.push(`По видам: ${counts(map.counters.byKind)}.`);
   lines.push(`По версиям: ${counts(map.counters.byVersion)}.`);
-  const openedBy = openedBreakdown(map, signals, opened);
   lines.push(`Открыто сессий ${openedBy.sessions}: по продуктам ${counts(openedBy.byProduct)}; по видам ${counts(openedBy.byKind)}; по версиям ${counts(openedBy.byVersion)}.`);
   lines.push("");
   const section = (title, entries) => {
@@ -306,6 +310,14 @@ function commentBody(finding, passUuid, key, stages) {
 
 // ---------------------------------------------------------------- plan
 
+// The weekly report is a document of a team (`reportTeam`); a project
+// (`projectId`) is only the fallback of an older personal config.
+export function reportParent(config) {
+  if (config.reportTeam) return { team: config.reportTeam, project: undefined };
+  if (config.projectId) return { team: undefined, project: config.projectId };
+  return { team: undefined, project: undefined };
+}
+
 function passInputs(dataRoot, passUuid) {
   const findings = runFile(dataRoot, passUuid, "findings.json", null);
   const selection = runFile(dataRoot, passUuid, "selection.json", null);
@@ -344,7 +356,7 @@ function desiredOps({ passUuid, config, map, inputs, stages }) {
     key: "report",
     type: "create-document",
     title: `Разбор сессий: ${ruDate(map.window.end)}`,
-    project: config.projectId,
+    ...reportParent(config),
     body: renderReport({ passUuid, map, ...inputs, stages }),
   });
   for (const entry of selection.triage) {
@@ -402,8 +414,8 @@ const REACHED = (op) => op.status !== "planned";
 // sent gets an update operation only when its content changed.
 export function plan(options = {}) {
   return withPass(options, ({ dataRoot, repo, config, passUuid, map, at, write, log }) => {
-    if (!config.projectId || !config.triageTeam) {
-      throw new AuditError("projectId and triageTeam are needed in the personal config.json of the data root before anything is written to Linear", { projectId: Boolean(config.projectId), triageTeam: Boolean(config.triageTeam) });
+    if (!(config.reportTeam || config.projectId) || !config.triageTeam) {
+      throw new AuditError("reportTeam (or the older projectId) and triageTeam are needed in the personal config.json of the data root before anything is written to Linear", { reportTeam: Boolean(config.reportTeam), projectId: Boolean(config.projectId), triageTeam: Boolean(config.triageTeam) });
     }
     const inputs = passInputs(dataRoot, passUuid);
     const stages = new Set(new TagIndex(repo).skillNames());
@@ -415,7 +427,7 @@ export function plan(options = {}) {
     const newReport = desired.find((op) => op.key === "report");
     let current;
     if (!existing) {
-      current = { passUuid, createdAt: at, project: config.projectId, team: config.triageTeam, ops: desired.map(fresh) };
+      current = { passUuid, createdAt: at, ...(config.reportTeam ? { reportTeam: config.reportTeam } : { project: config.projectId }), team: config.triageTeam, ops: desired.map(fresh) };
       current.ops[0].content = newReport.body;
     } else {
       current = existing;
@@ -428,7 +440,9 @@ export function plan(options = {}) {
       const last = reportOps.at(-1);
       const lastContent = last.content ?? last.body;
       if (!REACHED(report)) {
-        Object.assign(report, { title: newReport.title, project: newReport.project, body: newReport.body, content: newReport.body });
+        // A report not sent yet follows the current parent (team over project).
+        Object.assign(report, { title: newReport.title, team: newReport.team, project: newReport.project, body: newReport.body, content: newReport.body });
+        if (newReport.team) { current.reportTeam = newReport.team; delete current.project; }
       } else if (normalizeSpace(lastContent) !== normalizeSpace(newReport.body)) {
         if (last.type === "update-document" && !REACHED(last)) {
           const revision = Number(last.key.split(".")[1]);
@@ -474,7 +488,9 @@ function findOp(current, key) {
 // The Linear MCP call for an operation, with the text to send verbatim.
 function callFor(op, current) {
   const report = current.ops.find((candidate) => candidate.key === "report");
-  if (op.type === "create-document") return { tool: "save_document", args: { project: op.project, title: op.title, content: op.body } };
+  if (op.type === "create-document") {
+    return { tool: "save_document", args: op.team ? { team: op.team, title: op.title, content: op.body } : { project: op.project, title: op.title, content: op.body } };
+  }
   if (op.type === "update-document") return { tool: "save_document", args: { id: report.result?.id, title: op.title, content: op.body } };
   if (op.type === "create-issue") return { tool: "save_issue", args: { team: op.team, state: op.state, title: op.title, description: op.body } };
   if (op.type === "update-issue") return { tool: "save_issue", args: { id: op.target, state: op.state } };
@@ -509,9 +525,41 @@ function itemIds(item) {
   return [item.id, item.identifier, item.uuid].filter(Boolean);
 }
 
+// Names, keys and ids a Linear answer gives for one parent field, as a flat
+// value (`team: "Mono"`, `teamId`) or an object ({id, name, key}).
+function parentNames(item, field) {
+  const names = [];
+  const add = (value) => {
+    if (typeof value === "string" && value.trim()) names.push(value.trim().toLowerCase());
+    else if (value && typeof value === "object") for (const part of [value.id, value.name, value.key, value.slugId]) add(part);
+  };
+  add(item[field]);
+  add(item[`${field}Id`]);
+  return names;
+}
+
+// The document read back sits in the planned parent: the team of the report
+// (an answer without a team, or in a project, is not confirmed) or, for an
+// older plan, its project.
+function parentProblems(op, item) {
+  if (op.team) {
+    const teams = parentNames(item, "team");
+    if (!teams.length) return [`the answer names no team; the report belongs to team ${op.team}`];
+    if (!teams.includes(String(op.team).toLowerCase())) return [`the document is in team ${teams[0]}, not ${op.team}`];
+    if (parentNames(item, "project").length) return ["the document is in a project, not directly in the team"];
+    return [];
+  }
+  if (op.project) {
+    const projects = parentNames(item, "project");
+    if (!projects.length) return [`the answer names no project; the report belongs to project ${op.project}`];
+    if (!projects.includes(String(op.project).toLowerCase())) return [`the document is in project ${projects[0]}, not ${op.project}`];
+  }
+  return [];
+}
+
 // The object read back is the one this operation wrote: its target, its
 // marker, and the same words and link addresses (formatting may change).
-function checkReadBack(op, item, current) {
+export function checkReadBack(op, item, current) {
   const problems = [];
   if (!item || typeof item !== "object") return ["the answer is not an object"];
   if (op.type === "update-issue") {
@@ -522,7 +570,10 @@ function checkReadBack(op, item, current) {
   if (op.type === "update-document") {
     const report = current.ops.find((candidate) => candidate.key === "report");
     if (!itemIds(item).includes(op.target || report?.result?.id)) problems.push("the answer is not the report document");
+    // The updated report must still sit where the report was created.
+    if (report) problems.push(...parentProblems(report, item));
   }
+  if (op.type === "create-document") problems.push(...parentProblems(op, item));
   if (op.type === "create-comment" && item.issueId && item.issueId !== op.target && item.issue?.identifier !== op.target) {
     problems.push(`the comment is on ${item.issueId}, not ${op.target}`);
   }
@@ -653,7 +704,11 @@ export function opCommand(options = {}) {
 }
 
 function reconcileHint(op) {
-  if (op.type === "create-document") return "list_documents of the project created since the pass start; pass the saved answer with --listing";
+  if (op.type === "create-document") {
+    return op.team
+      ? `list_documents of team ${op.team} (teamId) created since the pass start, with fields content and team; pass the saved answer with --listing`
+      : "list_documents of the project created since the pass start; pass the saved answer with --listing";
+  }
   if (op.type === "create-issue") return "list_issues of the team created since the pass start; pass the saved answer with --listing";
   if (op.type === "create-comment") return `list_comments of ${op.target}, all of them; pass the saved answer with --listing`;
   return "get the target back and pass it with --listing";
@@ -736,7 +791,7 @@ export function commit(options = {}) {
     const queue = readQueue(dataRoot).filter((signal) => !openedSignals.has(signal.id));
     write(["queue.json"], { signals: queue });
     log(`commit boundary ${state.pending.windowEnd} queue ${queue.length}`);
-    const summary = buildSummary({ env, dataRoot, passUuid, map, at, plan: current, queueLength: queue.length, startedAt: state.pending.startedAt });
+    const summary = buildSummary({ env, dataRoot, passUuid, map, at, plan: current, queueLength: queue.length, pending: state.pending });
     write(["runs", passUuid, "summary.json"], summary);
     // Last: the boundary moves, deferred tails carry over, the pass is done.
     const latest = readState(dataRoot);
@@ -747,13 +802,14 @@ export function commit(options = {}) {
 
 // ---------------------------------------------------------------- summary
 
-export function buildSummary({ env, dataRoot, passUuid, map, at, plan: current, queueLength, startedAt }) {
+export function buildSummary({ env, dataRoot, passUuid, map, at, plan: current, queueLength, pending }) {
+  const startedAt = pending.startedAt;
   const findings = runFile(dataRoot, passUuid, "findings.json", { findings: [] }).findings;
   const selection = runFile(dataRoot, passUuid, "selection.json", { triage: [], queued: [], rows: [] });
   const signals = runFile(dataRoot, passUuid, "signals.json", { order: [], signals: [] });
   const opened = runFile(dataRoot, passUuid, "opened.json", { signals: [], sessions: [] });
   const checks = runFile(dataRoot, passUuid, "checks.json", { kept: [], dropped: [] });
-  const spent = cost({ env, passUuid });
+  const spent = passSpend(env, pending);
   const ops = current?.ops || [];
   const report = ops.filter((op) => op.key === "report" || op.type === "update-document").find((op) => op.key === "report")?.result || null;
   const triage = selection.triage.map((entry) => {
@@ -770,7 +826,7 @@ export function buildSummary({ env, dataRoot, passUuid, map, at, plan: current, 
     sessions: {
       counted: map.counters.sessions, byProduct: map.counters.byProduct, byKind: map.counters.byKind, byVersion: map.counters.byVersion,
       byHost: map.counters.byHost, runMarked: map.sessions.filter((session) => session.run?.marked).length,
-      opened: (opened.signals || []).length + (opened.sessions || []).length,
+      opened: openedBreakdown(map, signals, opened).sessions,
       openedBy: openedBreakdown(map, signals, opened),
     },
     signals: { total: (signals.order || []).length, opened: (opened.signals || []).length, unopened },
@@ -792,10 +848,18 @@ export function buildSummary({ env, dataRoot, passUuid, map, at, plan: current, 
   return summary;
 }
 
+function plural(n, one, few, many) {
+  const tens = n % 100;
+  const units = n % 10;
+  if (tens >= 11 && tens <= 14) return many;
+  if (units === 1) return one;
+  return units >= 2 && units <= 4 ? few : many;
+}
+
 function summaryText(s) {
   const versions = Object.keys(s.sessions.byVersion || {}).filter((key) => key !== "unconfirmed");
   const lines = [];
-  lines.push(`Учёл ${s.sessions.counted} сессий${versions.length ? ` на ${versions.join(", ")}` : ""}${s.sessions.byVersion?.unconfirmed ? ` (без подтверждённой версии ${s.sessions.byVersion.unconfirmed})` : ""} в продуктах: ${counts(s.sessions.byProduct)}; открыл ${s.sessions.opened}.`);
+  lines.push(`Учёл ${s.sessions.counted} сессий${versions.length ? ` на ${versions.join(", ")}` : ""}${s.sessions.byVersion?.unconfirmed ? ` (без подтверждённой версии ${s.sessions.byVersion.unconfirmed})` : ""} в продуктах: ${counts(s.sessions.byProduct)}; открыл ${s.sessions.opened} ${plural(s.sessions.opened, "сессию", "сессии", "сессий")} и ${s.signals.opened} ${plural(s.signals.opened, "сигнал", "сигнала", "сигналов")}.`);
   lines.push(`Новое: ${s.findings.new.length}. Повторы: ${s.findings.repeats.length}. Вернулось: ${s.findings.returned.length}. Отклонённые раньше: ${s.findings.rejected.length}.`);
   lines.push(`В Triage: ${s.triage.length}${s.triage.length ? ` (${s.triage.map((entry) => entry.issue || entry.id).join(", ")})` : ""}. В очередь: ${s.findings.queued.length}. Только в отчёте: ${s.findings.reportOnly.length}. Снято без доказательства или правила: ${s.dropped.count}.`);
   lines.push(s.confirm.length ? `От тебя: подтвердить ${s.confirm.length} ${s.confirm.length === 1 ? "находку" : "находки"} про экран (${s.confirm.map((entry) => `${entry.id}, этап ${entry.stage}`).join("; ")}).` : "От тебя: ничего.");
@@ -809,7 +873,7 @@ export function summary(options = {}) {
   const { env = process.env } = options;
   return withPass(options, ({ dataRoot, passUuid, map, at, state }) => {
     const current = runFile(dataRoot, passUuid, "plan.json", null);
-    return buildSummary({ env, dataRoot, passUuid, map, at, plan: current, queueLength: readQueue(dataRoot).length, startedAt: state.pending.startedAt });
+    return buildSummary({ env, dataRoot, passUuid, map, at, plan: current, queueLength: readQueue(dataRoot).length, pending: state.pending });
   });
 }
 

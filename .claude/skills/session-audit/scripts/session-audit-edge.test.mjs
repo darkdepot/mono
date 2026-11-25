@@ -60,6 +60,8 @@ const extractText = (w, id, session = AUDITOR) => {
   return result.out.chunks.map((chunk) => fs.readFileSync(chunk.file, "utf8"));
 };
 const eventsOnly = (texts) => texts.map((text) => text.split("## events")[1]).join("");
+// A digest line `[time #key] rest`, whatever the event key.
+const hasLine = (text, ts, rest) => text.split(`[${ts} #`).slice(1).some((tail) => /^[^\]\s]+\] /.test(tail) && tail.replace(/^[^\]\s]+\] /, "").startsWith(rest));
 
 test("ids with path syntax are refused before any path is built", (t) => {
   const w = setupWorld(t, buildWorld);
@@ -153,9 +155,9 @@ test("answers and outputs after the boundary are new; open questions show as una
   collect(w);
   const texts = extractText(w, EDGE.questions);
   const events = eventsOnly(texts);
-  assert.ok(events.includes(`[${at(BOUNDARY, 5)}] answer: Keep the old title? [options: Keep; Change]\n  answer (answered): {"Keep the old title?":"Change"}`));
+  assert.ok(hasLine(events, at(BOUNDARY, 5), 'answer: Keep the old title? [options: Keep; Change]\n  answer (answered): {"Keep the old title?":"Change"}'));
   assert.ok(events.includes("question: Publish now? [options: Yes; Later]\n  status: unanswered"));
-  assert.ok(events.includes(`[${at(BOUNDARY, 7)}] second-model: claude -p 'second look'`));
+  assert.ok(hasLine(events, at(BOUNDARY, 7), "second-model: claude -p 'second look'"));
   assert.ok(events.includes("second look: fine"));
 });
 
@@ -167,7 +169,7 @@ test("an entry above 200 KB continues over chunks without losing text", (t) => {
   assert.ok(result.out.chunks.length >= 2);
   for (const chunk of result.out.chunks) assert.ok(chunk.bytes <= 204800, `${chunk.bytes}`);
   const joined = result.out.chunks.map((chunk) => fs.readFileSync(chunk.file, "utf8").split("## events\n\n")[1])
-    .join("").replace(/\[part \d+\/\d+\] /g, "").replace(/\n(?=word|END)/g, "");
+    .join("").replace(/\[part \d+\/\d+ #[^\]\s]+\] /g, "").replace(/\n(?=word|END)/g, "");
   assert.ok(joined.includes("END-OF-OWNER-NOTE"));
   assert.equal((joined.match(/word /g) || []).length, (LONG_OWNER.match(/word /g) || []).length);
 });
@@ -213,7 +215,7 @@ test("the synchronous Codex question tool keeps its answer from the output", (t)
   collect(w);
   const text = eventsOnly(extractText(w, EDGE.syncQuestion));
   assert.ok(text.includes("question: Which day? [options: Monday; Tuesday]\n  status: answered"));
-  assert.ok(text.includes(`[${at(BOUNDARY, 22)}] answer: Which day? [options: Monday; Tuesday]\n  answer (answered): Tuesday`));
+  assert.ok(hasLine(text, at(BOUNDARY, 22), "answer: Which day? [options: Monday; Tuesday]\n  answer (answered): Tuesday"));
 });
 
 test("a hard-linked log is not appended to", (t) => {

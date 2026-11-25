@@ -96,7 +96,7 @@ export function fakeLinear() {
     documents, issues, comments,
     seedIssue(fields) { issues.push({ createdAt: "2026-10-01T00:00:00.000Z", ...fields }); return fields; },
     seedComment(issueId, body, createdAt = "2026-10-02T00:00:00.000Z") { comments.push({ id: `c-${next++}`, issueId, body, createdAt }); },
-    save_document({ project, title, content, id }, now) {
+    save_document({ project, team, title, content, id }, now) {
       if (id) {
         const doc = documents.find((candidate) => candidate.id === id);
         doc.content = rewrite(content);
@@ -104,7 +104,9 @@ export function fakeLinear() {
         doc.updatedAt = now;
         return { ...doc };
       }
-      const doc = { id: `doc-${next++}`, title, content: rewrite(content), url: `https://linear.app/fixture/document/doc-${next}`, project: { id: project }, createdAt: now, updatedAt: now };
+      const doc = { id: `doc-${next++}`, title, content: rewrite(content), url: `https://linear.app/fixture/document/doc-${next}`, createdAt: now, updatedAt: now,
+        // A team document as get_document returns it (observed 25.11.2026).
+        ...(team ? { project: null, initiative: null, team: { id: `team-${team.length}`, name: team }, issue: null } : { project: { id: project } }) };
       documents.push(doc);
       return { ...doc };
     },
