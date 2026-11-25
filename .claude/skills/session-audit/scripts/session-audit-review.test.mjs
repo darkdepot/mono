@@ -170,8 +170,8 @@ test("signals: linked by a written id only, ordered by cost, three random sessio
   assert.deepEqual(budget.opened.sessions, [result.random[0].session]);
   assert.equal(budget.budget.minutes.used, 10);
   assert.equal(budget.budget.exhausted, false);
-  const late = ok(w.env, ["opened", "--session", ME, "--now", at(NOW, 61)]);
-  assert.equal(late.budget.exhausted, true, "an hour after the start the budget is spent");
+  const late = ok(w.env, ["opened", "--session", ME, "--now", at(NOW, 91)]);
+  assert.equal(late.budget.exhausted, true, "past the minutes budget the pass is spent");
   assert.ok(late.unopened.length === result.signals.length - 1);
   assert.equal(run(w.env, ["opened", "S-unknown", "--session", ME, "--now", NOW]).status, 2);
   assert.equal(passUuid, budget.passUuid);
