@@ -420,7 +420,7 @@ function observeServedModels(boundary, stdout, phase = 'task') {
 }
 // MONO-483: a narrow list of network failure signs in a role CLI's stderr (unresolved host, reset or dropped connection).
 export const NETWORK_SIGNS = /could not resolve host|failed to lookup address|getaddrinfo|ENOTFOUND|EAI_AGAIN|nodename nor servname|name or service not known|temporary failure in name resolution|dns error|ECONNRESET|connection reset|ECONNABORTED|connection aborted|ECONNREFUSED|connection refused|ENETUNREACH|network is unreachable|EHOSTUNREACH|socket hang up|stream disconnected|error sending request|connection closed before/i;
-export function runInvocation(invocation, prompt, timeoutMs) {
+export function runInvocation(invocation, prompt, timeoutMs, { limitSec = timeoutMs / 1000 } = {}) {
   return new Promise((resolve, reject) => {
       const child = spawn(invocation.command, invocation.args, { cwd: invocation.cwd, env: invocation.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
       const stdout = [], stderr = [];
@@ -443,7 +443,7 @@ export function runInvocation(invocation, prompt, timeoutMs) {
           const result = { stdout: decodeChildBytes(Buffer.concat(stdout)), stderr: decodeChildBytes(Buffer.concat(stderr)) };
           if (interrupted) throw Object.assign(new Error('review interrupted; role process group stopped'), { rawAnswer: result.stdout });
           const exceeded = timedOut || outputLimit;
-          if (code !== 0 || exceeded) throw Object.assign(new Error(`role failed (${timedOut ? 'timeout' : outputLimit ? 'output limit' : code}); no response admitted`),
+          if (code !== 0 || exceeded) throw Object.assign(new Error(`role failed (${timedOut ? `timeout after ${limitSec} s` : outputLimit ? 'output limit' : code}); no response admitted`),
             { rawAnswer: result.stdout, stderrText: result.stderr, exceeded, timedOut, outputLimit, processFailure: true, network: !exceeded && NETWORK_SIGNS.test(result.stderr) });
           resolve(result);
         } catch (error) { error.interrupted = interrupted; reject(error); }
@@ -451,7 +451,8 @@ export function runInvocation(invocation, prompt, timeoutMs) {
       child.stdin.end(prompt);
     });
 }
-async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = 600000, ensureLogin = ensureClaudeLogin, login: checked = null }) {
+// The boundary probe shares the role's time limit.
+async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = ROLE_TIMEOUT_SEC * 1000, limitSec = timeoutMs / 1000, ensureLogin = ensureClaudeLogin, login: checked = null }) {
   // A Claude role first gets a fresh login: on the host an expiring one is refreshed, in the worker sandbox it is only read.
   // A relaunch after a forced refresh reuses that refresh's result instead of checking again.
   const login = route.engine === 'claude' ? checked ?? await ensureLogin() : null;
@@ -479,7 +480,7 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
       fs.writeFileSync(probeSchema, JSON.stringify({ type: 'object', properties: { tools: { type: 'array', items: { type: 'string' } },
         mcpServers: { type: 'array', items: { type: 'string' } } }, required: ['tools', 'mcpServers'], additionalProperties: false }));
       const args = [...invocation.args]; args[args.indexOf('--output-schema') + 1] = probeSchema;
-      const probe = await runInvocation({ ...invocation, args }, 'Boundary audit only. Do not call tools. Enumerate ALL exposed tool names including deferred tools and wrappers, and MCP server names. Exact names, no omissions. Return the schema.', timeoutMs);
+      const probe = await runInvocation({ ...invocation, args }, 'Boundary audit only. Do not call tools. Enumerate ALL exposed tool names including deferred tools and wrappers, and MCP server names. Exact names, no omissions. Return the schema.', timeoutMs, { limitSec });
       captured = probe.stdout;
       observeServedModels(boundary, captured, 'boundary-probe');
       const parsed = codexResponse(probe);
@@ -489,7 +490,7 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
       boundary.observed = observeCodexBoundary(surface, probe.stderr);
       boundary.probeUsage = parsed.usage;
     }
-    const result = await runInvocation(invocation, prompt, timeoutMs);
+    const result = await runInvocation(invocation, prompt, timeoutMs, { limitSec });
     captured = result.stdout; capturedErr = result.stderr;
     observeServedModels(boundary, captured);
     let response, usage = null;
@@ -590,7 +591,7 @@ function pinnedDiff(worktree, base, head, files) {
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 const ORDINARY_INSTRUCTION = 'Review this change for bugs.';
-const GROUP_NOTE = 'The change is too large for one request, so it is reviewed in file groups. This request carries one group: review its files and diff completely, reading any other repository file as needed, list them in reviewedFiles, and check every open finding. A file whose diff is split by hunks appears in parts (partialFiles).';
+const GROUP_NOTE = 'The change is too large for one request, so it is reviewed in file groups. This request carries one group: review its files and diff completely, reading any other repository file as needed, list them in reviewedFiles, and check every open finding. A file whose diff is split by hunks appears in parts (partialFiles). changeMap lists every file of the whole change with its added and removed lines and the headers of its changed places: use it to see how this group fits the change.';
 const jsonBytes = value => Buffer.byteLength(JSON.stringify(value));
 const REMARK_GROUP_NOTE = 'The change is too large for one request, so it is checked in file groups. This request carries one group of the diff: judge every remark against this part and any repository file you read; answer needs-fix whenever this part or the files show the decision does not hold. A file whose diff is split by hunks appears in parts (partialFiles).';
 // A file diff: its header lines, then hunks that each start with «@@ ». Concatenation gives the diff back exactly.
@@ -600,14 +601,16 @@ export function splitHunks(text) {
   return { header: text.slice(0, starts[0]), hunks: starts.map((start, index) => text.slice(start, starts[index + 1] ?? text.length)) };
 }
 // A file diff over the budget becomes pieces of its header plus whole hunks; a hunk that cannot fit alone is named.
-function hunkPieces(unit, budget, cost, where) {
+// MONO-494: hardBudget (the engine limit) admits one hunk over the group budget as a piece of its own.
+function hunkPieces(unit, budget, cost, where, hardBudget = budget) {
   if (cost(unit) <= budget) return [unit];
   const { header, hunks } = splitHunks(unit.diff), chunks = [];
   const piece = list => ({ file: unit.file, diff: header + list.join(''), part: 999999, of: 999999 });
   requireValue(hunks.length > 0, `file ${unit.file}: its diff has no hunks and does not fit the ${where}`);
   let current = [];
   for (const hunk of hunks) {
-    requireValue(cost(piece([hunk])) <= budget, `file ${unit.file}: one diff hunk of ${cost(piece([hunk]))} bytes does not fit the ${where}; the change cannot be split further for review`);
+    requireValue(cost(piece([hunk])) <= hardBudget, `file ${unit.file}: one diff hunk of ${cost(piece([hunk]))} bytes does not fit the ${where}; the change cannot be split further for review`);
+    if (cost(piece([hunk])) > budget) { if (current.length) chunks.push(current); chunks.push([hunk]); current = []; continue; }
     if (current.length && cost(piece([...current, hunk])) > budget) { chunks.push(current); current = []; }
     current.push(hunk);
   }
@@ -626,6 +629,69 @@ function packGroups(units, budget, cost, where) {
   }
   if (current.length) groups.push(current);
   return groups;
+}
+// MONO-494: a large change is reviewed in small groups (long inputs lose quality and the reviewer's time grows with
+// its answer): about GROUP_DIFF_BYTES of diff each, files of one directory together, a huge file split by hunks.
+export const GROUP_DIFF_BYTES = 200_000, GROUP_CONCURRENCY = 2, CHANGE_MAP_BYTES = 40_000, CHECKER_RADIUS = 80;
+const directoryOf = file => file.split('/').slice(0, -1).slice(0, 2).join('/');
+// Pieces packed into groups under the budget: one directory's pieces stay together and in order (a split file's parts
+// stay adjacent); a directory that does not fit what is left of a group at least half full starts the next group.
+// A piece over the group budget (one indivisible hunk) still within hardBudget goes alone in a group of its own.
+export function packCoherent(units, budget, cost, where, hardBudget = budget) {
+  const buckets = new Map();
+  for (const unit of units) {
+    requireValue(cost(unit) <= hardBudget, `file ${unit.file}: its diff does not fit the ${where}`);
+    const key = directoryOf(unit.file); if (!buckets.has(key)) buckets.set(key, []); buckets.get(key).push(unit);
+  }
+  const groups = [];
+  let current = [], used = 0;
+  const close = () => { if (current.length) groups.push(current); current = []; used = 0; };
+  for (const key of [...buckets.keys()].sort()) {
+    const bucket = buckets.get(key), size = bucket.reduce((sum, unit) => sum + cost(unit), 0);
+    if (current.length && used + size > budget && size <= budget && used >= budget / 2) close();
+    for (const unit of bucket) {
+      if (cost(unit) > budget) { close(); groups.push([unit]); continue; }
+      if (current.length && used + cost(unit) > budget) close();
+      current.push(unit); used += cost(unit);
+    }
+  }
+  close();
+  return groups;
+}
+// The map of the whole change every group carries: each changed file with its added/removed line counts and the
+// headers of its changed places. Over CHANGE_MAP_BYTES the hunk headers go first, then files past the bound.
+export function changeMap(parts, binaryFiles = [], limit = CHANGE_MAP_BYTES) {
+  const rows = parts.map(part => {
+    let added = 0, removed = 0;
+    const { hunks } = splitHunks(part.diff);
+    for (const hunk of hunks) for (const row of hunk.split('\n').slice(1)) { if (row.startsWith('+')) added++; else if (row.startsWith('-')) removed++; }
+    return { file: part.file, added, removed, hunks: hunks.map(hunk => hunk.slice(0, hunk.indexOf('\n') < 0 ? undefined : hunk.indexOf('\n')).slice(0, 160)) };
+  });
+  const text = withHunks => [...rows.map(row => `${row.file} +${row.added} -${row.removed}` + (withHunks && row.hunks.length ? `\n  ${row.hunks.join('\n  ')}` : '')),
+    ...binaryFiles.map(file => `${file} (binary)`)].join('\n');
+  let map = text(true);
+  if (Buffer.byteLength(map) <= limit) return { files: rows.length + binaryFiles.length, text: map };
+  map = text(false);
+  if (Buffer.byteLength(map) <= limit) return { files: rows.length + binaryFiles.length, hunkHeaders: 'omitted to fit the map bound', text: map };
+  const lines = map.split('\n'), kept = [];
+  let size = 0;
+  for (const line of lines) { if (size + Buffer.byteLength(line) + 1 > limit - 80) break; kept.push(line); size += Buffer.byteLength(line) + 1; }
+  return { files: lines.length, hunkHeaders: 'omitted to fit the map bound', text: `${kept.join('\n')}\n… ${lines.length - kept.length} more files` };
+}
+// A bounded queue: at most `limit` tasks run at once, in order. After an interrupted task nothing new starts.
+// Every started task settles before it returns; the results keep the task order.
+export async function boundedQueue(tasks, limit = GROUP_CONCURRENCY) {
+  const results = new Array(tasks.length);
+  let next = 0, stop = false;
+  const worker = async () => {
+    while (!stop && next < tasks.length) {
+      const index = next++;
+      try { results[index] = { ok: true, value: await tasks[index]() }; }
+      catch (error) { results[index] = { ok: false, error }; if (error?.interrupted === true) stop = true; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  return results;
 }
 // The base range a head line stands for, walking the hunk that holds it. Context rows advance both sides, removed rows
 // the base side, added rows the head side. An added line in a run that directly replaces a removed run stands for that
@@ -680,20 +746,11 @@ function evidenceExcerpts(evidence, findings, radius, rangesFor) {
       ...(item.deletionEvidence ? { deletionEvidence: item.deletionEvidence } : {}) };
   });
 }
-// The checker's input stays under its engine limit: least lossy cuts first, then a named failure.
-function boundedCheckerPrompt({ build, extra, limit, engine, findings, scopedDiff, full, scoped, binary }) {
-  let current = { ...extra }, prompt;
-  const fits = () => promptSize(prompt = build('code-review-checker', current)) <= limit;
-  if (fits()) return prompt;
+// Each file's diff kept only around its findings: whole hunks near a finding on either side, a long hunk cut to its rows near it.
+function diffAroundFindings(result, findings, radius, binary) {
   const findingFiles = new Set(findings.map(finding => finding.file));
-  const onlyFindingFiles = result => result.parts.filter(part => !binary.has(part.file) && findingFiles.has(part.file)).map(part => part.diff).join('');
-  const fullDiff = file => full.parts.find(part => part.file === file)?.diff;
-  // A finding's line is a head line, or a base line when it points at removed code (a deleted file has only base lines):
-  // the head side keeps the line itself, the base side the line itself and its head line mapped through the hunks.
-  // The base side keeps the finding line itself (it may name removed code) and the whole base range its head line stands for.
   const baseRanges = (fileDiff, line) => { const range = baseRange(fileDiff, line); return [[line, line], [range.from, range.to], [range.center, range.center]]; };
-  // Each file's diff kept only around its findings: whole hunks near a finding on either side, a long hunk cut to its rows near it.
-  const aroundFindings = (result, radius) => result.parts.filter(part => !binary.has(part.file) && findingFiles.has(part.file)).map(part => {
+  return result.parts.filter(part => !binary.has(part.file) && findingFiles.has(part.file)).map(part => {
     const lines = findings.filter(finding => finding.file === part.file).map(finding => finding.line);
     const headWindows = lines.map(line => [line - radius, line + radius]), baseWindows = lines.flatMap(line => baseRanges(part.diff, line)).map(([from, to]) => [from - radius, to + radius]);
     const near = (windows, line) => windows.some(([from, to]) => line >= from && line <= to);
@@ -719,15 +776,29 @@ function boundedCheckerPrompt({ build, extra, limit, engine, findings, scopedDif
       return [kept.join('\n') + '\n'];
     }).join('');
   }).join('');
-  const head = radius => evidenceExcerpts(extra.headEvidence, findings, radius, (file, line) => [[line, line]]);
-  const base = radius => evidenceExcerpts(extra.baseEvidence, findings, radius, (file, line) => baseRanges(fullDiff(file), line));
+}
+// The checker's input stays under its engine limit: least lossy cuts first, then a named failure.
+function boundedCheckerPrompt({ build, extra, limit, engine, findings, scopedDiff, full, scoped, binary, narrowBase = false, rawEvidence = extra }) {
+  let current = { ...extra }, prompt;
+  const fits = () => promptSize(prompt = build('code-review-checker', current)) <= limit;
+  if (fits()) return prompt;
+  const findingFiles = new Set(findings.map(finding => finding.file));
+  const onlyFindingFiles = result => result.parts.filter(part => !binary.has(part.file) && findingFiles.has(part.file)).map(part => part.diff).join('');
+  const fullDiff = file => full.parts.find(part => part.file === file)?.diff;
+  // A finding's line is a head line, or a base line when it points at removed code (a deleted file has only base lines):
+  // the head side keeps the line itself, the base side the line itself and its head line mapped through the hunks.
+  // The base side keeps the finding line itself (it may name removed code) and the whole base range its head line stands for.
+  const baseRanges = (fileDiff, line) => { const range = baseRange(fileDiff, line); return [[line, line], [range.from, range.to], [range.center, range.center]]; };
+  const aroundFindings = (result, radius) => diffAroundFindings(result, findings, radius, binary);
+  const head = radius => evidenceExcerpts(rawEvidence.headEvidence, findings, radius, (file, line) => [[line, line]]);
+  const base = radius => evidenceExcerpts(rawEvidence.baseEvidence, findings, radius, (file, line) => baseRanges(fullDiff(file), line));
   const note = 'Input limit: evidence and diffs are cut to fit; read head files directly for more context.';
   const steps = [
     // Lossless: on a full-scope round the scoped diff is the same text as baseDiff.
     () => { if (scopedDiff === extra.baseDiff) current = { ...current, diff: '', diffNote: 'Same as baseDiff; sent once to fit the input limit.' }; },
     () => { current = { ...current, inputLimitNote: note, headEvidence: head(80) }; },
     () => { current = { ...current, baseEvidence: base(80) }; },
-    () => { current = { ...current, ...(current.diff === '' ? {} : { diff: onlyFindingFiles(scoped) }), baseDiff: onlyFindingFiles(full), diffScope: 'files with findings only' }; },
+    () => { current = { ...current, ...(current.diff === '' ? {} : { diff: onlyFindingFiles(scoped) }), ...(narrowBase ? {} : { baseDiff: onlyFindingFiles(full), diffScope: 'files with findings only' }) }; },
     () => { current = { ...current, ...(current.diff === '' ? {} : { diff: aroundFindings(scoped, 80) }), baseDiff: aroundFindings(full, 80), diffScope: 'hunks around findings only' }; },
     () => { current = { ...current, headEvidence: head(20), baseEvidence: base(20) }; },
     () => { current = { ...current, ...(current.diff === '' ? {} : { diff: aroundFindings(scoped, 20) }), baseDiff: aroundFindings(full, 20) }; },
@@ -735,8 +806,12 @@ function boundedCheckerPrompt({ build, extra, limit, engine, findings, scopedDif
   for (const step of steps) { step(); if (fits()) return prompt; }
   throw new Error(`code-review-checker input of ${promptSize(prompt)} bytes is over the ${engine} input limit of ${limit} bytes even with evidence cut to the regions of its ${findings.length} findings`);
 }
+// MONO-494: every role call (reviewer, checker, remark check, each group, the boundary probe and the retry) has the same
+// fixed limit, the OpenAI and Anthropic SDK default; it is not configurable. secondMs only scales seconds in tests.
+export const ROLE_TIMEOUT_SEC = 600;
+const roleTimeout = secondMs => ({ timeoutMs: ROLE_TIMEOUT_SEC * secondMs, limitSec: ROLE_TIMEOUT_SEC });
 // The only round boundary. Callers persist/sign the returned record; manual mode only prints it.
-export async function runReviewRound(input, { runRole = executeRole, ensureLogin = ensureClaudeLogin, promptLimits = {}, clock = systemClock, load = hostLoad } = {}) {
+export async function runReviewRound(input, { runRole = executeRole, ensureLogin: baseLogin = ensureClaudeLogin, promptLimits = {}, clock = systemClock, load = hostLoad, secondMs = 1000, groupStore = null } = {}) {
   const { worktree, head, base, contract, risk = 'standard', config = {}, packRoot = runtimePackRoot() } = input;
   const record = structuredClone(input.stageRecord ?? { schemaVersion: 1, rounds: [], findings: [], failures: [] });
   requireValue(object(record) && ['rounds', 'findings', 'failures'].every(key => Array.isArray(record[key] ?? [])), 'stage record unreadable');
@@ -783,6 +858,10 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     requireValue(git(worktree, ['merge-base', base, head]).trim() === base, 'base must be an ancestor of the reviewed head');
     const identity = treeIdentity(worktree);
     const roles = resolveReviewRoles(config, packRoot);
+    const timeout = roleTimeout(secondMs);
+    // Groups run in parallel: login checks and refreshes of one round run one at a time.
+    let loginChain = Promise.resolve();
+    const serialLogin = options => { const next = loginChain.then(() => options === undefined ? baseLogin() : baseLogin(options)); loginChain = next.catch(() => {}); return next; };
     assertReadableWorktree(worktree);
     requireValue(!git(worktree, ['diff', '--raw', '--no-renames', base, head, '--']).split('\n')
       .some(row => /^:(?:160000 \d{6}|\d{6} 160000) /.test(row)), 'gitlink changes are unsupported; review the submodule separately');
@@ -802,13 +881,16 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     const rulesFile = path.join(exported.root, 'AGENTS.md');
     const rules = fs.existsSync(rulesFile) ? fs.readFileSync(rulesFile, 'utf8') : '';
     const context = { worktree: exported.root, symlinks: exported.symlinks, head, base, contract, rules, round: number, scope: narrow ? 'fixes-and-open-findings' : 'full', files, diff: view(scoped) };
+    // MONO-494: every group carries the map of the whole change; reused lists the groups answered by an earlier collection.
+    const map = changeMap(full.parts.filter(part => !binary.has(part.file)), [...binary]), reused = [];
     const limitFor = role => {
       const engine = roles[role].engine, own = promptLimits?.[engine];
       // A caller may only lower a limit (tests); the engine's own ceiling is never raised.
       return Math.min(PROMPT_LIMITS[engine] ?? 0, Number.isSafeInteger(own) && own > 0 ? own : Infinity);
     };
     const build = (role, extra) => promptFor(packRoot, role, { ...context, ...extra, unreviewedFiles: [...unreviewedFiles] });
-    const call = async (role, prompt, parse, group = null) => {
+    const call = async (role, prompt, parse, group = null, onAnswer = null) => {
+      const ensureLogin = serialLogin;
       // No role call ever carries a prompt over its engine's input limit.
       requireValue(promptSize(prompt) <= limitFor(role), `${role} input of ${promptSize(prompt)} bytes is over the ${roles[role].engine} input limit of ${limitFor(role)} bytes`);
       const cost = { role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id, ...(group ? { group } : {}) };
@@ -817,10 +899,12 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
         const started = Date.now(), wall = clock.wall(), mono = clock.mono();
         let result, answered = false;
         try {
-          result = await runRole({ role, route: roles[role], worktree: exported.root, packRoot, prompt, ensureLogin, ...(login ? { login } : {}) });
+          result = await runRole({ role, route: roles[role], worktree: exported.root, packRoot, prompt, ensureLogin, ...timeout, ...(login ? { login } : {}) });
           answered = true;
           costs.push({ ...cost, attempt, elapsedMs: result?.elapsedMs ?? null, usage: result?.usage ?? null, boundary: result?.boundary ?? null });
-          return parse(result?.response, attempt);
+          const parsed = parse(result?.response, attempt);
+          onAnswer?.(result?.response);
+          return parsed;
         } catch (error) {
           // A malformed or failed answer is retried once; an interrupted role is never relaunched.
           // A login failure gets one login refresh before that single retry.
@@ -839,18 +923,23 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     // and a file split by hunks only when every piece of it was reviewed.
     let units = scoped.parts.filter(part => !binary.has(part.file)).map(part => ({ file: part.file, diff: part.diff, part: 1, of: 1 }));
     const coveredUnits = new Set();
-    const absorb = (result, sent) => {
+    // MONO-494 review: coverage is also counted per pass. Each pass (all-defects, then ordinary when it runs) must cover
+    // every changed file from its own answers, so an answer that claims completion with files left out never rides on an
+    // earlier pass: its pass gets one focused pass on the missing files, then the round is not-reviewed.
+    const passCovers = [];
+    const absorb = (result, sent, cover) => {
       const listed = new Set(result.reviewedFiles);
-      result.reviewedFiles.forEach(file => covered.add(file)); sent.forEach(unit => { if (listed.has(unit.file)) coveredUnits.add(unit); });
+      result.reviewedFiles.forEach(file => { covered.add(file); cover.files.add(file); });
+      sent.forEach(unit => { if (listed.has(unit.file)) { coveredUnits.add(unit); cover.units.add(unit); } });
       found.push(...result.findings);
     };
-    const missing = () => files.filter(file => units.some(unit => unit.file === file) ? units.some(unit => unit.file === file && !coveredUnits.has(unit)) : !covered.has(file));
+    const missingFor = cover => files.filter(file => units.some(unit => unit.file === file) ? units.some(unit => unit.file === file && !cover.units.has(unit)) : !cover.files.has(file));
     // An oversize change goes to the reviewer in file groups, each under the engine limit, with the same contract,
     // rules and every open finding; the answers are joined and full coverage is still required.
     const groupExtra = (extra, group, index, of, focus) => {
       const groupFiles = [...new Set(group.map(unit => unit.file))], parts = group.filter(unit => unit.of > 1).map(({ file, part, of: total }) => ({ file, part, of: total }));
       return { ...extra, files: groupFiles, diff: group.map(unit => unit.diff).join(''), ...(focus ? { focusFiles: groupFiles } : {}),
-        group: { number: index, of, note: GROUP_NOTE, ...(parts.length ? { partialFiles: parts } : {}) } };
+        group: { number: index, of, note: GROUP_NOTE, ...(parts.length ? { partialFiles: parts } : {}) }, changeMap: map };
     };
     const overheadOf = (extra, focus) => promptSize(build('code-review', groupExtra(extra, [], 99999, 99999, focus))) + jsonBytes({ partialFiles: [] });
     const unitCost = (unit, newFile, focus) => jsonBytes(unit.diff) - 2 + (newFile ? (jsonBytes(unit.file) + 1) * (focus ? 2 : 1) : 0)
@@ -858,32 +947,59 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     let split = false;
     const splitUnits = () => {
       if (split) return; split = true;
-      const limit = limitFor('code-review'), overhead = overheadOf({ openFindings: open, pass: 'all-defects', instruction: ORDINARY_INSTRUCTION }, true), budget = limit - overhead;
+      const limit = limitFor('code-review'), overhead = overheadOf({ openFindings: open, pass: 'all-defects', instruction: ORDINARY_INSTRUCTION }, true), hard = limit - overhead, budget = Math.min(hard, GROUP_DIFF_BYTES);
       requireValue(budget > 0, `code-review input without any diff is ${overhead} bytes, over the ${roles['code-review'].engine} input limit of ${limit} bytes (contract, rules and open findings)`);
       const where = `${roles['code-review'].engine} input limit of ${limit} bytes for code-review`;
       units = units.flatMap(unit => {
-        const children = hunkPieces(unit, budget, piece => unitCost(piece, true, true), where);
-        if (children[0] !== unit && coveredUnits.has(unit)) children.forEach(child => coveredUnits.add(child));
+        const children = hunkPieces(unit, budget, piece => unitCost(piece, true, true), where, hard);
+        if (children[0] !== unit) for (const set of [coveredUnits, ...passCovers.map(cover => cover.units)]) if (set.has(unit)) children.forEach(child => set.add(child));
         return children;
       });
     };
-    const reviewerPass = async extra => {
-      const whole = build('code-review', extra);
-      if (promptSize(whole) <= limitFor('code-review')) return absorb(await call('code-review', whole, parseReviewer), units);
-      splitUnits();
-      const focus = Object.hasOwn(extra, 'focusFiles'), pending = focus ? units.filter(unit => !coveredUnits.has(unit)) : units;
-      const limit = limitFor('code-review');
-      const groups = packGroups(pending, limit - overheadOf(extra, focus), unit => unitCost(unit, true, focus), `${roles['code-review'].engine} input limit of ${limit} bytes for code-review`);
-      for (const [index, group] of groups.entries()) {
-        const prompt = build('code-review', groupExtra(extra, group, index + 1, groups.length, focus));
-        absorb(await call('code-review', prompt, parseReviewer, `${extra.pass} ${index + 1}/${groups.length}`), group);
+    // MONO-494: a reviewer answer already given for the same request (same head, contract, open findings, pass and group)
+    // is kept in the host's group store and reused by the next collection; only missing groups run again. The key is the
+    // request itself, so a change of head, contract, open findings or group plan never reuses an answer.
+    const tree = JSON.stringify(exported.root).slice(1, -1);
+    const requestKey = prompt => digest([roles['code-review'], prompt.split(tree).join('<review-tree>')]);
+    // Only an answer that covers every file it was sent is kept: an incomplete one must be asked again, never replayed.
+    const covers = (result, sent) => sent.every(file => result.reviewedFiles.includes(file));
+    const reviewCall = async (prompt, label, sent) => {
+      const key = requestKey(prompt), saved = groupStore?.get(key);
+      if (saved !== undefined) {
+        try { const result = parseReviewer(saved.response); if (covers(result, sent)) { reused.push(label ?? 'whole'); return result; } } catch {}
       }
+      return call('code-review', prompt, parseReviewer, label, response => {
+        try { if (covers(parseReviewer(response), sent)) groupStore?.put(key, { pass: label?.split(' ')[0] ?? null, group: label, response }); } catch {}
+      });
     };
-    await reviewerPass({ openFindings: open, pass: 'all-defects' });
+    const reviewerPass = async (extra, cover) => {
+      const whole = build('code-review', extra);
+      if (promptSize(whole) <= limitFor('code-review') && jsonBytes(context.diff) <= GROUP_DIFF_BYTES) return absorb(await reviewCall(whole, null, extra.focusFiles ?? files), units, cover);
+      splitUnits();
+      const focus = Object.hasOwn(extra, 'focusFiles'), pending = focus ? units.filter(unit => !cover.units.has(unit)) : units;
+      const limit = limitFor('code-review');
+      const hard = limit - overheadOf(extra, focus), budget = Math.min(hard, GROUP_DIFF_BYTES);
+      const groups = packCoherent(pending, budget, unit => unitCost(unit, true, focus), `${roles['code-review'].engine} input limit of ${limit} bytes for code-review`, hard);
+      // Groups of one pass run GROUP_CONCURRENCY at a time; each call keeps its own retry. Passes stay in order: a pass's
+      // focused pass depends on what that pass covered. A failed group fails the pass after the others settle,
+      // so their answers are kept; nothing is absorbed from a pass that did not finish.
+      const settled = await boundedQueue(groups.map((group, index) => () =>
+        reviewCall(build('code-review', groupExtra(extra, group, index + 1, groups.length, focus)), `${extra.pass} ${index + 1}/${groups.length}`, [...new Set(group.map(unit => unit.file))])));
+      const failed = settled.find(result => result && !result.ok);
+      if (failed) throw failed.error;
+      requireValue(settled.every(result => result?.ok), 'review interrupted before every group ran');
+      settled.forEach((result, index) => absorb(result.value, groups[index], cover));
+    };
+    const runPass = async extra => {
+      const cover = { files: new Set(), units: new Set() }; passCovers.push(cover);
+      await reviewerPass(extra, cover);
+      const left = missingFor(cover);
+      if (left.length) await reviewerPass({ ...extra, pass: 'coverage', focusFiles: left }, cover);
+      requireValue(missingFor(cover).length === 0, 'incomplete changed-file coverage after focused pass');
+    };
+    await runPass({ openFindings: open, pass: 'all-defects' });
     const lines = git(worktree, ['diff', '--numstat', base, head, '--']).trim().split('\n').reduce((total, row) => total + row.split('\t').slice(0, 2).reduce((sum, part) => sum + (Number(part) || 0), 0), 0);
-    if (number === 1 && (risk.startsWith('risky') || lines >= 1000)) await reviewerPass({ openFindings: open, pass: 'ordinary', instruction: ORDINARY_INSTRUCTION });
-    if (missing().length) await reviewerPass({ openFindings: open, pass: 'coverage', focusFiles: missing() });
-    requireValue(missing().length === 0, 'incomplete changed-file coverage after focused pass');
+    if (number === 1 && (risk.startsWith('risky') || lines >= 1000)) await runPass({ openFindings: open, pass: 'ordinary', instruction: ORDINARY_INSTRUCTION });
     const merged = new Map(record.findings.map(finding => [finding.key, finding])), byKey = new Map(), reported = new Set(found.map(finding => finding.key));
     for (const finding of [...open, ...found]) {
       const prior = byKey.get(finding.key), saved = merged.get(finding.key);
@@ -907,9 +1023,15 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
       if (before) item.deletionEvidence = { before, head };
     }
     const checkerExtra = { findings: findings.map(({ key, ...finding }, index) => ({ ...finding, id: `F${index + 1}` })),
-      history: record.findings.filter(item => findings.some(f => f.key === item.key)).map(({ key, ...item }) => ({ ...item, id: `F${findings.findIndex(f => f.key === key) + 1}` })), baseDiff: diff, baseEvidence, headEvidence };
+      history: record.findings.filter(item => findings.some(f => f.key === item.key)).map(({ key, ...item }) => ({ ...item, id: `F${findings.findIndex(f => f.key === key) + 1}` })),
+      // MONO-494: from round 2 on (same contract) the checker reads the fixes since the last round (diff) and the change
+      // only around the findings, not the whole change again; round 1 and a task change's round read the whole change.
+      ...(narrow ? { baseDiff: diffAroundFindings(full, findings, CHECKER_RADIUS, binary), diffScope: 'diff: fixes since the last round; baseDiff, baseEvidence and headEvidence: regions around findings only (read head files directly for more)',
+        headEvidence: evidenceExcerpts(headEvidence, findings, CHECKER_RADIUS, (file, line) => [[line, line]]),
+        baseEvidence: evidenceExcerpts(baseEvidence, findings, CHECKER_RADIUS, (file, line) => { const range = baseRange(full.parts.find(part => part.file === file)?.diff, line); return [[line, line], [range.from, range.to]]; }) }
+        : { baseDiff: diff, baseEvidence, headEvidence }) };
     const checker = findings.length ? await call('code-review-checker', boundedCheckerPrompt({ build, extra: checkerExtra, limit: limitFor('code-review-checker'),
-      engine: roles['code-review-checker'].engine, findings, scopedDiff: context.diff, full, scoped, binary }),
+      engine: roles['code-review-checker'].engine, findings, scopedDiff: context.diff, full, scoped, binary, narrowBase: narrow, rawEvidence: { headEvidence, baseEvidence } }),
       (value, attempt) => parseChecker(value, findings, { separateContradictoryMerges: attempt === 2 })) : { verdicts: [], mergesSeparated: false };
     const checked = checker.verdicts.map(verdict => {
       const finding = byKey.get(verdict.key), saved = merged.get(verdict.key);
@@ -951,7 +1073,7 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     // A round only lists successors; after merge the task's Linear writer files them (references/review-admission.md).
     const successors = active.filter(finding => (finding.origin === 'pre-existing' && finding.danger) || (number >= 3 && blocking.includes(finding) && !finding.danger));
     const outcome = unreviewedFiles.size ? 'not-reviewed' : blocking.length || current.some(finding => finding.outOfContract || finding.riskRaised) || successors.length ? 'not-converged' : 'clean';
-    const round = { number, head, base, scope: context.scope, checkerMergesSeparated: checker.mergesSeparated, binaryFiles, reviewedFiles: [...covered].filter(file => !unreviewedFiles.has(file)), findingKeys: checked.map(verdict => verdict.key), outcome, costs };
+    const round = { number, head, base, scope: context.scope, checkerMergesSeparated: checker.mergesSeparated, binaryFiles, reviewedFiles: [...covered].filter(file => !unreviewedFiles.has(file)), findingKeys: checked.map(verdict => verdict.key), outcome, costs, ...(reused.length ? { reusedGroups: reused } : {}) };
     return { ...record, schemaVersion: 1, interrupted: false, base, contractDigest, rounds: [...record.rounds, round], findings: current, round, outcome,
       successorKeys: successors.map(finding => finding.key), binaryFiles, unreviewedFiles: [...unreviewedFiles], costs, host: host(), ...(outcome === 'not-reviewed' ? { cause: 'review' } : {}) };
   } catch (error) { return fail(clipped(String(error?.message ?? error)).text, !!error?.interrupted); }
@@ -975,7 +1097,7 @@ export function parseRemarkCheck(value, remarks) {
 }
 // The digest of what was checked: the remark's own text, never a value the worker supplies.
 export const remarkDigest = remark => digest([remark.id, remark.source, remark.title, remark.body, remark.urgent, remark.head]);
-export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin = ensureClaudeLogin, promptLimits = {} } = {}) {
+export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin = ensureClaudeLogin, promptLimits = {}, secondMs = 1000 } = {}) {
   const { worktree, head, base, remarks = [], config = {}, packRoot = runtimePackRoot() } = input;
   requireValue(path.isAbsolute(worktree ?? '') && /^[a-f0-9]{40}$/.test(head) && /^[a-f0-9]{40}$/.test(base), 'absolute worktree and immutable head/base required');
   requireValue(Array.isArray(remarks) && remarks.length > 0 && remarks.length <= 100, 'remarks required');
@@ -990,6 +1112,7 @@ export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin
   requireValue(git(worktree, ['rev-parse', 'HEAD']).trim() === head && !git(worktree, ['status', '--porcelain=v1', '--untracked-files=all']).trim(), 'remark check requires the clean pinned HEAD');
   requireValue(git(worktree, ['merge-base', base, head]).trim() === base, 'base must be an ancestor of the checked head');
   const route = resolveReviewRoles(config, packRoot)['code-review-checker'];
+  const timeout = roleTimeout(secondMs);
   const files = git(worktree, ['diff', '--name-only', '--no-renames', '-z', base, head, '--']).split('\0').filter(Boolean);
   const changed = pinnedDiff(worktree, base, head, files), binary = new Set(changed.binary);
   let exported;
@@ -997,7 +1120,7 @@ export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin
     exported = exportReviewTree(worktree, head, binary);
     const context = { worktree: exported.root, head, base, diff: changed.parts.map(part => part.diff).join(''), binaryFiles: [...binary], remarks };
     const own = promptLimits?.[route.engine], limit = Math.min(PROMPT_LIMITS[route.engine] ?? 0, Number.isSafeInteger(own) && own > 0 ? own : Infinity);
-    const launch = (prompt, login) => runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt, ensureLogin, ...(login ? { login } : {}) });
+    const launch = (prompt, login) => runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt, ensureLogin, ...timeout, ...(login ? { login } : {}) });
     const run = async prompt => {
       requireValue(promptSize(prompt) <= limit, `remark-check input of ${promptSize(prompt)} bytes is over the ${route.engine} input limit of ${limit} bytes`);
       // Only a login failure is retried here: one login refresh, one relaunch.

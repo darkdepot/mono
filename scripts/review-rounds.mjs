@@ -53,13 +53,14 @@ export function evidenceSnapshot(evidenceRoot, pinsFile) {
     let bytes; try { if (!fs.lstatSync(file).isFile()) { files.push([file, { hash: "irregular", ours: true, history: false, control: true }]); continue; } bytes = fs.readFileSync(file); } catch { continue; }
     files.push([file, { hash: crypto.createHash("sha256").update(bytes).digest("hex"), ours: true, history: false, control: true, bytes: bytes.toString("base64") }]);
   }
+  files.push(...reviewGroupsSnapshot(evidenceRoot, pinsFile));
   for (const directory of [evidenceRoot, path.join(evidenceRoot, "history")]) {
     if (!fs.existsSync(directory)) continue;
     for (const name of fs.readdirSync(directory).filter(name => name.endsWith(".json"))) {
       const file = path.join(directory, name);
       let bytes; try { if (!fs.lstatSync(file).isFile()) continue; bytes = fs.readFileSync(file); } catch { continue; }
       let ours = false; try { ours = attemptOf(JSON.parse(bytes).receipt?.pins?.file, pinsFile); } catch {}
-      files.push([file, { hash: crypto.createHash("sha256").update(bytes).digest("hex"), ours, history: directory !== evidenceRoot,
+      files.push([file, { hash: crypto.createHash("sha256").update(bytes).digest("hex"), ours, history: directory === path.join(evidenceRoot, "history"),
         ...(ours ? { bytes: bytes.toString("base64") } : {}) }]);
     }
   }
@@ -81,7 +82,23 @@ function restoreVoidable(file, bytes) {
 // Puts this attempt's earlier receipts back and quarantines new ones bound to it; returns what changed.
 export function evidenceTouched(snapshot, evidenceRoot, pinsFile) {
   const before = new Map(snapshot), after = new Map(evidenceSnapshot(evidenceRoot, pinsFile)), touched = [];
+  // MONO-494 review: saved review groups of every attempt are discarded on any change, never put back: a missing cache
+  // only costs a rerun, a planted one would pass unreviewed work. This attempt's (or an irregular entry) is touched evidence.
+  const label = file => path.relative(evidenceRoot, file);
   for (const [file, old] of before) {
+    if (!old.cache) continue;
+    const now = after.get(file);
+    if (now?.hash === old.hash && old.hash !== "irregular") continue;
+    fs.rmSync(file, { recursive: true, force: true });
+    if (old.ours || now?.ours || old.hash === "irregular" || now?.hash === "irregular" || !now) touched.push(label(file));
+  }
+  for (const [file, now] of after) {
+    if (!now.cache || before.has(file)) continue;
+    fs.rmSync(file, { recursive: true, force: true });
+    if (now.ours || now.hash === "irregular") touched.push(label(file));
+  }
+  for (const [file, old] of before) {
+    if (old.cache) continue;
     const now = after.get(file);
     if (now?.hash === old.hash || (!old.history && !old.control && !now?.ours)) continue;
     touched.push(old.control ? controlLabel(file, pinsFile) : path.relative(evidenceRoot, file));
@@ -91,7 +108,7 @@ export function evidenceTouched(snapshot, evidenceRoot, pinsFile) {
     else if (now?.ours) quarantineEvidence(evidenceRoot, file);
   }
   for (const [file, now] of after) {
-    if (before.has(file) || !now.ours) continue;
+    if (now.cache || before.has(file) || !now.ours) continue;
     // A control file created during the run is moved aside into the evidence quarantine.
     touched.push(now.control ? controlLabel(file, pinsFile) : path.relative(evidenceRoot, file));
     if (now.control && now.bytes === undefined) fs.rmSync(file, { recursive: true, force: true }); else quarantineEvidence(evidenceRoot, file);
@@ -389,4 +406,73 @@ export async function waitForRound(roundFile, pollMs = 2000) {
     if (!collectorAlive(request.root, round.issue, round.attempt) && Date.now() - fs.statSync(roundFile).mtimeMs > COLLECTOR_START_GRACE_MS) throw new Error("blocked: collector not running for this attempt; the orchestrator restarts it with collector.mjs start");
     await new Promise(resolve => setTimeout(resolve, pollMs));
   }
+}
+
+// MONO-494: answers of review groups that finished in a collection whose round did not finish (another group failed
+// twice). One file per head in the host's evidence root, outside every worker grant, bound to the head, the base, the
+// task contract and the attempt's launch pins. The next collection on the same binding reuses them, so only missing
+// groups run again; any other binding starts empty, and opening it drops this attempt's files for other heads. The
+// round is spent only when every group of every pass is covered; the gate then clears the file.
+export const reviewGroupsDirectory = evidenceRoot => path.join(evidenceRoot, "review-groups");
+const lstat = file => { try { return fs.lstatSync(file); } catch { return null; } };
+// Every attempt's saved groups (MONO-482 style, like the control files of every attempt): the directory and each file
+// must be regular, never a symlink; an irregular entry is recorded so a host run that swaps one in is caught.
+function reviewGroupsSnapshot(evidenceRoot, pinsFile) {
+  const directory = reviewGroupsDirectory(evidenceRoot), stat = lstat(directory);
+  if (!stat) return [];
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return [[directory, { hash: "irregular", ours: true, cache: true }]];
+  return fs.readdirSync(directory).map(name => {
+    const file = path.join(directory, name), entry = lstat(file);
+    if (!entry?.isFile()) return [file, { hash: "irregular", ours: true, cache: true }];
+    const bytes = fs.readFileSync(file);
+    let ours = false; try { ours = attemptOf(JSON.parse(bytes).pinsFile, pinsFile); } catch {}
+    return [file, { hash: crypto.createHash("sha256").update(bytes).digest("hex"), ours, cache: true }];
+  });
+}
+// MONO-494 review: host verification runs worker code with host rights, which could plant saved answers anywhere the
+// host can write. Instead of guarding the cache against it, reuse is off whenever host verification is in play: this
+// attempt's pins or any attempt of the orchestrator root (every registry entry's pins file and every dispatch pins
+// file), read under the root's launch.lock. Anything unreadable counts as on. Isolating host verification is MONO-489.
+export function hostVerificationInRoot(root, pins = null) {
+  if (pins?.hostVerification === true) return true;
+  if (!root) return false;
+  try {
+    return withLockSync(path.join(root, "launch.lock"), () => {
+      const files = new Set(), registry = path.join(root, "workers.json"), dispatch = path.join(root, "dispatch");
+      if (fs.existsSync(registry)) for (const entry of Object.values(readJson(registry) ?? {})) if (typeof entry?.pins?.file === "string") files.add(entry.pins.file);
+      for (const name of fs.existsSync(dispatch) ? fs.readdirSync(dispatch) : []) files.add(path.join(dispatch, name, "pins.json"));
+      return [...files].some(file => fs.existsSync(file) && readJson(file)?.hostVerification === true);
+    });
+  } catch { return true; }
+}
+export function reviewGroupStore(evidenceRoot, { head, base, contractDigest, pinsFile = null }, { root = null, pins = null } = {}) {
+  if (!/^[a-f0-9]{40}$/.test(head ?? "") || !/^[a-f0-9]{40}$/.test(base ?? "") || typeof contractDigest !== "string") throw new Error("review group store needs head, base and contract digest");
+  const directory = reviewGroupsDirectory(evidenceRoot), file = path.join(directory, `${head}.json`);
+  const binding = { head, base, contractDigest, pinsFile };
+  const stat = lstat(directory);
+  if (stat && (!stat.isDirectory() || stat.isSymbolicLink())) fs.rmSync(directory, { recursive: true, force: true });
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  for (const name of fs.readdirSync(directory).filter(name => name !== `${head}.json`)) {
+    const other = path.join(directory, name);
+    try { if (!lstat(other)?.isFile() || (readJson(other).pinsFile ?? null) === pinsFile) fs.rmSync(other, { recursive: true, force: true }); } catch { fs.rmSync(other, { recursive: true, force: true }); }
+  }
+  const own = lstat(file);
+  if (own && !own.isFile()) fs.rmSync(file, { recursive: true, force: true });
+  // Checked at opening and again right before every read and write: an attempt with host verification dispatched later
+  // never makes an earlier saved file trusted.
+  const reuse = () => !hostVerificationInRoot(root, pins);
+  let saved = {};
+  try {
+    const value = own?.isFile() && reuse() ? readJson(file) : null;
+    if (value && canonical({ head: value.head, base: value.base, contractDigest: value.contractDigest, pinsFile: value.pinsFile ?? null }) === canonical(binding) &&
+        value.entries && typeof value.entries === "object" && !Array.isArray(value.entries)) saved = value.entries;
+  } catch { saved = {}; }
+  const entries = { ...saved };
+  return {
+    get: key => Object.hasOwn(entries, key) && reuse() ? entries[key] : undefined,
+    put: (key, entry) => { if (!reuse()) return; entries[key] = entry; atomicJson(file, { ...binding, entries }); },
+    clear: () => fs.rmSync(file, { force: true }),
+    size: () => Object.keys(entries).length,
+    file,
+  };
 }

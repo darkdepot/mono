@@ -700,7 +700,11 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         const leftover = text => [reviewFinding('input.mjs', { anchor: text, title: text })], closing = reviewVerdict({ outcome: 'rejected', closed: true });
         setReview(bin, { findings: leftover('First leftover') });
         const first = commit('export const one = 1;\n');
+        // MONO-494: saved group answers of this head (here a stale file) are cleared once the round is spent.
+        const savedGroups = path.join(evidence, 'review-groups', `${first}.json`);
+        write(savedGroups, JSON.stringify({ head: first, base, contractDigest: 'stale', pinsFile, entries: {} }));
         let receipt = await round(at(first), 1, /fail: review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 input\.mjs:1 First leftover/);
+        assert.equal(fs.existsSync(savedGroups), false, 'a spent round clears its saved groups after its receipt');
         assert.deepEqual([receipt.producer, receipt.review.spent, receipt.verification.exitCode, receipt.base], [REVIEW_PRODUCER, true, null, base]);
         const verifySaw = path.join(repo, '.orchestrator/verify-saw');
         assert.deepEqual([reviewCalls(bin), fs.existsSync(verifySaw)], [['reviewer', 'reviewer', 'checker'], false], 'the collection never runs the verification');

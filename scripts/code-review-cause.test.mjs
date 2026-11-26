@@ -25,7 +25,7 @@ const failure = (invocation, timeoutMs = 10_000) => runInvocation(invocation, ''
 
 test('role process failures: the timer is a timeout, the output limit is not, a DNS error is the network', async () => {
   const timedOut = await failure(node('setTimeout(() => {}, 60000)'), 300);
-  assert.match(timedOut.message, /^role failed \(timeout\); no response admitted$/);
+  assert.match(timedOut.message, /^role failed \(timeout after 0.3 s\); no response admitted$/, "MONO-494: a timeout names the limit it hit");
   assert.deepEqual([timedOut.timedOut, timedOut.outputLimit, timedOut.processFailure], [true, false, true]);
   assert.equal(roleFailureCause(timedOut), 'timeout');
 

@@ -214,12 +214,13 @@ test('MONO-486 (b): a finding in a file whose own diff is over the checker limit
   const c1 = checkerOf(first); assert.ok(c1.size <= limit);
   assert.match(c1.context.baseDiff, /flagged_001499 /); assert.ok(!c1.context.baseDiff.includes('flagged_000100 '), 'far lines are cut');
   assert.match(c1.context.baseDiff, /lines cut to fit the input limit/); assert.equal(c1.context.diffScope, 'hunks around findings only');
-  // Round two reads a small fix elsewhere; the whole baseDiff still rides beside it and is cut the same way.
+  // Round two reads a small fix elsewhere; beside it the baseDiff keeps only the hunk lines around the finding.
   fs.writeFileSync(path.join(f.worktree, 'input.mjs'), 'export function value(n) { return Math.max(0, n); }\n'); f.git('add', '.'); f.git('commit', '-qm', 'fix');
   const second = recorder(answer), two = await runReviewRound({ ...f.request, head: f.git('rev-parse', 'HEAD'), stageRecord: one }, { ...second, promptLimits: { claude: limit } });
   assert.equal(two.outcome, 'not-converged', JSON.stringify(two.failures)); assert.equal(two.rounds.length, 2);
   const c2 = checkerOf(second); assert.ok(c2.size <= limit); assert.equal(c2.context.diffNote, undefined, 'a different scoped diff is not deduplicated away');
-  assert.equal(c2.context.scope, 'fixes-and-open-findings'); assert.equal(c2.context.diffScope, 'hunks around findings only');
+  // MONO-494: from round 2 the checker reads the change only around the findings from the start.
+  assert.equal(c2.context.scope, 'fixes-and-open-findings'); assert.match(c2.context.diffScope, /around findings only/);
   assert.match(c2.context.baseDiff, /flagged_001499 /); assert.ok(!c2.context.baseDiff.includes('flagged_000100 '));
 });
 
