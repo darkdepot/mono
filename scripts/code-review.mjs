@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { digest, resolveRole, runtimePackRoot, isMain } from './runtime.mjs';
+import { digest, resolveRole, runtimePackRoot, isMain, reviewRoleTimeout, pinnedReviewRoleTimeout, REVIEW_ROLE_TIMEOUT_SEC } from './runtime.mjs';
 import { ensureClaudeLogin, claudeLoginFailure, LOGIN_FAILURE_REASON } from './claude-login.mjs';
 
 export const DANGER_CASES = ['data', 'security', 'gate-bypass', 'gate-stall', 'silent-result', 'readiness', 'unknown'];
@@ -420,7 +420,7 @@ function observeServedModels(boundary, stdout, phase = 'task') {
 }
 // MONO-483: a narrow list of network failure signs in a role CLI's stderr (unresolved host, reset or dropped connection).
 export const NETWORK_SIGNS = /could not resolve host|failed to lookup address|getaddrinfo|ENOTFOUND|EAI_AGAIN|nodename nor servname|name or service not known|temporary failure in name resolution|dns error|ECONNRESET|connection reset|ECONNABORTED|connection aborted|ECONNREFUSED|connection refused|ENETUNREACH|network is unreachable|EHOSTUNREACH|socket hang up|stream disconnected|error sending request|connection closed before/i;
-export function runInvocation(invocation, prompt, timeoutMs) {
+export function runInvocation(invocation, prompt, timeoutMs, { limitSec = timeoutMs / 1000 } = {}) {
   return new Promise((resolve, reject) => {
       const child = spawn(invocation.command, invocation.args, { cwd: invocation.cwd, env: invocation.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
       const stdout = [], stderr = [];
@@ -443,7 +443,7 @@ export function runInvocation(invocation, prompt, timeoutMs) {
           const result = { stdout: decodeChildBytes(Buffer.concat(stdout)), stderr: decodeChildBytes(Buffer.concat(stderr)) };
           if (interrupted) throw Object.assign(new Error('review interrupted; role process group stopped'), { rawAnswer: result.stdout });
           const exceeded = timedOut || outputLimit;
-          if (code !== 0 || exceeded) throw Object.assign(new Error(`role failed (${timedOut ? 'timeout' : outputLimit ? 'output limit' : code}); no response admitted`),
+          if (code !== 0 || exceeded) throw Object.assign(new Error(`role failed (${timedOut ? `timeout after ${limitSec} s` : outputLimit ? 'output limit' : code}); no response admitted`),
             { rawAnswer: result.stdout, stderrText: result.stderr, exceeded, timedOut, outputLimit, processFailure: true, network: !exceeded && NETWORK_SIGNS.test(result.stderr) });
           resolve(result);
         } catch (error) { error.interrupted = interrupted; reject(error); }
@@ -451,7 +451,8 @@ export function runInvocation(invocation, prompt, timeoutMs) {
       child.stdin.end(prompt);
     });
 }
-async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = 600000, ensureLogin = ensureClaudeLogin, login: checked = null }) {
+// MONO-494: timeoutMs is the pinned review role time limit (reviewRoleTimeoutSec); the boundary probe shares it.
+export async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = REVIEW_ROLE_TIMEOUT_SEC * 1000, limitSec = timeoutMs / 1000, ensureLogin = ensureClaudeLogin, login: checked = null, runner = runInvocation }) {
   // A Claude role first gets a fresh login: on the host an expiring one is refreshed, in the worker sandbox it is only read.
   // A relaunch after a forced refresh reuses that refresh's result instead of checking again.
   const login = route.engine === 'claude' ? checked ?? await ensureLogin() : null;
@@ -479,7 +480,7 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
       fs.writeFileSync(probeSchema, JSON.stringify({ type: 'object', properties: { tools: { type: 'array', items: { type: 'string' } },
         mcpServers: { type: 'array', items: { type: 'string' } } }, required: ['tools', 'mcpServers'], additionalProperties: false }));
       const args = [...invocation.args]; args[args.indexOf('--output-schema') + 1] = probeSchema;
-      const probe = await runInvocation({ ...invocation, args }, 'Boundary audit only. Do not call tools. Enumerate ALL exposed tool names including deferred tools and wrappers, and MCP server names. Exact names, no omissions. Return the schema.', timeoutMs);
+      const probe = await runner({ ...invocation, args }, 'Boundary audit only. Do not call tools. Enumerate ALL exposed tool names including deferred tools and wrappers, and MCP server names. Exact names, no omissions. Return the schema.', timeoutMs, { limitSec });
       captured = probe.stdout;
       observeServedModels(boundary, captured, 'boundary-probe');
       const parsed = codexResponse(probe);
@@ -489,7 +490,7 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
       boundary.observed = observeCodexBoundary(surface, probe.stderr);
       boundary.probeUsage = parsed.usage;
     }
-    const result = await runInvocation(invocation, prompt, timeoutMs);
+    const result = await runner(invocation, prompt, timeoutMs, { limitSec });
     captured = result.stdout; capturedErr = result.stderr;
     observeServedModels(boundary, captured);
     let response, usage = null;
@@ -735,8 +736,15 @@ function boundedCheckerPrompt({ build, extra, limit, engine, findings, scopedDif
   for (const step of steps) { step(); if (fits()) return prompt; }
   throw new Error(`code-review-checker input of ${promptSize(prompt)} bytes is over the ${engine} input limit of ${limit} bytes even with evidence cut to the regions of its ${findings.length} findings`);
 }
+// MONO-494: every role call of a round (reviewer, checker, remark check, each group, the boundary probe and the retry) gets
+// the same limit: the one pinned at dispatch, otherwise reviewRoleTimeoutSec in the BASE config (600 s default, at most 3600).
+// secondMs only scales seconds in tests; neither config nor a request reaches it.
+function roleTimeout(pinned, config, secondMs) {
+  const limitSec = pinned === undefined ? reviewRoleTimeout(config).sec : pinnedReviewRoleTimeout(pinned);
+  return { timeoutMs: limitSec * secondMs, limitSec };
+}
 // The only round boundary. Callers persist/sign the returned record; manual mode only prints it.
-export async function runReviewRound(input, { runRole = executeRole, ensureLogin = ensureClaudeLogin, promptLimits = {}, clock = systemClock, load = hostLoad } = {}) {
+export async function runReviewRound(input, { runRole = executeRole, ensureLogin = ensureClaudeLogin, promptLimits = {}, clock = systemClock, load = hostLoad, secondMs = 1000 } = {}) {
   const { worktree, head, base, contract, risk = 'standard', config = {}, packRoot = runtimePackRoot() } = input;
   const record = structuredClone(input.stageRecord ?? { schemaVersion: 1, rounds: [], findings: [], failures: [] });
   requireValue(object(record) && ['rounds', 'findings', 'failures'].every(key => Array.isArray(record[key] ?? [])), 'stage record unreadable');
@@ -783,6 +791,7 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     requireValue(git(worktree, ['merge-base', base, head]).trim() === base, 'base must be an ancestor of the reviewed head');
     const identity = treeIdentity(worktree);
     const roles = resolveReviewRoles(config, packRoot);
+    const timeout = roleTimeout(input.roleTimeoutSec, config, secondMs);
     assertReadableWorktree(worktree);
     requireValue(!git(worktree, ['diff', '--raw', '--no-renames', base, head, '--']).split('\n')
       .some(row => /^:(?:160000 \d{6}|\d{6} 160000) /.test(row)), 'gitlink changes are unsupported; review the submodule separately');
@@ -817,7 +826,7 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
         const started = Date.now(), wall = clock.wall(), mono = clock.mono();
         let result, answered = false;
         try {
-          result = await runRole({ role, route: roles[role], worktree: exported.root, packRoot, prompt, ensureLogin, ...(login ? { login } : {}) });
+          result = await runRole({ role, route: roles[role], worktree: exported.root, packRoot, prompt, ensureLogin, ...timeout, ...(login ? { login } : {}) });
           answered = true;
           costs.push({ ...cost, attempt, elapsedMs: result?.elapsedMs ?? null, usage: result?.usage ?? null, boundary: result?.boundary ?? null });
           return parse(result?.response, attempt);
@@ -975,7 +984,7 @@ export function parseRemarkCheck(value, remarks) {
 }
 // The digest of what was checked: the remark's own text, never a value the worker supplies.
 export const remarkDigest = remark => digest([remark.id, remark.source, remark.title, remark.body, remark.urgent, remark.head]);
-export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin = ensureClaudeLogin, promptLimits = {} } = {}) {
+export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin = ensureClaudeLogin, promptLimits = {}, secondMs = 1000 } = {}) {
   const { worktree, head, base, remarks = [], config = {}, packRoot = runtimePackRoot() } = input;
   requireValue(path.isAbsolute(worktree ?? '') && /^[a-f0-9]{40}$/.test(head) && /^[a-f0-9]{40}$/.test(base), 'absolute worktree and immutable head/base required');
   requireValue(Array.isArray(remarks) && remarks.length > 0 && remarks.length <= 100, 'remarks required');
@@ -990,6 +999,7 @@ export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin
   requireValue(git(worktree, ['rev-parse', 'HEAD']).trim() === head && !git(worktree, ['status', '--porcelain=v1', '--untracked-files=all']).trim(), 'remark check requires the clean pinned HEAD');
   requireValue(git(worktree, ['merge-base', base, head]).trim() === base, 'base must be an ancestor of the checked head');
   const route = resolveReviewRoles(config, packRoot)['code-review-checker'];
+  const timeout = roleTimeout(input.roleTimeoutSec, config, secondMs);
   const files = git(worktree, ['diff', '--name-only', '--no-renames', '-z', base, head, '--']).split('\0').filter(Boolean);
   const changed = pinnedDiff(worktree, base, head, files), binary = new Set(changed.binary);
   let exported;
@@ -997,7 +1007,7 @@ export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin
     exported = exportReviewTree(worktree, head, binary);
     const context = { worktree: exported.root, head, base, diff: changed.parts.map(part => part.diff).join(''), binaryFiles: [...binary], remarks };
     const own = promptLimits?.[route.engine], limit = Math.min(PROMPT_LIMITS[route.engine] ?? 0, Number.isSafeInteger(own) && own > 0 ? own : Infinity);
-    const launch = (prompt, login) => runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt, ensureLogin, ...(login ? { login } : {}) });
+    const launch = (prompt, login) => runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt, ensureLogin, ...timeout, ...(login ? { login } : {}) });
     const run = async prompt => {
       requireValue(promptSize(prompt) <= limit, `remark-check input of ${promptSize(prompt)} bytes is over the ${route.engine} input limit of ${limit} bytes`);
       // Only a login failure is retried here: one login refresh, one relaunch.

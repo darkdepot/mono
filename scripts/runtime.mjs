@@ -424,6 +424,7 @@ export function shipBotChecks(config = {}) {
   return [...checks];
 }
 
+export const REVIEW_ROLE_TIMEOUT_SEC = 600, REVIEW_ROLE_TIMEOUT_CEILING_SEC = 3600;
 export function deliveryConfig(source) {
   const root = typeof source === "string" ? readJson(source) : source ?? {};
   const configured = root?.orchestration?.delivery;
@@ -440,11 +441,15 @@ export function deliveryConfig(source) {
     stallSec: positive(config.stallSec, 120, "stallSec"),
     ackWaitSec: positive(config.ackWaitSec, 420, "ackWaitSec"),
     attemptCap: positive(config.attemptCap, 3, "attemptCap"),
+    // Seconds one review role call may run (reviewer, checker, remark check; each group and the retry). Read from BASE.
+    reviewRoleTimeoutSec: config.reviewRoleTimeoutSec ?? REVIEW_ROLE_TIMEOUT_SEC,
     // The product's full verification needs the host (for example the process table): the collection runs it.
     hostVerification: config.hostVerification ?? false,
   };
   if (!Number.isSafeInteger(result.collectionRetries) || result.collectionRetries < 0)
     throw new Error("invalid collectionRetries");
+  if (!Number.isSafeInteger(result.reviewRoleTimeoutSec) || result.reviewRoleTimeoutSec <= 0)
+    throw new Error(`orchestration.delivery.reviewRoleTimeoutSec must be a whole positive number of seconds, got ${JSON.stringify(result.reviewRoleTimeoutSec)}`);
   if (typeof result.hostVerification !== "boolean") throw new Error("orchestration.delivery.hostVerification must be true or false");
   if (result.ackWaitSec > result.stallSec * 4 - result.pollSec) {
     throw new Error("ackWaitSec must be <= stallSec * 4 - pollSec");
@@ -630,6 +635,24 @@ export function baseModelConfig(worktree, base) {
   const file = '.agents/mono-workflow.config.json';
   if (!git(['ls-tree', base, '--', file]).trim()) return {};
   return JSON.parse(git(['show', `${base}:${file}`]));
+}
+// MONO-494: the review role time limit comes from the product config committed at BASE, like model routes, and is
+// pinned at dispatch. A different value in the local --config is ignored with a warning; a BASE value above the
+// ceiling counts as the ceiling with a warning. No value at BASE: the pack default (600 s).
+export function reviewRoleTimeout(baseConfig, localConfig) {
+  const committed = deliveryConfig(baseConfig ?? {}).reviewRoleTimeoutSec, warnings = [];
+  if (localConfig !== undefined && localConfig !== null) {
+    const local = deliveryConfig(localConfig).reviewRoleTimeoutSec;
+    if (local !== committed) warnings.push(`warning: --config reviewRoleTimeoutSec ${local} differs from BASE reviewRoleTimeoutSec ${committed} and is ignored; commit the value to the product config on main`);
+  }
+  if (committed > REVIEW_ROLE_TIMEOUT_CEILING_SEC) warnings.push(`warning: BASE reviewRoleTimeoutSec ${committed} is above the ceiling of ${REVIEW_ROLE_TIMEOUT_CEILING_SEC} and counts as ${REVIEW_ROLE_TIMEOUT_CEILING_SEC}`);
+  return { sec: Math.min(committed, REVIEW_ROLE_TIMEOUT_CEILING_SEC), warnings };
+}
+// A pinned limit is the effective one written at dispatch: whole seconds within the ceiling.
+export function pinnedReviewRoleTimeout(value) {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > REVIEW_ROLE_TIMEOUT_CEILING_SEC)
+    throw new Error(`pinned reviewRoleTimeoutSec must be whole seconds from 1 to ${REVIEW_ROLE_TIMEOUT_CEILING_SEC}, got ${JSON.stringify(value)}`);
+  return value;
 }
 // Launch pins bind the worker and the review round roles; a launch prepared by an older pack pinned the
 // legacy reviewer instead (legacyReviewer), and both shapes stay valid until that attempt ends.

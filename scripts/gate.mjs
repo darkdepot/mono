@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
-import { atomicJson, canonical, digest, readJson, flags, identity, isMain, processStart, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER, REVIEW_ROUND_ROLES } from "./runtime.mjs";
+import { atomicJson, canonical, digest, readJson, flags, identity, isMain, processStart, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, pinnedReviewRoleTimeout, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER, REVIEW_ROUND_ROLES } from "./runtime.mjs";
 import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges, reviewRetries, extraRounds } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
@@ -675,6 +675,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     else {
       const record = await runReviewRound({ worktree: repo, head, base, contract, risk: request.critical ? 'riskyCritical' : request.risk,
         config: baseModelConfig(repo, request.modelRoutes?.base ?? base), packRoot: path.resolve(scriptDir, '..'), roundLimit: Math.max(limit, ROUND_LIMIT), ...(prior.record ? { stageRecord: prior.record } : {}),
+        // MONO-494: the role time limit pinned at dispatch; an attempt pinned before it reads BASE at the pinned base.
+        ...(pins?.reviewRoleTimeoutSec !== undefined ? { roleTimeoutSec: pinnedReviewRoleTimeout(pins.reviewRoleTimeoutSec) } : {}),
         ...(request.prRemarks?.length ? { remarks: request.prRemarks } : {}) });
       const { costs, host, cause: _cause, ...stageRecord } = record;
       // MONO-483: environment only when every failed role attempt of the round failed on the environment and every file was read.
