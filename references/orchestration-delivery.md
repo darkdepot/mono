@@ -351,11 +351,16 @@ groups of about 200 KB of diff (`GROUP_DIFF_BYTES`), files of one directory toge
 each with the map of the whole change, two at a time (`GROUP_CONCURRENCY`); passes stay
 in order. Finished groups are saved in `evidenceRoot/review-groups/<head>.json` (bound to
 head, base, contract and launch pins; the host-run evidence snapshot judges every attempt's
-saved groups, discards them on any change, symlink or removal and never puts them back, and
-no saved group is read while a host run of the root is open) and reused
+saved groups, discards them on any change, symlink or removal and never puts them back) and reused
 by the next collection on the same binding, so a gate stopped at the ceiling or a group
 that failed twice loses no finished group; the round is spent only when every group of
 every pass is covered (each pass from its own answers), and a spent round clears the file.
+Reuse is off under host verification: when the attempt's pins or any registry entry or dispatch
+pins file of the orchestrator root has `hostVerification: true` (read under launch.lock at
+opening and again right before every read and write; unreadable counts as on), groups are
+neither saved nor read and every collection reviews every group. Host verification runs worker
+code with host rights, which could plant saved answers wherever the host writes; isolating it is
+MONO-489.
 
 ### Screen check before review
 

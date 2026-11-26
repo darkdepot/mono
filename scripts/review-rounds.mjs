@@ -429,9 +429,23 @@ function reviewGroupsSnapshot(evidenceRoot, pinsFile) {
     return [file, { hash: crypto.createHash("sha256").update(bytes).digest("hex"), ours, cache: true }];
   });
 }
-// A host run of the root is open (or unrecovered) while its marker exists: saved groups are not trusted meanwhile.
-const hostRunOpen = evidenceRoot => { try { return fs.readdirSync(path.join(evidenceRoot, "verification")).some(name => name.endsWith(".running")); } catch { return false; } };
-export function reviewGroupStore(evidenceRoot, { head, base, contractDigest, pinsFile = null }) {
+// MONO-494 review: host verification runs worker code with host rights, which could plant saved answers anywhere the
+// host can write. Instead of guarding the cache against it, reuse is off whenever host verification is in play: this
+// attempt's pins or any attempt of the orchestrator root (every registry entry's pins file and every dispatch pins
+// file), read under the root's launch.lock. Anything unreadable counts as on. Isolating host verification is MONO-489.
+export function hostVerificationInRoot(root, pins = null) {
+  if (pins?.hostVerification === true) return true;
+  if (!root) return false;
+  try {
+    return withLockSync(path.join(root, "launch.lock"), () => {
+      const files = new Set(), registry = path.join(root, "workers.json"), dispatch = path.join(root, "dispatch");
+      if (fs.existsSync(registry)) for (const entry of Object.values(readJson(registry) ?? {})) if (typeof entry?.pins?.file === "string") files.add(entry.pins.file);
+      for (const name of fs.existsSync(dispatch) ? fs.readdirSync(dispatch) : []) files.add(path.join(dispatch, name, "pins.json"));
+      return [...files].some(file => fs.existsSync(file) && readJson(file)?.hostVerification === true);
+    });
+  } catch { return true; }
+}
+export function reviewGroupStore(evidenceRoot, { head, base, contractDigest, pinsFile = null }, { root = null, pins = null } = {}) {
   if (!/^[a-f0-9]{40}$/.test(head ?? "") || !/^[a-f0-9]{40}$/.test(base ?? "") || typeof contractDigest !== "string") throw new Error("review group store needs head, base and contract digest");
   const directory = reviewGroupsDirectory(evidenceRoot), file = path.join(directory, `${head}.json`);
   const binding = { head, base, contractDigest, pinsFile };
@@ -444,16 +458,19 @@ export function reviewGroupStore(evidenceRoot, { head, base, contractDigest, pin
   }
   const own = lstat(file);
   if (own && !own.isFile()) fs.rmSync(file, { recursive: true, force: true });
+  // Checked at opening and again right before every read and write: an attempt with host verification dispatched later
+  // never makes an earlier saved file trusted.
+  const reuse = () => !hostVerificationInRoot(root, pins);
   let saved = {};
   try {
-    const value = own?.isFile() && !hostRunOpen(evidenceRoot) ? readJson(file) : null;
+    const value = own?.isFile() && reuse() ? readJson(file) : null;
     if (value && canonical({ head: value.head, base: value.base, contractDigest: value.contractDigest, pinsFile: value.pinsFile ?? null }) === canonical(binding) &&
         value.entries && typeof value.entries === "object" && !Array.isArray(value.entries)) saved = value.entries;
   } catch { saved = {}; }
   const entries = { ...saved };
   return {
-    get: key => Object.hasOwn(entries, key) ? entries[key] : undefined,
-    put: (key, entry) => { entries[key] = entry; atomicJson(file, { ...binding, entries }); },
+    get: key => Object.hasOwn(entries, key) && reuse() ? entries[key] : undefined,
+    put: (key, entry) => { if (!reuse()) return; entries[key] = entry; atomicJson(file, { ...binding, entries }); },
     clear: () => fs.rmSync(file, { force: true }),
     size: () => Object.keys(entries).length,
     file,

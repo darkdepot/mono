@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runReviewRound, runInvocation, findingKey, changeMap, GROUP_DIFF_BYTES, GROUP_CONCURRENCY, ROLE_TIMEOUT_SEC } from './code-review.mjs';
-import { reviewGroupStore, reviewGroupsDirectory, evidenceSnapshot, evidenceTouched, hostRunMarker } from './review-rounds.mjs';
+import { reviewGroupStore, reviewGroupsDirectory, evidenceSnapshot, evidenceTouched } from './review-rounds.mjs';
 import { digest } from './runtime.mjs';
 
 // MONO-494: a large change is reviewed in small groups, two at a time; answers of finished groups survive a group that
@@ -304,21 +304,73 @@ test('MONO-494 review: a host run of attempt A that edits attempt B\'s saved gro
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-groups-cross-')); t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
   const evidenceRoot = path.join(scratch, 'evidence'), pinsA = path.join(scratch, 'root/dispatch/MONO-1-a1/pins.json'), pinsB = path.join(scratch, 'root/dispatch/MONO-2-a1/pins.json');
   for (const file of [pinsA, pinsB]) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, '{}'); }
-  const bindingB = { head: 'e'.repeat(40), base: 'b'.repeat(40), contractDigest: digest(contract), pinsFile: pinsB };
-  const storeB = reviewGroupStore(evidenceRoot, bindingB);
+  const bindingB = { head: 'e'.repeat(40), base: 'b'.repeat(40), contractDigest: digest(contract), pinsFile: pinsB }, rootB = { root: path.join(scratch, 'root'), pins: {} };
+  const storeB = reviewGroupStore(evidenceRoot, bindingB, rootB);
   storeB.put('k1', { pass: 'all-defects', group: 'all-defects 1/2', response: { completed: true, reviewedFiles: ['x'], findings: [] } });
   const before = evidenceSnapshot(evidenceRoot, pinsA);
-  // A's host run is open: its marker exists while it runs, and B trusts no saved group meanwhile.
-  const marker = hostRunMarker(evidenceRoot, `preflight-collect:${'f'.repeat(40)}:1`);
-  fs.mkdirSync(path.dirname(marker), { recursive: true }); fs.writeFileSync(marker, '{}');
+  // A has host verification (its run is open now): B trusts no saved group while such an attempt is in the root.
+  fs.writeFileSync(pinsA, JSON.stringify({ hostVerification: true }));
   const saved = JSON.parse(fs.readFileSync(storeB.file, 'utf8'));
   saved.entries.k2 = { pass: 'all-defects', group: 'all-defects 2/2', response: { completed: true, reviewedFiles: ['y'], findings: [] } };
   fs.writeFileSync(storeB.file, JSON.stringify(saved));
-  assert.equal(reviewGroupStore(evidenceRoot, bindingB).get('k2'), undefined, 'no saved group is trusted while a host run of the root is open');
+  assert.equal(reviewGroupStore(evidenceRoot, bindingB, rootB).get('k2'), undefined, 'no saved group is trusted while an attempt of the root has host verification');
   // A's settlement: B's changed cache is discarded, neither restored nor kept.
   evidenceTouched(before, evidenceRoot, pinsA);
-  fs.rmSync(marker);
+  fs.writeFileSync(pinsA, '{}');
   assert.equal(exists(storeB.file), false);
-  const reopened = reviewGroupStore(evidenceRoot, bindingB);
+  const reopened = reviewGroupStore(evidenceRoot, bindingB, rootB);
   assert.equal(reopened.get('k2'), undefined); assert.equal(reopened.size(), 0);
+});
+
+test('MONO-494 review: saved groups are neither written nor read when this attempt or any attempt of the root has host verification', t => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-groups-hostv-')); t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+  const root = path.join(scratch, 'root'), evidenceRoot = path.join(scratch, 'evidence');
+  const pinsAt = (key, pins) => { const file = path.join(root, `dispatch/${key}-a1/pins.json`); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(pins)); return file; };
+  fs.mkdirSync(root, { recursive: true }); fs.writeFileSync(path.join(root, 'workers.json'), '{}');
+  const answer = { pass: 'all-defects', group: 'all-defects 1/2', response: { completed: true, reviewedFiles: ['x'], findings: [] } };
+  const binding = pinsFile => ({ head: 'a'.repeat(40), base: 'b'.repeat(40), contractDigest: digest(contract), pinsFile });
+
+  // Off everywhere: reuse works.
+  const own = pinsAt('MONO-1', { risk: 'standard' }), plain = { root, pins: { risk: 'standard' } };
+  reviewGroupStore(evidenceRoot, binding(own), plain).put('k1', answer);
+  assert.deepEqual(reviewGroupStore(evidenceRoot, binding(own), plain).get('k1'), answer);
+
+  // This attempt has host verification: nothing is read, nothing is written.
+  const ownHost = { root, pins: { risk: 'standard', hostVerification: true } };
+  assert.equal(reviewGroupStore(evidenceRoot, binding(own), ownHost).get('k1'), undefined);
+  const head2 = { ...binding(null), head: 'c'.repeat(40) };
+  reviewGroupStore(evidenceRoot, head2, ownHost).put('k2', answer);
+  assert.equal(exists(path.join(reviewGroupsDirectory(evidenceRoot), `${'c'.repeat(40)}.json`)), false, 'no file is written');
+
+  // Another attempt of the root gets host verification after the file was saved: the saved answer is not trusted any more,
+  // re-checked right before the read even on a store opened earlier.
+  const opened = reviewGroupStore(evidenceRoot, binding(own), plain);
+  pinsAt('MONO-2', { risk: 'standard', hostVerification: true });
+  assert.equal(opened.get('k1'), undefined, 'checked again right before use');
+  assert.equal(reviewGroupStore(evidenceRoot, binding(own), plain).get('k1'), undefined);
+  opened.put('k3', answer);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(reviewGroupsDirectory(evidenceRoot), `${'a'.repeat(40)}.json`), 'utf8')).entries.k3, undefined, 'nothing new is saved');
+  fs.rmSync(path.join(root, 'dispatch/MONO-2-a1'), { recursive: true });
+
+  // A registered attempt whose pins file lives elsewhere counts too.
+  const outside = path.join(scratch, 'elsewhere/pins.json'); fs.mkdirSync(path.dirname(outside), { recursive: true });
+  fs.writeFileSync(outside, JSON.stringify({ hostVerification: true }));
+  fs.writeFileSync(path.join(root, 'workers.json'), JSON.stringify({ 'MONO-3': { issue: 'MONO-3', attempt: 1, pins: { file: outside, digest: 'x' } } }));
+  assert.equal(reviewGroupStore(evidenceRoot, binding(own), plain).get('k1'), undefined);
+  fs.writeFileSync(path.join(root, 'workers.json'), '{}');
+  assert.deepEqual(reviewGroupStore(evidenceRoot, binding(own), plain).get('k1'), answer, 'reuse is back once no attempt has it');
+});
+
+test('MONO-494 review: a round under host verification reviews every group every time', async t => {
+  const files = zeniChange(30), f = fixture(t, files);
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-groups-hostv-round-')); t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+  const root = path.join(scratch, 'root'), evidenceRoot = path.join(scratch, 'evidence');
+  fs.mkdirSync(root, { recursive: true }); fs.writeFileSync(path.join(root, 'workers.json'), '{}');
+  const open = () => reviewGroupStore(evidenceRoot, { head: f.request.head, base: f.base, contractDigest: digest(contract), pinsFile: null }, { root, pins: { hostVerification: true } });
+  const failing = reviewer({ onCall: async call => { if (labelOf(call.context) === 'all-defects 2/2') throw Object.assign(new Error('role failed (1); no response admitted'), { processFailure: true }); return null; } });
+  assert.equal((await runReviewRound(f.request, { runRole: failing.runRole, groupStore: open() })).outcome, 'not-reviewed');
+  const r = reviewer();
+  const record = await runReviewRound(f.request, { runRole: r.runRole, groupStore: open() });
+  assert.equal(record.outcome, 'clean'); assert.equal(record.round.reusedGroups, undefined);
+  assert.ok(r.calls.some(call => labelOf(call.context) === 'all-defects 1/2'), 'the finished group runs again');
 });

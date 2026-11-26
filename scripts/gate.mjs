@@ -674,7 +674,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     else if (!roundOpen(prior)) review = workerFixed(prior, hostVerify ? verification.exitCode === 0 : workerVerified) ?? refuse(closedRefusal(prior));
     else {
       // MONO-494: answers of groups finished by an earlier collection on this head and contract; only missing groups run.
-      const groupStore = contractDigest ? reviewGroupStore(evidenceRoot, { head, base, contractDigest, pinsFile: request.pins?.file ?? null }) : null;
+      // Off whenever this attempt or any attempt of the root has host verification (reviewGroupStore).
+      const groupStore = contractDigest ? reviewGroupStore(evidenceRoot, { head, base, contractDigest, pinsFile: request.pins?.file ?? null }, { root: request.root, pins }) : null;
       const record = await runReviewRound({ worktree: repo, head, base, contract, risk: request.critical ? 'riskyCritical' : request.risk,
         config: baseModelConfig(repo, request.modelRoutes?.base ?? base), packRoot: path.resolve(scriptDir, '..'), roundLimit: Math.max(limit, ROUND_LIMIT), ...(prior.record ? { stageRecord: prior.record } : {}),
         ...(request.prRemarks?.length ? { remarks: request.prRemarks } : {}) }, { groupStore });
