@@ -52,8 +52,8 @@ host-owned ledger with one result per round (`done`, `refused`, `failed`) bound 
 that request; the worker waits with `delivery-state.mjs wait-round`. There are no
 collection or confirmation windows (`confirmationTimeoutSec`, `collectionTimeoutSec`
 are ignored): every reviewer role has its own time limit, and a gate stuck outside
-them is stopped after a fixed two-hour safety ceiling. With groups of about 200 KB two at a time a ZENI-880-sized
-change (about 1 MB, six groups a pass) takes three waves a pass, well inside it; if a gate is stopped at the ceiling
+them is stopped after a fixed two-hour safety ceiling. With groups of about 200 KB two at a time a change of
+about 1 MB (six groups a pass) takes three waves a pass, well inside it; if a gate is stopped at the ceiling
 anyway, the finished groups are already saved and the collection retry runs only the missing ones. A crash before a receipt
 may retry `collectionRetries` times (default 1) with the same admission; failure
 receipts reconcile without another review. Receipts are unsigned: `evidenceRoot`
