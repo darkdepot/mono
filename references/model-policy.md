@@ -8,17 +8,17 @@ Link `role:<role>` to `#roles`; report values.
 | Role | Model id | Reasoning effort | Applies to | Decided by |
 | --- | --- | --- | --- | --- |
 | `orchestrator` | `session-selected` | n/a | Unconstrained model/effort. | Owner, 2026-10-13. |
-| `second-voice` | `gpt-6-astra` | `high` | Second Voice for Claude, cross-vendor. | Owner, 2026-09-30. |
-| `second-voice-alt` | `claude-opus-5` | `high` | Second Voice for GPT, independent of worker. | Owner, 2026-09-06. |
-| `worker-default` | `gpt-6.1-sol` | `high` | Codex. | Owner, 2026-09-30. |
-| `worker-complex` | `gpt-6.1-sol` | `xhigh` | Complex Codex; require dispatch reason, never by risk. | Owner, 2026-09-30. |
-| `worker-claude` | `claude-opus-5` | `high` | Claude worker; see below. | Owner, 2026-09-06. |
-| `idea-helper` | claude-code: `claude-opus-5-5`; codex: `gpt-6.1-sol` | `high` | Read-only idea facts. | Owner, 2026-10-16. |
+| `second-voice` | `gpt-6.2-astra` | `high` | Second Voice for Claude, cross-vendor. | Owner, 2026-11-27. |
+| `second-voice-alt` | `claude-opus-5-5` | `high` | Second Voice for GPT, independent of worker. | Owner, 2026-11-27. |
+| `worker-default` | `gpt-6.2-sol` | `high` | Codex. | Owner, 2026-11-27. |
+| `worker-complex` | `gpt-6.2-sol` | `xhigh` | Complex Codex; require dispatch reason, never by risk. | Owner, 2026-11-27. |
+| `worker-claude` | `claude-opus-5-5` | `high` | Claude worker; see below. | Owner, 2026-11-27. |
+| `idea-helper` | claude-code: `claude-opus-5-5`; codex: `gpt-6.2-sol` | `high` | Read-only idea facts. | Owner, 2026-11-27. |
 | `scout` | claude-code: `sonnet`; codex: `gpt-6-luna` | claude-code: `medium`; codex: `high` | Read-only scouts. | Owner, 2026-10-17. |
-| `qa` | `claude-opus-5-5` | `high` | Independent QA; models.roles override. | Owner. |
-| `code-review` | `gpt-6.1-sol` | `high` | Round reviewer. | Owner, 2026-11-01. |
-| `code-review-checker` | `claude-opus-5` | `high` | Finding checker. | Owner, 2026-11-01. |
-| `autoreview` | `claude-opus-5` | tiny: `low`; standard: `medium`; deep: `high`; risky: `high`; riskyCritical: `xhigh` | Legacy pins/configs; never runs. | Owner. |
+| `qa` | `claude-opus-5-5` | `high` | Independent QA; overridable. | Owner. |
+| `code-review` | `gpt-6.2-sol` | `high` | Round reviewer. | Owner, 2026-11-27. |
+| `code-review-checker` | `claude-opus-5-5` | `high` | Finding checker. | Owner, 2026-11-27. |
+| `autoreview` | `claude-opus-5-5` | tiny: `low`; standard: `medium`; deep: `high`; risky: `high`; riskyCritical: `xhigh` | Legacy pins/configs; never runs. | Owner. |
 
 `idea-helper`/`scout`: `resolveRole` takes actual `host: "claude-code"|"codex"`
 (default codex). `models.roles.<role>` overrides; omissions inherit. Stages use `scout`;
