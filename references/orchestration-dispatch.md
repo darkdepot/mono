@@ -84,7 +84,11 @@ is absent, never rebuild it. Scheduling remains Handoff/orchestrator-owned.
 For a package record, `tech-spec.md` holds the content of the current record's
 `mono-package` fence (its `- U<n>.` units, `## Кратко` and manifests stay
 parseable; the dispatch label `Tech Spec:` stays) and `approval.md` is the authorized
-start comment; before dispatch verify ordinary `by=owner`, or delegated
+start comment; before dispatch verify ordinary `by=owner` (PC-016: an answer to
+the shown summary, or a named «Согласие наперёд:» whose `mono-forward: granted
+scope=start` you check in Linear: not revoked before the start, same PRD and Design
+versions, at most three Issues, same words; the worker accepts the pinned
+`approval.md` prose and is not BLOCKED by missing consent records), or delegated
 `by=orchestrator` with reason/countercheck (latest Idea mark or earlier owner decision),
 never bundling unapproved stale/legacy Idea: owner agreement/record/fresh check first; listing this
 Issue, and names the record version it started with its `sha256`; the current

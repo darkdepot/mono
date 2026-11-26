@@ -131,7 +131,8 @@
       "scenarios": [
         "discovery/approve/scenario.json",
         "discovery/correction/scenario.json",
-        "discovery/empty/scenario.json"
+        "discovery/empty/scenario.json",
+        "discovery/forward-parent/scenario.json"
       ]
     },
     {
@@ -168,7 +169,8 @@
         "design/approve/scenario.json",
         "design/correction/scenario.json",
         "design/empty/scenario.json",
-        "design/main-file/scenario.json"
+        "design/main-file/scenario.json",
+        "design/forward-grant/scenario.json"
       ]
     },
     {
@@ -210,7 +212,9 @@
       "scenarios": [
         "tech-evaluation/approve/scenario.json",
         "tech-evaluation/correction/scenario.json",
-        "tech-evaluation/empty/scenario.json"
+        "tech-evaluation/empty/scenario.json",
+        "tech-evaluation/forward-inherited/scenario.json",
+        "tech-evaluation/forward-stop/scenario.json"
       ],
       "chainSeed": "seeds/research-cli.json"
     },
@@ -256,12 +260,20 @@
         "handoff/approve/scenario.json",
         "handoff/correction/scenario.json",
         "handoff/empty/scenario.json",
-        "handoff/single-task/scenario.json"
+        "handoff/single-task/scenario.json",
+        "handoff/forward-chain/scenario.json"
       ]
     }
   ],
   "release": {
-    "stages": ["idea", "research", "discovery", "design", "tech-evaluation", "handoff"],
+    "stages": [
+      "idea",
+      "research",
+      "discovery",
+      "design",
+      "tech-evaluation",
+      "handoff"
+    ],
     "brief": "Mono: существующий тестовый продукт с таблицей прогонов в cli/runs.mjs и графическим представлением в тестовом Paper. Выпускной проект добавляет одинаковую колонку «Источник» из source после имени в обоих представлениях; пустое значение, null и отсутствующий source показываются прочерком. Приёмка охватывает модель данных, CLI и графическую таблицу, их независимые проверки и передачу утверждённого макета в техническое решение. Дизайн нужен, размер — большой. Фильтр и сортировка не нужны. Свежий проект создаёт Idea, записей посева Linear нет.",
     "routeHint": "Выпускной проект: PRD design=needed, размер «большой» (прежний «проект»), маршрут Idea → Research → Discovery → Design → Tech Evaluation → Handoff. После Design следующий этап отдельно запускает оркестратор по утверждённому плану проверки."
   },

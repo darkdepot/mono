@@ -80,6 +80,11 @@ FAIL, его PASS для этого входа не требуется. Отде
 mono-design: approved project=<uuid> prd=<uuid PRD> prd-updatedAt=<ISO> canvas=<https-ссылка> tool=paper|wonder images=<sha256> next=tech-evaluation|handoff by=owner|orchestrator
 ```
 
+Владелец, утверждая макет, прямо сказал готовить дальше и передавать в работу:
+второй строкой того же забора `mono-forward: granted … design=self by=owner` по
+`<корень>/references/owner-dialog.md` «Слова наперёд». Макет утверждается только
+показом, как всегда; «Финал» не меняется, следующий этап начинает родитель.
+
 Для своей записи выбери `next=` по «Размер» утверждённого PRD через соответствие
 в `skills/discovery/references/prd.md`: средний/большой → `tech-evaluation`,
 небольшой → `handoff`. Старый PRD не переоценивай; записи и их `next=` решают маршрут.

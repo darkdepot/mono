@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "id": "forward-parent",
+  "stage": "discovery",
+  "kind": "continuation",
+  "seed": "seeds/research.json",
+  "next": "design",
+  "continuation": "same-session",
+  "routeHint": "PRD: design=needed, размер «средний» (прежний «обычное»): меняются вывод CLI и графическая таблица; после Design нужен Tech Evaluation.",
+  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии. После показа спрашивай об утверждении и старте Design: владелец готов решить оба вопроса сейчас. В итоге оставь ссылку на показанный документ, прочитанный нативно; после ответа перечитай его перед записью. В PRD запиши это решение о подписи первой колонки в «Не берём» с причиной «подпись первой колонки вне проекта, решено владельцем».",
+  "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь колонку «Источник» из поля source после имени прогона в таблицу CLI и в её графическое представление. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт. Для проверки Design используется готовый тестовый макет этой таблицы в Paper и посеянная память. Подпись первой колонки в этот проект не входит, владелец это уже решил: подпись в коде остаётся как есть, в том числе ещё не выпущенная правка, а макет может показывать выпущенную подпись; это расхождение принято, оно не отступление от PRD и не вопрос владельцу. Работа укладывается в три задачи.",
+  "hosts": {
+    "claude": {
+      "expectedReplies": [
+        {
+          "id": "discovery-forward-parent",
+          "stage": "discovery",
+          "role": "approval",
+          "summary": [
+            "Источник"
+          ],
+          "question": {
+            "anchors": [
+              [
+                "PRD",
+                "результат",
+                "решени",
+                "соглас",
+                "требовани",
+                "утвержда"
+              ],
+              [
+                "Design",
+                "Tech Evaluation",
+                "Handoff",
+                "дизайн"
+              ],
+              [
+                "Design",
+                "Tech Evaluation",
+                "Handoff",
+                "дизайн"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": true,
+          "reply": "согласен",
+          "intent": "agree",
+          "outcome": {
+            "approval": true,
+            "startNext": true
+          },
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд",
+                "утвержд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "document",
+          "driverStart": [
+            "design"
+          ]
+        }
+      ],
+      "idleContinuation": "Продолжай."
+    },
+    "codex": {
+      "expectedReplies": [
+        {
+          "id": "discovery-forward-parent",
+          "stage": "discovery",
+          "role": "approval",
+          "summary": [
+            "Источник"
+          ],
+          "question": {
+            "anchors": [
+              [
+                "PRD",
+                "результат",
+                "решени",
+                "соглас",
+                "требовани",
+                "утвержда"
+              ],
+              [
+                "Design",
+                "Tech Evaluation",
+                "Handoff",
+                "дизайн"
+              ],
+              [
+                "Design",
+                "Tech Evaluation",
+                "Handoff",
+                "дизайн"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": true,
+          "reply": "согласен",
+          "intent": "agree",
+          "outcome": {
+            "approval": true,
+            "startNext": true
+          },
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд",
+                "утвержд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "document",
+          "driverStart": [
+            "design"
+          ]
+        }
+      ]
+    }
+  },
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "type": "mono-prd: approved",
+      "version": "fresh-read-after-shown-version",
+      "count": 1
+    },
+    {
+      "type": "mono-brief",
+      "scope": "project",
+      "count": 1
+    }
+  ]
+}

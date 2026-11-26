@@ -45,7 +45,12 @@ for(const host of ['claude','codex'])for(const scenario of shippedCatalog.scenar
   else if(stage==='handoff')messages=[base[0],base[0].replace('пакет, проверки и Ready готовы','пакет новой версии, проверка записи без source и Ready готовы'),base[1]];
   else{const at=base[0].lastIndexOf('\n');messages=[base[0].slice(0,at)+'\nФильтр и сортировку не добавляем.'+base[0].slice(at),'Экспорт добавлен к исключениям. '+base[1]];}
  }
- if(scenario.kind==='main'&&['idea','discovery','tech-evaluation'].includes(stage)){
+ // MONO-485 forward chain: inherited steps show a summary and ask nothing; forward-stop
+ // first confirms the Design record, then the owner interjects and the stage asks as usual.
+ if(scenario.id==='forward-inherited')messages=['Источник читаем из source. Решение записано по согласию наперёд, Handoff начат.'];
+ if(scenario.id==='forward-chain')messages=['Источник добавляется одной задачей. Старт записан по согласию наперёд.'];
+ if(scenario.id==='forward-stop')messages=['Запись Design сверена, дальше Tech Evaluation.',base[0].replace('Такое техническое решение подходит?','Принимаем решение и начинаем Handoff?'),base[1]];
+ if((scenario.kind==='main'||scenario.id==='forward-parent')&&['idea','discovery','tech-evaluation'].includes(stage)){
   const questions={idea:'Принимаем эту идею и начинаем Research?',discovery:'Утверждаем PRD и начинаем Design?', 'tech-evaluation':'Принимаем решение и начинаем Handoff?'};
   const lines=messages[0].split('\n');lines[lines.length-1]=questions[stage];messages[0]=lines.join('\n');
  }
@@ -56,7 +61,7 @@ for(const host of ['claude','codex'])for(const scenario of shippedCatalog.scenar
   mcpServers:{monotest:{url:'https://example.test/mcp'}},workspaceProof:{tool:'mcp__monotest__get_workspace',path:['name'],equals:'Test Space'},
   scenario:{prompt:'Run text',allowedTools:['*'],...flow}});
  assert.equal(result.status,'passed',JSON.stringify(result));
- assert.deepEqual(result.replies.map(r=>r.reply),flow.expectedReplies.map(r=>r.reply));assert(result.replies.every(r=>r.received));
+ assert.deepEqual(result.replies.map(r=>r.reply),flow.expectedReplies.map(r=>r.intent==='inherited'?null:r.reply));assert(result.replies.every(r=>r.received));
  assert.equal(result.check.windows.length,0);
  assert.equal(probeText({host,trace:result.trace,expectedReplies:flow.expectedReplies,stageStartLine:result.stageStartLine}).status,'passed');
 });

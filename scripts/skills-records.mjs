@@ -522,6 +522,8 @@ function approvalCheck(request,write,data,dump,writes){
  if(!createProject&&!markers.some(type=>recordWrite(write,type,dump)))return;
  const packageStart=recordWrite(write,'mono-package: start',dump);
  const binding=request.approvalBindings?.find(b=>b.recordId===idOf(write.value));
+ const governing=data.expectedReplies&&data.exchanges.filter(e=>authorityLine(e)<write.line).at(-1);
+ if(governing?.inherited) return inheritedRecordCheck(request,write,data,dump,governing,createProject);
  if(data.expectedReplies) return textApprovalCheck(request,write,data,dump,{createProject,packageStart,binding,writes});
  if(dialogueMode(request.testedVersion??testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))!=='windows')throw new Error('text approval requires scenario expectedReplies');
  const candidates=data.audit.calls.filter(c=>!c.event.parent_tool_use_id&&['AskUserQuestion','request_user_input_async'].includes(c.name)&&c.line<write.line);
@@ -641,6 +643,123 @@ function checkApprovedVersion({request,write,data,dump,createProject,packageStar
  if(!Number.isInteger(invocation))bindingMissing('approval write invocation not proved by native trace');
 }
 
+// MONO-485: forward consent. The owner's words at an approval are recorded once as
+// a grant line in that approval comment; a record under a later inherited step keeps
+// its own machine form and names the grant outside fences. The grant counts only when
+// written right after a real owner reply the scenario declares as forward words.
+const FORWARD_GRANT='mono-forward: granted',FORWARD_REVOKED='mono-forward: revoked',CONSENT_LINE='Согласие наперёд: ',OWNER_LINE='Владелец: ответил «';
+// An inherited step has no reply: it governs what follows the previous reply (or the stage start).
+const authorityLine=e=>e.inherited?e.consentLine:e.replyLine;
+function consentLines(exchanges,startLine=0){
+ return exchanges.map((e,index)=>e.inherited?{...e,consentLine:index?exchanges[index-1].replyLine:startLine??0}:e);
+}
+function forwardFields(body,marker){
+ let lines;try{lines=recordLines(body);}catch{return [];}
+ return lines.map(line=>line.trim()).filter(line=>line.startsWith(marker+' ')).map(line=>{
+  const fields={};
+  for(const token of line.slice(marker.length+1).split(' ')){const match=token.match(/^([^=]+)=(.+)$/);if(!match||Object.hasOwn(fields,match[1]))return null;fields[match[1]]=match[2];}
+  return fields;
+ });
+}
+const proseLines=body=>approvalBlocks(body).filter(block=>!block.fenced).map(block=>block.text).join('\n').split(/\r?\n/);
+function ownerWords(body){
+ const lines=proseLines(body).filter(line=>line.startsWith('Владелец: ответил '));
+ return lines.length===1&&lines[0].startsWith(OWNER_LINE)&&lines[0].endsWith('»')?lines[0].slice(OWNER_LINE.length,-1):null;
+}
+// Earlier stages of the same chain, read only for their owner replies and writes;
+// their own records were verified when they ran.
+function forwardSource(source){
+ const data=nativeRecords(source.host,source.trace);
+ if(!completedTrace(source.host,data.rows))missing(`forward evidence trace incomplete: ${source.trace}`);
+ data.exchanges=consentLines(textExchanges(source.host,data.rows,source.expectedReplies,{startLine:source.stageStartLine,idleContinuation:source.idleContinuation}),source.stageStartLine);
+ return data;
+}
+// What a grant must repeat from the approval comment that carries it. A grant at PRD
+// approval is valid only on the route without Design (design=not-needed).
+function grantAnchor(body){
+ const read=(marker,required,optional)=>{try{return latestApproval([{body,createdAt:'1970-01-01T00:00:00Z'}],marker,required,optional);}catch{return null;}};
+ const prd=read('mono-prd: approved',['project','document','updatedAt','by'],['next','design']);
+ if(prd){
+  if(prd.fields.design!=='not-needed')throw new Error('consent at PRD approval needs design=not-needed');
+  return {prd:prd.fields.document,updatedAt:prd.fields.updatedAt,design:'none'};
+ }
+ const design=read('mono-design: approved',['project','prd','prd-updatedAt','images','next','by'],['paper','canvas','tool']);
+ if(design)return {prd:design.fields.prd,updatedAt:design.fields['prd-updatedAt'],design:'self'};
+ const tech=read('mono-tech: approved',['project','prd','prd-updatedAt','spec','spec-sha256','page-sha256','by'],['design']);
+ if(tech)return {prd:tech.fields.prd,updatedAt:tech.fields['prd-updatedAt'],design:tech.fields.design??'none'};
+ throw new Error('forward consent outside a PRD, Design or Tech approval');
+}
+function checkGrant(grant,project,anchor){
+ const keys=['project','scope','prd','prd-updatedAt','design','by'];
+ if(!grant||Object.keys(grant).length!==keys.length||keys.some(key=>!text(grant[key]))||!['tech','package','start'].includes(grant.scope)||grant.by!=='owner')throw new Error('invalid forward consent record');
+ if(grant.project!==project)throw new Error('consent belongs to another project');
+ if(grant.prd!==anchor.prd||grant['prd-updatedAt']!==anchor.updatedAt)throw new Error('consent PRD version differs');
+ if(grant.design!==anchor.design)throw new Error('consent Design differs');
+}
+function inheritedRecordCheck(request,write,data,dump,exchange,createProject){
+ const expected=exchange.expected,body=writeBody(write);
+ if(createProject)throw new Error('inherited step cannot create a project');
+ let kind,fields;
+ try{({kind,fields}=versionApproval(write));}catch{throw new Error('record kind differs from scenario stage');}
+ if(kind!=={'tech-evaluation':'mono-tech: approved',handoff:'mono-package: start'}[expected.stage])throw new Error('record kind differs from scenario stage');
+ if(fields.by!=='owner'||fields.project!==dump.project?.uuid)throw new Error('record approval authority differs from scenario');
+ if(kind==='mono-package: start'?!expected.outcome.startNext:!expected.outcome.approval)throw new Error('scenario reply does not authorize this record');
+ const refs=proseLines(body).filter(line=>line.startsWith(CONSENT_LINE));
+ if(refs.length!==1)throw new Error('record under an inherited step names no forward consent');
+ const ref=refs[0].slice(CONSENT_LINE.length).trim();
+ const grantRow=dump.projectComments.find(row=>text(ref)&&(ref===idOf(row)||ref===row.url||ref.endsWith('#comment-'+idOf(row))));
+ const grants=grantRow?forwardFields(bodyOf(grantRow),FORWARD_GRANT):[];
+ if(grants.length!==1)throw new Error('consent record missing');
+ const grant=grants[0];
+ checkGrant(grant,dump.project.uuid,grantAnchor(bodyOf(grantRow)));
+ if(kind==='mono-package: start'&&grant.scope!=='start')throw new Error('consent scope does not cover this record');
+ // scope=tech covers only the Tech approval; starting Handoff needs package or start.
+ const startsHandoff=expected.outcome.startNext||data.audit.calls.some(c=>c.name===stageDriverTool&&c.line>authorityLine(exchange)&&c.input?.stage==='handoff');
+ if(kind==='mono-tech: approved'&&startsHandoff&&grant.scope==='tech')throw new Error('consent scope does not cover the Handoff start');
+ const words=ownerWords(bodyOf(grantRow));
+ if(words===null||ownerWords(body)!==words)throw new Error('owner words differ from the consent');
+ const persisted=dump.projectComments.find(row=>idOf(row)===idOf(write.value)),recordTime=date(persisted?.createdAt??write.value.createdAt);
+ if(!Number.isFinite(recordTime))missing('inherited record time missing');
+ if(!(date(grantRow.createdAt)<recordTime))throw new Error('consent recorded after the record');
+ const earlier=dump.projectComments.filter(row=>date(row.createdAt)<recordTime);
+ let prdApproval,designApproval,techApproval;
+ try{
+  prdApproval=latestApproval(earlier,'mono-prd: approved',['project','document','updatedAt','by'],['next','design']);designApproval=latestDesignApproval(earlier);
+  techApproval=latestApproval(earlier,'mono-tech: approved',['project','prd','prd-updatedAt','spec','spec-sha256','page-sha256','by'],['design']);
+ }catch{throw new Error('approval chain before the record is unreadable');}
+ // PC-016: the consent's PRD equals the latest PRD approval and the PRD in mono-tech: approved, if any.
+ const tech=kind==='mono-tech: approved'?fields:techApproval?.fields;
+ if(!prdApproval||grant.prd!==prdApproval.fields.document||grant['prd-updatedAt']!==prdApproval.fields.updatedAt||
+  (tech&&(tech.prd!==grant.prd||tech['prd-updatedAt']!==grant['prd-updatedAt'])))throw new Error('consent PRD version differs');
+ if((grant.design==='self'?idOf(grantRow):grant.design)!==(designApproval?idOf(designApproval.comment):'none'))throw new Error('consent Design differs');
+ if(earlier.some(row=>forwardFields(bodyOf(row),FORWARD_REVOKED).some(revoke=>revoke?.consent===idOf(grantRow))))throw new Error('consent revoked before the record');
+ if(kind==='mono-package: start'){
+  if(fields.issues.split(',').filter(Boolean).length>3)throw new Error('start under consent names more than three tasks');
+  const packet=dump.projectComments.find(row=>idOf(row)===fields.record);
+  if(!packet||packageHash(bodyOf(packet))!==fields.sha256)throw new Error('written approval does not bind the shown content/version');
+ }
+ // The grant must be the write that followed the owner's own forward words in this chain.
+ const sources=[...(request.forwardEvidence??[]).map(forwardSource),data];
+ let found;
+ for(const [index,source] of sources.entries()){
+  for(const call of source.calls.filter(c=>isWrite(c.name))){
+   let result;try{result=resultFor(source.host,call,source.rows);}catch(error){if(error instanceof MissingEvidence)continue;throw error;}
+   if(idOf(result.value)===idOf(grantRow)){found={index,source,write:result};break;}
+  }
+  if(found)break;
+ }
+ const reply=found&&found.source.exchanges.filter(e=>authorityLine(e)<found.write.line).at(-1);
+ if(!reply||reply.inherited||reply.expected.intent==='interject'||reply.expected.by==='orchestrator'||!reply.expected.outcome.approval||
+  reply.expected.forward!==grant.scope||reply.reply!==words)throw new Error('consent not bound to the owner forward words');
+ compareField('body',writeBody(found.write),bodyOf(grantRow),idOf(grantRow));
+ // Between the forward words and this record only plain continuations may be owner replies.
+ for(const [index,source] of sources.entries())for(const e of source.exchanges??[]){
+  if(index<found.index||e.inherited||e===reply||(index===found.index&&e.replyLine<found.write.line)||(source===data&&e.replyLine>=write.line))continue;
+  if(!(e.expected.intent==='interject'&&e.expected.continues===true))throw new Error('owner reply after the consent and before the record');
+ }
+ return kind==='mono-tech: approved'?[exchange]:[];
+}
+
 function textApprovalCheck(request,write,data,dump,{createProject,packageStart,binding,writes}) {
  if(!binding)bindingMissing(`shown-version binding missing for ${idOf(write.value)}`);
  const exchange=data.exchanges.find(e=>e.expected.id===binding.replyId);
@@ -708,6 +827,11 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
    }
   }
   if(expected.by==='orchestrator'&&!prose.includes(`Причина: ${expected.reason}`))throw new Error('orchestrator reason missing');
+  // A forward consent is written only for a reply the scenario declares as forward words.
+  const grants=forwardFields(body,FORWARD_GRANT);
+  if(expected.forward!==undefined?grants.length!==1||grants[0]?.scope!==expected.forward||grants[0]?.by!=='owner':grants.length)throw new Error('forward consent differs from the owner reply');
+  // The grant is complete and repeats this record's PRD version and Design (review round 1).
+  if(grants.length)checkGrant(grants[0],dump.project?.uuid,grantAnchor(body));
  }
  let ownerExchange;
  if(expected.by==='orchestrator'&&expected.stage==='idea') {
@@ -767,10 +891,8 @@ export function verifyRecords(request){
    if(!dump&&data.audit.calls.some(c=>isOwnerWindow(c.name))&&dialogueMode(request.testedVersion??testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))!=='windows')throw new Error('stage called a window in text scenario');
    if(!dump&&(request.expectedReplies||source.expectedReplies)&&data.audit.calls.some(c=>isOwnerWindow(c.name)))throw new Error('stage called a window in text scenario');
    if(data.expectedReplies) {
-    data.exchanges=textExchanges(source.host,data.rows,data.expectedReplies,{startLine:source.stageStartLine,idleContinuation:source.idleContinuation});
-    // Records under an inherited step bind to a recorded consent, which this
-    // verifier cannot check yet; it fails closed instead of binding a reply.
-    if(data.exchanges.some(e=>e.inherited))throw new Error('inherited step records have no consent binding yet');
+    // Records under an inherited step bind to the owner's forward consent (MONO-485).
+    data.exchanges=consentLines(textExchanges(source.host,data.rows,data.expectedReplies,{startLine:source.stageStartLine,idleContinuation:source.idleContinuation}),source.stageStartLine);
    }
    return data;
   };
@@ -792,7 +914,7 @@ export function verifyRecords(request){
     const input=source.calls.includes(call)||['Skill','Agent','Task'].includes(call.name)?callInput(source.host,call):call.input;
     const status=input?.state??input?.status;
     const invocation=call.event.type==='event_msg'?call.approvalInvocationLine:call.line;
-    const e=source.exchanges?.filter(e=>e.replyLine<(invocation??call.line)).at(-1);
+    const e=source.exchanges?.filter(e=>authorityLine(e)<(invocation??call.line)).at(-1);
     // Before any owner reply, the scenario identifies only the current stage;
     // it cannot authorize a transition. Re-saving that stage is not a start.
     const currentStage=stageNames[e?.expected.stage??policies[0].stage];
@@ -1106,7 +1228,7 @@ function evidenceFiles(request) {
   else throw new Error('saved evidence must contain regular files and directories');
  };
  capture(request.dumpDir);capture(request.configFile);
- for(const file of [request.trace,request.sent,request.dumpTrace,...(request.additionalTraces??[]).flatMap(t=>[t.trace,t.sent]),...(request.dumpAdditionalTraces??[]).map(t=>t.trace),...(request.approvalBindings??[]).map(b=>b.ownerEvidence?.trace)].filter(Boolean)) {
+ for(const file of [request.trace,request.sent,request.dumpTrace,...(request.additionalTraces??[]).flatMap(t=>[t.trace,t.sent]),...(request.dumpAdditionalTraces??[]).map(t=>t.trace),...(request.approvalBindings??[]).map(b=>b.ownerEvidence?.trace),...(request.forwardEvidence??[]).map(t=>t.trace)].filter(Boolean)) {
   capture(file);capture(path.join(path.dirname(file),'result.json'));
  }
  return [...files];
@@ -1130,7 +1252,7 @@ export function resumeScenarioRecords({resumeEvidence,bindingsFile,prepareReview
  if((result.rubricDigest??null)!==(saved.rubricDigest??null))throw new Error(saved.rubricDigest?'saved rubric digest changed; resume refused':'review preparation required: no saved rubric digest');
  return {...result,reviewEvidence:resumeEvidence};
 }
-export async function verifyScenarioRecords({run,runRequest,scenario,project,outputDir,bindingsFile,resumeEvidence,prepareReview=false},collect=collectRecordDump){
+export async function verifyScenarioRecords({run,runRequest,scenario,project,outputDir,bindingsFile,resumeEvidence,prepareReview=false,forwardEvidence=[]},collect=collectRecordDump){
  if(resumeEvidence)return resumeScenarioRecords({resumeEvidence,bindingsFile,prepareReview});
  const start=Date.now();
  const traces=(run.auditedTraces??[]).filter(trace=>trace!==run.trace).map(trace=>({host:runRequest.host,trace}));
@@ -1145,7 +1267,7 @@ export async function verifyScenarioRecords({run,runRequest,scenario,project,out
  if(dump.status!=='passed')return {...dump,status:dump.status==='failed'?'failed':'unverified',durationMs:Date.now()-start};
  const bindings=bindingsFile&&fs.existsSync(bindingsFile)?read(bindingsFile):{};
  const verification={host:runRequest.host,testedVersion:run.testedVersion??runRequest.testedVersion,trace:run.trace,endLine:run.endLine,stageStartLine:run.stageStartLine,sent:run.sent,seedExpected:Boolean(runRequest.seed),seedEndLine:run.seedEndLine,seedProjectId:run.seedRoute?.project?.id,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,dumpAdditionalTraces:(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace})),
-  idleContinuation:runRequest.scenario?.idleContinuation,expectedReplies:runRequest.scenario?.expectedReplies,expectedWindows:runRequest.scenario?.expectedWindows,windows:runRequest.scenario?.windows,rubricDefinition:runRequest.scenario?.rubricDefinition,approvalBindings:bindings.approvalBindings,presentationBindings:bindings.presentationBindings,rubric:bindings.rubric,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:next,skillPrefix:rules.skillPrefix,nextSkill:rules.nextSkill,nextAgent:rules.nextAgent,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')};
+  idleContinuation:runRequest.scenario?.idleContinuation,expectedReplies:runRequest.scenario?.expectedReplies,expectedWindows:runRequest.scenario?.expectedWindows,windows:runRequest.scenario?.windows,rubricDefinition:runRequest.scenario?.rubricDefinition,approvalBindings:bindings.approvalBindings,presentationBindings:bindings.presentationBindings,rubric:bindings.rubric,gates:bindings.gates,forwardEvidence,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:next,skillPrefix:rules.skillPrefix,nextSkill:rules.nextSkill,nextAgent:rules.nextAgent,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')};
  const result=verifyRecords(verification),reviewEvidence=outputDir+'-evidence.json';
  const payload={request:verification,files:evidenceFiles(verification),rubricDigest:result.rubricDigest??null,rubricInput:result.rubricInput??null};
  fs.writeFileSync(reviewEvidence,JSON.stringify({...payload,digest:rubricDigest(payload)},null,2)+'\n',{flag:'wx'});

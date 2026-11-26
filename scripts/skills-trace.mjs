@@ -12,7 +12,7 @@ import { dialogueMode, testedVersion } from './skills-stage-driver.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Full rule source, including final-message order. A rule edit requires checker/rubric review.
-export const OWNER_DIALOG_SHA256 = '09cf56ded30fbfcb099ca60bcdc2dd0addbe429e6fd06276afa59ebbdb0957b4';
+export const OWNER_DIALOG_SHA256 = '4741ae2748789b0d1c22244b95e3d14604182613f3f96df4cc3c025cb2b2f4b1';
 export const visible = visibleText;
 export { completedTrace, codexTerminals } from './skills-audit.mjs';
 export { textExchanges, checkEndings } from './skills-probe.mjs';

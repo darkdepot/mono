@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "id": "forward-grant",
+  "stage": "design",
+  "kind": "continuation",
+  "seed": "seeds/prd-design.json",
+  "next": "tech-evaluation",
+  "chain": [
+    "discovery/forward-parent"
+  ],
+  "routeHint": "PRD уже утверждён с design=needed и размером «средний»: после Design следующий этап Tech Evaluation в родительской сессии.",
+  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии. В итоге оставь ссылку на показанный макет; после ответа перечитай записи перед записью.",
+  "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь колонку «Источник» из поля source после имени прогона в таблицу CLI и в её графическое представление. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт. Для проверки Design используется готовый тестовый макет этой таблицы в Paper и посеянная память. Подпись первой колонки в этот проект не входит, владелец это уже решил: подпись в коде остаётся как есть, в том числе ещё не выпущенная правка, а макет может показывать выпущенную подпись; это расхождение принято, оно не отступление от PRD и не вопрос владельцу. Работа укладывается в три задачи.",
+  "hosts": {
+    "claude": {
+      "expectedReplies": [
+        {
+          "id": "design-forward-grant",
+          "stage": "design",
+          "role": "approval",
+          "summary": [
+            "Источник"
+          ],
+          "question": {
+            "anchors": [
+              [
+                "макет",
+                "дизайн",
+                "экран",
+                "утвержда"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": false,
+          "reply": "утверждаю. Дальше сам: готовь техрешение и пакет, проверяй и передавай в работу",
+          "intent": "agree",
+          "outcome": {
+            "approval": true,
+            "startNext": false
+          },
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд",
+                "закончил",
+                "утвержд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "document",
+          "driverStart": null,
+          "forward": "start"
+        }
+      ],
+      "idleContinuation": "Продолжай."
+    },
+    "codex": {
+      "expectedReplies": [
+        {
+          "id": "design-forward-grant",
+          "stage": "design",
+          "role": "approval",
+          "summary": [
+            "Источник"
+          ],
+          "question": {
+            "anchors": [
+              [
+                "макет",
+                "дизайн",
+                "экран",
+                "утвержда"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": false,
+          "reply": "утверждаю. Дальше сам: готовь техрешение и пакет, проверяй и передавай в работу",
+          "intent": "agree",
+          "outcome": {
+            "approval": true,
+            "startNext": false
+          },
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд",
+                "закончил",
+                "утвержд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "document",
+          "driverStart": null,
+          "forward": "start"
+        }
+      ]
+    }
+  },
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "type": "mono-design",
+      "version": "fresh-read-after-shown-version",
+      "count": 1
+    },
+    {
+      "type": "mono-brief",
+      "scope": "project",
+      "count": 1
+    }
+  ]
+}

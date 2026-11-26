@@ -52,10 +52,14 @@ function fixture(t) {
 
 test('Mono catalog has exactly six stage contracts, all host text replies and no stored run identities',()=>{
   const catalog=loadCatalog(path.join(source,'index.json'));
-  assert.deepEqual([...catalog.stages.keys()],Object.keys(neighbors));assert.equal(catalog.scenarios.size,20);
+  assert.deepEqual([...catalog.stages.keys()],Object.keys(neighbors));assert.equal(catalog.scenarios.size,25);
+  // MONO-485 adds the forward-consent chain: discovery/forward-parent, design/forward-grant,
+  // tech-evaluation/forward-inherited and forward-stop, handoff/forward-chain.
+  const kinds={idea:['main','correction','unclear','defer'],research:['main','question'],discovery:['main','correction','unclear','continuation'],
+   design:['main','correction','unclear','continuation','continuation'],'tech-evaluation':['main','correction','unclear','continuation','correction'],handoff:['main','correction','unclear','continuation','continuation']};
   for(const [id,stage] of catalog.stages){
-    assert.deepEqual(stage.neighbors,neighbors[id]);assert.equal(stage.scenarios.length,id==='research'?2:['idea','design','handoff'].includes(id)?4:3);
-    assert.deepEqual(stage.scenarios.map(p=>catalog.scenarios.get(`${id}/${p.split('/')[1]}`).kind),id==='research'?['main','question']:id==='idea'?['main','correction','unclear','defer']:['design','handoff'].includes(id)?['main','correction','unclear','continuation']:['main','correction','unclear']);
+    assert.deepEqual(stage.neighbors,neighbors[id]);assert.equal(stage.scenarios.length,kinds[id].length);
+    assert.deepEqual(stage.scenarios.map(p=>catalog.scenarios.get(`${id}/${p.split('/')[1]}`).kind),kinds[id]);
     assert(!stage.files.includes('templates/qa-output.md'));
     for(const common of ['references/owner-dialog.md','scripts/russian-stages.mjs','scripts/idea-gate.mjs']) assert(stage.files.includes(common));
   }
@@ -192,11 +196,14 @@ test('seed route is isolated from the following stage before any real stage runs
 });
 
 test('catalog reply anchors accept the full final message and preserve the exact owner reply',async()=>{
- const {textReply}=await import('./skills-owner.mjs');
+ const {textReply,inheritedTurn}=await import('./skills-owner.mjs');
  const catalog=loadCatalog(path.join(source,'index.json'));
  for(const scenario of catalog.scenarios.values())for(const host of ['claude','codex']){
   const expected=scenario.hosts[host].expectedReplies;
   for(const [i,r] of expected.entries()){
+   // MONO-485 forward steps: an inherited step asks nothing; an interjection answers no question.
+   if(r.intent==='inherited'){assert.doesNotThrow(()=>inheritedTurn(r,r.summary.join('\n')+'\nЗаписано по согласию наперёд, старт записан.'));continue;}
+   if(r.intent==='interject'){assert.equal(textReply({expectedReplies:expected},r.summary.join('\n')+' сверена.',i),r.reply);continue;}
    const question=typeof r.question==='string'?r.question:r.question.anchors.map(a=>Array.isArray(a)?a[0]:a).join(' ')+'?';
    const shown=r.summary.join('\n')+'\nМоя позиция по '+scenario.stage+'.\nКак поступим: '+question;
    assert.equal(textReply({expectedReplies:expected},shown,i),r.reply);
@@ -817,7 +824,8 @@ for(const changed of [false,true])test(`acceptance directly selects the full cat
  if(changed){write(path.join(f.dir,'skills/idea/SKILL.md'),'changed Idea\n');f.commit();}
  const args={indexFile:path.join(f.catalogDir,'index.json'),worktree:f.dir,base,purpose:'acceptance'};
  const actual=selectScenarios(args),full=selectScenarios({...args,full:true});
- assert.equal(actual.status,'selected');assert.equal(actual.expectedItems.length,58);
+ // MONO-485 forward chains add 13 stage runs per host: 1 + 2 + 3 + 3 + 4.
+ assert.equal(actual.status,'selected');assert.equal(actual.expectedItems.length,84);
  assert.deepEqual(actual.affected,Object.keys(neighbors));assert.deepEqual(actual.expectedItems,full.expectedItems);assert.deepEqual(actual.units,full.units);
  assert.equal(selectScenarios({...args,purpose:'release'}).expectedItems.length,12,'release remains the single seedless chain');
 });
@@ -904,6 +912,44 @@ test('same-session continuation resumes the production conversation for the next
   assert.equal(call('tech-evaluation-approve',host,2).continueSession.id,`tech-evaluation-approve-${host}-0-session`);
  }
  for(const r of calls.filter(r=>!r.continueSession))assert.match(r.scenario.prompt,/Это отдельная сессия владельца/);
+});
+// MONO-485: after Design the parent follows the Design record's next=; the forward
+// chain therefore declares a medium PRD so that next=tech-evaluation.
+test('forward scenarios declare the medium route with Design and Tech Evaluation',()=>{
+ const catalog=loadCatalog(path.join(source,'index.json'));
+ const parent=catalog.scenarios.get('discovery/forward-parent'),grant=catalog.scenarios.get('design/forward-grant');
+ assert.match(parent.routeHint,/design=needed/);assert.match(parent.routeHint,/«средний»/);assert.match(parent.routeHint,/Tech Evaluation/);
+ assert.equal(grant.next,'tech-evaluation');assert.match(grant.routeHint,/Tech Evaluation/);
+ for(const key of ['tech-evaluation/forward-inherited','tech-evaluation/forward-stop','handoff/forward-chain'])assert.deepEqual(catalog.scenarios.get(key).chain.slice(0,2),['discovery/forward-parent','design/forward-grant']);
+ // Live run: an unreleased header in the test product's code differs from the mockup and
+ // became «Тебе решить». The owner's decision is stated up front so the page can be empty of it.
+ for(const key of ['discovery/forward-parent','design/forward-grant','tech-evaluation/forward-inherited','tech-evaluation/forward-stop','handoff/forward-chain'])
+  assert.match(catalog.scenarios.get(key).brief,/Подпись первой колонки в этот проект не входит, владелец это уже решил/,key);
+ assert.match(parent.prompt,/«Не берём»/);
+});
+// MONO-485: a chained stage verifies its records with every earlier passed text
+// stage of the same chain as forward evidence (the Design session included).
+test('each chained stage receives the earlier passed stages as forward evidence',async t=>{
+ const f=fixture(t);
+ const edit=(key,change)=>{const file=path.join(f.catalogDir,key,'scenario.json');write(file,JSON.stringify({...json(file),...change},null,2)+'\n');};
+ edit('discovery/approve',{continuation:'same-session'});edit('tech-evaluation/approve',{continuation:'same-session'});
+ edit('handoff/correction',{chain:['discovery/approve','design/approve','tech-evaluation/approve']});
+ for(const stage of ['design','tech-evaluation','handoff'])write(path.join(f.dir,`skills/${stage}/SKILL.md`),'changed');
+ f.commit();
+ const verified=[];
+ const result=await runSuiteWithRecords(suiteRequest(f,f.select(),{paper:{fileIds:['fixture','second-fixture'],command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'design/memory.md')}),async r=>{
+  write(r.context.projectFile,JSON.stringify(runProject(r)));
+  return {...passedStage(r),trace:r.outputDir+'.jsonl',stageStartLine:0,session:r.continueSession??{host:r.host,id:`${path.basename(r.outputDir)}-session`,home:path.join(f.dir,'home')}};
+ },async input=>{verified.push(input);return {status:'passed',monotestTasks:0,starts:input.runRequest.scenario.expectedReplies.flatMap(r=>(r.driverStart===null||r.driverStart===undefined)?[]:(Array.isArray(r.driverStart)?r.driverStart:[r.driverStart]).map(stage=>({stage,replyId:r.id})))};});
+ assert.equal(result.status,'passed',JSON.stringify(result.items.filter(i=>i.status!=='passed')));
+ for(const host of ['claude','codex']){
+  const unit=verified.filter(input=>path.basename(input.runRequest.outputDir).startsWith(`handoff-correction-${host}-`));
+  assert.equal(unit.length,4);
+  for(const [position,input] of unit.entries()){
+   assert.deepEqual(input.forwardEvidence.map(e=>path.basename(e.trace)),unit.slice(0,position).map(earlier=>path.basename(earlier.runRequest.outputDir)+'.jsonl'));
+   for(const [index,e] of input.forwardEvidence.entries())assert.deepEqual(e.expectedReplies,unit[index].runRequest.scenario.expectedReplies);
+  }
+ }
 });
 test('Design never owns a continued conversation; scenario chains keep pipeline order',t=>{
  const f=fixture(t),index=path.join(f.catalogDir,'index.json');

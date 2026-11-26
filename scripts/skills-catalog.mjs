@@ -50,6 +50,8 @@ export function loadCatalog(indexFile) {
       // Design in between runs in its own session and returns here. Design itself
       // never owns a continued conversation.
       if (scenario.continuation !== undefined && (scenario.continuation !== 'same-session' || scenario.stage === 'design')) fail(`invalid continuation ${key}`);
+      // MONO-485: a scenario may state its own route (for example a medium PRD with Design).
+      if (scenario.routeHint !== undefined && !text(scenario.routeHint)) fail(`invalid routeHint ${key}`);
       if (scenario.chain !== undefined && (!Array.isArray(scenario.chain) || !scenario.chain.length || !unique(scenario.chain) || scenario.chain.some(k => !text(k)))) fail(`invalid scenario chain ${key}`);
       for (const host of ['claude','codex']) {
         const flow = scenario.hosts?.[host];

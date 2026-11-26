@@ -119,6 +119,9 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
   runs: for (const unit of selection.units) for (const host of selection.hosts) {
     const projectName=`monotest-${request.runId}-${host}-${unit.id}`;
     let project=null,previousResult=null;const chainExchanges=[],sessions=[];
+    // MONO-485: earlier passed text stages of this chain; a later record under an
+    // inherited step binds to the owner's forward words found in them.
+    const forwardEvidence=[];
     // After Design the parent conversation continues; Design itself asks no start.
     const parentContinues=()=>sessions.findLast(s=>s.stage!=='design')?.continuation==='same-session';
     for (const [position,key] of unit.scenarios.entries()) {
@@ -179,7 +182,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         }
         const prompt=scenarioPrompt({scenario:{...scenario,brief},host,seed,seedProjectFile,projectName,projectFile,project,next,packRoot:request.packRoot,paper:scenario.stage==='design'?request.paper:null,designMemoryFile:request.designMemoryFile,
           designMemory,
-          productName:catalog.index.productName,skillPrefix:catalog.index.skillPrefix,routeHint:release?catalog.index.release.routeHint:catalog.index.routeHints?.[next],continued});
+          productName:catalog.index.productName,skillPrefix:catalog.index.skillPrefix,routeHint:release?catalog.index.release.routeHint:scenario.routeHint??catalog.index.routeHints?.[next],continued});
         runRequest={host,cwd:request.cwd,packRoot:request.packRoot,outputDir,authFile:request.authFile,...(continueSession?{continueSession}:{}),
           ...(scenario.stage==='design'?{writableRoots:[path.dirname(request.designMemoryFile),path.join(path.dirname(request.designMemoryFile),'approved'),exportRunDir]}:{}),
           timeoutMs:request.timeoutMs ?? 1_800_000,idleMs:20_000,maxTurns:request.maxTurns??128,mcpServers:servers,
@@ -226,7 +229,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         try{
           if(prior&&!prior.reviewEvidence)throw new Error('saved native review evidence missing; resume refused');
           const prepareTarget=Boolean(prepareReview&&preparationTargets[0]===`${unit.id}:${key}:${host}`);
-          const records=prepareReview&&prior&&!prepareTarget?prior.records:await verify({run:result,runRequest,scenario,project:observedProject??project??seedProject,outputDir:outputDir+'-records',bindingsFile:recordBindings?.[`${unit.id}:${key}:${host}`],...(prior?{resumeEvidence:prior.reviewEvidence,prepareReview:prepareTarget}: {})});
+          const records=prepareReview&&prior&&!prepareTarget?prior.records:await verify({run:result,runRequest,scenario,project:observedProject??project??seedProject,outputDir:outputDir+'-records',bindingsFile:recordBindings?.[`${unit.id}:${key}:${host}`],forwardEvidence:[...forwardEvidence],...(prior?{resumeEvidence:prior.reviewEvidence,prepareReview:prepareTarget}: {})});
           if(!records.stop)checkPack(request.packRoot,selection.head);
           result={...result,records,status:result.status==='failed'||records.status==='failed'?'failed':result.status!=='passed'||records.status!=='passed'?'unverified':'passed'};
           // Non-target results are preserved during preparation. Certification
@@ -234,6 +237,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
           if(prepareTarget&&result.status==='passed')result={...result,status:'unverified',reason:'review preparation requires ordinary resume before certification'};
         }catch(error){result={...result,status:result.status==='failed'||prior?.records?.status==='failed'?'failed':'unverified',records:{...prior?.records,status:prior?.records?.status==='failed'?'failed':'unverified',reason:error.message}};}
       }
+      if(result?.status==='passed'&&result.trace&&runRequest?.scenario.expectedReplies)forwardEvidence.push({host,trace:result.trace,stageStartLine:result.stageStartLine,idleContinuation:runRequest.scenario.idleContinuation,expectedReplies:runRequest.scenario.expectedReplies});
       previousResult={...result,stage:scenario?.stage,continuation:scenario?.continuation,anchored:runRequest?.scenario.expectedReplies?.some(anchored)};
       sessions.push({stage:scenario?.stage,session:result?.session,continuation:scenario?.continuation});
       const item={durationMs:Date.now()-stageStart,monotestTasks:result.records?.monotestTasks??null,unit:unit.id,scenario:key,host,status:result.status,outputDir,result};results.push(item);
