@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runReviewRound, runInvocation, findingKey, changeMap, GROUP_DIFF_BYTES, GROUP_CONCURRENCY, ROLE_TIMEOUT_SEC } from './code-review.mjs';
-import { reviewGroupStore, reviewGroupsDirectory, evidenceSnapshot, evidenceTouched } from './review-rounds.mjs';
+import { reviewGroupStore, reviewGroupsDirectory, evidenceSnapshot, evidenceTouched, hostRunMarker } from './review-rounds.mjs';
 import { digest } from './runtime.mjs';
 
 // MONO-494: a large change is reviewed in small groups, two at a time; answers of finished groups survive a group that
@@ -187,7 +187,7 @@ test('MONO-494: saved groups are host evidence: a host run that plants or edits 
   saved.entries.k2 = { pass: 'all-defects', group: 'all-defects 2/2', response: { completed: true, reviewedFiles: ['y'], findings: [] } };
   fs.writeFileSync(store.file, JSON.stringify(saved));
   assert.match(evidenceTouched(before, evidenceRoot, pinsFile) ?? '', /review-groups/);
-  assert.equal(reviewGroupStore(evidenceRoot, { head, base, contractDigest: digest(contract), pinsFile }).get('k2'), undefined, 'the edited file is put back');
+  assert.equal(reviewGroupStore(evidenceRoot, { head, base, contractDigest: digest(contract), pinsFile }).get('k2'), undefined, 'the edited file is discarded, never trusted');
   const planted = path.join(reviewGroupsDirectory(evidenceRoot), `${'c'.repeat(40)}.json`);
   const again = evidenceSnapshot(evidenceRoot, pinsFile);
   fs.writeFileSync(planted, JSON.stringify({ head: 'c'.repeat(40), base, contractDigest: digest(contract), pinsFile, entries: {} }));
@@ -251,4 +251,74 @@ test('MONO-494: login checks of groups running in parallel go one at a time', as
   const r = reviewer({ onCall: async (call, request) => { await request.ensureLogin(); return null; } });
   const record = await runReviewRound(f.request, { runRole: r.runRole, ensureLogin });
   assert.equal(record.outcome, 'clean'); assert.equal(r.max(), 2); assert.equal(most, 1);
+});
+
+test('MONO-494 review: a group answer that leaves out its files never counts for its pass, even after an earlier pass covered them', async t => {
+  const files = zeniChange(30), f = fixture(t, files);
+  // All-defects covers everything; every ordinary-pass answer claims completion with nothing reviewed.
+  const r = reviewer({ onCall: async call => call.context.instruction ? { response: { completed: true, reviewedFiles: [], findings: [] } } : null });
+  const record = await runReviewRound(f.request, { runRole: r.runRole });
+  assert.notEqual(record.outcome, 'clean');
+  assert.equal(record.outcome, 'not-reviewed'); assert.equal(record.rounds.length, 0, 'never a spent round');
+  // The same hole on a change sent whole: a risky round's ordinary pass answers with no files.
+  const small = fixture(t, { 'lib/a.mjs': 'export const a = 1;\n' });
+  const whole = reviewer({ onCall: async call => call.context.instruction ? { response: { completed: true, reviewedFiles: [], findings: [] } } : null });
+  const second = await runReviewRound({ ...small.request, risk: 'risky' }, { runRole: whole.runRole });
+  assert.equal(second.outcome, 'not-reviewed'); assert.equal(second.rounds.length, 0);
+});
+
+const exists = file => { try { fs.lstatSync(file); return true; } catch { return false; } };
+test('MONO-494 review: a saved-groups file or directory replaced by a symlink is never read and counts as touched', t => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-groups-link-')); t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+  const evidenceRoot = path.join(scratch, 'evidence'), pinsFile = path.join(scratch, 'root/dispatch/MONO-9-a1/pins.json');
+  fs.mkdirSync(path.dirname(pinsFile), { recursive: true }); fs.writeFileSync(pinsFile, '{}');
+  const head = 'a'.repeat(40), base = 'b'.repeat(40), binding = { head, base, contractDigest: digest(contract), pinsFile };
+  const store = reviewGroupStore(evidenceRoot, binding);
+  store.put('k1', { pass: 'all-defects', group: 'all-defects 1/2', response: { completed: true, reviewedFiles: ['x'], findings: [] } });
+  const before = evidenceSnapshot(evidenceRoot, pinsFile);
+  const edited = path.join(scratch, 'edited.json'), saved = JSON.parse(fs.readFileSync(store.file, 'utf8'));
+  saved.entries.k2 = { pass: 'all-defects', group: 'all-defects 2/2', response: { completed: true, reviewedFiles: ['y'], findings: [] } };
+  fs.writeFileSync(edited, JSON.stringify(saved)); fs.rmSync(store.file); fs.symlinkSync(edited, store.file);
+  // Read before any settlement: the link is not followed.
+  assert.equal(reviewGroupStore(evidenceRoot, binding).get('k2'), undefined, 'a symlinked cache is not read');
+  fs.rmSync(store.file, { force: true }); fs.symlinkSync(edited, store.file);
+  assert.match(evidenceTouched(before, evidenceRoot, pinsFile) ?? '', /review-groups/, 'a cache that became irregular is touched evidence');
+  assert.equal(exists(store.file), false, 'and is discarded');
+  // A cache that disappears during the run is touched too.
+  reviewGroupStore(evidenceRoot, binding).put('k1', { pass: null, group: null, response: {} });
+  const again = evidenceSnapshot(evidenceRoot, pinsFile); fs.rmSync(store.file);
+  assert.match(evidenceTouched(again, evidenceRoot, pinsFile) ?? '', /review-groups/);
+  // The directory itself replaced by a symlink to a planted copy.
+  const plantedDir = path.join(scratch, 'planted'); fs.mkdirSync(plantedDir);
+  fs.writeFileSync(path.join(plantedDir, `${head}.json`), JSON.stringify(saved));
+  const third = evidenceSnapshot(evidenceRoot, pinsFile);
+  fs.rmSync(reviewGroupsDirectory(evidenceRoot), { recursive: true }); fs.symlinkSync(plantedDir, reviewGroupsDirectory(evidenceRoot));
+  assert.equal(reviewGroupStore(evidenceRoot, binding).get('k2'), undefined, 'a symlinked directory is not read');
+  assert.ok(fs.lstatSync(reviewGroupsDirectory(evidenceRoot)).isDirectory());
+  fs.rmSync(reviewGroupsDirectory(evidenceRoot), { recursive: true }); fs.symlinkSync(plantedDir, reviewGroupsDirectory(evidenceRoot));
+  assert.match(evidenceTouched(third, evidenceRoot, pinsFile) ?? '', /review-groups/);
+  assert.equal(exists(reviewGroupsDirectory(evidenceRoot)), false, 'the linked directory is removed');
+});
+
+test('MONO-494 review: a host run of attempt A that edits attempt B\'s saved groups is discarded; B never replays it', t => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-groups-cross-')); t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+  const evidenceRoot = path.join(scratch, 'evidence'), pinsA = path.join(scratch, 'root/dispatch/MONO-1-a1/pins.json'), pinsB = path.join(scratch, 'root/dispatch/MONO-2-a1/pins.json');
+  for (const file of [pinsA, pinsB]) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, '{}'); }
+  const bindingB = { head: 'e'.repeat(40), base: 'b'.repeat(40), contractDigest: digest(contract), pinsFile: pinsB };
+  const storeB = reviewGroupStore(evidenceRoot, bindingB);
+  storeB.put('k1', { pass: 'all-defects', group: 'all-defects 1/2', response: { completed: true, reviewedFiles: ['x'], findings: [] } });
+  const before = evidenceSnapshot(evidenceRoot, pinsA);
+  // A's host run is open: its marker exists while it runs, and B trusts no saved group meanwhile.
+  const marker = hostRunMarker(evidenceRoot, `preflight-collect:${'f'.repeat(40)}:1`);
+  fs.mkdirSync(path.dirname(marker), { recursive: true }); fs.writeFileSync(marker, '{}');
+  const saved = JSON.parse(fs.readFileSync(storeB.file, 'utf8'));
+  saved.entries.k2 = { pass: 'all-defects', group: 'all-defects 2/2', response: { completed: true, reviewedFiles: ['y'], findings: [] } };
+  fs.writeFileSync(storeB.file, JSON.stringify(saved));
+  assert.equal(reviewGroupStore(evidenceRoot, bindingB).get('k2'), undefined, 'no saved group is trusted while a host run of the root is open');
+  // A's settlement: B's changed cache is discarded, neither restored nor kept.
+  evidenceTouched(before, evidenceRoot, pinsA);
+  fs.rmSync(marker);
+  assert.equal(exists(storeB.file), false);
+  const reopened = reviewGroupStore(evidenceRoot, bindingB);
+  assert.equal(reopened.get('k2'), undefined); assert.equal(reopened.size(), 0);
 });

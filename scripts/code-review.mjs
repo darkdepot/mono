@@ -923,12 +923,17 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     // and a file split by hunks only when every piece of it was reviewed.
     let units = scoped.parts.filter(part => !binary.has(part.file)).map(part => ({ file: part.file, diff: part.diff, part: 1, of: 1 }));
     const coveredUnits = new Set();
-    const absorb = (result, sent) => {
+    // MONO-494 review: coverage is also counted per pass. Each pass (all-defects, then ordinary when it runs) must cover
+    // every changed file from its own answers, so an answer that claims completion with files left out never rides on an
+    // earlier pass: its pass gets one focused pass on the missing files, then the round is not-reviewed.
+    const passCovers = [];
+    const absorb = (result, sent, cover) => {
       const listed = new Set(result.reviewedFiles);
-      result.reviewedFiles.forEach(file => covered.add(file)); sent.forEach(unit => { if (listed.has(unit.file)) coveredUnits.add(unit); });
+      result.reviewedFiles.forEach(file => { covered.add(file); cover.files.add(file); });
+      sent.forEach(unit => { if (listed.has(unit.file)) { coveredUnits.add(unit); cover.units.add(unit); } });
       found.push(...result.findings);
     };
-    const missing = () => files.filter(file => units.some(unit => unit.file === file) ? units.some(unit => unit.file === file && !coveredUnits.has(unit)) : !covered.has(file));
+    const missingFor = cover => files.filter(file => units.some(unit => unit.file === file) ? units.some(unit => unit.file === file && !cover.units.has(unit)) : !cover.files.has(file));
     // An oversize change goes to the reviewer in file groups, each under the engine limit, with the same contract,
     // rules and every open finding; the answers are joined and full coverage is still required.
     const groupExtra = (extra, group, index, of, focus) => {
@@ -947,7 +952,7 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
       const where = `${roles['code-review'].engine} input limit of ${limit} bytes for code-review`;
       units = units.flatMap(unit => {
         const children = hunkPieces(unit, budget, piece => unitCost(piece, true, true), where, hard);
-        if (children[0] !== unit && coveredUnits.has(unit)) children.forEach(child => coveredUnits.add(child));
+        if (children[0] !== unit) for (const set of [coveredUnits, ...passCovers.map(cover => cover.units)]) if (set.has(unit)) children.forEach(child => set.add(child));
         return children;
       });
     };
@@ -967,29 +972,34 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
         try { if (covers(parseReviewer(response), sent)) groupStore?.put(key, { pass: label?.split(' ')[0] ?? null, group: label, response }); } catch {}
       });
     };
-    const reviewerPass = async extra => {
+    const reviewerPass = async (extra, cover) => {
       const whole = build('code-review', extra);
-      if (promptSize(whole) <= limitFor('code-review') && jsonBytes(context.diff) <= GROUP_DIFF_BYTES) return absorb(await reviewCall(whole, null, extra.focusFiles ?? files), units);
+      if (promptSize(whole) <= limitFor('code-review') && jsonBytes(context.diff) <= GROUP_DIFF_BYTES) return absorb(await reviewCall(whole, null, extra.focusFiles ?? files), units, cover);
       splitUnits();
-      const focus = Object.hasOwn(extra, 'focusFiles'), pending = focus ? units.filter(unit => !coveredUnits.has(unit)) : units;
+      const focus = Object.hasOwn(extra, 'focusFiles'), pending = focus ? units.filter(unit => !cover.units.has(unit)) : units;
       const limit = limitFor('code-review');
       const hard = limit - overheadOf(extra, focus), budget = Math.min(hard, GROUP_DIFF_BYTES);
       const groups = packCoherent(pending, budget, unit => unitCost(unit, true, focus), `${roles['code-review'].engine} input limit of ${limit} bytes for code-review`, hard);
-      // Groups of one pass run GROUP_CONCURRENCY at a time; each call keeps its own retry. Passes stay in order: the
-      // coverage pass depends on what the earlier passes covered. A failed group fails the pass after the others settle,
+      // Groups of one pass run GROUP_CONCURRENCY at a time; each call keeps its own retry. Passes stay in order: a pass's
+      // focused pass depends on what that pass covered. A failed group fails the pass after the others settle,
       // so their answers are kept; nothing is absorbed from a pass that did not finish.
       const settled = await boundedQueue(groups.map((group, index) => () =>
         reviewCall(build('code-review', groupExtra(extra, group, index + 1, groups.length, focus)), `${extra.pass} ${index + 1}/${groups.length}`, [...new Set(group.map(unit => unit.file))])));
       const failed = settled.find(result => result && !result.ok);
       if (failed) throw failed.error;
       requireValue(settled.every(result => result?.ok), 'review interrupted before every group ran');
-      settled.forEach((result, index) => absorb(result.value, groups[index]));
+      settled.forEach((result, index) => absorb(result.value, groups[index], cover));
     };
-    await reviewerPass({ openFindings: open, pass: 'all-defects' });
+    const runPass = async extra => {
+      const cover = { files: new Set(), units: new Set() }; passCovers.push(cover);
+      await reviewerPass(extra, cover);
+      const left = missingFor(cover);
+      if (left.length) await reviewerPass({ ...extra, pass: 'coverage', focusFiles: left }, cover);
+      requireValue(missingFor(cover).length === 0, 'incomplete changed-file coverage after focused pass');
+    };
+    await runPass({ openFindings: open, pass: 'all-defects' });
     const lines = git(worktree, ['diff', '--numstat', base, head, '--']).trim().split('\n').reduce((total, row) => total + row.split('\t').slice(0, 2).reduce((sum, part) => sum + (Number(part) || 0), 0), 0);
-    if (number === 1 && (risk.startsWith('risky') || lines >= 1000)) await reviewerPass({ openFindings: open, pass: 'ordinary', instruction: ORDINARY_INSTRUCTION });
-    if (missing().length) await reviewerPass({ openFindings: open, pass: 'coverage', focusFiles: missing() });
-    requireValue(missing().length === 0, 'incomplete changed-file coverage after focused pass');
+    if (number === 1 && (risk.startsWith('risky') || lines >= 1000)) await runPass({ openFindings: open, pass: 'ordinary', instruction: ORDINARY_INSTRUCTION });
     const merged = new Map(record.findings.map(finding => [finding.key, finding])), byKey = new Map(), reported = new Set(found.map(finding => finding.key));
     for (const finding of [...open, ...found]) {
       const prior = byKey.get(finding.key), saved = merged.get(finding.key);

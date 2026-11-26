@@ -350,10 +350,12 @@ ceiling, also when its collector died, and the round fails. A large change goes 
 groups of about 200 KB of diff (`GROUP_DIFF_BYTES`), files of one directory together,
 each with the map of the whole change, two at a time (`GROUP_CONCURRENCY`); passes stay
 in order. Finished groups are saved in `evidenceRoot/review-groups/<head>.json` (bound to
-head, base, contract and launch pins; judged by the host-run evidence snapshot) and reused
+head, base, contract and launch pins; the host-run evidence snapshot judges every attempt's
+saved groups, discards them on any change, symlink or removal and never puts them back, and
+no saved group is read while a host run of the root is open) and reused
 by the next collection on the same binding, so a gate stopped at the ceiling or a group
 that failed twice loses no finished group; the round is spent only when every group of
-every pass is covered, and a spent round clears the file.
+every pass is covered (each pass from its own answers), and a spent round clears the file.
 
 ### Screen check before review
 
