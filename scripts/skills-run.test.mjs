@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
+import { driverStageNames, launchPermitted } from './skills-stage-driver.mjs';
 import { runScenario as runTextScenario } from './skills-run.mjs';
 import { runScenario as runWindowFixture, runPersona, runClaude, runCodex } from './test-fixtures/legacy-window-run.mjs';
 const runScenario=request=>request.scenario.expectedReplies?runTextScenario(request):runWindowFixture(request);
@@ -541,9 +542,14 @@ test('U7 stage-driver MCP intercepts only predefined destinations without execut
  const result=spawnSync(process.execPath,['scripts/skills-stage-driver.mjs','["discovery"]'],{input:requests.map(JSON.stringify).join('\n')+'\n',encoding:'utf8'});
  assert.equal(result.status,0,result.stderr);const replies=result.stdout.trim().split('\n').map(JSON.parse);
  assert.equal(replies.length,4);assert.deepEqual(replies.map(r=>r.id),[1,2,3,4]);
- assert.deepEqual(replies[1].result.tools[0].inputSchema.properties.stage.enum,['discovery']);
+ // The schema lists only the fixed stage vocabulary; the run's launch list is checked on each call (MONO-493).
+ assert.deepEqual(replies[1].result.tools[0].inputSchema.properties.stage.enum,driverStageNames);
  assert.deepEqual(JSON.parse(replies[2].result.content[0].text),{driverIntercepted:true,stage:'discovery',projectId:'fixture-project'});
  assert.match(replies[3].error.message,/permission/);assert.equal(replies[3].result,undefined);
+});
+test('MONO-493 stage driver takes its list only from a launch argument of known stages',()=>{
+ assert.deepEqual(launchPermitted('["handoff"]'),['handoff']);assert.deepEqual(launchPermitted('[]'),[]);
+ for(const bad of ['[null,"handoff"]','"handoff"','["Handoff"]','/tmp/permission.json'])assert.throws(()=>launchPermitted(bad),undefined,bad);
 });
 
 const liveIdle=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-host-context-regressions.json',import.meta.url))).idle;

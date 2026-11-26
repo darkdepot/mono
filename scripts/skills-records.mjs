@@ -26,20 +26,41 @@ const text=value=>typeof value==='string'&&value.trim().length>0;
 const ownUrl=url=>typeof url==='string'&&url.startsWith('https://linear.app/monotest/');
 const idOf=row=>row?.uuid??row?.id;
 const bodyOf=row=>row?.body??row?.content??row?.description;
+// Linear stores a "- " list item as "* "; a retry copies the stored marker.
+const listMarkers=value=>value.replace(/^( {0,3})[-*+] /gm,'$1* ');
+// A nothing-saved patch is recovered by a later successful same-document write
+// that makes every intended edit, plus a fresh read-back. An edit is its
+// (old_string, new_string) pair, compared modulo Linear's list-marker rewrite:
+// the retry's pairs applied to an intended target must give exactly its
+// replacement, so a retry may narrow the context but not change target or text.
+// The read-back must no longer hold any replaced old text, and must hold every
+// retry replacement, which confirms pairs the retry added. Replacement text
+// found somewhere in the document proves nothing on its own.
+const edits=patch=>Array.isArray(patch)&&patch.length&&patch.every(p=>typeof p?.old_string==='string'&&p.old_string.length&&typeof p.new_string==='string')
+ ?patch.map(p=>({old:listMarkers(p.old_string),new:listMarkers(p.new_string)})):null;
+const madeBy=(intended,retried)=>{
+ let target=intended.old;
+ for(const edit of retried)if(target.includes(edit.old))target=target.replace(edit.old,()=>edit.new);
+ return target===intended.new;
+};
+const gone=(edit,content)=>edit.new.includes(edit.old)||!content.includes(edit.old);
 function recoveredUnsavedWrite(data,call){
  const error=unsavedResult(data.host,call,data.rows);
  if(!error||call.name!=='mcp__monotest__save_document')return false;
  const input=callInput(data.host,call);
- if(!text(input?.id)||!Array.isArray(input.patch))return false;
- const wanted=input.patch.map(p=>p?.new_string);
+ const wanted=edits(input?.patch);
+ if(!text(input?.id)||!wanted)return false;
  for(const retry of data.calls.filter(c=>c.line>error.line&&c.name===call.name)){
-  const again=callInput(data.host,retry);
-  if(again?.id!==input.id||!Array.isArray(again.patch)||!isDeepStrictEqual(again.patch.map(p=>p?.new_string),wanted))continue;
+  const again=callInput(data.host,retry),retried=edits(again?.patch);
+  if(again?.id!==input.id||!retried||!wanted.every(edit=>madeBy(edit,retried)))continue;
   let saved;try{saved=resultFor(data.host,retry,data.rows);}catch{continue;}
   if(idOf(saved.value)!==input.id)continue;
   for(const read of data.calls.filter(c=>c.line>saved.resultLine&&c.name==='mcp__monotest__get_document')){
    if(callInput(data.host,read)?.id!==input.id)continue;
-   try{if(idOf(resultFor(data.host,read,data.rows).value)===input.id)return true;}catch{}
+   let fresh;try{fresh=resultFor(data.host,read,data.rows).value;}catch{continue;}
+   if(idOf(fresh)!==input.id||typeof fresh.content!=='string'||elided(fresh.content))continue;
+   const content=listMarkers(fresh.content);
+   if(wanted.every(edit=>gone(edit,content))&&retried.every(edit=>gone(edit,content)&&content.includes(edit.new)))return true;
   }
  }
  return false;

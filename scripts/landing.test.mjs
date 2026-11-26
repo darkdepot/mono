@@ -8,6 +8,8 @@ import { test } from "node:test";
 import { atomicJson, changedPaths, withLock } from "./runtime.mjs";
 import { effectivePins, sha256File, admitCollection } from "./orchestrator/command-state.mjs";
 import { checkSpawnAvailability } from "./orchestrator/launch.mjs";
+// MONO-490: spawn availability takes the attempt cap from the config committed at BASE (here this checkout's HEAD).
+const BASE_SOURCE = (worktree => ({ worktree, base: spawnSync("git", ["rev-parse", "HEAD"], { cwd: worktree, encoding: "utf8" }).stdout.trim() }))(path.resolve(path.dirname(new URL(import.meta.url).pathname), ".."));
 import { renderDispatch } from "./orchestrator/dispatch.mjs";
 import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
 import { guardScratch, ownerWatchdog, reapScratch } from './test-fixtures/fixture-processes.mjs';
@@ -85,7 +87,7 @@ test("landing U2 two releases are refused under launch.lock, including direct sp
     const binding = key => { const file = path.join(root, `dispatch/${key}-a1/pins.json`); atomicJson(file, { release: true }); return { file, digest: sha256File(file) }; };
     const first = binding("MONO-998"), second = binding("MONO-999");
     atomicJson(path.join(root, "workers.json"), { "MONO-998": { issue: "MONO-998", pins: first, pinsVersion: 0, pid: null } });
-    const request = { root, issue: "MONO-999", pins: second, config: {} };
+    const request = { ...BASE_SOURCE, root, issue: "MONO-999", pins: second, config: {} };
     await withLock(path.join(root, "launch.lock"), () => assert.throws(() => checkSpawnAvailability(request), /release.*MONO-998/));
     atomicJson(path.join(root, "workers.json"), {});
     await withLock(path.join(root, "launch.lock"), () => assert.doesNotThrow(() => checkSpawnAvailability(request)));

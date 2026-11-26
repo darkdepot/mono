@@ -558,7 +558,7 @@ in full for both audiences. Never substitute a checkout's `SURFACE_REVISION`.
 A mono:deliver process needs the union of phase capabilities from launch:
 workspace-write, network, writable worktree, the worktree-specific Git directory and the common Git directory, derived from the worktree, and only <root>/reports as mailbox.
 codex 0.153.4 protects the metadata directory of an explicitly listed linked worktree.
-Keep workers.json, attempts.json, control.json, consumed/,
+Keep workers.json, attempts.json, attempt-cap-raises.json, control.json, consumed/,
 logs/ and dispatch/ outside worker grants. Spawn uses --add-dir <root>/reports;
 resume uses the supported writable_roots config override. Persist the complete
 write-grant list in the launch capsule; phase capsules copy these dispatch pins.
@@ -583,7 +583,9 @@ recorded launch pins; do not resolve new policy values for an existing thread.
   and node '<pack-root>/scripts/orchestrator/resume.mjs' --request <json>,
   never a product checkout or session helper.
   Run --help for request fields. Spawn enforces start gate, control halt/state,
-  attempt cap, durable empty-log pre-registration and explicit model/effort.
+  attempt cap (config base plus recorded raises, see
+  [attempt cap raises](orchestration-delivery.md#monitoring-protocol)), durable
+  empty-log pre-registration and explicit model/effort.
   It persists launch metadata in the attempt log before execution, preserving
   price evidence after registry retirement. No shell interpolation: prompt is
   read from dispatchFile and passed as one argument; stdin is /dev/null.
