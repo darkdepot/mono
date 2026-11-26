@@ -33,8 +33,8 @@ function fixture(t, files, baseFiles = {}) {
   const commit = entries => { write(entries); git('add', '.'); git('commit', '-qm', 'next'); return git('rev-parse', 'HEAD'); };
   return { worktree, base, commit, request: { worktree, head: git('rev-parse', 'HEAD'), base, contract, packRoot } };
 }
-// A ZENI-880-sized change: about 120 files and 1 MB of diff over six directories.
-const zeniChange = (count = 120, lines = 105) => Object.fromEntries(Array.from({ length: count }, (_, index) =>
+// A 1 MB change: about 120 files and 1 MB of diff over six directories.
+const largeChange = (count = 120, lines = 105) => Object.fromEntries(Array.from({ length: count }, (_, index) =>
   [`app/${['feed', 'menu', 'card', 'swipe', 'store', 'theme'][index % 6]}/file${String(index).padStart(3, '0')}.mjs`, body(`v${index}`, lines)]));
 // An answering reviewer that counts the calls running at once.
 function reviewer({ delayMs = 20, onCall = () => null } = {}) {
@@ -53,8 +53,8 @@ function reviewer({ delayMs = 20, onCall = () => null } = {}) {
 }
 const labelOf = context => `${context.pass} ${context.group?.number}/${context.group?.of}`;
 
-test('MONO-494: a ZENI-880-sized change goes in groups of at most 200 KB, two at a time, each with the whole change map', async t => {
-  const files = zeniChange(), f = fixture(t, files);
+test('MONO-494: a 1 MB change goes in groups of at most 200 KB, two at a time, each with the whole change map', async t => {
+  const files = largeChange(), f = fixture(t, files);
   const r = reviewer();
   const record = await runReviewRound(f.request, { runRole: r.runRole });
   assert.equal(record.outcome, 'clean', JSON.stringify(record.failures));
@@ -87,7 +87,7 @@ test('MONO-494: a ZENI-880-sized change goes in groups of at most 200 KB, two at
 });
 
 test('MONO-494: a group that times out twice leaves the round not-reviewed and unspent; the next collection runs only it', async t => {
-  const files = zeniChange(30), f = fixture(t, files);
+  const files = largeChange(30), f = fixture(t, files);
   const evidenceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-groups-evidence-')); t.after(() => fs.rmSync(evidenceRoot, { recursive: true, force: true }));
   const open = (head = f.request.head) => reviewGroupStore(evidenceRoot, { head, base: f.base, contractDigest: digest(contract), pinsFile: null });
   // Seconds scaled to milliseconds: the role limit is 600 ms. The slow group's real process sleeps past it.
@@ -122,7 +122,7 @@ test('MONO-494: a group that times out twice leaves the round not-reviewed and u
 });
 
 test('MONO-494: a head change discards the saved groups', async t => {
-  const files = zeniChange(30), f = fixture(t, files);
+  const files = largeChange(30), f = fixture(t, files);
   const evidenceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-groups-evidence-')); t.after(() => fs.rmSync(evidenceRoot, { recursive: true, force: true }));
   const open = head => reviewGroupStore(evidenceRoot, { head, base: f.base, contractDigest: digest(contract), pinsFile: null });
   const failing = reviewer({ onCall: async call => { if (labelOf(call.context) === 'all-defects 2/2') throw Object.assign(new Error('role failed (1); no response admitted'), { processFailure: true }); return null; } });
@@ -201,7 +201,7 @@ test('MONO-494: saved groups are host evidence: a host run that plants or edits 
 });
 
 test('MONO-494: an answer that leaves out a file it was sent is never saved, so the next collection asks again', async t => {
-  const files = zeniChange(30), f = fixture(t, files);
+  const files = largeChange(30), f = fixture(t, files);
   const evidenceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-groups-evidence-')); t.after(() => fs.rmSync(evidenceRoot, { recursive: true, force: true }));
   const open = () => reviewGroupStore(evidenceRoot, { head: f.request.head, base: f.base, contractDigest: digest(contract), pinsFile: null });
   const left = 'app/card/file002.mjs';
@@ -221,7 +221,7 @@ test('MONO-494: an answer that leaves out a file it was sent is never saved, so 
 });
 
 test('MONO-494: when every group finished and the checker failed twice, the next collection runs only the checker', async t => {
-  const files = zeniChange(30), f = fixture(t, files);
+  const files = largeChange(30), f = fixture(t, files);
   const evidenceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-groups-evidence-')); t.after(() => fs.rmSync(evidenceRoot, { recursive: true, force: true }));
   const open = () => reviewGroupStore(evidenceRoot, { head: f.request.head, base: f.base, contractDigest: digest(contract), pinsFile: null });
   const item = finding('app/feed/file000.mjs', 3);
@@ -245,7 +245,7 @@ test('MONO-494: when every group finished and the checker failed twice, the next
 });
 
 test('MONO-494: login checks of groups running in parallel go one at a time', async t => {
-  const f = fixture(t, zeniChange(30));
+  const f = fixture(t, largeChange(30));
   let active = 0, most = 0;
   const ensureLogin = async () => { active++; most = Math.max(most, active); await new Promise(resolve => setTimeout(resolve, 30)); active--; return { status: 'fresh' }; };
   const r = reviewer({ onCall: async (call, request) => { await request.ensureLogin(); return null; } });
@@ -254,7 +254,7 @@ test('MONO-494: login checks of groups running in parallel go one at a time', as
 });
 
 test('MONO-494 review: a group answer that leaves out its files never counts for its pass, even after an earlier pass covered them', async t => {
-  const files = zeniChange(30), f = fixture(t, files);
+  const files = largeChange(30), f = fixture(t, files);
   // All-defects covers everything; every ordinary-pass answer claims completion with nothing reviewed.
   const r = reviewer({ onCall: async call => call.context.instruction ? { response: { completed: true, reviewedFiles: [], findings: [] } } : null });
   const record = await runReviewRound(f.request, { runRole: r.runRole });
@@ -362,7 +362,7 @@ test('MONO-494 review: saved groups are neither written nor read when this attem
 });
 
 test('MONO-494 review: a round under host verification reviews every group every time', async t => {
-  const files = zeniChange(30), f = fixture(t, files);
+  const files = largeChange(30), f = fixture(t, files);
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-groups-hostv-round-')); t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
   const root = path.join(scratch, 'root'), evidenceRoot = path.join(scratch, 'evidence');
   fs.mkdirSync(root, { recursive: true }); fs.writeFileSync(path.join(root, 'workers.json'), '{}');

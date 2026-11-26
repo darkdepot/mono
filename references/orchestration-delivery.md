@@ -343,7 +343,8 @@ worker through Linear MCP when it has access, otherwise the orchestrator) files
 every `must-file` entry of the receipt's `review.successors` list (an older dangerous defect; a minor one
 only for data, security or gate bypass) and decide
 which of the rest become Issues; the gate line and ready certificate repeat the
-list. A round takes up to 25 minutes on a large risky change; every reviewer role
+list. A round takes up to 25 minutes on an ordinary risky change and longer on a
+large one, whose groups run two at a time (below); every reviewer role call
 has its own fixed 600 s limit, so a hung CLI ends the round instead of a window; a gate
 stuck outside them (a blocking Git read) is stopped after a fixed two-hour safety
 ceiling, also when its collector died, and the round fails. A large change goes in
