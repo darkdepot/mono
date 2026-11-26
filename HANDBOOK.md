@@ -22,7 +22,7 @@ forbids) sets `orchestration.delivery.hostVerification: true`; see
 [host verification](#host-verification). The change sets the path: Handoff marks installer,
 delivery, deploy and release, product prod scripts, user data and migrations,
 security, public API and review-gate changes `risky` (the strict path, at most
-three rounds per task attempt); everything else, `deep` included, takes the fast
+three rounds per task attempt plus one extra round the orchestrator may grant); everything else, `deep` included, takes the fast
 path with one round, after which the worker fixes and the final head passes on
 its full verification without another round. A behavior change gets a live run
 of its main scenario before the first round (pack skills and stages: the
