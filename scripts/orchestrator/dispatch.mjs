@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { atomicJson, readJson, isMain, deliveryConfig, shipBotChecks, RISK_KEYS, withLock, baseModelConfig, reviewRoleTimeout, validateLanding, validateEvidenceGrants, packLayout, runtimePackRoot } from "../runtime.mjs";
+import { atomicJson, readJson, isMain, deliveryConfig, shipBotChecks, RISK_KEYS, withLock, baseModelConfig, validateLanding, validateEvidenceGrants, packLayout, runtimePackRoot } from "../runtime.mjs";
 import { commandFlags, allowedFlags, sha256File, dispatchIdea, ideaBinding } from "./command-state.mjs";
 import { extractSnapshot, section } from "./snapshot.mjs";
 import { copyDesignSnapshot } from "./design-snapshot.mjs";
@@ -131,10 +131,7 @@ async function prepareDispatch(args) {
   const gate = { worktree, branch, base, packRoot, skillsRoot, packVersion: installed.packVersion, sourceCommit: installed.sourceCommit, surfaceRevision: installed.surfaceRevision };
   const modelFile = path.join(output, "model-request.json"); atomicJson(modelFile, { ...gate, role });
   const modelRoutes = JSON.parse(run("spawn.mjs", ["--pins", modelFile]));
-  // MONO-494: from BASE like the model routes; a different --config value is ignored with a warning.
-  const roleTimeout = reviewRoleTimeout(baseConfig, config);
-  for (const warning of roleTimeout.warnings) console.error(`dispatch: ${warning}`);
-  const pins = { ...gate, release, modelRoutes, reviewRoleTimeoutSec: roleTimeout.sec, shipBotChecks: shipBotChecks(baseConfig), product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
+  const pins = { ...gate, release, modelRoutes, shipBotChecks: shipBotChecks(baseConfig), product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
     risk, critical, afk, openDecisions, workerWritableRoots: roots, packageKind: seam.package_kind,
     // From BASE, immutable for the attempt: the collection runs the full verification on the host.
     ...(deliveryConfig(baseConfig).hostVerification ? { hostVerification: true } : {}) };

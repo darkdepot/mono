@@ -5,11 +5,11 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
-import { atomicJson, canonical, digest, readJson, flags, identity, isMain, processStart, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, pinnedReviewRoleTimeout, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER, REVIEW_ROUND_ROLES } from "./runtime.mjs";
+import { atomicJson, canonical, digest, readJson, flags, identity, isMain, processStart, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER, REVIEW_ROUND_ROLES } from "./runtime.mjs";
 import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges, reviewRetries, extraRounds } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
-import { hostRunMarker, hostRunCheckout, removeHostCheckout, openHostRun, settleHostRun, stopHostGroup, screenCheckHold, readScreenCheck } from './review-rounds.mjs';
+import { hostRunMarker, hostRunCheckout, removeHostCheckout, openHostRun, settleHostRun, stopHostGroup, screenCheckHold, readScreenCheck, reviewGroupStore } from './review-rounds.mjs';
 
 export { reviewEnvironment } from "./model-environment.mjs";
 
@@ -556,7 +556,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   const binding = { ...(idea ? { idea } : {}), ...(workerCheck ? { workerVerification: workerCheck } : {}), ...(request.issue !== undefined ? { issue: request.issue } : {}), ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), ...(request.prRemarks?.length ? { prRemarks: request.prRemarks } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
     critical: request.critical, root: fs.realpathSync(request.root), worktree: repo, evidenceRoot,
     workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort() };
-  let receipt, verifiedReceiptFile = receiptFile;
+  let receipt, verifiedReceiptFile = receiptFile, spentGroups = null;
   if (request.collect === false) {
     // evidenceRoot is outside every worker grant (checked above), so its regular files are the receipts.
     const readReceipt = file => {
@@ -673,11 +673,13 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     else if (prior.notReviewed >= 2) review = refuse(blockedTwice(prior));
     else if (!roundOpen(prior)) review = workerFixed(prior, hostVerify ? verification.exitCode === 0 : workerVerified) ?? refuse(closedRefusal(prior));
     else {
+      // MONO-494: answers of groups finished by an earlier collection on this head and contract; only missing groups run.
+      const groupStore = contractDigest ? reviewGroupStore(evidenceRoot, { head, base, contractDigest, pinsFile: request.pins?.file ?? null }) : null;
       const record = await runReviewRound({ worktree: repo, head, base, contract, risk: request.critical ? 'riskyCritical' : request.risk,
         config: baseModelConfig(repo, request.modelRoutes?.base ?? base), packRoot: path.resolve(scriptDir, '..'), roundLimit: Math.max(limit, ROUND_LIMIT), ...(prior.record ? { stageRecord: prior.record } : {}),
-        // MONO-494: the role time limit pinned at dispatch; an attempt pinned before it reads BASE at the pinned base.
-        ...(pins?.reviewRoleTimeoutSec !== undefined ? { roleTimeoutSec: pinnedReviewRoleTimeout(pins.reviewRoleTimeoutSec) } : {}),
-        ...(request.prRemarks?.length ? { remarks: request.prRemarks } : {}) });
+        ...(request.prRemarks?.length ? { remarks: request.prRemarks } : {}) }, { groupStore });
+      // A spent round covered every group of every pass; its saved answers go once its receipt is durable (below).
+      if (record.outcome !== 'not-reviewed') spentGroups = groupStore;
       const { costs, host, cause: _cause, ...stageRecord } = record;
       // MONO-483: environment only when every failed role attempt of the round failed on the environment and every file was read.
       const cause = record.cause === 'environment' && !record.unreviewedFiles?.length ? 'environment' : 'review';
@@ -702,6 +704,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     if (passedScreen?.outcome === 'passed') receipt.screenCheck = { head, report: passedScreen.report };
     atomicJson(path.join(evidenceRoot, "history", `${receipt.runId}.json`), { receipt });
     atomicJson(receiptFile, { receipt });
+    // A round that did not finish keeps its saved group answers for the next collection.
+    spentGroups?.clear();
   }
   const reason = validatePreflight(receipt, head, base);
   // The pin, not the receipt, decides the verification: a pinned attempt passes only on the collection's host run.

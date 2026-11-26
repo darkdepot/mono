@@ -53,13 +53,15 @@ export function evidenceSnapshot(evidenceRoot, pinsFile) {
     let bytes; try { if (!fs.lstatSync(file).isFile()) { files.push([file, { hash: "irregular", ours: true, history: false, control: true }]); continue; } bytes = fs.readFileSync(file); } catch { continue; }
     files.push([file, { hash: crypto.createHash("sha256").update(bytes).digest("hex"), ours: true, history: false, control: true, bytes: bytes.toString("base64") }]);
   }
-  for (const directory of [evidenceRoot, path.join(evidenceRoot, "history")]) {
+  // MONO-494: saved review group answers count as round evidence: a host run must not plant or edit this attempt's
+  // (judged like head receipts: other attempts may write or clear their own meanwhile).
+  for (const directory of [evidenceRoot, path.join(evidenceRoot, "history"), reviewGroupsDirectory(evidenceRoot)]) {
     if (!fs.existsSync(directory)) continue;
     for (const name of fs.readdirSync(directory).filter(name => name.endsWith(".json"))) {
       const file = path.join(directory, name);
       let bytes; try { if (!fs.lstatSync(file).isFile()) continue; bytes = fs.readFileSync(file); } catch { continue; }
-      let ours = false; try { ours = attemptOf(JSON.parse(bytes).receipt?.pins?.file, pinsFile); } catch {}
-      files.push([file, { hash: crypto.createHash("sha256").update(bytes).digest("hex"), ours, history: directory !== evidenceRoot,
+      let ours = false; try { const value = JSON.parse(bytes); ours = attemptOf(value.receipt?.pins?.file ?? value.pinsFile, pinsFile); } catch {}
+      files.push([file, { hash: crypto.createHash("sha256").update(bytes).digest("hex"), ours, history: directory === path.join(evidenceRoot, "history"),
         ...(ours ? { bytes: bytes.toString("base64") } : {}) }]);
     }
   }
@@ -389,4 +391,35 @@ export async function waitForRound(roundFile, pollMs = 2000) {
     if (!collectorAlive(request.root, round.issue, round.attempt) && Date.now() - fs.statSync(roundFile).mtimeMs > COLLECTOR_START_GRACE_MS) throw new Error("blocked: collector not running for this attempt; the orchestrator restarts it with collector.mjs start");
     await new Promise(resolve => setTimeout(resolve, pollMs));
   }
+}
+
+// MONO-494: answers of review groups that finished in a collection whose round did not finish (another group failed
+// twice). One file per head in the host's evidence root, outside every worker grant, bound to the head, the base, the
+// task contract and the attempt's launch pins. The next collection on the same binding reuses them, so only missing
+// groups run again; any other binding starts empty, and opening it drops this attempt's files for other heads. The
+// round is spent only when every group of every pass is covered; the gate then clears the file.
+export const reviewGroupsDirectory = evidenceRoot => path.join(evidenceRoot, "review-groups");
+export function reviewGroupStore(evidenceRoot, { head, base, contractDigest, pinsFile = null }) {
+  if (!/^[a-f0-9]{40}$/.test(head ?? "") || !/^[a-f0-9]{40}$/.test(base ?? "") || typeof contractDigest !== "string") throw new Error("review group store needs head, base and contract digest");
+  const directory = reviewGroupsDirectory(evidenceRoot), file = path.join(directory, `${head}.json`);
+  const binding = { head, base, contractDigest, pinsFile };
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  for (const name of fs.readdirSync(directory).filter(name => name.endsWith(".json") && name !== `${head}.json`)) {
+    const other = path.join(directory, name);
+    try { if ((readJson(other).pinsFile ?? null) === pinsFile) fs.rmSync(other, { force: true }); } catch { fs.rmSync(other, { force: true }); }
+  }
+  let saved = {};
+  try {
+    const value = fs.existsSync(file) ? readJson(file) : null;
+    if (value && canonical({ head: value.head, base: value.base, contractDigest: value.contractDigest, pinsFile: value.pinsFile ?? null }) === canonical(binding) &&
+        value.entries && typeof value.entries === "object" && !Array.isArray(value.entries)) saved = value.entries;
+  } catch { saved = {}; }
+  const entries = { ...saved };
+  return {
+    get: key => Object.hasOwn(entries, key) ? entries[key] : undefined,
+    put: (key, entry) => { entries[key] = entry; atomicJson(file, { ...binding, entries }); },
+    clear: () => fs.rmSync(file, { force: true }),
+    size: () => Object.keys(entries).length,
+    file,
+  };
 }

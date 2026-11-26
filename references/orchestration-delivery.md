@@ -344,9 +344,16 @@ every `must-file` entry of the receipt's `review.successors` list (an older dang
 only for data, security or gate bypass) and decide
 which of the rest become Issues; the gate line and ready certificate repeat the
 list. A round takes up to 25 minutes on a large risky change; every reviewer role
-has its own time limit, so a hung CLI ends the round instead of a window; a gate
+has its own fixed 600 s limit, so a hung CLI ends the round instead of a window; a gate
 stuck outside them (a blocking Git read) is stopped after a fixed two-hour safety
-ceiling, also when its collector died, and the round fails.
+ceiling, also when its collector died, and the round fails. A large change goes in
+groups of about 200 KB of diff (`GROUP_DIFF_BYTES`), files of one directory together,
+each with the map of the whole change, two at a time (`GROUP_CONCURRENCY`); passes stay
+in order. Finished groups are saved in `evidenceRoot/review-groups/<head>.json` (bound to
+head, base, contract and launch pins; judged by the host-run evidence snapshot) and reused
+by the next collection on the same binding, so a gate stopped at the ceiling or a group
+that failed twice loses no finished group; the round is spent only when every group of
+every pass is covered, and a spent round clears the file.
 
 ### Screen check before review
 
