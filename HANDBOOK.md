@@ -1815,6 +1815,10 @@ as before. Records verification refuses inherited steps until consent binding ex
 A step with `intent: "interject"` sends its `reply` as a real owner message after the
 completed turn that shows its summary and asks nothing, for example a correction in
 the middle of a chain; a later step must carry the stage's answer.
+The stage driver takes each run's permitted stages only from its launch argument in
+that run's MCP config (a resumed host restarts it), never from a file the stage can
+write; its schema lists only the fixed stage vocabulary, so a continued stage starts
+what its own run permits rather than what an earlier stage's schema listed.
 Focused checks: `node --test scripts/skills-catalog.test.mjs scripts/skills-window-roles.test.mjs scripts/skills-continuation.test.mjs`.
 The shared audit bounds real MCP actions to monotest/Paper and a local stage-driver
 control tool, and requires a workspace read before writes. Every main/child rollout

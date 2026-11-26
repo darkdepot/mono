@@ -2430,16 +2430,62 @@ for(const mode of ['valid','wrong-start','fragment','missing-end'])test(`continu
  }
 });
 for(const mode of ['recovered','no-explicit-error','no-retry','wrong-target','no-fresh-read','other-text'])test(`continue9 explicit nothing-saved native error requires same-target successful retry and fresh read (${mode})`,t=>{
- const f=textFixture(t,'claude','defer'),doc={id:'brief',projectId,title:'Brief',content:'Expected link.'},final={...doc,content:'Approval link.'};
- const bad=f.call('bad-patch','mcp__monotest__save_document',{id:'brief',patch:[{op:'replace',old_string:'MISSING',new_string:mode==='other-text'?'Another record.':'Approval link.'}]});
+ // The rejected patch used the "- " marker Linear stores as "* " (MONO-493: recovery needs the same target).
+ const f=textFixture(t,'claude','defer'),doc={id:'brief',projectId,title:'Brief',content:'* Expected link.'},final={...doc,content:'* Approval link.'};
+ const bad=f.call('bad-patch','mcp__monotest__save_document',{id:'brief',patch:[{op:'replace',old_string:'- Expected link.',new_string:mode==='other-text'?'- Another record.':'- Approval link.'}]});
  const error={type:'user',message:{content:[{...resumeLive.writeError,tool_use_id:'bad-patch'}]}};
  if(mode==='no-explicit-error')error.message.content[0].content='Error: network interrupted; save outcome unknown.';
- const retry=f.call('patch','mcp__monotest__save_document',{id:mode==='wrong-target'?'other':'brief',patch:[{op:'replace',old_string:'Expected link.',new_string:'Approval link.'}]});
+ const retry=f.call('patch','mcp__monotest__save_document',{id:mode==='wrong-target'?'other':'brief',patch:[{op:'replace',old_string:'* Expected link.',new_string:'* Approval link.'}]});
  const events=[f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',doc),bad,error];
  if(mode!=='no-retry')events.push(retry,f.result('patch',final));
  if(mode!=='no-fresh-read')events.push(f.call('fresh','mcp__monotest__get_document',{id:'brief'}),f.result('fresh',final));
  f.events.splice(7,0,...events);f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
  const r=f.check();assert.equal(r.status,mode==='recovered'?'passed':'unverified',JSON.stringify(r));
+});
+// MONO-493: Linear stores "- " list items as "* ", so a retry copies the stored marker and may narrow or add
+// edits. Recovery holds when the fresh read-back contains every intended and every retried edit.
+for(const mode of ['markers-narrowed','added-confirmed','added-unconfirmed','intended-missing','no-fresh-read'])test(`MONO-493 nothing-saved recovery accepts Linear list markers and checked retry edits (${mode})`,t=>{
+ const f=textFixture(t,'claude','defer'),prior='Список:\n* R4. Пусто.\n* R5. Колонка.';
+ const doc={id:'brief',projectId,title:'Brief',content:prior};
+ const added=mode.startsWith('added');
+ const final={...doc,content:`${added?'Список источников:':'Список:'}\n* R4. Пусто, пробелы.\n* R5. Колонка ${mode==='intended-missing'?'тут':'везде'}.`};
+ const bad=f.call('bad-patch','mcp__monotest__save_document',{id:'brief',patch:[{op:'replace',old_string:'- R4. Пусто.\n- R5. Колонка.',new_string:'- R4. Пусто, пробелы.\n- R5. Колонка везде.'}]});
+ const error={type:'user',message:{content:[{...resumeLive.writeError,tool_use_id:'bad-patch'}]}};
+ const patch=[{op:'replace',old_string:'* R4. Пусто.',new_string:'* R4. Пусто, пробелы.'},{op:'replace',old_string:'Колонка.',new_string:mode==='intended-missing'?'Колонка тут.':'Колонка везде.'}];
+ if(added)patch.push({op:'replace',old_string:'Список:',new_string:'Список источников:'});
+ const retry=f.call('patch','mcp__monotest__save_document',{id:'brief',patch});
+ const fresh=mode==='added-unconfirmed'?{...final,content:final.content.replace('Список источников:','Список:')}:final;
+ const events=[f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',doc),bad,error,retry,f.result('patch',final)];
+ if(mode!=='no-fresh-read')events.push(f.call('fresh','mcp__monotest__get_document',{id:'brief'}),f.result('fresh',fresh));
+ f.events.splice(7,0,...events);f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
+ const r=f.check();
+ if(['markers-narrowed','added-confirmed'].includes(mode))assert.equal(r.status,'passed',JSON.stringify(r));
+ else{assert.equal(r.status,'unverified',JSON.stringify(r));assert.match(r.reason,/successful record result missing/);}
+});
+// An edit is its (old_string, new_string) pair: a deletion of R5 is not the intended deletion of R4.
+for(const mode of ['identical','different','other-deletion'])test(`MONO-493 nothing-saved deletion recovers only by the same deletion (${mode})`,t=>{
+ const f=textFixture(t,'claude','defer'),doc={id:'brief',projectId,title:'Brief',content:'Список:\n* R4. Пусто.\n* R5. Колонка.'};
+ const final={...doc,content:{identical:'Список:\n* R5. Колонка.',different:'Список:\n* R4. Пусто, пробелы.\n* R5. Колонка.','other-deletion':'Список:\n* R4. Пусто.\n'}[mode]};
+ const bad=f.call('bad-patch','mcp__monotest__save_document',{id:'brief',patch:[{op:'replace',old_string:'- R4. Пусто.\n',new_string:''}]});
+ const error={type:'user',message:{content:[{...resumeLive.writeError,tool_use_id:'bad-patch'}]}};
+ const patch={identical:[{op:'replace',old_string:'* R4. Пусто.\n',new_string:''}],different:[{op:'replace',old_string:'* R4. Пусто.',new_string:'* R4. Пусто, пробелы.'}],'other-deletion':[{op:'replace',old_string:'* R5. Колонка.',new_string:''}]}[mode];
+ f.events.splice(7,0,f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',doc),bad,error,
+  f.call('patch','mcp__monotest__save_document',{id:'brief',patch}),f.result('patch',final),f.call('fresh','mcp__monotest__get_document',{id:'brief'}),f.result('fresh',final));
+ f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
+ const r=f.check();
+ if(mode==='identical')assert.equal(r.status,'passed',JSON.stringify(r));
+ else{assert.equal(r.status,'unverified',JSON.stringify(r));assert.match(r.reason,/successful record result missing/);}
+});
+// Replacement text already present elsewhere in the document proves nothing about the intended edit.
+test('MONO-493 nothing-saved recovery is not proved by replacement text that already existed',t=>{
+ const f=textFixture(t,'claude','defer'),doc={id:'brief',projectId,title:'Brief',content:'Пример:\n* Current: on\nНиже:\n* Current: off\nДругое.'};
+ const final={...doc,content:'Пример:\n* Current: on\nНиже:\n* Current: off\nДругое!'};
+ const bad=f.call('bad-patch','mcp__monotest__save_document',{id:'brief',patch:[{op:'replace',old_string:'- Current: of',new_string:'- Current: on'}]});
+ const error={type:'user',message:{content:[{...resumeLive.writeError,tool_use_id:'bad-patch'}]}};
+ f.events.splice(7,0,f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',doc),bad,error,
+  f.call('patch','mcp__monotest__save_document',{id:'brief',patch:[{op:'replace',old_string:'Другое.',new_string:'Другое!'}]}),f.result('patch',final),f.call('fresh','mcp__monotest__get_document',{id:'brief'}),f.result('fresh',final));
+ f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
+ const r=f.check();assert.equal(r.status,'unverified',JSON.stringify(r));assert.match(r.reason,/successful record result missing/);
 });
 test('continue9 missing saved rubric digest retains actual missing-binding reason on resume',async t=>{
  const f=u7DocumentFixture(t,'codex');f.check();
