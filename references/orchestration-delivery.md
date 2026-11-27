@@ -208,27 +208,23 @@ No-ack/no-report exit (`cause=other`): resume the same thread once demanding its
 capsule/report; a second reportless exit or failed resume rebuilds from Linear plus
 capsule/worktree and uses a verified new attempt, preserving outstanding write IDs
 and reconciliation. Use installed resume/spawn tools; do not reset Issue or attempt counts.
-The attempt cap is the base from `orchestration.delivery.attemptCap` in the product
-config committed at BASE (like model routes; pack default 3), at most the ceiling
-of 6, plus the raises recorded for that Issue; spawn refuses at the cap and names
-the raise command. A BASE value above 6 counts as 6 with a warning, and an
-`attemptCap` in the `--config` file that differs from BASE is ignored with a
-warning naming both values, so a local config never adds attempts. Raise one
-Issue's cap only through
-`node '<pack-root>/scripts/orchestrator/attempt-cap.mjs' raise --root <root> --config <config> --issue <KEY> --reason <why> [--owner-words <words>]`
-(raise evaluates against the BASE dispatch would use now: `origin/main` of the repo
-holding `--config`, as last fetched; spawn uses the BASE pinned at dispatch, so a
-spawn refused on a stale pinned BASE is re-dispatched, which picks up the current
-BASE). A raise adds one attempt, only while the cap is exhausted and with a
-non-empty reason, and records the cap it produced: one more than the effective cap.
-A cap above 6 needs the owner's verbatim words in `--owner-words`. Anything else is
-refused and writes nothing. The effective cap is the larger of the clamped BASE cap
-and the last raise's cap, so a later BASE change never re-judges a recorded raise;
-caps strictly increase and a record above 6 without owner words is invalid. The
-record `attempt-cap-raises.json` (`{number, reason, recordedAt, cap, ownerWords?}`
-per raise) sits beside `attempts.json` under its own lock, outside every worker
-grant; the ceiling of 6 is not configurable. `attempt-cap.mjs show` prints used, counted and uncounted attempts, base, raises and the
-effective cap; report recorded raises with the attempt state.
+A task has at most 3 counted attempts and there is no raise (an older
+`attempt-cap-raises.json` and `attemptCap` in the config are ignored); `attempt-cap.mjs show`
+prints used, counted and uncounted attempts. A new attempt is for a critical defect or a
+changed approach. Spawn reads the issue's review receipts and QA reports and refuses a
+counted attempt when:
+- no progress: open blockers (review findings plus blocking QA bugs) did not decrease
+  over two consecutive passes, a blocker still open came back twice, or the last
+  reviewed change is oversized;
+- the same approach: the last pass was a non-converged review or a failed QA without a
+  critical defect (a blocking QA bug or a P0/P1 finding).
+`dispatch --approach-changed <one-line reason>` passes both; nothing passes the limit.
+On a refusal pick the exit yourself, record it with «Решил сам:» and tell the owner,
+without a question: merge what is done (behind a flag if incomplete) and file the rest
+as successor issues; move the findings to successors; park; or change the approach.
+Size: the review line says `oversized` when the change passes 1.5 times the task budget
+(about 600 lines or 38 files) or after more than two task changes: merge what is done
+and split the rest; it never blocks the PR.
 Keep dirty work on same-thread resume. If that thread cannot resume, park
 needs-decision with its capsule and preserved dirty tree; never loop new spawns,
 discard changes or bypass the mandatory clean-tree start gate. A clean recovery
@@ -332,8 +328,9 @@ Parks:
      reason; no separate Linear record.
   2. Merge: green CI, passed required checks and no open finding harming the
      main path, data or the owner's install.
-  3. Otherwise split the Issue or change the approach in a new attempt. A task
-     change by itself keeps the count and adds no rounds.
+  3. Otherwise merge what is done and split the rest, or change the approach in a
+     new attempt (spawn checks it, see the attempt limit). A task change by itself
+     keeps the count and adds no rounds.
 - needs-decision, `review not-converged after round 4 of 4 (extra round used)`
   or `review round limit reached (4 of 4 …, extra round used)`: no second extra
   round; merge by the rule above, or split the Issue or change the approach in a

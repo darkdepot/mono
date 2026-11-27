@@ -182,6 +182,8 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     write(gateRequest, preflight); pass(preflightCall());
     const receiptFile = path.join(preflight.evidenceRoot, `${head}.json`), envelope = json(receiptFile);
     assert.deepEqual([envelope.receipt.producer, envelope.receipt.review.outcome, envelope.receipt.review.round, envelope.receipt.verification.exitCode], ["gate-review-v3", "clean", 1, null]);
+    // MONO-505: the collection measures the change against the base; a small one is not oversized.
+    assert.deepEqual(envelope.receipt.size, { lines: 0, files: 0, taskChanges: 0, oversized: false });
     assert.deepEqual(reviewCalls(bin), ["reviewer", "reviewer"], "the gate ran the review round itself: a risky first round adds the ordinary pass");
     assert.equal(Object.hasOwn(envelope, "signature"), false, "receipts are trusted by the write boundary, not a signature");
     write(gateRequest, preflight); pass(preflightCall());
@@ -716,7 +718,7 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     assert.equal(json(path.join(state, "attempts.json"))[request.issue], 1);
     fs.unlinkSync(path.join(repo, "recovery-dirty.txt"));
     write(path.join(state, "attempts.json"), { "MONO-999": 3 });
-    await assert.rejects(spawnWorker(request), /attempt cap/);
+    await assert.rejects(spawnWorker(request), /attempt limit reached: 3 of 3/);
     const price = pass(run(process.execPath, [path.join(runtime, "wave-cost.mjs"), request.issue, "--root", state], root, env));
     assert.equal(JSON.parse(price.stdout.split("\nЦена волны")[0]).model.model, entry.model);
     // MONO-504: attempt 3 died of an overloaded model: the next attempt opens past the cap and is recorded as uncounted.

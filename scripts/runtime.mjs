@@ -483,7 +483,7 @@ export function deliveryConfig(source) {
     throw new Error("orchestration.delivery must be an object");
   }
   const config = configured ?? {};
-  // confirmationTimeoutSec and collectionTimeoutSec no longer exist; older configs may still carry them.
+  // confirmationTimeoutSec, collectionTimeoutSec and attemptCap (MONO-505) no longer exist; older configs may still carry them.
   const result = {
     collectionRetries: config.collectionRetries ?? 1,
     quietSec: positive(config.quietSec, 120, "quietSec"),
@@ -491,7 +491,6 @@ export function deliveryConfig(source) {
     pollSec: positive(config.pollSec, 10, "pollSec"),
     stallSec: positive(config.stallSec, 120, "stallSec"),
     ackWaitSec: positive(config.ackWaitSec, 420, "ackWaitSec"),
-    attemptCap: positive(config.attemptCap, 3, "attemptCap"),
     // The product's full verification needs the host (for example the process table): the collection runs it.
     hostVerification: config.hostVerification ?? false,
   };

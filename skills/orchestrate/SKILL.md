@@ -202,7 +202,7 @@ Workflow states:
      critical null, afk true, openDecisions 0 (last two supplied by orchestrator).
      Use installed scripts/orchestrator/spawn.mjs; never session-local helpers.
      Select worker role by the model policy and recorded technical judgment;
-     preserve launch pins on resume. The tool enforces halt, attempt cap and
+     preserve launch pins on resume. The tool enforces halt, attempt limit and
      durable registration before execution. Keep worktree, attempt log and
      context across phases. Respect dependencies/concurrency configuration.
    - For lifecycle-carrying startup follow Two-Phase Dispatch Handshake in
@@ -218,9 +218,8 @@ Workflow states:
      permits lifecycle replay; poll both mailbox and fallback.
    - Use active control for dispatch, draining for existing work only, idle only
      with empty registry. halt refuses spawn/resume without stopping workers.
-     Keep attempts.json when an entry retires; never reset the cap. Raise one
-     Issue's cap only with `attempt-cap.mjs raise` (+1 while exhausted, reason;
-     above 6 the owner's verbatim words), never a local config: [cap](../../references/orchestration-delivery.md#monitoring-protocol).
+     Keep attempts.json when an entry retires. At most 3 counted attempts, no
+     raise; a spawn refusal names exits you pick and record with «Решил сам:»: [limit](../../references/orchestration-delivery.md#monitoring-protocol).
 5. `monitor`
    - Apply the durable late-bot-feedback cursor
      in references/orchestration-delivery.md on restore and each deploy; P1/P2

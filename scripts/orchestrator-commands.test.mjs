@@ -1171,11 +1171,8 @@ test("preapply AE12 named contracts on installed scratch", async t => {
     policy.orchestration.transport = "codex-cli";
     policy.ideaGate = { since: '2026-10-17' };
     policy.orchestration.preapply = { mandate: input.mandate };
-    // MONO-490: the committed base stops at the ceiling of 6; this fixture's many attempts come from recorded
-    // raises carrying the owner's words, the only way above 6.
-    policy.orchestration.delivery = { ...policy.orchestration.delivery, attemptCap: 6 };
-    atomicJson(path.join(root, "attempt-cap-raises.json"), { "MONO-997": [7, 8, 9, 10].map((cap, index) => ({ number: index + 1,
-      reason: `AE12 fixture attempt ${cap}`, recordedAt: new Date().toISOString(), cap, ownerWords: `fixture: allow attempt ${cap}` })) });
+    // MONO-505: a task has 3 counted attempts; this fixture's many attempts are recorded as uncounted (MONO-504).
+    atomicJson(path.join(root, "attempts-uncounted.json"), { "MONO-997": Array.from({ length: 10 }, (_, index) => ({ attempt: index + 1, reason: "AE12 fixture attempt" })) });
     policy.orchestration.dispatch = { product: "ae12", evidenceRoot: path.join(scratch, "evidence"), openDecisions: 0, lifecycle_moves: [], verification: { command: "node", args: ["scripts/verify.mjs"] } };
     write(config, JSON.stringify(policy, null, 2) + "\n"); write(path.join(repo, ".gitignore"), ".worktrees/\n.agents/ignored.txt\n"); write(path.join(repo, ".agents/directory/file"), "fixture\n"); write(path.join(repo, ".gitattributes"), ".agents/filtered.txt ident\n");
     git(repo, "add", "."); git(repo, "commit", "-m", "AE12 mandate bootstrap"); git(repo, "push", "origin", "main");
@@ -1313,7 +1310,7 @@ test("preapply AE12 named contracts on installed scratch", async t => {
     await t.test("preapply-launch-lock-covers-commit-through-registration", async () => {
       const gate = path.join(runtime, "gate.mjs"), original = fs.readFileSync(gate, "utf8"), backup = path.join(runtime, "gate-original.mjs"), probe = path.join(scratch, "competing-launch.json");
       write(backup, original);
-      write(gate, `import fs from "node:fs"; import path from "node:path"; import {spawnSync,execFileSync} from "node:child_process"; import {isMain} from "./runtime.mjs"; export {startGate,reviewEnvironment,extraRoundCheck} from "./gate-original.mjs";
+      write(gate, `import fs from "node:fs"; import path from "node:path"; import {spawnSync,execFileSync} from "node:child_process"; import {isMain} from "./runtime.mjs"; export {startGate,reviewEnvironment,extraRoundCheck,issuePasses,progressStop} from "./gate-original.mjs";
 if(isMain(import.meta.url)){ const args=process.argv.slice(2), request=path.join(path.dirname(args[args.indexOf("--request")+1]),"spawn.json"); const other=spawnSync(process.execPath,[${JSON.stringify(path.join(runtime, "orchestrator/spawn.mjs"))},"--request",request],{encoding:"utf8"}); fs.writeFileSync(${JSON.stringify(probe)},JSON.stringify({status:other.status,stderr:other.stderr})); if(other.status===0)process.kill(JSON.parse(other.stdout).pid,"SIGTERM"); process.stdout.write(execFileSync(process.execPath,[${JSON.stringify(backup)},...args],{encoding:"utf8"})); }
 `);
       try {

@@ -365,7 +365,7 @@ export function validatePreflight(receipt, head, base) {
   requireThat(receipt.head === head && receipt.base === base, "missing or stale review receipt/head/base");
   // MONO-481: the worker cannot read the host ledger; the round's line carries the host's screen check of this head.
   const screen = receipt.screenCheck?.head === head ? `; screen check on the host passed on this head (report ${receipt.screenCheck.report})` : '';
-  requireThat(ACCEPTED.includes(receipt.review.outcome), reviewRefusal(receipt.review, receipt.verification?.host === true, receipt.risk) + screen);
+  requireThat(ACCEPTED.includes(receipt.review.outcome), reviewRefusal(receipt.review, receipt.verification?.host === true, receipt.risk) + screen + sizeNote(receipt));
   requireThat(receipt.consistency?.passed === true && receipt.consistency.error === null, `collection consistency failed or missing: ${receipt.consistency?.error ?? "no record"}`);
   // Host verification (pinned hostVerification): the collection ran the full verification of this head outside the sandbox.
   // Otherwise the collection does not verify (exitCode null): only the worker's full verification of this head, exit 0, passes it.
@@ -386,7 +386,60 @@ export function validatePreflight(receipt, head, base) {
   requireThat(!worker || (worker.head === head && worker.exitCode === 0), "worker verification is not on this head");
   const fixes = receipt.review.hostVerified ? ', fixes after it confirmed by the full verification on the host,' : worker ? ', fixes after it confirmed by the worker\'s full verification,' : '';
   return `review ${receipt.review.outcome} (${roundText(receipt.review.round, receipt.review.limit ?? ROUND_LIMIT)})${fixes} and ${host ? 'host ' : ''}verification verified on head` +
-    (successors.length ? `; successor candidates: ${successors.map(item => item.line).join('; ')}` : '') + screen;
+    (successors.length ? `; successor candidates: ${successors.map(item => item.line).join('; ')}` : '') + screen + sizeNote(receipt);
+}
+// MONO-505: a task is about SIZE_BUDGET; past 1.5 times it, or after more than two task changes, the collection marks the
+// receipt oversized and the line says so: a signal for the orchestrator (merge what is done, split the rest), never a block.
+export const SIZE_BUDGET = { lines: 400, files: 25 };
+function changeSize(repo, base, head, taskChangeCount) {
+  const rows = git(repo, "diff", "--no-renames", "--numstat", base, head, "--").split("\n").filter(Boolean);
+  const lines = rows.reduce((sum, row) => sum + row.split("\t").slice(0, 2).reduce((n, value) => n + (Number(value) || 0), 0), 0);
+  return { lines, files: rows.length, taskChanges: taskChangeCount,
+    oversized: lines > SIZE_BUDGET.lines * 1.5 || rows.length > SIZE_BUDGET.files * 1.5 || taskChangeCount > 2 };
+}
+const sizeNote = receipt => receipt.size?.oversized ? `; oversized: ${receipt.size.lines} lines, ${receipt.size.files} files, ` +
+  `${receipt.size.taskChanges} task changes (budget about ${SIZE_BUDGET.lines} lines or ${SIZE_BUDGET.files} files, at most two task changes); merge what is done and split the rest` : '';
+// MONO-505: the issue's review rounds and QA passes from host-owned facts only (the review receipts bound to each attempt's
+// pins, the QA reports under qa/<KEY>/), oldest first. A pass is stalled when its review did not converge or its QA did not
+// pass; its blockers are the open findings (finding key, P0/P1 critical) or blocking QA bugs (by item, always critical).
+export function issuePasses(root, issue, used) {
+  const passes = [];
+  for (let attempt = 1; attempt <= used; attempt++) {
+    const pinsFile = path.join(root, "dispatch", `${issue}-a${attempt}`, "pins.json");
+    let evidenceRoot; try { evidenceRoot = readJson(pinsFile).evidenceRoot; } catch { continue; }
+    if (typeof evidenceRoot !== "string" || !path.isAbsolute(evidenceRoot)) continue;
+    for (const receipt of receiptHistory(evidenceRoot, pinsFile)) {
+      const review = receipt.review;
+      // A reused round repeats a pass; refused and not-reviewed collections are none.
+      if (receipt.producer !== REVIEW_PRODUCER || review?.reusedFrom || !['not-converged', ...ACCEPTED].includes(review?.outcome)) continue;
+      const stalled = !ACCEPTED.includes(review.outcome);
+      passes.push({ kind: "review", at: String(receipt.recordedAt), stalled, oversized: receipt.size?.oversized === true,
+        blockers: stalled ? openDefects(review.record).map(item => ({ id: item.key, critical: item.members.some(finding => ["P0", "P1"].includes(finding.weight)) })) : [] });
+    }
+  }
+  const qa = path.join(root, "qa", issue);
+  for (const head of fs.existsSync(qa) ? fs.readdirSync(qa) : []) {
+    const file = path.join(qa, head, "task-report.json");
+    let report; try { report = readJson(file); } catch { continue; }
+    passes.push({ kind: "qa", at: fs.statSync(file).mtime.toISOString(), stalled: report?.verdict !== "passed",
+      blockers: (Array.isArray(report?.bugs) ? report.bugs : []).filter(bug => bug?.class === "blocking").map(bug => ({ id: `qa:${bug.item ?? bug.id}`, critical: true })) });
+  }
+  return passes.sort((a, b) => a.at.localeCompare(b.at));
+}
+// Why the work makes no progress, or null: open blockers (of the latest review plus the latest QA) did not decrease over two
+// consecutive passes while some stayed open, a blocker still open came back twice (open in three passes), or the last reviewed change is oversized.
+export function progressStop(passes) {
+  const latest = {}, totals = [], seen = new Map();
+  for (const pass of passes) {
+    latest[pass.kind] = pass.blockers;
+    for (const item of pass.blockers) seen.set(item.id, (seen.get(item.id) ?? 0) + 1);
+    totals.push((latest.review?.length ?? 0) + (latest.qa?.length ?? 0));
+  }
+  if (passes.findLast(pass => pass.kind === "review")?.oversized) return "the change is oversized";
+  const [a, b, c] = totals.slice(-3), open = [...(latest.review ?? []), ...(latest.qa ?? [])];
+  if (totals.length >= 3 && a > 0 && c >= b && b >= a) return `open blockers did not decrease over the last two passes (${a}, ${b}, ${c})`;
+  const back = open.find(item => seen.get(item.id) >= 3);
+  return back ? `blocker ${back.id} came back twice` : null;
 }
 
 const ROUND_LIMIT_REACHED = `review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); split the Issue or change approach in a new attempt`;
@@ -746,7 +799,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     checkConsistency();
     receipt = { producer: REVIEW_PRODUCER, recordedAt, ...binding, runId: crypto.randomUUID(), head, base, review,
       // Without host verification the worker runs the full verification; the collection records the pinned command unrun.
-      verification, consistency };
+      verification, consistency, size: changeSize(repo, base, head, request.pins ? taskChanges(path.dirname(request.pins.file)).length : 0) };
     // The screen check this round waited for, named in the round's line (validatePreflight).
     if (passedScreen?.outcome === 'passed') receipt.screenCheck = { head, report: passedScreen.report };
     atomicJson(path.join(evidenceRoot, "history", `${receipt.runId}.json`), { receipt });
@@ -1090,7 +1143,7 @@ ship request: {preflight:<complete preflight collect:false request>, repo:"owner
   judgment: {head,preShipReview:"выполнено",readinessCheck:"пройдена",documentation:"выполнен на этой голове|без изменений|намеренно недоступен",documentationReason,closures:[{threadId,replyId}],botRemarks:[{id,commentDigest,outcome:"fixed|rejected|deferred|informational",evidence}]}
   Compute commentDigest with exported botRemarkDigest(comment) on each latest readShipSnapshot bot comment; re-inspect any edited comment.
   config.orchestration.delivery: quietSec=120,
-  evidenceLimitSec=7200, pollSec=10, attemptCap=3 (the base, read from the config committed at BASE, at most 6; one task gets more only through orchestrator/attempt-cap.mjs raise). Positive seconds/counts only.
+  evidenceLimitSec=7200, pollSec=10. Positive seconds/counts only.
   Never delete stateFile to reset a deadline. A ship fix (in the same worker session, or after a task change) names the next ship-gate attempt;
   use a new stateFile for the new head, preserve the old file, and keep the same task attempt. No ship-gate attempt cap.`);
     else {

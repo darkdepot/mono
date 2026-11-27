@@ -739,9 +739,9 @@ Known limitation: inline code spanning multiple source lines refuses `unsupporte
 | GitHub | Branch, PR, code review, CI, deploy and merge history |
 | Worker report | Phase, exact head, decisions, collection request and verification result; Linear comments/statuses are written by the worker through Linear MCP |
 
-Keep whole PRD and Tech Spec bodies out of Issues. Link them through Project resources and Issue references/snapshots, following [references/linear-links.md](references/linear-links.md) for each entity's format. Use stable requirement and acceptance IDs when required by risk. Prefer one Issue; a second and third need a named reason (`too-big`, `shared-base`, `probe`), more need the owner; Issues touching the same surfaces are chained. Mark **AFK** when an agent can execute alone, or **HITL** when a named human action remains. For a bug or performance issue, carry reproduction/baseline and fix-proof expectations, or an explicit reason that the symptom cannot yet be reproduced.
+Keep whole PRD and Tech Spec bodies out of Issues. Link them through Project resources and Issue references/snapshots, following [references/linear-links.md](references/linear-links.md) for each entity's format. Use stable requirement and acceptance IDs when required by risk. Prefer one Issue; each extra one needs a named reason (`too-big`, `shared-base`, `probe`), with no cap on the count; Issues touching the same surfaces are chained. Mark **AFK** when an agent can execute alone, or **HITL** when a named human action remains. For a bug or performance issue, carry reproduction/baseline and fix-proof expectations, or an explicit reason that the symptom cannot yet be reproduced.
 
-Handoff counts a change expected to exceed roughly 1,000 lines in critical paths (gates, release, security, data) as `too-big` and splits it into smaller one-PR Issues with verifiable contracts and dependencies.
+Handoff keeps an Issue to one screen or one flow, about 400 changed lines or 25 files; a larger change is `too-big` and splits into one-PR Issues with verifiable contracts and dependencies.
 
 ### Issue-only work and repair
 
@@ -851,18 +851,11 @@ contract nor the round count. On the strict path after its three rounds,
 `resume.mjs` with `extraRound: {reason}` (with or without `taskChange`, never with
 `reviewRetry`) checks the right to one extra round and records it in
 `dispatch/KEY-aN/extra-round.json`, bound to the last spent receipt. Resume carries no grants or network override; a risk, critical or
-grant change is a new attempt on the same branch. The attempt cap is `attemptCap`
-from the product config committed at BASE (the base for every task, pack default 3,
-at most 6: a higher value counts as 6 with a warning), or the cap of the last raise
-recorded for that Issue in `attempt-cap-raises.json` beside `attempts.json`, outside
-every worker grant, whichever is larger; `orchestrator/attempt-cap.mjs raise`
-records one raise with the cap it produced (one more) only while the cap is
-exhausted, with a reason, and above 6 attempts only with the owner's verbatim
-words; otherwise it refuses and writes nothing. A later BASE change never re-judges
-a recorded raise. Raise evaluates the BASE dispatch would use now; a spawn refused
-on a stale pinned BASE is re-dispatched. A different `attemptCap` in the
-`--config` file is ignored with a warning, so a local config never adds attempts;
-the ceiling of 6 is not configurable. A worker whose log ends on an overloaded model, a rate limit or the network (the watcher's `dead` line names `cause=`) is resumed in the same attempt after 1, 5 and 15 minutes, then every 15; an attempt opened after such a death or a pack surface change is recorded in `attempts-uncounted.json` and does not count. See [attempt cap raises](references/orchestration-delivery.md#monitoring-protocol). Registry changes and collector
+grant change is a new attempt on the same branch. A task has at most 3 counted attempts and there is no raise.
+Spawn refuses a counted attempt without progress (open blockers did not decrease over
+two passes, a blocker came back twice, the change is oversized) or with the same
+approach after a stalled pass without a critical defect, unless dispatch passes
+`--approach-changed <reason>`; the orchestrator picks an exit and records it with «Решил сам:». A worker whose log ends on an overloaded model, a rate limit or the network (the watcher's `dead` line names `cause=`) is resumed in the same attempt after 1, 5 and 15 minutes, then every 15; an attempt opened after such a death or a pack surface change is recorded in `attempts-uncounted.json` and does not count. See [attempt limit](references/orchestration-delivery.md#monitoring-protocol). Registry changes and collector
 admissions use `launch.lock`. The collector admits each round request into the
 host-owned ledger (`consumed/KEY-aN/rounds/`): a new collectionId only after every
 earlier round has a result, the same collectionId never with another request, and

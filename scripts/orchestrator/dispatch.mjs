@@ -11,7 +11,7 @@ import { copyDesignSnapshot } from "./design-snapshot.mjs";
 import { copyChainSnapshot } from './chain-snapshot.mjs';
 import { preapplyManifest, preapplyMandate, applyPreapply } from "./preapply.mjs";
 import { workerTransport } from "../worker-transport.mjs";
-import { spawnWorker } from "./launch.mjs";
+import { spawnWorker, approachChange } from "./launch.mjs";
 import { IDEA_GATE_DEFAULT_SINCE, checkResearchSnapshot } from '../idea-gate.mjs';
 import { SCREEN_HOST_CONFLICT, screenHostConflict } from '../qa-recipe.mjs';
 import { qaRecipeSource } from '../qa-gate.mjs';
@@ -55,7 +55,10 @@ export async function dispatch(args) {
 
 async function prepareDispatch(args) {
   allowedFlags(args, ["issue", "root", "config", "snapshot", "risk", "critical", "profile", "handshake", "role", "reason", "full-snapshot", "preapply",
-    "skills-root", "moves", "gates", "open-decisions", "verification", "worker-writable-roots", "release"]);
+    "skills-root", "moves", "gates", "open-decisions", "verification", "worker-writable-roots", "release", "approach-changed"]);
+  // MONO-505: a new attempt after a stalled pass names what changes in the approach.
+  const approach = args["approach-changed"] === undefined ? undefined : { changed: true, reason: String(args["approach-changed"]) };
+  approachChange(approach);
   if (args.release !== undefined && !["true", "false"].includes(args.release)) throw new Error("--release must be true or false");
   const release = args.release === "true";
   const issue = args.issue;
@@ -173,7 +176,7 @@ async function prepareDispatch(args) {
   fs.writeFileSync(path.join(output, "pins.sha256"), `${pinsDigest}\n`);
   const request = { ...gate, root: args.root, issue, role, modelRoutes, modelReason: reason, transport: transport.transport, dispatchFile, evidenceRoot,
     writable_roots: extras, workerWritableRoots: roots, gates, lifecycle_moves: moves, config: args.config, product_name: product, handshake, profile,
-    pins: { file: pinsFile, digest: pinsDigest }, risk, critical, afk, openDecisions };
+    pins: { file: pinsFile, digest: pinsDigest }, risk, critical, afk, openDecisions, ...(approach ? { approach } : {}) };
   atomicJson(spawnFile, request);
   const identityCommand = `node ${q(path.join(directory, "../verify-pack-state.mjs"))} identity --pack-root ${q(packRoot)} --pack-version ${q(installed.packVersion)}${installed.sourceCommit ? ` --source-commit ${q(installed.sourceCommit)}` : ""} --surface-revision ${q(installed.surfaceRevision)}`;
   const ack = path.join(args.root, "reports", `${issue}-gate-ack-a${attempt}.json`);
@@ -230,14 +233,14 @@ async function prepareDispatch(args) {
   const launched = await spawnWorker(request, { beforeStart, onRefusal });
   const stamp = execFileSync("date", ["-u", "+%Y-%m-%dT%H:%M:%SZ"], { encoding: "utf8" }).trim();
   const fd = fs.openSync(path.join(args.root, "ledger.md"), "a");
-  try { fs.writeSync(fd, `- ${stamp} DISPATCHED ${issue} a${launched.attempt}: ${dispatchFile}; pins ${pinsDigest}; profile ${profile}; snapshot ${extracts.note ?? "extracts"}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  try { fs.writeSync(fd, `- ${stamp} DISPATCHED ${issue} a${launched.attempt}: ${dispatchFile}; pins ${pinsDigest}; profile ${profile}; snapshot ${extracts.note ?? "extracts"}${approach ? `; approach changed: ${approach.reason}` : ""}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   return { ...launched, pins: request.pins, gateFile, dispatchFile, spawnFile, snapshot };
 }
 
 if (isMain(import.meta.url)) {
   try {
     const args = commandFlags(process.argv.slice(2), ["preapply", "full-snapshot"]);
-    if (args.help) console.log("Usage: dispatch.mjs --issue KEY --root DIR --config FILE --snapshot DIR [--risk tiny|standard|deep|risky] [--critical TEXT] [--profile short|full] [--handshake wait|resume] [--role worker-default|worker-complex|worker-claude --reason TEXT] [--preapply] [--full-snapshot] [--release true|false]\nExplicit facts: --moves JSON --open-decisions N --verification JSON [--gates JSON] [--skills-root DIR] [--worker-writable-roots JSON]. Facts may use orchestration.dispatch config defaults. --preapply applies approved .agents/ bytes under a configured mandate before start gates. Project repo derives from the config path; worktree .worktrees/KEY and branch mono/key start at origin/main. Issue-only uses issue-only.json with marker/label/fingerprint/config/ownerApproval/seam; no Project docs. Every pre-spawn refusal leaves attempts unregistered.");
+    if (args.help) console.log("Usage: dispatch.mjs --issue KEY --root DIR --config FILE --snapshot DIR [--risk tiny|standard|deep|risky] [--critical TEXT] [--profile short|full] [--handshake wait|resume] [--role worker-default|worker-complex|worker-claude --reason TEXT] [--preapply] [--full-snapshot] [--release true|false] [--approach-changed REASON]\nExplicit facts: --moves JSON --open-decisions N --verification JSON [--gates JSON] [--skills-root DIR] [--worker-writable-roots JSON]. Facts may use orchestration.dispatch config defaults. --preapply applies approved .agents/ bytes under a configured mandate before start gates. Project repo derives from the config path; worktree .worktrees/KEY and branch mono/key start at origin/main. Issue-only uses issue-only.json with marker/label/fingerprint/config/ownerApproval/seam; no Project docs. Every pre-spawn refusal leaves attempts unregistered.");
     else console.log(JSON.stringify(await dispatch(args)));
   } catch (error) { console.error(`dispatch: ${error.message}`); process.exitCode = 1; }
 }

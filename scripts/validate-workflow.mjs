@@ -774,7 +774,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "dd7b947c2b367e428942990c14e1491e923f870d0a6d2c0d08a2d243cd0d6e8e",
+      contractFingerprint: "7c56fcfd69be0a63f67b9aa608f72a11e257bd0910ab0b12d8c8e6686874ccaf",
       contractConsumers: [
         "skills/initiative/SKILL.md",
         "skills/idea/SKILL.md",
@@ -810,7 +810,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/issue.md",
       ledgerSourcePath: "references/contracts/issue.md",
       templatePath: "templates/issue.md",
-      contractFingerprint: "85fa3d5b6126a038b28567b3016a7662373cc213abdc862aaed882f479b56aa3",
+      contractFingerprint: "66e8a472d3ee44c4d378d9f415ce06407257d61f495704b6410d84d28a85108b",
       contractConsumers: ["skills/issue/SKILL.md", "skills/handoff/SKILL.md"],
     },
   };
