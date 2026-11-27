@@ -578,7 +578,7 @@ test("named collection fixtures through the gate CLI", async t => {
       }
       if (fixture.mode.startsWith("review-")) {
         git("branch", "review-base"); pins.baseRef = "review-base";
-        // The strict path keeps up to three rounds; the fast path has one.
+        // The strict path keeps up to two rounds; the fast path has one.
         if (fixture.mode === "review-rounds" || fixture.mode === "review-limit") pins.risk = "risky";
         pins.verification.args = ["-e", `const fs=require('node:fs');fs.mkdirSync('.orchestrator',{recursive:true});fs.writeFileSync('.orchestrator/verify-saw',fs.readFileSync(${JSON.stringify(path.join(bin, "review.log"))},'utf8'))`];
       }

@@ -36,9 +36,9 @@ comments/certificates; apply worker snapshot/Linear Writes rules.
 2. Targeted checks; disclose unavailable/manual/browser/mobile/prod/acceptance.
    Final diff/approved risk: higher wins.
 3. `review round`: the orchestrator's collection runs it read-only on the
-   committed head with [role:code-review](references/model-policy.md#roles) and
-   [role:code-review-checker](references/model-policy.md#roles). No in-worker
-   review or substitute.
+   committed head with [role:code-review](references/model-policy.md#roles);
+   [role:code-review-checker](references/model-policy.md#roles) rechecks only
+   P0/P1 of a risky task. No in-worker review or substitute.
 4. Commit, run the pinned verification, send `workerVerification` (none if `hostVerification`);
    first request: `scripts/ship-pr.mjs open` (draft, once). Later: `push`,
    then `remarks`; all fixed this attempt go in the request's `prRemarks`. Run the pinned
@@ -64,7 +64,7 @@ Issue(s): <keys>
 Branch: <branch>; commit state: <clean/dirty/committed>
 Changed files: <count/list/summary>
 Local verification: <commands/outcomes>
-Review: <clean|clean-with-successors|not-converged|not-reviewed|unavailable>; round: <n of 1|3|4>; receipt: <collectionId|none>
+Review: <clean|clean-with-successors|not-converged|not-reviewed|unavailable>; round: <n of 1|2>; receipt: <collectionId|none>
 Review successors: <none|weight file:line title for each>
 Review route: risk=<tiny|standard|deep|risky>; source=<Linear|diff>; critical=<none|signal>; reclassified=<no|summary>
 Drift candidate: <none/summary>

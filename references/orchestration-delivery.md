@@ -236,8 +236,8 @@ Material scope drift parks scope-drift-needs-handoff and goes to owner decision.
 
 ## Review rounds
 
-A collection runs one read-only review round on the committed head (reviewer
-and checker from different model families) and writes one `gate-review-v3`
+A collection runs one read-only review round on the committed head (the reviewer;
+a checker of another family only for P0/P1 of a risky task) and writes one `gate-review-v3`
 receipt with `verification.exitCode: null`: the worker runs the full product
 verification and sends `workerVerification {head, exitCode}`; the receipt passes
 only with exit 0 on its head. Receipts of older attempts keep their sandbox verification.
