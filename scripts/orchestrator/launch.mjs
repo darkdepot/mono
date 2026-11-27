@@ -360,7 +360,7 @@ async function startCollector(root, entry) {
   catch (error) { return { status: "not-started", reason: error.message }; }
 }
 // Resume carries text only: a task change («Изменение задачи» comment, taskChange = its link), a review retry
-// (reviewRetry: true, after restoring the environment of an environmental not-reviewed streak), an extra review round
+// (reviewRetry: true, after restoring the environment or fixing the cause of a not-reviewed streak), an extra review round
 // (extraRound: {reason}, MONO-482: once per attempt on the strict path after its rounds are spent) or recovery input.
 // Risk, critical and grants come from the immutable launch pins; changing them is a new attempt on the same branch.
 export async function resumeWorker(request) {
@@ -370,10 +370,10 @@ export async function resumeWorker(request) {
   validExtraRoundRequest(request.extraRound);
   // A review retry repeats a round that did not happen; an extra round adds one after the spent rounds: never both at once.
   if (request.reviewRetry && request.extraRound !== undefined)
-    throw new Error("reviewRetry and extraRound are exclusive: a review retry is for an environmental not-reviewed streak, an extra round for spent rounds; resume with one of them");
+    throw new Error("reviewRetry and extraRound are exclusive: a review retry is for a not-reviewed streak, an extra round for spent rounds; resume with one of them");
   if (request.reviewRetry !== undefined && request.reviewRetry !== true) throw new Error("reviewRetry must be true when given");
   if (request.reviewRetry && request.taskChange !== undefined)
-    throw new Error("reviewRetry and taskChange are exclusive: a review retry is for an environmental not-reviewed streak, a task change for everything else");
+    throw new Error("reviewRetry and taskChange are exclusive: a review retry repeats a round on the same contract, a task change changes the contract");
   const launched = await withLock(path.join(request.root, "launch.lock"), async () => {
     guard(request.root, true);
     requireWatcher(request.root);

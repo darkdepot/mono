@@ -4,8 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { evaluateShip, validatePreflight, advanceEvidence, botRemarkDigest, reviewHistory, roundWork, blockedTwice, roundOutcome, reviewContext, roundLimit, ROUND_LIMIT, extraRoundRefusal, extraRoundGranted } from "./gate.mjs";
+import { evaluateShip, validatePreflight, advanceEvidence, botRemarkDigest, reviewHistory, roundWork, blockedTwice, roundOutcome, reviewContext, sourceReceipts, roundLimit, ROUND_LIMIT, extraRoundRefusal, extraRoundGranted } from "./gate.mjs";
 import { REVIEW_PRODUCER, digest } from "./runtime.mjs";
+import { hostRunMarker } from "./review-rounds.mjs";
 import { installReviewClis, setReview, reviewCalls, reviewFinding, reviewVerdict } from "./test-fixtures/review-clis.mjs";
 import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
 import { ideaBinding } from './orchestrator/command-state.mjs';
@@ -245,7 +246,7 @@ test("MONO-488: a round's work causes come only from the call that ended it", ()
   assert.deepEqual(roundWork({ failures: [on({ reason: 'incomplete changed-file coverage after focused pass' })], unreviewedFiles: ['a.bin'] }, head, 1),
     ['incomplete coverage of the changed files', 'unreadable or binary files']);
 });
-test("a review retry clears only an environmental not-reviewed streak recorded before it (MONO-483)", () => {
+test("a review retry clears a not-reviewed streak recorded before it, whatever its cause (MONO-483, MONO-502)", () => {
   const pins = { file: '/root/dispatch/MONO-1-a1/pins.json', digest: 'd' }, base = 'b'.repeat(40), contractDigest = 'c'.repeat(64), at = '1'.repeat(40);
   let clock = 0;
   const time = () => new Date(Date.UTC(2026, 10, 10, 0, clock++)).toISOString();
@@ -265,7 +266,8 @@ test("a review retry clears only an environmental not-reviewed streak recorded b
   const before = retry(9), late = [receipt('not-reviewed', 'environment'), receipt('not-reviewed', 'environment')];
   assert.equal(read(late, [before]).notReviewed, 2, 'a retry recorded before the last receipt of the streak does not cut it');
   const work = [receipt('not-reviewed', 'review'), receipt('not-reviewed', 'review')];
-  assert.deepEqual([read(work, [retry(1)]).notReviewed, read(work).notReviewedCause], [2, 'review'], 'a streak caused by the work is not cleared');
+  assert.deepEqual([read(work, [retry(1)]).notReviewed, read(work).notReviewedCause], [0, 'review'], 'MONO-502: a streak caused by the work is retried without a task change too');
+  assert.equal(read(work, [retry(1)]).spent, read(work).spent, 'the retry changes no round count');
   // MONO-488: the streak names the work's causes from each receipt, or from an older receipt's reason.
   const named = [receipt('not-reviewed', 'review', { workCauses: ['malformed or incomplete reviewer answer'] }),
     receipt('not-reviewed', 'review', { reason: 'incomplete changed-file coverage after focused pass' })];
@@ -273,13 +275,13 @@ test("a review retry clears only an environmental not-reviewed streak recorded b
   // MONO-488 review: a mixed streak keeps its labels and the latest unlabeled reason.
   const mixedWork = [receipt('not-reviewed', 'review', { workCauses: ['malformed or incomplete reviewer answer'], reason: 'Codex did not complete' }),
     receipt('not-reviewed', 'review', { workCauses: [], reason: 'role failed (output limit); no response admitted' })];
-  assert.equal(blockedTwice(read(mixedWork)), 'blocked: not-reviewed twice in a row on this head (review: malformed or incomplete reviewer answer); resume with a task change: role failed (output limit); no response admitted');
+  assert.equal(blockedTwice(read(mixedWork)), 'blocked: not-reviewed twice in a row on this head (review: malformed or incomplete reviewer answer); fix it (a code fix is a new head) or resume the worker with reviewRetry, without a task change: role failed (output limit); no response admitted');
   assert.equal(blockedTwice(read([...mixedWork].reverse().map((item, index) => ({ ...item, recordedAt: `2026-11-1${index}T00:00:00.000Z` })))),
-    'blocked: not-reviewed twice in a row on this head (review: malformed or incomplete reviewer answer); resume with a task change', 'a labelled latest round needs no raw reason');
+    'blocked: not-reviewed twice in a row on this head (review: malformed or incomplete reviewer answer); fix it (a code fix is a new head) or resume the worker with reviewRetry, without a task change', 'a labelled latest round needs no raw reason');
   const mixed = [receipt('not-reviewed', 'environment'), receipt('not-reviewed', 'review')];
-  assert.deepEqual([read(mixed, [retry(1)]).notReviewed, read(mixed).notReviewedCause], [2, 'review'], 'one work cause in the streak keeps it');
+  assert.deepEqual([read(mixed, [retry(1)]).notReviewed, read(mixed).notReviewedCause], [0, 'review'], 'a mixed streak is retried the same way');
   const legacy = [receipt('not-reviewed', null), receipt('not-reviewed', null)];
-  assert.deepEqual([read(legacy, [retry(1)]).notReviewed, read(legacy).notReviewedCause], [2, 'review'], 'an old receipt without a cause counts as the work');
+  assert.deepEqual([read(legacy, [retry(1)]).notReviewed, read(legacy).notReviewedCause], [0, 'review'], 'an old receipt without a cause counts as the work and is retried too');
   const spentFirst = [receipt('not-converged', null), ...[receipt('not-reviewed', 'environment'), receipt('not-reviewed', 'environment')]];
   const plain = read(spentFirst), retried = read(spentFirst, [retry(1)]);
   assert.deepEqual([retried.spent, retried.onContract, retried.record], [plain.spent, plain.onContract, plain.record], 'a retry changes no round count and no record');
@@ -445,6 +447,60 @@ test('shared review context refreshes the remote base, uses HEAD while dirty, an
     assert.equal(live.base, first, 'the live PR base remains authoritative'); assert.equal(live.history.reuse, null);
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
+// MONO-502: a new attempt on the same branch carries the last record (findings, last reviewed head; rounds and failures
+// start afresh), reuses a clean round of an earlier attempt on the same head, base and contract, and after main is
+// merged in keeps the record; a rewritten branch, another branch, another risk or an unfinished host run carry nothing.
+test('MONO-502 a new attempt on the same branch carries the record and reuses a clean earlier round', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { atomicJson } = await import('./runtime.mjs');
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-carry-'));
+  try {
+    const repo = path.join(scratch, 'repo'), origin = path.join(scratch, 'origin.git');
+    fs.mkdirSync(repo);
+    const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const commit = message => { git('add', '.'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', message); return git('rev-parse', 'HEAD'); };
+    git('init', '-b', 'main'); const base = commit('base');
+    git('init', '--bare', origin); git('remote', 'add', 'origin', origin); git('push', 'origin', 'main');
+    git('switch', '-c', 'mono/mono-999'); const reviewed = commit('work'); const fixed = commit('fix');
+    const root = path.join(scratch, 'control'), evidenceRoot = path.join(scratch, 'evidence'), branchPins = { worktree: repo, branch: 'mono/mono-999' };
+    const attempt = n => { const dir = path.join(root, `dispatch/MONO-999-a${n}`); fs.mkdirSync(path.join(dir, 'snapshot'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'snapshot/issue-MONO-999.md'), 'Approved task.'); atomicJson(path.join(dir, 'pins.json'), branchPins); return { file: path.join(dir, 'pins.json'), digest: 'a'.repeat(64) }; };
+    const [a1, a2] = [attempt(1), attempt(2)];
+    fs.mkdirSync(path.join(evidenceRoot, 'history'), { recursive: true });
+    const record = { schemaVersion: 1, base, contractDigest: digest('Approved task.'), rounds: [{ number: 1, head: reviewed, base, reviewedFiles: ['input.mjs'] }, { number: 2, head: reviewed, base, reviewedFiles: ['other.mjs'] }],
+      findings: [{ key: 'k1', status: 'unresolved' }], failures: [{ head: reviewed, round: 1 }] };
+    let clock = 0;
+    const seal = (name, value) => { atomicJson(path.join(evidenceRoot, 'history', name + '.json'), { receipt: value }); return value; };
+    const receipt = (pins, head, outcome, extra = {}) => ({ producer: REVIEW_PRODUCER, pins, head, base, risk: 'risky', critical: null, collectionId: `preflight-collect:${head}:${++clock}`, runId: `run-${clock}`,
+      recordedAt: `2026-11-20T00:00:0${clock}Z`, ...extra, review: { spent: true, outcome, contractDigest: digest('Approved task.'), record, ...extra.review } });
+    const source = seal('source', receipt(a1, reviewed, 'not-converged'));
+    const request = pins => ({ worktree: repo, baseRef: 'origin/main', evidenceRoot, pins, risk: 'risky', critical: null });
+    let context = reviewContext(request(a2), branchPins);
+    assert.equal(context.history.spent, 0, 'a new attempt counts its rounds afresh');
+    assert.deepEqual(context.history.record, { schemaVersion: 1, contractDigest: record.contractDigest, findings: record.findings, rounds: [], failures: [],
+      carried: { head: reviewed, base, runId: source.runId, reviewedFiles: ['input.mjs', 'other.mjs'] } }, 'findings and the last reviewed head carry over');
+    assert.equal(context.history.reuse, null, 'a not-converged earlier round is never reused');
+    assert.deepEqual(reviewContext(request(a1), branchPins).history.record, record, 'the own attempt keeps its record as before');
+    // The same head with a clean earlier round on the same base and contract: reused, not repeated.
+    const clean = seal('clean', receipt(a1, fixed, 'clean'));
+    context = reviewContext(request(a2), branchPins);
+    assert.deepEqual(context.history.reuse, clean, 'a clean round of an earlier attempt on this head, base and contract counts');
+    assert.equal(sourceReceipts(evidenceRoot, a2.file, { ...branchPins, risk: 'standard', critical: null }).length, 0, 'another risk carries nothing');
+    assert.equal(sourceReceipts(evidenceRoot, a2.file, { ...branchPins, branch: 'mono/other', risk: 'risky', critical: null }).length, 0, 'another branch carries nothing');
+    assert.equal(sourceReceipts(evidenceRoot, a1.file, { ...branchPins, risk: 'risky', critical: null }).length, 0, 'a later attempt is never a source');
+    const marker = hostRunMarker(evidenceRoot, clean.collectionId); fs.mkdirSync(path.dirname(marker), { recursive: true }); fs.writeFileSync(marker, '{}');
+    assert.equal(reviewContext(request(a2), branchPins).history.reuse, null, 'a receipt whose host run did not finish is not trusted');
+    fs.rmSync(marker);
+    // Main merged into the branch: the earlier attempt's record still carries (its base and head are in the branch).
+    git('switch', 'main'); fs.writeFileSync(path.join(repo, 'main.txt'), 'main'); const main = commit('main moved'); git('push', 'origin', 'main');
+    git('switch', 'mono/mono-999'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'merge', '-q', '--no-edit', 'main');
+    context = reviewContext(request(a2), branchPins);
+    assert.deepEqual([context.base, context.history.record?.carried?.head, context.history.reuse], [main, fixed, null], 'main merged in: carried from the latest earlier head');
+    // A rewritten branch (the reviewed heads are gone from it) carries nothing.
+    git('reset', '-q', '--hard', main); commit('rewritten');
+    assert.equal(reviewContext(request(a2), branchPins).history.record, null);
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+});
 test("preflight accepts only a v3 receipt with an accepted review, exact head/base and proven verification", () => {
   const base = "b".repeat(40);
   const receipt = (extra = {}) => ({ producer: REVIEW_PRODUCER, head, base, consistency: { passed: true, error: null },
@@ -461,13 +517,13 @@ test("preflight accepts only a v3 receipt with an accepted review, exact head/ba
     [{ review: { outcome: 'not-converged', round: 3 } }, /^needs-decision: review not-converged after round 3 of 3; 1 open/],
     [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed' } }, /^not-reviewed: role failed; no round spent, request this head once more$/],
     // MONO-488: the work's own cause is named from the receipt; login is mentioned only for a login failure.
-    [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed', repeated: true } }, /^blocked: not-reviewed twice in a row on this head \(review\); resume with a task change: role failed$/],
+    [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed', repeated: true } }, /^blocked: not-reviewed twice in a row on this head \(review\); fix it \(a code fix is a new head\) or resume the worker with reviewRetry, without a task change: role failed$/],
     [{ review: { outcome: 'not-reviewed', round: null, reason: 'Codex did not complete', repeated: true } },
-      /^blocked: not-reviewed twice in a row on this head \(review: malformed or incomplete reviewer answer\); resume with a task change: Codex did not complete$/],
+      /^blocked: not-reviewed twice in a row on this head \(review: malformed or incomplete reviewer answer\); fix it \(a code fix is a new head\) or resume the worker with reviewRetry, without a task change: Codex did not complete$/],
     [{ review: { outcome: 'not-reviewed', round: null, reason: 'incomplete changed-file coverage after focused pass', repeated: true } },
-      /^blocked: not-reviewed twice in a row on this head \(review: incomplete coverage of the changed files\); resume with a task change: incomplete changed-file coverage after focused pass$/],
+      /^blocked: not-reviewed twice in a row on this head \(review: incomplete coverage of the changed files\); fix it \(a code fix is a new head\) or resume the worker with reviewRetry, without a task change: incomplete changed-file coverage after focused pass$/],
     [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed (1); no response admitted', repeated: true, streakWork: ['CLI login', 'malformed or incomplete reviewer answer'] } },
-      /^blocked: not-reviewed twice in a row on this head \(review: CLI login, malformed or incomplete reviewer answer\); check that both review CLIs are logged in, then resume with a task change: role failed/],
+      /^blocked: not-reviewed twice in a row on this head \(review: CLI login, malformed or incomplete reviewer answer\); check that both review CLIs are logged in, then fix it \(a code fix is a new head\) or resume the worker with reviewRetry, without a task change: role failed/],
     [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed (timeout)', repeated: true, cause: 'environment', causes: ['timeout', 'host-slept'] } },
       /^blocked: not-reviewed twice in a row on this head \(environment: timeout, host-slept\); restore the environment \(host awake, load down, network, CLI login\) and resume the worker with reviewRetry, without a task change: role failed \(timeout\)$/],
     [{ review: { outcome: 'refused', round: null, reason: 'needs-decision: review round limit reached' } }, /^needs-decision: review round limit reached$/],
@@ -778,7 +834,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
       if (fixture.mode === 'review-environment') {
         // MONO-483: a review that did not happen because of the environment (here: the Codex role cannot resolve its host)
         // is retried by a plain resume with reviewRetry, without a task change; one that did not happen because of the
-        // work itself (a malformed answer) still needs a task change.
+        // work itself (a malformed answer) too, once its cause is fixed (MONO-502): a retry is never a task change.
         const author = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid'];
         const commit = text => { fs.appendFileSync(path.join(repo, 'input.mjs'), text); git('add', 'input.mjs'); git(...author, 'commit', '-m', text.trim()); return git('rev-parse', 'HEAD'); };
         const at = (tip, n = 1) => ({ ...request, head: tip, collectionId: `preflight-collect:${tip}:${n}`, workerVerification: { head: tip, exitCode: 0 } });
@@ -789,7 +845,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         };
         const attempt = path.dirname(pinsFile), changes = path.join(attempt, 'task-changes.json'), retries = path.join(attempt, 'review-retries.json');
         const leftover = [reviewFinding('input.mjs', { anchor: 'Leftover', title: 'Leftover' })];
-        // Control first: a malformed answer is the work's own cause; a review retry does not clear its streak.
+        // A malformed answer is the work's own cause; MONO-502: a review retry clears its streak too, without a task change.
         setReview(bin, { failRole: 'malformed', findings: leftover });
         const broken = commit('export const broken = 1;\n');
         let receipt = await round(at(broken), 1, /fail: not-reviewed: /);
@@ -797,20 +853,24 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.ok(receipt.review.failures.filter(item => item.role).every(item => item.cause === 'other'));
         assert.deepEqual(receipt.review.workCauses, ['malformed or incomplete reviewer answer']);
         // MONO-488: the blocked line names the malformed answer, not a login, on the round's own line and on later requests.
-        const malformedLine = /fail: blocked: not-reviewed twice in a row on this head \(review: malformed or incomplete reviewer answer\); resume with a task change/;
+        const malformedLine = /fail: blocked: not-reviewed twice in a row on this head \(review: malformed or incomplete reviewer answer\); fix it \(a code fix is a new head\) or resume the worker with reviewRetry, without a task change/;
         receipt = await round(at(broken, 2), 1, malformedLine);
         for (const text of [fs.readFileSync(path.join(evidence, `${broken}.json`), 'utf8'), call(at(broken, 2)).stdout]) assert.doesNotMatch(text, /logged in/);
-        recordReviewRetry(attempt);
-        const still = call(at(broken, 3)); assert.equal(still.status, 1); assert.match(still.stdout, malformedLine); assert.doesNotMatch(still.stdout, /logged in/);
-        const calls = reviewCalls(bin).length;
+        const blockedCalls = reviewCalls(bin).length;
         await round(at(broken, 3), 1, malformedLine);
-        assert.equal(reviewCalls(bin).length, calls, 'no role runs on a blocked work streak');
+        assert.equal(reviewCalls(bin).length, blockedCalls, 'no role runs on a blocked work streak');
+        const digestBefore = receipt.review.contractDigest;
+        recordReviewRetry(attempt);
+        receipt = await round(at(broken, 4), 1, /fail: not-reviewed: /);
+        assert.deepEqual([receipt.review.repeated, receipt.review.failures.some(item => item.role === 'code-review')], [false, true],
+          'MONO-502: after a review retry the same head runs a round again (the role ran; a fresh streak)');
+        assert.deepEqual([receipt.review.contractDigest, fs.existsSync(changes)], [digestBefore, false], 'the retry neither needs nor makes a task change');
         // MONO-488: incomplete coverage of the changed files is named the same way.
         setReview(bin, { failRole: null, skipCoverage: true });
         const uncovered = commit('export const uncovered = 1;\n');
         receipt = await round(at(uncovered), 1, /fail: not-reviewed: incomplete changed-file coverage after focused pass; no round spent/);
         assert.deepEqual([receipt.review.cause, receipt.review.workCauses], ['review', ['incomplete coverage of the changed files']]);
-        const coverageLine = /fail: blocked: not-reviewed twice in a row on this head \(review: incomplete coverage of the changed files\); resume with a task change/;
+        const coverageLine = /fail: blocked: not-reviewed twice in a row on this head \(review: incomplete coverage of the changed files\); fix it \(a code fix is a new head\) or resume the worker with reviewRetry, without a task change/;
         await round(at(uncovered, 2), 1, coverageLine);
         const parkedCoverage = call(at(uncovered, 3)); assert.match(parkedCoverage.stdout, coverageLine); assert.doesNotMatch(parkedCoverage.stdout, /logged in/);
         setReview(bin, { skipCoverage: false });
@@ -1044,7 +1104,8 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.deepEqual([receipt.review.spent, receipt.workerVerification, receipt.review.workerVerification], [false, verified.workerVerification, verified.workerVerification]);
         const unbound = call(at(fixed, 1, { workerVerification: undefined })); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /collection request mismatch: admission; expected "the admitted round request for collectionId"/);
         // A task change («Изменение задачи» plus resume) after the spent round: the reviewer gets exactly one round on the
-        // new contract, on the same head, reading the whole change; the next requests pass on the worker's verification again.
+        // new contract, on the same head, reading the fixes since the last reviewed head (none) and the open findings
+        // (MONO-502); the next requests pass on the worker's verification again.
         const changeTask = n => { const url = `https://linear.app/darkdepot/issue/MONO-999/x#comment-${n}`;
           recordTaskChange(path.dirname(pinsFile), url, `Изменение задачи: ${url}\nRound ${n}: round the result.`); };
         const reviewers = () => reviewCalls(bin).filter(role => role === 'reviewer').length;
@@ -1054,7 +1115,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         receipt = await round(at(fixed, 2), 0, /pass: review clean \(round 1 of 1\) and verification verified on head/);
         assert.equal(reviewers() - before, 1, 'the task change gets one review round on the unchanged head');
         assert.deepEqual([receipt.review.spent, receipt.review.round, receipt.review.record.rounds.length, receipt.review.record.rounds.at(-1).scope, receipt.review.record.rounds.at(-1).reviewedFiles],
-          [true, 1, 2, 'full', ['input.mjs']], 'the round after a task change reads the whole change');
+          [true, 1, 2, 'fixes-and-open-findings', ['input.mjs']], 'MONO-502: the round after a task change stays narrow (the stub reviewer lists input.mjs)');
         assert.equal(receipt.review.contractDigest, digest(`# MONO-999\n\nFixture task contract.\n\n\n## Изменение задачи 1 (https://linear.app/darkdepot/issue/MONO-999/x#comment-1)\nИзменение задачи: https://linear.app/darkdepot/issue/MONO-999/x#comment-1\nRound 1: round the result.`));
         before = reviewers();
         await round(at(fixed, 3), 0, /pass: review clean \(round 1 of 1\)/);
@@ -1181,7 +1242,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
           return;
         }
         // review-extra-change: the main path of an outside fix. A clean round 3, then a task change and a new head; the
-        // extra round reads the whole change on the changed contract and a clean result is ready in the same attempt.
+        // extra round reads the fixes on the changed contract (MONO-502) and a clean result is ready in the same attempt.
         setReview(bin, { findings: leftover, verdict: dangerous });
         await round(at(commit('export const one = 1;\n')), 1, /fail: review not-converged \(round 1 of 3\)/);
         setReview(bin, { findings: [], verdict: reviewVerdict({ outcome: 'rejected', closed: true }) });
@@ -1194,7 +1255,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         recordExtraRound(attempt, 'task change after a clean round 3', extraRoundCheck(pinsFile).receipt);
         const receipt = await round(at(fourth, 2), 0, /pass: review clean \(round 4 of 4, extra\) and verification verified on head/);
         assert.deepEqual([receipt.review.round, receipt.review.limit, receipt.review.record.rounds.at(-1).scope, receipt.review.record.rounds.at(-1).reviewedFiles],
-          [4, 4, 'full', ['input.mjs']], 'the extra round after a task change reads the whole change');
+          [4, 4, 'fixes-and-open-findings', ['input.mjs']], 'MONO-502: the extra round after a task change reads the fixes');
         assert.notEqual(receipt.review.contractDigest, third.review.contractDigest, 'the round read the changed contract');
         assert.deepEqual([receipt.pins.file, receipt.review.record.rounds.length], [pinsFile, 4], 'same attempt and record');
         return;

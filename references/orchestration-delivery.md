@@ -267,9 +267,14 @@ at the start and end of the round with a sleep flag, as facts, not a threshold.
 Between rounds do nothing: the worker fixes open findings and requests the next
 round itself. The pinned risk sets the completed rounds per task attempt (`risky`
 three, the fast path one plus one per task change, even on an unchanged head),
-counted from the attempt's receipts; rounds after the first read only the fixes
-and open findings, except the first round after a task change; the same head
-reuses its round; `not-reviewed` spends nothing. `ROUND_LIMIT` stays 3 and
+counted from the attempt's receipts; every round after the first reads only the
+fixes since the last reviewed head and the open findings, a task change's round
+too (plus the files its text names; a reviewed file rewritten by more than half is
+read whole); the same head reuses its round; `not-reviewed` spends nothing. A new
+attempt on the same branch and risk carries the last record (findings, last
+reviewed head) and counts rounds afresh: its first round reads only the delta, and
+a clean round of an earlier attempt on the same head, base and contract is reused.
+After main is merged into the branch the delta keeps only files of `base..head`. `ROUND_LIMIT` stays 3 and
 `reviewContext` in `gate.mjs` counts from the receipt history. The strict path
 gets at most one extra round per attempt (below): with it the limit is 4.
 
@@ -312,8 +317,7 @@ Parks:
      (also `taskChange`) waits for every host verification run of the root,
      whose snapshot covers the control files of all attempts; host runs of a
      root never overlap (a second is refused, no round spent). The fourth
-     round reads the fixes and open findings, or the whole change after a task
-     change, and judges leftovers like round 3; its lines say
+     round reads the fixes and open findings and judges leftovers like round 3; its lines say
      `round 4 of 4, extra`. Write the grant to the journal in one line with the
      reason; no separate Linear record.
   2. Merge: green CI, passed required checks and no open finding harming the
@@ -331,8 +335,7 @@ Parks:
   the CLI login), then resume the worker with `reviewRetry: true` and no task
   change; the next collection on the same head runs a round. The retry is
   recorded in `dispatch/KEY-aN/review-retries.json` beside the launch pins,
-  outside every worker grant; it cuts only a streak recorded before it whose
-  receipts all say `environment`, never accepts a head, and changes neither the
+  outside every worker grant; it cuts the streak recorded before it, never accepts a head, and changes neither the
   contract nor the round count. A retry dated after the collection is ignored,
   and a host verification run that plants, edits or removes it (or
   `task-changes.json`) fails consistency and is put back.
@@ -340,9 +343,9 @@ Parks:
   kept the review from happening, and the line names which (unreadable or binary
   files, incomplete coverage, a malformed or incomplete answer, a single model
   family, a CLI that could not start; it asks to check the CLI login only when a
-  login failed): fix it, then resume the
-  worker with a task change (the streak belongs to one contract; the count
-  stays); a review retry does not clear it.
+  login failed): fix it. A code fix is a new head; anything else is retried on
+  the same head with `reviewRetry: true` as above. A collection again on the same
+  head is never a task change: it would change the contract for nothing.
 
 `clean-with-successors` passes. Its candidates are older defects (on the strict
 path only harmless ones), minor P3

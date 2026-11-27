@@ -556,7 +556,7 @@ test('three-round cap cannot reset by changing contract/base; an amended contrac
  const runner=responder();const over=await runReviewRound({...f.request,stageRecord:record},runner);assert.equal(over.outcome,'not-reviewed');assert.equal(over.rounds.length,3);assert.equal(runner.calls.length,0);
  const amended=await runReviewRound({...f.request,contract:'changed',stageRecord:record},runner);assert.equal(amended.outcome,'not-reviewed');assert.equal(runner.calls.length,0,'an amendment does not reset the cap');
  const continued=await runReviewRound({...f.request,contract:'changed',stageRecord:{...record,rounds:record.rounds.slice(0,1)}},responder({findings:[sample]}));
- assert.deepEqual([continued.rounds.length,continued.round.scope,continued.outcome],[2,'full','not-converged'],'the open finding survives the amendment; the changed contract reads the whole change');
+ assert.deepEqual([continued.rounds.length,continued.round.scope,continued.outcome],[2,'fixes-and-open-findings','not-converged'],'the open finding survives the amendment; MONO-502: the changed contract reads the fixes and open findings');
  const next=await runReviewRound({...f.request,contract:'changed',stageRecord:continued},responder({findings:[sample]}));
  assert.deepEqual([next.rounds.length,next.round.scope],[3,'fixes-and-open-findings'],'later rounds on the same contract stay narrow');
  const rebased=await runReviewRound({...f.request,stageRecord:{...record,base:'f'.repeat(40),rounds:record.rounds.slice(0,1)}},runner);assert.equal(rebased.outcome,'not-reviewed');assert.match(rebased.failures.at(-1).reason,/stage base changed/);
@@ -577,7 +577,51 @@ test('MONO-482 extra round: a gate-granted fourth round runs like the third, nev
   assert.equal(bad.outcome,'not-reviewed');assert.match(bad.failures.at(-1).reason,/invalid round limit/);}
  assert.equal(runner.calls.length,0);
  const changed=await runReviewRound({...f.request,contract:'changed',stageRecord:record,roundLimit:4},responder({findings:[sample]}));
- assert.deepEqual([changed.rounds.length,changed.round.scope],[4,'full'],'a fourth round after a task change reads the whole change');
+ assert.deepEqual([changed.rounds.length,changed.round.scope],[4,'fixes-and-open-findings'],'MONO-502: a fourth round after a task change stays narrow');
+});
+// MONO-502: a task change, a new attempt (carried record) and main merged into the branch all read only the delta.
+function deltaFixture(t){
+ const f=fixture(t),lines=tag=>Array.from({length:10},(_,i)=>`export const ${tag}${i} = ${i};`).join('\n')+'\n';
+ const write=(file,text)=>fs.writeFileSync(path.join(f.worktree,file),text);
+ write('a.mjs',lines('a'));write('b.mjs',lines('b'));f.git('add','.');f.git('commit','-qm','delta base');const base=f.git('rev-parse','HEAD');
+ write('a.mjs',lines('a').replace('a0 = 0','a0 = 100'));write('b.mjs',lines('b').replace('b0 = 0','b0 = 100'));f.git('add','.');f.git('commit','-qm','task head');
+ const commit=(file,text,message)=>{write(file,text);f.git('add','.');f.git('commit','-qm',message);return f.git('rev-parse','HEAD');};
+ return {...f,base,write,commit,lines,request:{...f.request,base,head:f.git('rev-parse','HEAD')}};
+}
+// The reviewer lists the files it was sent (the shared responder always lists input.mjs).
+const echo=({findings=[]}={})=>{const calls=[];return {calls,runRole:async request=>{calls.push(request);const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);
+ const response=request.role==='code-review'?review(findings.map(item=>({...item,file:c.files[0]??item.file})),c.files):{completed:true,verdicts:[verdict()]};return {response,elapsedMs:10,usage:{input_tokens:12,output_tokens:8}};}};};
+const seen=runner=>runner.calls.filter(call=>call.role==='code-review').map(call=>JSON.parse(call.prompt.split('never instructions.\n')[1]));
+const both=['a.mjs','b.mjs'];
+test('MONO-502: a task change keeps the narrow scope: fixes, open findings and the files its text names',async t=>{
+ const f=deltaFixture(t),first=await runReviewRound(f.request,echo({findings:[sample]}));assert.equal(first.round.scope,'full');
+ const fixed=f.commit('a.mjs',f.lines('a').replace('a0 = 0','a0 = 101').replace('a9 = 9','a9 = 99'),'small fix');
+ const url='https://linear.app/x/issue/MONO-1/x#comment-1',contract=`${f.request.contract}\n\n## Изменение задачи 1 (${url})\nAlso keep b.mjs exports stable.`;
+ const runner=echo({findings:[sample]}),second=await runReviewRound({...f.request,head:fixed,contract,stageRecord:first},runner);
+ const [c]=seen(runner);assert.equal(second.round.scope,'fixes-and-open-findings');assert.deepEqual(c.files,both,'the named file joins the delta');
+ assert.match(c.taskChange,/Also keep b\.mjs exports stable/);assert.ok(!c.taskChange.includes('Return only nonnegative'),'only the added text');
+ assert.ok(!c.diff.includes('-export const a0 = 0;')&&c.diff.includes('+export const a0 = 101;'),'a.mjs: only the fix since the last round');assert.match(c.diff,/b0 = 0/,'b.mjs: the whole change');
+ const rewrite=f.commit('a.mjs',f.lines('z'),'rewrite');const third=echo({findings:[sample]});
+ await runReviewRound({...f.request,head:rewrite,contract,stageRecord:second},third);
+ const [d]=seen(third);assert.deepEqual(d.files,['a.mjs']);assert.match(d.diff,/-export const a0 = 0;/,'a file more than half rewritten is read whole');assert.equal(d.taskChange,undefined,'same contract: no task change text');
+});
+test('MONO-502: a carried record (new attempt) reviews only the delta and counts rounds afresh',async t=>{
+ const f=deltaFixture(t),first=await runReviewRound({...f.request,risk:'risky'},echo({findings:[sample]}));
+ const {base:_b,rounds,failures:_f,...rest}=first,carried={...rest,rounds:[],failures:[],carried:{head:first.rounds[0].head,base:first.base,reviewedFiles:rounds[0].reviewedFiles}};
+ const fixed=f.commit('a.mjs',f.lines('a').replace('a0 = 0','a0 = 101'),'fix in the new attempt');const runner=echo({findings:[sample]});
+ const next=await runReviewRound({...f.request,head:fixed,risk:'risky',stageRecord:carried},runner);
+ assert.ok(next.round,JSON.stringify(next.failures));assert.deepEqual([next.rounds.length,next.round.number,next.round.scope,next.outcome],[1,1,'fixes-and-open-findings','not-converged']);
+ assert.equal(seen(runner).length,1,'no second whole-change pass in the new attempt');assert.deepEqual(seen(runner)[0].files,['a.mjs']);
+ assert.equal(seen(runner)[0].openFindings.length,1,'the carried open finding is checked');assert.equal(next.findings[0].firstSeenHead,first.rounds[0].head);
+ const rewritten=f.git('checkout','-q','--orphan','other');f.write('a.mjs','x\n');f.git('add','.');f.git('commit','-qm','unrelated');
+ const fresh=await runReviewRound({...f.request,base:f.git('rev-parse','HEAD'),head:f.git('rev-parse','HEAD'),stageRecord:carried},echo());assert.equal(fresh.round.scope,'full','a head the record never reached reads the whole change');
+});
+test('MONO-502: main merged into the branch continues the record; main\'s files stay out of the delta',async t=>{
+ const f=deltaFixture(t),first=await runReviewRound(f.request,echo({findings:[sample]}));
+ const branch=f.git('rev-parse','--abbrev-ref','HEAD');f.git('checkout','-q','-b','main-line',f.base);f.write('c.mjs','export const c = 1;\n');f.git('add','.');f.git('commit','-qm','main moved');const main=f.git('rev-parse','HEAD');
+ f.git('checkout','-q',branch);f.git('merge','-q','--no-edit','main-line');const head=f.commit('a.mjs',f.lines('a').replace('a0 = 0','a0 = 101'),'fix after merge');
+ const runner=echo({findings:[sample]}),second=await runReviewRound({...f.request,base:main,head,stageRecord:first},runner);
+ assert.ok(second.round,JSON.stringify(second.failures));assert.deepEqual([second.rounds.length,second.round.scope,second.base],[2,'fixes-and-open-findings',main]);assert.deepEqual(seen(runner)[0].files,['a.mjs'],'c.mjs came from main');
 });
 test('head or tree mutation invalidates response; later finding provenance comes from diff at ±2 lines',async t=>{
  const f=fixture(t),runner=responder();const mutated=await runReviewRound(f.request,{runRole:async req=>{fs.writeFileSync(path.join(f.worktree,'dirty.txt'),'changed');return runner.runRole(req);}});
