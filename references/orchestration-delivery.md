@@ -421,9 +421,9 @@ default stays off without an error, and an explicit `screenCheck: true` is refus
   again before its first round. A
   `passed` result needs no write: the first round's gate line ends with
   «screen check on the host passed on this head (report <link>)».
-- Queue: the screen check and QA passes share one stand and simulator; at most
-  one of them runs on the host at a time, in one queue by request time, with no
-  priority.
+- Queue: simulator checks and QA passes share one stand; at most one of them
+  runs on the host at a time, in one queue by request time, with no priority.
+  Web checks run on their own copy and port and never wait in this queue.
 - Proof: the report names its head. The worker and Preflight count it as the
   visibility check only for the same head; otherwise the item stays
   `unverified` («сверка экранов на хосте»).

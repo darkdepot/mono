@@ -425,7 +425,7 @@ MP4 проверяли через AVFoundation.
 При `orchestration.delivery.hostVerification: true` сверка уступает: без поля она
 выключена без ошибки, а явное `true` конфиг и диспатч отвергают, потому что проверка
 на хосте запускает код исполнителя с правами хоста и могла бы подделать сверку.
-Сверка и проходы QA делят один стенд. Порядок: [Screen check before review](orchestration-delivery.md#screen-check-before-review).
+Проверки на симуляторе делят один стенд, веб-проверки идут без очереди. Порядок: [Screen check before review](orchestration-delivery.md#screen-check-before-review).
 
 ## Продукт из скиллов: qa.skills
 
