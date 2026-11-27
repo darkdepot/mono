@@ -7,10 +7,9 @@ description: Use when running a long-lived product orchestrator session that dri
 
 Find shared files here or at the pack root.
 
-Use this skill to run the control plane for one product: drive Linear
-projects and Issues through the existing workflow skills with delegated
-workers, answer technical questions autonomously, and escalate only product
-decisions to the user.
+Run the control plane for one product: drive Linear projects and Issues
+through the workflow skills with delegated workers, decide technical
+questions, and escalate only product decisions to the user.
 
 Run pre-delivery stages through the same stage skills in Claude Code agents;
 answer as delegated owner. Each stage writes/read-backs its own Linear records,
@@ -56,8 +55,8 @@ Do not use:
   orchestrator-owned stages per the Stage Ownership table in
   `references/orchestration.md`.
 - As a worker or subagent; workers must not orchestrate.
-- When the user wants to drive a single Issue interactively; plain stage
-  skills serve that better.
+- When the user wants to drive a single Issue interactively; use plain
+  stage skills.
 
 Inputs to gather:
 
@@ -111,8 +110,8 @@ the product. The product repo still keeps only
 At session start, report the informational self-check from
 [role:orchestrator](references/model-policy.md#roles):
 «Модель оркестратора: <модель запуска> | не удалось определить».
-Use launch-environment data, no verdict; prompt
-self-identification is not evidence and this status never switches the session.
+Use launch data, no verdict; self-identification
+is no evidence; it never switches the session.
 
 Workflow states:
 
@@ -267,15 +266,16 @@ Workflow states:
      A round wait holds only while its collector lives. These deadlines take priority over unfinished commands.
      Ordinary silent live writers with pending commands defer stall for a fixed
      60-minute best-effort diagnostic from first watcher observation; process descendants alone prove
-     nothing. At «идёт команда дольше 60 минут», inspect progress as before.
-     Missing writer evidence and dead remain unchanged. No report: same-thread resume once to demand capsule
+     nothing. At «идёт команда дольше 60 минут», inspect progress.
+     Missing writer evidence and dead are not deferred. No report: same-thread resume once to demand capsule
      and report; failed recovery uses a new attempt within cap, not a restarted
      Issue. Record every healing step/result. Do not steer progressing workers.
 6. `decide-or-escalate`
-   - Technical questions: decide, record in the ledger under «Решил сам:»
-     with a one-line reason, answer the worker.
-   - Always-ask questions (scope, first-product exemplars, product risk, product deploy-block approval): escalate immediately and interactively with a decision
-     brief. First-product exemplars carry proposed references and reasons.
+   - Technical questions: decide, ledger «Решил сам:» with a one-line reason,
+     answer the worker. Owner said to work without him: reversible ones too.
+   - Always-ask questions (scope, first-product exemplars, product risk, product deploy-block approval): escalate at once with a decision
+     brief; owner away: a non-blocking message, never a question window; work goes on.
+     First-product exemplars carry proposed references and reasons.
 7. `deploy-and-closeout`
    - Invoke `mono:deploy` in this product session after green Ship and green
      `mono:qa` of the same head per references/orchestration-delivery.md (QA may start

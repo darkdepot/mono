@@ -459,8 +459,9 @@ Ready — готовность, не старт: обычный проект и 
 проходит с коротким сертификатом и причиной; продукт без рецепта продолжает
 прежний путь с записью «тестировщик не подключён».
 
-Сверка экранов до ревью: с `qa.screenCheck: true` (по умолчанию выключено, включает
-владелец по продукту) задача с макетом в снимке получает пин `screenCheck`. На голове
+Сверка экранов до ревью: при рецепте QA задача с макетом в снимке получает пин
+`screenCheck` (по умолчанию включено, `qa.screenCheck: false` выключает; при проверке
+на хосте сверка уступает, а явное `true` вместе с ней отвергается). На голове
 первого запроса сбора оркестратор на хосте прогоняет `mono:qa` в `given-version` только по
 пунктам PNG и вкуса; первый круг ревью ждёт результат этой головы, не тратя круг.
 Расхождения уходят исполнителю одним «Изменением задачи», исправленная голова
@@ -891,9 +892,9 @@ The review round runs on a read-only export of the pinned tree and needs no writ
 | Code reviewer and checker | Read-only review round by [role:code-review](references/model-policy.md#roles) and [role:code-review-checker](references/model-policy.md#roles) from different model families; a finding counts only with the checker's verdict |
 | PR reviewers and CI | Evaluate the actual PR head; findings and check results become inputs to ship |
 
-Record technical decisions as “Decided independently” in owner-facing reporting. Ask about scope, slicing, risk acceptance and design with prepared options and a recommendation; show design choices visually. Do not ask questions whose answer is already in the repository, Linear or config. The worker sends a blocked question and recommendation through its report to the orchestrator.
+Record technical decisions as “Decided independently” in owner-facing reporting. Ask about scope, slicing, risk acceptance and design with prepared options and a recommendation; show design choices visually. Do not ask questions whose answer is already in the repository, Linear or config. The worker sends a blocked question and recommendation through its report to the orchestrator. When the owner has said to work without him, the orchestrator decides technical and reversible questions itself with «Решил сам:», sends owner questions as non-blocking messages, never a question window, and keeps working.
 
-The orchestrator uses the owner-selected launch model and reports its authoritative identity or «не удалось определить», without a policy verdict; product overrides for this role remain refused. Second Voice selection still follows the actual orchestrator family. Resolve other role defaults from [the roles table](references/model-policy.md#roles) plus validated product `models` overrides, never helper defaults. Risk has four classes: `tiny`, `standard`, `deep`, `risky`; use the higher approved/final-diff class. Risk controls review depth and artifact needs, while a complex worker is an explicit orchestrator launch decision with a recorded reason. Preserve model/effort provenance; missing authoritative runtime data means unverified, not compliant. Policy changes govern new launches after installation, without rewriting historical records.
+The orchestrator uses the owner-selected launch model and reports its authoritative identity or «не удалось определить», without a policy verdict; product overrides for this role remain refused. Second Voice selection still follows the actual orchestrator family. Resolve other role defaults from [the roles table](references/model-policy.md#roles) plus validated product `models` overrides, never helper defaults. Risk has four classes: `tiny`, `standard`, `deep`, `risky`; use the higher approved/final-diff class. Risk controls review depth and artifact needs, while a complex worker is an explicit orchestrator launch decision with a recorded reason. Preserve model/effort provenance; missing authoritative runtime data means unverified, not compliant. Policy changes govern new launches after installation, without rewriting historical records; role models change only between waves, never while attempts are live.
 
 Mono pilots product `models` overrides in [config](.agents/mono-workflow.config.json): [role:second-voice](references/model-policy.md#roles) reviews packages and decisions (Project, PRD, Tech Spec, Issues); [role:code-review](references/model-policy.md#roles) with [role:code-review-checker](references/model-policy.md#roles) reviews code before the PR. Each role resolves independently from the policy table and product overrides. The pilot accepts same-family Codex worker/code-reviewer pairing. Remove `models` to roll back.
 
@@ -1663,7 +1664,8 @@ archive/version structure and recorded behavior; review checks instruction meani
 Наблюдённые способы поднять безопасную копию и сохранить доказательства для
 веба, терминального пака и мобильного симулятора собраны в
 [рецептах QA](references/qa-recipes.md). Там же — результат загрузки WebM в
-Linear, ограничения пробы, требования к хосту и время шагов. Это справочник;
+Linear, ограничения пробы, требования к хосту и время шагов. Замок стенда
+берёт только проверка на симуляторе, веб-проверка его не ждёт. Это справочник;
 тестировщик [mono:qa](skills/qa/SKILL.md) использует его на хосте.
 Проверка сертификата: `node scripts/qa-certificate.mjs <report.json> <expected.json>`;
 [отдельный шаблон](templates/qa-output.md) описывает task/project, короткий и

@@ -77,21 +77,25 @@ for (const expectedProject of ['66666666-6666-6666-6666-666666666666', null])
     assert.deepEqual(fs.readdirSync(f.target), []);
   }));
 
-// MONO-481: dispatch pins screenCheck only for a task whose snapshot holds an approved mockup and a product
-// whose BASE recipe turns the switch on; absent means off.
-test('screenCheck is pinned only with a mockup in the snapshot and the recipe switch on', () => fixture(f => {
-  const design = f.copy(), on = { qa: { screenCheck: true } };
-  assert.equal(screenCheckPinned(on, design), true);
-  for (const config of [{ qa: { screenCheck: false } }, { qa: {} }, {}]) assert.equal(screenCheckPinned(config, design), false);
-  assert.equal(screenCheckPinned(on, null), false, 'no mockup: no screen check before review');
+// MONO-481/506: dispatch pins screenCheck for a task whose snapshot holds an approved mockup and whose product has a QA
+// recipe (config or registry), unless the recipe says screenCheck: false; absent means on.
+const recipe = { mode: 'web', install: [], start: 'pnpm dev --port $QA_PORT', ready: { command: 'curl -s localhost:$QA_PORT', identity: 'copy id' },
+  data: { source: 'synthetic', description: 'synthetic data' }, forbiddenActions: ['no external sends'] };
+test('screenCheck is pinned by default for a task with a mockup; explicit false or no recipe keeps it off', () => fixture(f => {
+  const design = f.copy();
+  for (const config of [{ qa: recipe }, { qa: { ...recipe, screenCheck: true } }, { projectName: 'Mono Agent Workflow' }])
+    assert.equal(screenCheckPinned(config, design), true, 'mockup task without the flag: pinned on');
+  assert.equal(screenCheckPinned({ qa: { ...recipe, screenCheck: false } }, design), false, 'explicit false: off');
+  assert.equal(screenCheckPinned({}, design), false, 'no QA recipe: nobody can run the check, off');
+  for (const config of [{ qa: recipe }, { qa: { ...recipe, screenCheck: true } }]) assert.equal(screenCheckPinned(config, null), false, 'no mockup: no screen check before review');
 }));
 
 // Codex review round 3: host verification runs worker code with host rights and could forge the screen check.
-test('screenCheck and hostVerification both on refuse dispatch; either alone keeps its behavior', () => fixture(f => {
+test('explicit screenCheck with hostVerification refuses dispatch; the default steps aside without an error', () => fixture(f => {
   const design = f.copy(), host = { orchestration: { delivery: { hostVerification: true } } };
   for (const snapshot of [design, null])
-    assert.throws(() => screenCheckPinned({ ...host, qa: { screenCheck: true } }, snapshot),
+    assert.throws(() => screenCheckPinned({ ...host, qa: { ...recipe, screenCheck: true } }, snapshot),
       /^Error: screenCheck and hostVerification cannot both be on: host verification runs worker code with host rights and could forge the screen check$/);
-  assert.equal(screenCheckPinned({ qa: { screenCheck: true } }, design), true, 'screenCheck alone is pinned');
-  for (const qa of [{}, { screenCheck: false }]) assert.equal(screenCheckPinned({ ...host, qa }, design), false, 'hostVerification alone: unchanged, no screen check');
+  assert.equal(screenCheckPinned({ qa: { ...recipe, screenCheck: true } }, design), true, 'screenCheck alone is pinned');
+  for (const qa of [recipe, { ...recipe, screenCheck: false }]) assert.equal(screenCheckPinned({ ...host, qa }, design), false, 'hostVerification: the default steps aside, no error');
 }));

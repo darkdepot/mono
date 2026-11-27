@@ -378,13 +378,13 @@ MONO-489.
 
 ### Screen check before review
 
-A product whose recipe sets `screenCheck: true` (off by default; it builds and
-runs worker code on the host before any review) gets its screens compared with
-the approved mockups before the first review round. Dispatch pins `screenCheck`
-from BASE, like `hostVerification`, only when the task snapshot holds
-`design.json`; the worker never takes screenshots and gets no new park. It never
-runs with `hostVerification`: with both on BASE the config check and dispatch refuse,
-since host verification runs worker code with host rights and could forge the check.
+A task with an approved mockup in a product with a QA recipe gets its screens
+compared with the mockups before the first review round (on by default; the host
+builds and runs worker code before any review; `qa.screenCheck: false` turns it
+off). Dispatch pins `screenCheck` from BASE, like `hostVerification`, only when the
+task snapshot holds `design.json`; the worker never takes screenshots and gets no
+new park. It never runs with `hostVerification`, which could forge it: there the
+default stays off without an error, and an explicit `screenCheck: true` is refused.
 
 - Who and when: the orchestrator on the host runs `mono:qa` in `given-version`
   (never gate-eligible) on the head of the attempt's first preflight collection
@@ -421,9 +421,9 @@ since host verification runs worker code with host rights and could forge the ch
   again before its first round. A
   `passed` result needs no write: the first round's gate line ends with
   «screen check on the host passed on this head (report <link>)».
-- Queue: the screen check and QA passes share one stand and simulator; at most
-  one of them runs on the host at a time, in one queue by request time, with no
-  priority.
+- Queue: simulator checks and QA passes share one stand; at most one of them
+  runs on the host at a time, in one queue by request time, with no priority.
+  Web checks run on their own copy and port and never wait in this queue.
 - Proof: the report names its head. The worker and Preflight count it as the
   visibility check only for the same head; otherwise the item stays
   `unverified` («сверка экранов на хосте»).
