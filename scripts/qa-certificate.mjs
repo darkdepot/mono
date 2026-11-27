@@ -120,7 +120,7 @@ export function validateQaCertificate(report, expected, { taskDir } = {}) {
 // crash) or successor (filed as a new issue after merge, never holds it).
 const BLOCKING = ['acceptance', 'regression', 'data', 'security', 'crash'];
 const PROTECTED = ['task', 'requirement', 'acceptance', 'scenario'];
-function triage(cert, expected, prior) {
+function triage(cert, expected, prior, passedBefore) {
   const bugs = cert.bugs ?? [];
   need(Array.isArray(bugs), 'bugs must be an array');
   const items = new Map(cert.items.map(item => [item.id, item])), ids = new Set();
@@ -129,6 +129,7 @@ function triage(cert, expected, prior) {
     ids.add(bug.id);
     need(['blocking', 'successor'].includes(bug.class), `bug ${bug.id} requires class blocking or successor`);
     need(bug.item === undefined || items.has(bug.item), `bug ${bug.id} names an unknown item`);
+    need(bug.class === 'blocking' || !BLOCKING.includes(bug.why), `bug ${bug.id} with why ${bug.why} is a blocking bug, not a successor`);
     if (bug.class === 'blocking') {
       need(BLOCKING.includes(bug.why), `blocking bug ${bug.id} requires why: ${BLOCKING.join(', ')}`);
       need(!['acceptance', 'regression'].includes(bug.why) || items.get(bug.item)?.outcome === 'failed',
@@ -139,7 +140,7 @@ function triage(cert, expected, prior) {
   for (const item of cert.items) {
     if (item.outcome !== 'failed' || !successorFor(item.id)) continue;
     need(!PROTECTED.includes(item.source) && !expected.taskCriteria.includes(item.id), `failed acceptance item ${item.id} is a blocking bug`);
-    need(!(prior && prior.items.get(item.id)?.outcome === 'passed'), `item ${item.id} passed on the previous head: regression is a blocking bug`);
+    need(!(prior?.items.get(item.id)?.outcome === 'passed' || passedBefore.has(item.id)), `item ${item.id} passed on the previous head: regression is a blocking bug`);
   }
   const holding = bugs.some(bug => bug.class === 'blocking')
     || cert.items.some(item => item.outcome === 'unverified' || (item.outcome === 'failed' && !successorFor(item.id)));
@@ -161,21 +162,31 @@ function derivedTaskDir(expected) {
     && path.basename(path.dirname(path.dirname(root))) === 'qa' ? path.dirname(root) : null;
 }
 // MONO-503: from the second pass on a task the recheck block is mandatory; a full pass needs a recorded
-// reason, and the full list at the final gate (`fullPass.final`) runs once per task.
-function secondPass(expected, ctx, prior) {
+// reason, and the full list at the final gate (`fullPass.final`) runs once per task. Returns the ids that passed
+// on another head of this task, so a full second pass cannot call a regression a successor either.
+function secondPass(expected, ctx, prior, enforce) {
+  const passed = new Set();
   const taskDir = ctx.taskDir ?? prior?.taskDir ?? derivedTaskDir(expected);
   const full = expected.fullPass;
   need(full === undefined || (object(full) && text(full.reason) && [undefined, true].includes(full.final)), 'fullPass requires a reason');
   need(!(full && expected.recheck), 'recheck and fullPass exclude each other');
-  if (!taskDir || !fs.existsSync(taskDir)) return;
+  if (!taskDir || !fs.existsSync(taskDir)) return passed;
   const others = fs.readdirSync(taskDir).filter(name => HEAD.test(name) && name !== expected.head
     && fs.existsSync(path.join(taskDir, name, 'task-report.json')));
-  if (!others.length) return;
+  for (const name of others) {
+    // Host-written reports of this task; an unreadable one is checked where it is carried, not here.
+    try {
+      const raw = JSON.parse(fs.readFileSync(path.join(taskDir, name, 'task-report.json'), 'utf8')).certificate;
+      for (const item of JSON.parse(raw.slice(QA_MARKER.length).trim()).items ?? []) if (item?.outcome === 'passed') passed.add(item.id);
+    } catch { /* not a behavior report */ }
+  }
+  if (!others.length || !enforce) return passed;
   need(expected.recheck !== undefined || full, 'second pass on this task requires a recheck block or fullPass.reason');
   if (full?.final) for (const name of others) {
     let saved; try { saved = JSON.parse(fs.readFileSync(path.join(taskDir, name, 'task-expected.json'), 'utf8')); } catch { continue; }
     need(saved?.fullPass?.final !== true, `final full pass already ran on head ${name}`);
   }
+  return passed;
 }
 
 function validate(report, expected, ctx) {
@@ -246,9 +257,9 @@ function validate(report, expected, ctx) {
   }
   need(Array.isArray(expected.expectedItems) && expected.expectedItems.length > 0
     && expected.expectedItems.length === ids.size && expected.expectedItems.every(item => ids.has(item.id)), 'expectation list missing or incomplete');
-  const successors = triage(cert, expected, prior);
-  if (ctx.top && cert.scope === 'task' && cert.mode === 'ship' && cert.recipeSource !== 'file'
-    && !['release', 'acceptance'].includes(expected.purpose)) secondPass(expected, ctx, prior);
+  const passedBefore = ctx.top && cert.scope === 'task' && cert.mode === 'ship' && cert.recipeSource !== 'file'
+    ? secondPass(expected, ctx, prior, !['release', 'acceptance'].includes(expected.purpose)) : new Set();
+  const successors = triage(cert, expected, prior, passedBefore);
   return { ...cert, gateEligible, successors };
 }
 

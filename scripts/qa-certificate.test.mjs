@@ -439,3 +439,30 @@ test('MONO-503 successors found on an earlier head stay listed through a green r
   fixed.items[1] = { ...f.items[1], outcome: 'passed', evidence: [f.proof(f.heads.B, 'c2-ok.cast')] };
   assert.deepEqual(f.check(fixed).successors.map(bug => bug.summary), ['Tooltip typo']);
 });
+
+test('MONO-503 review: a full second pass cannot label a regression a successor', t => {
+  const f = recheckFixture(t);
+  // C2 passed on A; a full pass on B (recorded reason) finds it failing and calls it a successor.
+  const { recheck, ...plain } = f.expectedB;
+  const expected = { ...plain, fullPass: { reason: 'Fix rewrote the shared navigation' } };
+  const cert = structuredClone(f.certB);
+  cert.items = f.items.map(item => ({ ...item, outcome: 'passed', evidence: [f.proof(f.heads.B, `${item.id}.cast`)] }));
+  cert.items[1] = { ...f.items[1], outcome: 'failed', reason: 'Hint disappeared', evidence: [f.proof(f.heads.B, 'c2.cast')] };
+  cert.bugs = [{ id: 'B1', class: 'successor', item: 'C2', summary: 'Hint disappeared' }];
+  assert.throws(() => f.check(cert, expected), /C2 passed on the previous head: regression/);
+  cert.verdict = 'failed'; cert.bugs[0] = { ...cert.bugs[0], class: 'blocking', why: 'regression' };
+  assert.equal(f.check(cert, expected).verdict, 'failed');
+});
+
+test('MONO-503 review: a successor bug cannot carry a blocking reason', t => {
+  const f = recheckFixture(t);
+  const certA = structuredClone(f.certA);
+  certA.items[2] = { ...f.items[2], outcome: 'passed', evidence: [f.proof(f.heads.A, 'c3-ok.cast')] };
+  certA.verdict = 'passed';
+  for (const why of ['crash', 'data', 'security', 'regression', 'acceptance']) {
+    certA.bugs = [{ id: 'B1', class: 'successor', why, summary: 'App closes on save' }];
+    assert.throws(() => validateQaCertificate(f.report(certA), f.expectedA), /is a blocking bug, not a successor/, why);
+  }
+  certA.bugs = [{ id: 'B1', class: 'successor', summary: 'Tooltip typo' }];
+  assert.equal(validateQaCertificate(f.report(certA), f.expectedA).verdict, 'passed');
+});
