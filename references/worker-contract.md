@@ -145,7 +145,7 @@ report/chat omit human lead.
 ## Linear Writes
 
 Sole writer of own Issue reports/comments/statuses via Linear MCP `save_comment`/
-`save_issue` (codex-cli pre-approves only these); orchestrator only start moves
+`save_issue` (codex-cli: MCP or app, only these); orchestrator only start moves
 (handshake `lifecycle_moves`) and «Изменение задачи». First after handshake: one
 Linear MCP read; failure/denial parks blocked before code. Before a write find the
 existing comment/status, write only missing; after, read back (`list_comments`/

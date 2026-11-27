@@ -16,6 +16,7 @@ import { publishPhase } from "./delivery-state.mjs";
 import { effectivePins, admitCollection, collectionPinsBinding, checkCollectionRequest, pinnedShipPolicy } from "./orchestrator/command-state.mjs";
 import { acceptAck } from "./orchestrator/accept.mjs";
 import { readLedger, recordResult, roundRequestName, writeScreenCheck } from "./review-rounds.mjs";
+process.env.MONO_CODEX_PROBE_BIN ??= new URL('./test-fixtures/fake-codex-linear.mjs', import.meta.url).pathname; // MONO-509 Linear path probe
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixture = name => fs.readFileSync(path.join(checkout, "scripts/fixtures", name), "utf8");

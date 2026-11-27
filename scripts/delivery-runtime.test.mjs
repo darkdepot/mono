@@ -12,6 +12,7 @@ import { spawnSync, execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { installReviewClis, setReview, reviewCalls, reviewFinding } from "./test-fixtures/review-clis.mjs";
 import { guardScratch, ownerWatchdog, reapScratch } from "./test-fixtures/fixture-processes.mjs";
+process.env.MONO_CODEX_PROBE_BIN ??= new URL('./test-fixtures/fake-codex-linear.mjs', import.meta.url).pathname; // MONO-509 Linear path probe
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, typeof value === "string" ? value : JSON.stringify(value)); };
@@ -790,8 +791,30 @@ console.log(JSON.stringify({type:'thread.started',thread_id:'grants-fixture'}));
     const alias = path.join(root, "linked-alias"); fs.symlinkSync(worktree, alias);
     const commonReal = path.join(root, "common-real"); fs.renameSync(common, commonReal); fs.symlinkSync(commonReal, common);
     const canonicalExpected = [worktree, mailbox, commonReal, path.join(commonReal, "worktrees/linked")].sort();
+    // MONO-509: without a usable Linear path the launch refuses before the attempt exists; with only the built-in
+    // Linear app it keeps apps on and approves just the app's two write tools.
+    const codexHome = path.join(root, "codex-home"), appId = "asdk_app_69a089a326dc8191b32a3f2553f5be2c";
+    process.env.CODEX_HOME = codexHome;
+    const cache = () => write(path.join(codexHome, "cache/codex_apps_tools/fixture.json"), { tools: ["linear.save_comment", "linear.save_issue", "linear.get_issue"]
+      .map(name => ({ connector_id: appId, connector_name: "Linear", tool: { name } })) });
+    for (const [spec, message] of [[{ mcp: "absent" }, /linear-unavailable: no Linear connection/],
+      [{ mcp: "not_logged_in" }, /linear-unavailable: Linear not authorized/],
+      [{ mcp: "absent", apps: false, cache: true }, /linear-unavailable: Linear writes disabled by Codex config: features\.apps is off/]]) {
+      if (spec.cache) cache();
+      process.env.MONO_FAKE_CODEX_LINEAR = JSON.stringify(spec);
+      await assert.rejects(spawnWorker({ ...request, worktree: alias }), message);
+      assert.equal(starts().length, 0); assert.equal(fs.existsSync(path.join(state, "attempts.json")), false, "a Linear refusal spends no attempt");
+      assert.deepEqual(json(path.join(state, "workers.json")), {});
+      assert.equal(fs.existsSync(path.join(state, "logs", `${request.issue}-mono-deliver-a1.jsonl`)), false);
+    }
+    process.env.MONO_FAKE_CODEX_LINEAR = JSON.stringify({ mcp: "absent" });
+    const appGrant = `apps.${appId}.tools={"linear.save_comment"={approval_mode="approve"},"linear.save_issue"={approval_mode="approve"}}`;
+    const appPath = args => { assert.ok(!args.includes("--disable"), "apps stay on for the Linear app");
+      assert.ok(!args.some(arg => arg.startsWith("mcp_servers.")), "no linear server keys without the server");
+      assert.deepEqual(args.filter(arg => arg.startsWith("apps.")), [`apps.${appId}.default_tools_approval_mode="auto"`, appGrant]); };
     await spawnWorker({ ...request, worktree: alias });
     const entry = json(path.join(state, "workers.json"))[request.issue];
+    assert.deepEqual(entry.linearPath, { kind: "app", connectorId: appId }); appPath(starts().at(-1).args);
     for (const actual of [entry.writable_roots, entry.workerWritableRoots, entry.capsule.writable_roots]) assert.deepEqual(actual, canonicalExpected);
     const argsRoots = args => JSON.parse(args.find(a => a.startsWith("sandbox_workspace_write.writable_roots=")).split("=").slice(1).join("="));
     assert.deepEqual(argsRoots(starts().at(-1).args), canonicalExpected);
@@ -821,9 +844,19 @@ console.log(JSON.stringify({type:'thread.started',thread_id:'grants-fixture'}));
     fs.writeFileSync(path.join(worktree, 'foreign-unfinished.txt'), 'foreign unstaged work survives interruption\n');
     pass(run('git', ['add', 'own-unfinished.txt'], worktree, env));
     const interruptedDiff = pass(run('git', ['diff', '--binary', 'HEAD'], worktree, env)).stdout;
+    // A resume keeps the launch's Linear path: with the app gone it refuses even though the MCP server is back.
+    process.env.MONO_FAKE_CODEX_LINEAR = JSON.stringify({ mcp: "ok", apps: false });
+    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile }), /linear-unavailable: this attempt writes Linear through the Linear app .*features\.apps is off/);
+    assert.equal(starts().length, 1);
+    // An entry from before MONO-509 launched on the MCP path (apps disabled) and never resumes onto the app.
+    process.env.MONO_FAKE_CODEX_LINEAR = JSON.stringify({ mcp: "absent" });
+    const pinned = json(path.join(state, "workers.json")), legacy = structuredClone(pinned); delete legacy[request.issue].linearPath;
+    write(path.join(state, "workers.json"), legacy);
+    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile }), /this attempt writes Linear through the linear MCP server, which is no longer usable/);
+    write(path.join(state, "workers.json"), pinned); assert.equal(starts().length, 1);
     await resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile });
     for (let i = 0; i < 100 && starts().length < 2; i++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert.equal(starts().length, 2);
+    assert.equal(starts().length, 2); appPath(starts().at(-1).args);
     assert.deepEqual(argsRoots(starts().at(-1).args), canonicalExpected);
     assert.deepEqual(starts().at(-1).credentialDigests, credentialDigests);
     assert.equal(fs.readFileSync(path.join(worktree, 'own-unfinished.txt'), 'utf8'), 'own staged work survives interruption\n');

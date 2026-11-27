@@ -3,12 +3,13 @@ import path from "node:path";
 import { reviewEnvironment } from "../model-environment.mjs";
 import { zeroUsage, addUsage, finalizeUsage } from "../token-usage.mjs";
 import { readJsonLines } from "./journal.mjs";
+import { LINEAR_APP_WRITE_TOOLS, resolveLinearPath } from "./codex-linear.mjs";
 
 const unavailable = reason => `unavailable: ${reason}`;
 
 function environment(route, source = process.env) {
   const env = { ...source };
-  delete env.MONO_ATTEMPT;
+  delete env.MONO_ATTEMPT; delete env.MONO_CODEX_PROBE_BIN;
   if (route?.credentialEnv || route?.provider.endpoint) {
     for (const key of ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_API_KEY']) delete env[key];
     const credential = route.credentialEnv ? { [route.credentialEnv]: source[route.credentialEnv] } : {};
@@ -61,21 +62,33 @@ function startIdentity(event) {
   return { thread_id: event.thread_id };
 }
 
-// The worker writes its own Issue comments and statuses through the user's
-// logged-in Linear MCP server. approval_policy=never rejects tools that need
-// approval, so exactly these write tools are pre-approved (MONO-449 probe).
-// Built-in ChatGPT apps are disabled: otherwise the model may pick the
-// codex_apps Linear connector, whose writes these grants do not cover (MONO-460).
+// The worker writes its own Issue comments and statuses through Linear. approval_policy=never rejects tools that need
+// approval, so exactly these write tools are pre-approved (MONO-449 probe). MONO-509: the path is resolved before the
+// attempt is registered and kept in the entry (linearPath). mcp: the user's logged-in `linear` server gets the grants
+// and built-in ChatGPT apps are disabled, so the model cannot pick the app connector the grants do not cover (MONO-460).
+// app: no usable server, so apps stay on and only the Linear app's save_comment and save_issue are approved, as one
+// inline table (a dotted key splits the quoted tool name); the app's other tools keep asking (auto), even under an
+// approving apps._default. No mcp_servers.linear grant keys, which would break config parsing without the server; an
+// existing server is turned off so the model cannot pick it.
 export const LINEAR_WRITE_TOOLS = Object.freeze(["save_comment", "save_issue"]);
+
+export function linearArgs(linearPath) {
+  if (linearPath?.kind === "app") {
+    const tools = LINEAR_APP_WRITE_TOOLS.map(tool => `${JSON.stringify(tool)}={approval_mode="approve"}`).join(",");
+    return ["-c", `apps.${linearPath.connectorId}.default_tools_approval_mode="auto"`, "-c", `apps.${linearPath.connectorId}.tools={${tools}}`,
+      ...(linearPath.mcpServerPresent ? ["-c", "mcp_servers.linear.enabled=false"] : [])];
+  }
+  return ["--disable", "apps", ...LINEAR_WRITE_TOOLS.flatMap(tool => ["-c", `mcp_servers.linear.tools.${tool}.approval_mode="approve"`])];
+}
 
 function invocation(entry, { reportsDir, roots, prompt, resume }) {
   const model = entry.model_launch.model_parameter, effort = entry.model_launch.effort_parameter;
   const args = resume ? ["exec", "resume", entry.thread_id, "--json"] : ["exec", "--json", "--cd", entry.worktree];
   if (!resume) args.push("--add-dir", reportsDir);
-  args.push("--disable", "apps", "-c", `model=${JSON.stringify(model)}`, "-c", `model_reasoning_effort=${JSON.stringify(effort)}`,
+  const linear = linearArgs(entry.linearPath), disable = linear[0] === "--disable" ? linear.splice(0, 2) : [];
+  args.push(...disable, "-c", `model=${JSON.stringify(model)}`, "-c", `model_reasoning_effort=${JSON.stringify(effort)}`,
     "-c", 'sandbox_mode="workspace-write"', "-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(roots)}`,
-    "-c", `sandbox_workspace_write.network_access=${entry.network_access === true}`,
-    ...LINEAR_WRITE_TOOLS.flatMap(tool => ["-c", `mcp_servers.linear.tools.${tool}.approval_mode="approve"`]), prompt);
+    "-c", `sandbox_workspace_write.network_access=${entry.network_access === true}`, ...linear, prompt);
   return { command: "codex", args };
 }
 
@@ -218,6 +231,7 @@ export const codexCli = Object.freeze({
   logLiveness: true,
   environment,
   invocation,
+  resolveLinearPath,
   startIdentity,
   waitingCommand,
   activityTime: stat => stat.mtimeMs,

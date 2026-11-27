@@ -5,6 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { copyDesignSnapshot } from './orchestrator/design-snapshot.mjs';
 import { screenCheckPinned } from './orchestrator/dispatch.mjs';
+process.env.MONO_CODEX_PROBE_BIN ??= new URL('./test-fixtures/fake-codex-linear.mjs', import.meta.url).pathname; // MONO-509 Linear path probe
 
 const project = '11111111-1111-1111-1111-111111111111';
 const recordId = '44444444-4444-4444-4444-444444444444';
