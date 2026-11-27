@@ -993,8 +993,8 @@ never a task change), a task change continues the record (on the
 strict path it keeps the count; the fast path gets one round on the changed task,
 inside the record's three), and main merged into the branch continues it with the same
 count (main's own files stay out of the delta). A new attempt on the same branch with the
-same risk carries the last record's findings and reviewed head with a fresh count, and
-reuses a clean round of the same head, base and contract. Round 1 reads the whole change;
+same risk carries the last record's findings and reviewed head with a fresh count (its
+rounds are never reused). Round 1 reads the whole change;
 later rounds read the fixes and open findings. After the strict path's third
 round the orchestrator may grant one extra round per attempt (`resume.mjs`
 `extraRound: {reason}`): only when at most one finding is open (successor

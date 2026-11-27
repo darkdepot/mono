@@ -448,9 +448,9 @@ test('shared review context refreshes the remote base, uses HEAD while dirty, an
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
 // MONO-502: a new attempt on the same branch carries the last record (findings, last reviewed head; rounds and failures
-// start afresh), reuses a clean round of an earlier attempt on the same head, base and contract, and after main is
-// merged in keeps the record; a rewritten branch, another branch, another risk or an unfinished host run carry nothing.
-test('MONO-502 a new attempt on the same branch carries the record and reuses a clean earlier round', async () => {
+// start afresh), never reuses an earlier attempt's round, and after main is merged in keeps the record; a rewritten
+// branch, another branch, another risk or an unfinished host run carry nothing.
+test('MONO-502 a new attempt on the same branch carries the record, never an earlier round', async () => {
   const { execFileSync } = await import('node:child_process');
   const { atomicJson } = await import('./runtime.mjs');
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-carry-'));
@@ -481,15 +481,15 @@ test('MONO-502 a new attempt on the same branch carries the record and reuses a 
       carried: { head: reviewed, base, runId: source.runId, reviewedFiles: ['input.mjs', 'other.mjs'] } }, 'findings and the last reviewed head carry over');
     assert.equal(context.history.reuse, null, 'a not-converged earlier round is never reused');
     assert.deepEqual(reviewContext(request(a1), branchPins).history.record, record, 'the own attempt keeps its record as before');
-    // The same head with a clean earlier round on the same base and contract: reused, not repeated.
+    // A clean earlier round on this very head, base and contract is not reused: the new attempt reviews it as a delta.
     const clean = seal('clean', receipt(a1, fixed, 'clean'));
     context = reviewContext(request(a2), branchPins);
-    assert.deepEqual(context.history.reuse, clean, 'a clean round of an earlier attempt on this head, base and contract counts');
+    assert.deepEqual([context.history.reuse, context.history.record?.carried?.head], [null, fixed], 'an earlier attempt\'s round is never reused; its record carries');
     assert.equal(sourceReceipts(evidenceRoot, a2.file, { ...branchPins, risk: 'standard', critical: null }).length, 0, 'another risk carries nothing');
     assert.equal(sourceReceipts(evidenceRoot, a2.file, { ...branchPins, branch: 'mono/other', risk: 'risky', critical: null }).length, 0, 'another branch carries nothing');
     assert.equal(sourceReceipts(evidenceRoot, a1.file, { ...branchPins, risk: 'risky', critical: null }).length, 0, 'a later attempt is never a source');
     const marker = hostRunMarker(evidenceRoot, clean.collectionId); fs.mkdirSync(path.dirname(marker), { recursive: true }); fs.writeFileSync(marker, '{}');
-    assert.equal(reviewContext(request(a2), branchPins).history.reuse, null, 'a receipt whose host run did not finish is not trusted');
+    assert.equal(reviewContext(request(a2), branchPins).history.record?.carried?.head, reviewed, 'a receipt whose host run did not finish is not trusted');
     fs.rmSync(marker);
     // Main merged into the branch: the earlier attempt's record still carries (its base and head are in the branch).
     git('switch', 'main'); fs.writeFileSync(path.join(repo, 'main.txt'), 'main'); const main = commit('main moved'); git('push', 'origin', 'main');

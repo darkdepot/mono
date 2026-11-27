@@ -616,6 +616,13 @@ test('MONO-502: a carried record (new attempt) reviews only the delta and counts
  const rewritten=f.git('checkout','-q','--orphan','other');f.write('a.mjs','x\n');f.git('add','.');f.git('commit','-qm','unrelated');
  const fresh=await runReviewRound({...f.request,base:f.git('rev-parse','HEAD'),head:f.git('rev-parse','HEAD'),stageRecord:carried},echo());assert.equal(fresh.round.scope,'full','a head the record never reached reads the whole change');
 });
+test('MONO-502: a file the branch restores to its base content (a removed guard) stays in the delta',async t=>{
+ const f=deltaFixture(t),first=await runReviewRound(f.request,echo({findings:[sample]}));
+ const reverted=f.commit('b.mjs',f.lines('b'),'drop the guard: b.mjs back to base');const runner=echo();
+ const second=await runReviewRound({...f.request,head:reverted,stageRecord:first},runner);
+ assert.ok(second.round,JSON.stringify(second.failures));const [c]=seen(runner);
+ assert.deepEqual([second.round.scope,c.files],['fixes-and-open-findings',['b.mjs']]);assert.match(c.diff,/-export const b0 = 100;/,'the revert itself is reviewed');
+});
 test('MONO-502: main merged into the branch continues the record; main\'s files stay out of the delta',async t=>{
  const f=deltaFixture(t),first=await runReviewRound(f.request,echo({findings:[sample]}));
  const branch=f.git('rev-parse','--abbrev-ref','HEAD');f.git('checkout','-q','-b','main-line',f.base);f.write('c.mjs','export const c = 1;\n');f.git('add','.');f.git('commit','-qm','main moved');const main=f.git('rev-parse','HEAD');

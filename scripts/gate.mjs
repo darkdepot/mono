@@ -153,7 +153,8 @@ const openDefects = record => openItems(leftover(record));
 const sameAttempt = (file, pinsFile) => typeof file === 'string' && path.dirname(file) === path.dirname(pinsFile);
 // MONO-483: a not-reviewed receipt names its cause; an old one without it counts as the work's own.
 const notReviewedCause = receipt => receipt.review.cause === 'environment' ? 'environment' : 'review';
-// MONO-502: sources are spent receipts of earlier attempts of the same issue on the same branch (sourceReceipts);
+// MONO-502: sources are spent receipts of earlier attempts of the same issue on the same branch (sourceReceipts): only
+// their record carries over (carriedRecord); a round of an earlier attempt is never reused;
 // ancestor(a, b) says the review may build on commit a at b (the gate injects git ancestry; pure callers get equality).
 export function reviewHistory(receipts, { pins, head, base, contractDigest, retries = [], now = new Date().toISOString(), sources = [], ancestor = (a, b) => a === b }) {
   const mine = receipts.filter(receipt => receipt?.producer === REVIEW_PRODUCER && sameAttempt(receipt.pins?.file, pins.file) && receipt.review)
@@ -185,9 +186,7 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest, retr
     // The latest round's reason stays on the line whenever that round has no label, whatever earlier rounds named.
     notReviewedWork: [...new Set(streak.flatMap(receipt => receiptWork(receipt.review)))],
     notReviewedReason: streak.length && !receiptWork(streak.at(-1).review).length ? streak.at(-1).review.reason ?? null : null,
-    // MONO-502: a clean round of an earlier attempt on this exact head, base and contract counts too.
-    reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ??
-      sources.findLast(receipt => receipt.head === head && same(receipt) && ACCEPTED.includes(receipt.review.outcome)) ?? null,
+    reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,
     record: carriedRecord(completed, sources, head, base, ancestor) };
 }
 // The record the next round continues: this attempt's latest on this base, or on an older base main moved forward from

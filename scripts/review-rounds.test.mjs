@@ -200,7 +200,7 @@ test("MONO-483 host run: planted, edited or removed review retries and task chan
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-// MONO-502: the review gate reads an earlier attempt's history receipts (carried record, reused clean round), so a host
+// MONO-502: the review gate reads an earlier attempt's history receipts (their record carries over), so a host
 // run of a later attempt that plants or edits one bound to the earlier attempt is touched evidence: edited ones are put
 // back, planted ones quarantined; another issue's receipts stay out of it.
 test("MONO-502 host run: a planted or edited history receipt of an earlier attempt of the issue is touched evidence", () => {

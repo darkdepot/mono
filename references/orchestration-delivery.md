@@ -272,9 +272,10 @@ fixes since the last reviewed head and the open findings, a task change's round
 too (plus the files its text names; a reviewed file rewritten by more than half is
 read whole); the same head reuses its round; `not-reviewed` spends nothing. A new
 attempt on the same branch and risk carries the last record (findings, last
-reviewed head) and counts rounds afresh: its first round reads only the delta, and
-a clean round of an earlier attempt on the same head, base and contract is reused.
-After main is merged into the branch the delta keeps only files of `base..head`. `ROUND_LIMIT` stays 3 and
+reviewed head) and counts rounds afresh: its first round reads only the delta; an
+earlier attempt's round is never reused. After main is merged into the branch the
+delta leaves out files main changed whose head content is main's; a file the
+branch itself restored to its base stays in the delta. `ROUND_LIMIT` stays 3 and
 `reviewContext` in `gate.mjs` counts from the receipt history. The strict path
 gets at most one extra round per attempt (below): with it the limit is 4.
 

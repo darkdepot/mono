@@ -26,8 +26,8 @@ export function quarantineEvidence(evidenceRoot, file) {
   fs.mkdirSync(path.dirname(target), { recursive: true }); fs.renameSync(file, target);
 }
 const attemptOf = (receiptPins, pinsFile) => typeof receiptPins === "string" && path.dirname(receiptPins) === path.dirname(pinsFile);
-// MONO-502: the review gate reads history receipts of earlier attempts of the same issue (their record carries over and a
-// clean round may be reused), so in history any receipt of the issue is judged and kept like this attempt's own.
+// MONO-502: the review gate reads history receipts of earlier attempts of the same issue (their record carries over),
+// so in history any receipt of the issue is judged and kept like this attempt's own.
 const issueOf = file => /^([A-Z][A-Z0-9]*-[1-9][0-9]*)-a[1-9][0-9]*$/.exec(path.basename(path.dirname(file)))?.[1];
 const issueOfAttempt = (receiptPins, pinsFile) => typeof receiptPins === "string" && path.dirname(path.dirname(receiptPins)) === path.dirname(path.dirname(pinsFile)) &&
   !!issueOf(pinsFile) && issueOf(receiptPins) === issueOf(pinsFile);
