@@ -44,8 +44,8 @@ fingerprint changes with these rules; record formats and scripts do not change.
 MONO-485 explicitly changes PC-016: an owner start (`by=owner`) is admitted by one
 of two paths, the answer to the shown summary or the owner's forward consent
 `mono-forward: granted scope=start` named outside fences («Согласие наперёд:») and
-checked by reading Linear (no revoke, same PRD and Design versions, at most three
-Issues, the consent words). The `mono-package: start` machine form, `by=owner`
+checked by reading Linear (no revoke, same PRD and Design versions, the consent
+words). The `mono-package: start` machine form, `by=owner`
 and the dispatch scripts do not change; forgery resistance is not a goal. The bounded
 Project fingerprint changes with this rule.
 

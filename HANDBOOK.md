@@ -1851,7 +1851,7 @@ names outside fences («Согласие наперёд:») a `mono-forward: gra
 Project. The suite passes every earlier passed text stage of the chain as
 `forwardEvidence`; the grant must be the write that followed a real owner reply
 declared `forward: "tech"|"package"|"start"` with the same words. Scope, PRD and Design
-versions, revokes, at most three start Issues and the words are checked against the
+versions, revokes and the words are checked against the
 fresh dump; between the words and the record only an interjection marked
 `continues: true` may be an owner reply. An approval record carries a grant only
 for a reply that declares `forward`.

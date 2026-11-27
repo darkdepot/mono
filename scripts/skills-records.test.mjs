@@ -2893,6 +2893,10 @@ test('MONO-485 an anchored inherited start keeps the record check and leaves onl
  assert.notEqual(r.status,'failed',r.reason);
  assert.deepEqual(r.starts.map(s=>[s.replyId,s.stage,s.kind]),[['handoff-forward','delivery','package-start']],'the suite sees the work start signal');
 });
+// MONO-505: the consent covers the project's tasks whatever their count.
+test('MONO-485 a start under consent with four tasks passes',async t=>{
+ const r=(await forwardFixture(t,{issues:4})).check();assert.equal(r.status,'passed',r.reason);
+});
 test('MONO-485 a Tech record under package scope passes; start needs scope=start',async t=>{
  const r=(await forwardFixture(t,{kind:'tech',scope:'package'})).check();assert.equal(r.status,'passed',r.reason);
 });
@@ -2903,7 +2907,6 @@ for(const [label,options,reason] of [
  ['other Design',{grantDesign:'00000000-0000-4000-8000-0000000000d1'},/consent Design differs/],
  ['owner correction between consent and record',{between:{reply:'Поправка: колонку назови «Откуда».'}},/owner reply after the consent/],
  ['revoked before the record',{revoked:true},/consent revoked before the record/],
- ['four tasks',{issues:4},/more than three tasks/],
  ['other words in the record',{words:'да'},/owner words differ from the consent/],
  ['foreign consent',{grantProject:'00000000-0000-4000-8000-0000000000ff'},/consent belongs to another project/],
  ['missing consent record',{consentRef:'00000000-0000-4000-8000-0000000000aa'},/consent record missing/],

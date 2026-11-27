@@ -147,8 +147,7 @@ the start names outside fences («Согласие наперёд:») the owner'
 `mono-forward: revoked` for it before the start, its PRD version equal to the
 latest `mono-prd: approved` before the start and to the PRD in `mono-tech: approved`
 if any, its Design equal to the latest `mono-design: approved` before the start
-(`none` without Design), at most three Issues in `issues=`, and the consent words
-quoted verbatim in the start. A start on neither path fails. Both paths keep the
+(`none` without Design), and the consent words quoted verbatim in the start. A start on neither path fails. Both paths keep the
 same machine record. Ordinary Projects require `by=owner`; only Projects delegated
 with work start (PC-019, not the narrow mode) accept `by=orchestrator` with a reason
 and the countercheck verdict outside fences.

@@ -734,7 +734,6 @@ function inheritedRecordCheck(request,write,data,dump,exchange,createProject){
  if((grant.design==='self'?idOf(grantRow):grant.design)!==(designApproval?idOf(designApproval.comment):'none'))throw new Error('consent Design differs');
  if(earlier.some(row=>forwardFields(bodyOf(row),FORWARD_REVOKED).some(revoke=>revoke?.consent===idOf(grantRow))))throw new Error('consent revoked before the record');
  if(kind==='mono-package: start'){
-  if(fields.issues.split(',').filter(Boolean).length>3)throw new Error('start under consent names more than three tasks');
   const packet=dump.projectComments.find(row=>idOf(row)===fields.record);
   if(!packet||packageHash(bodyOf(packet))!==fields.sha256)throw new Error('written approval does not bind the shown content/version');
  }
