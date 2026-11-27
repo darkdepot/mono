@@ -430,8 +430,6 @@ Discovery: дамп своих чтений по «4. Проверить» Idea 
 Handoff: после записи и обратного чтения пакета/задач один вызов `mono:check`
 на `handoff` и `issue` всех задач на таком же дампе; этап выдаёт отчёт проверки
 по шаблону со строкой статуса на каждый режим отдельным сообщением; Ready следующим шагом, только при PASS обоих. Своя сверка не замена, нового круга ревью нет.
-В «веди до Handoff» и «веди сам» больше трёх задач разрешает оркестратор с причиной,
-без отдельного противовеса; запись принимает ответ владельца или оркестратора.
 Ready — готовность, не старт: обычный проект и «до Handoff» начинает владелец;
 делегированный — оркестратор с причиной/противовесом. Нет Ready — остаётся Discovery.
 Реализация из Ready, старый проект или нет Ready — из Discovery после проверок.
@@ -1373,7 +1371,7 @@ builds provider environment from the route and keeps the existing two invocation
 sealed-head requirement and all certification checks. No provider key value belongs
 in config, dispatch, registry or receipts. Resumes keep their original pins.
 
-The owner approves a product deploy block once; the block adds version proof and checks to guarded merge without another approval, and a product without one merges unverified. Mono alone uses delegated package approval. Configure targets with at most five fields (kind included), unknown fields fail. No block is inferred from repository files. Configure `orchestration.transport` and `maxParallelWorkers` (default 3) when needed. Delivery settings default to a 120-second quiet interval, 7,200-second evidence limit, 10-second polling, 420-second acknowledgement wait, one collection retry and three attempts (`attemptCap` is read from the config committed at BASE, at most 6; one task gets more only through a recorded raise). This repository opts in to its own issue-only lane with its owner ID; the lane stays off by default, and consumers enable it explicitly with `issueOnlyLane.enabled` and the canonical approving `ownerPrincipal`. Plugin compatibility and helper policy: [guide](references/install.md).
+The owner approves a product deploy block once; the block adds version proof and checks to guarded merge without another approval, and a product without one merges unverified. Mono alone uses delegated package approval. Configure targets with at most five fields (kind included), unknown fields fail. No block is inferred from repository files. Configure `orchestration.transport` and `maxParallelWorkers` (default 3) when needed. Delivery settings default to a 120-second quiet interval, 7,200-second evidence limit, 10-second polling, 420-second acknowledgement wait, one collection retry and at most three counted attempts per task (fixed, with no raise; an `attemptCap` left in the config is ignored). This repository opts in to its own issue-only lane with its owner ID; the lane stays off by default, and consumers enable it explicitly with `issueOnlyLane.enabled` and the canonical approving `ownerPrincipal`. Plugin compatibility and helper policy: [guide](references/install.md).
 
 The optional `workflows."qa"` setting selects live-sweep browser automation;
 absent or null uses the available runtime tool. `qaAuth` accepts `cookie-import`,
