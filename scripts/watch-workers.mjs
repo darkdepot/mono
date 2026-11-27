@@ -954,7 +954,9 @@ function checkLog(log, gateAck, report, registry, nowMs, phasePending = false) {
   const turn = transport.turnState?.(registryEntry);
   if (turn && !report && !gateAck) {
     const event = turn.status === "failed" ? "failed" : "completed-without-report";
-    emitEvent(event, log.issue, `${turn.status} turn without an attempt-correlated terminal report; resume the same session for a report`, `${event}:${log.name}`, nowMs);
+    // MONO-504: a failed turn names the same environment cause as a dead worker, so recovery treats both alike.
+    const found = event === "failed" ? workerDeathCause(log.filePath) : null;
+    emitEvent(event, log.issue, `${turn.status} turn without an attempt-correlated terminal report; resume the same session for a report${found ? ` cause=${found}` : ""}`, `${event}:${log.name}`, nowMs);
     return;
   }
   if (ageSec < args.stallSec) return;

@@ -266,7 +266,7 @@ Workflow states:
      Ordinary silent live writers with pending commands defer stall for a fixed
      60-minute best-effort diagnostic from first watcher observation; process descendants alone prove
      nothing. At «идёт команда дольше 60 минут», inspect progress.
-     Missing writer evidence and dead are not deferred. dead cause=capacity|rate-limit|network:
+     Missing writer evidence and dead are not deferred. dead|failed cause=capacity|rate-limit|network:
      resume this attempt at 1, 5, 15, then every 15 min. Else no report: resume once for
      capsule and report, then a new attempt within cap. Record every healing step/result. Do not steer progressing workers.
 6. `decide-or-escalate`

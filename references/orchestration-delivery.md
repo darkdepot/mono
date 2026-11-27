@@ -197,7 +197,7 @@ No unfinished command means ordinary stall; missing writer evidence and `dead`
 remain unchanged. A hung command that keeps writing progress still has a fresh
 log: detecting it remains outside this rule.
 
-A `dead` line names the cause the worker's log ended on: `cause=capacity`,
+A `dead` or `failed` line names the cause the worker's log ended on: `cause=capacity`,
 `rate-limit`, `network` or `other`. An environmental death (the first three) is
 resumed in the same attempt after 1, 5 and 15 minutes, then every 15, for as long
 as the cause stays environmental; it never opens a new attempt. Should a new
