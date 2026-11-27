@@ -43,6 +43,15 @@
               "boolean",
               "null"
             ]
+          },
+          "weight": {
+            "type": "string",
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3"
+            ]
           }
         },
         "required": [
@@ -53,7 +62,8 @@
           "title",
           "trigger",
           "evidence",
-          "danger"
+          "danger",
+          "weight"
         ],
         "additionalProperties": false
       }

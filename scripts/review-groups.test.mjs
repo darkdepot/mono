@@ -20,7 +20,7 @@ const jsonBytes = value => Buffer.byteLength(JSON.stringify(value));
 const body = (tag, lines) => Array.from({ length: lines }, (_, index) => `export const ${tag}_${String(index).padStart(6, '0')} = ${'1'.repeat(80 - 30 - tag.length)};\n`).join('');
 const finding = (file, line) => ({ danger: false, class: 'missing-validation', file, anchor: `anchor ${file}`, line, title: 'Invalid input is accepted',
   trigger: 'value is negative', evidence: `${file} returns value without validation` });
-const verdictFor = (item, index) => ({ id: `F${index + 1}`, outcome: 'confirmed', weight: 'P2', danger: false, dangerCase: null,
+const verdictFor = (item, index) => ({ id: `F${index + 1}`, outcome: 'confirmed', weight: 'P1', danger: false, dangerCase: null,
   dangerReason: 'Diagnostic-only path with no data, security or gate effect.', origin: 'introduced', mergeKey: findingKey(item), outOfContract: false,
   riskRaised: false, reason: 'Still reachable.', closed: false, newEvidence: false, codeQuote: '' });
 
@@ -32,7 +32,7 @@ function fixture(t, files, baseFiles = {}) {
   write({ 'input.mjs': 'export function value(n) { return 0; }\n', ...baseFiles }); git('add', '.'); git('commit', '-qm', 'base'); const base = git('rev-parse', 'HEAD');
   write(files); git('add', '.'); git('commit', '-qm', 'head');
   const commit = entries => { write(entries); git('add', '.'); git('commit', '-qm', 'next'); return git('rev-parse', 'HEAD'); };
-  return { worktree, base, commit, request: { worktree, head: git('rev-parse', 'HEAD'), base, contract, packRoot } };
+  return { worktree, base, commit, request: { worktree, head: git('rev-parse', 'HEAD'), base, contract, packRoot, risk: 'risky' } };
 }
 // A 1 MB change: about 120 files and 1 MB of diff over six directories.
 const largeChange = (count = 120, lines = 105) => Object.fromEntries(Array.from({ length: count }, (_, index) =>

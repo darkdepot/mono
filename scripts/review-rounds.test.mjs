@@ -280,74 +280,38 @@ test("MONO-483 review retries: restoring touched evidence never undoes a void re
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-// MONO-482: the extra round grant beside the launch pins is host-only like a review retry: a host verification run that
-// plants, edits or removes it is touched evidence and the grant is put back, keeping a void recorded meanwhile.
-test("MONO-482 host run: a planted, edited or removed extra round grant is touched evidence and put back, a void survives", async () => {
-  const { recordExtraRound, voidExtraRound, extraRounds } = await import("./orchestrator/command-state.mjs");
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-extra-round-")), evidence = path.join(root, "evidence");
-  try {
-    const dir = path.join(root, "dispatch", "MONO-999-a1"), pinsFile = path.join(dir, "pins.json"), file = path.join(dir, "extra-round.json");
-    fs.mkdirSync(dir, { recursive: true }); fs.mkdirSync(path.join(evidence, "history"), { recursive: true }); fs.writeFileSync(pinsFile, "{}");
-    const planted = JSON.stringify([{ number: 1, reason: "planted", receipt: "run-3", recordedAt: "2026-11-25T10:00:00.000Z" }]);
-    let snapshot = evidenceSnapshot(evidence, pinsFile);
-    fs.writeFileSync(file, planted);
-    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /evidence changed during host verification: extra-round\.json/);
-    assert.equal(fs.existsSync(file), false, "a planted grant is moved aside");
-    const grant = recordExtraRound(dir, "QA fix after round 3", "run-3");
-    snapshot = evidenceSnapshot(evidence, pinsFile);
-    fs.rmSync(file);
-    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /extra-round\.json/);
-    assert.deepEqual(extraRounds(dir), [grant], "a removed grant is put back");
-    // During the run: the run edits the grant to another receipt and a refused startup voids the real one.
-    snapshot = evidenceSnapshot(evidence, pinsFile);
-    fs.writeFileSync(file, JSON.stringify([{ ...grant, receipt: "run-9" }]));
-    assert.equal(voidExtraRound(dir, grant, "startup refused: fixture"), true);
-    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /extra-round\.json/);
-    assert.deepEqual(extraRounds(dir), [{ ...grant, void: "startup refused: fixture" }], "the edit is gone and the void stays");
-    assert.equal(fs.existsSync(path.join(dir, "extra-round.lock")), false, "the lock is released");
-    // A voided grant leaves the attempt its extra round; an effective one refuses a second.
-    const again = recordExtraRound(dir, "after the refused startup", "run-3");
-    assert.equal(again.number, 2);
-    assert.throws(() => recordExtraRound(dir, "third", "run-3"), /one extra round per attempt/);
-    fs.writeFileSync(file, JSON.stringify([{ ...grant }, { ...again }]));
-    assert.throws(() => extraRounds(dir), /invalid extra-round\.json/, "two effective grants are never read");
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
-});
-
 // MONO-482 review round 1 (P1): a host verification run of one attempt has host rights over every attempt's control
-// files under dispatch/: planting, editing or removing another attempt's grant, retry or task change is touched
+// files under dispatch/: planting, editing or removing another attempt's retry or task change is touched
 // evidence too and is put back (a void recorded meanwhile kept).
-test("MONO-482 host run: another attempt's extra round, review retries and task changes are guarded too", async () => {
-  const { recordExtraRound, voidExtraRound, extraRounds } = await import("./orchestrator/command-state.mjs");
+test("MONO-482 host run: another attempt's review retries and task changes are guarded too", async () => {
+  const { recordReviewRetry, voidReviewRetry, reviewRetries } = await import("./orchestrator/command-state.mjs");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-cross-attempt-")), evidence = path.join(root, "evidence");
   try {
     const own = path.join(root, "dispatch", "MONO-1-a1"), other = path.join(root, "dispatch", "MONO-2-a1"), pinsFile = path.join(own, "pins.json");
     for (const dir of [own, other]) fs.mkdirSync(dir, { recursive: true });
     fs.mkdirSync(path.join(evidence, "history"), { recursive: true }); fs.writeFileSync(pinsFile, "{}");
-    // Plant: attempt MONO-1's run writes a grant, a retry and a task change for MONO-2, and one for a later attempt.
+    // Plant: attempt MONO-1's run writes a retry and a task change for MONO-2, and one for a later attempt.
     let snapshot = evidenceSnapshot(evidence, pinsFile);
-    const planted = { number: 1, reason: "planted", receipt: "run-3", recordedAt: "2026-11-25T10:00:00.000Z" };
-    fs.writeFileSync(path.join(other, "extra-round.json"), JSON.stringify([planted]));
     fs.writeFileSync(path.join(other, "review-retries.json"), JSON.stringify([{ number: 1, recordedAt: "2026-11-25T10:00:00.000Z" }]));
     fs.writeFileSync(path.join(other, "task-changes.json"), "[]");
     const later = path.join(root, "dispatch", "MONO-2-a2"); fs.mkdirSync(later); fs.writeFileSync(path.join(later, "task-changes.json"), "[]");
     const touched = evidenceTouched(snapshot, evidence, pinsFile);
-    for (const name of ["MONO-2-a1/extra-round.json", "MONO-2-a1/review-retries.json", "MONO-2-a1/task-changes.json", "MONO-2-a2/task-changes.json"])
+    for (const name of ["MONO-2-a1/review-retries.json", "MONO-2-a1/task-changes.json", "MONO-2-a2/task-changes.json"])
       assert.ok(touched?.includes(name), `${name} in ${touched}`);
-    for (const file of ["extra-round.json", "review-retries.json", "task-changes.json"]) assert.equal(fs.existsSync(path.join(other, file)), false, `planted ${file} removed`);
+    for (const file of ["review-retries.json", "task-changes.json"]) assert.equal(fs.existsSync(path.join(other, file)), false, `planted ${file} removed`);
     assert.equal(fs.existsSync(path.join(later, "task-changes.json")), false);
-    // Edit: a real grant of MONO-2 edited during the run goes back, keeping a void its refused startup wrote meanwhile.
-    const grant = recordExtraRound(other, "QA fix", "run-3");
+    // Edit: a real retry of MONO-2 edited during the run goes back, keeping a void its refused startup wrote meanwhile.
+    const retry = recordReviewRetry(other);
     snapshot = evidenceSnapshot(evidence, pinsFile);
-    fs.writeFileSync(path.join(other, "extra-round.json"), JSON.stringify([{ ...grant, receipt: "run-9" }]));
-    assert.equal(voidExtraRound(other, grant, "startup refused: fixture"), true);
-    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /MONO-2-a1\/extra-round\.json/);
-    assert.deepEqual(extraRounds(other), [{ ...grant, void: "startup refused: fixture" }]);
+    fs.writeFileSync(path.join(other, "review-retries.json"), JSON.stringify([{ ...retry, recordedAt: "2026-11-25T11:00:00.000Z" }]));
+    assert.equal(voidReviewRetry(other, retry, "startup refused: fixture"), false, "the edited entry is not found");
+    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /MONO-2-a1\/review-retries\.json/);
+    assert.deepEqual(reviewRetries(other), [retry]);
     // Remove: put back.
     snapshot = evidenceSnapshot(evidence, pinsFile);
-    fs.rmSync(path.join(other, "extra-round.json"));
-    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /MONO-2-a1\/extra-round\.json/);
-    assert.equal(extraRounds(other).length, 1);
+    fs.rmSync(path.join(other, "review-retries.json"));
+    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /MONO-2-a1\/review-retries\.json/);
+    assert.equal(reviewRetries(other).length, 1);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -377,7 +341,7 @@ test("MONO-482 host runs in progress are found across the root's attempts, and t
 // MONO-482 review round 2 (P1): host runs of one root never overlap. Overlapping, run B could snapshot run A's plant and
 // put it back after A's settlement quarantined it. Run B is refused before its snapshot while A's marker is open.
 test("MONO-482 host runs are serialized per root: B neither snapshots nor runs while A is open, so A's plant never survives", async () => {
-  const { openHostRun, extraRounds } = { ...(await import("./review-rounds.mjs")), ...(await import("./orchestrator/command-state.mjs")) };
+  const { openHostRun, reviewRetries } = { ...(await import("./review-rounds.mjs")), ...(await import("./orchestrator/command-state.mjs")) };
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-serial-")), evidence = path.join(root, "evidence");
   try {
     const dirA = path.join(root, "dispatch", "MONO-1-a1"), dirB = path.join(root, "dispatch", "MONO-2-a1");
@@ -386,16 +350,16 @@ test("MONO-482 host runs are serialized per root: B neither snapshots nor runs w
     fs.writeFileSync(path.join(root, "workers.json"), JSON.stringify({ "MONO-1": { issue: "MONO-1", attempt: 1 }, "MONO-2": { issue: "MONO-2", attempt: 1 } }));
     const idA = `preflight-collect:${"a".repeat(40)}:1`, idB = `preflight-collect:${"b".repeat(40)}:1`;
     const markerA = openHostRun(evidence, idA, pinsA);
-    // A's run plants B's grant; B's run is refused before it snapshots anything.
-    fs.writeFileSync(path.join(dirB, "extra-round.json"), JSON.stringify([{ number: 1, reason: "planted", receipt: "run-3", recordedAt: "2026-11-25T10:00:00.000Z" }]));
+    // A's run plants B's retry; B's run is refused before it snapshots anything.
+    fs.writeFileSync(path.join(dirB, "review-retries.json"), JSON.stringify([{ number: 1, recordedAt: "2026-11-25T10:00:00.000Z" }]));
     assert.throws(() => openHostRun(evidence, idB, pinsB), error => error.code === "EHOSTRUN" && /host verification preflight-collect-a{40}-1 is running or unrecovered/.test(error.message));
     assert.equal(fs.existsSync(hostRunMarker(evidence, idB)), false, "run B opened no marker and took no snapshot");
     // A settles: the plant is removed. B, opened only now, snapshots a clean tree.
-    assert.match(evidenceTouched(JSON.parse(fs.readFileSync(markerA, "utf8")).snapshot, evidence, pinsA), /MONO-2-a1\/extra-round\.json/);
+    assert.match(evidenceTouched(JSON.parse(fs.readFileSync(markerA, "utf8")).snapshot, evidence, pinsA), /MONO-2-a1\/review-retries\.json/);
     fs.rmSync(markerA);
     const markerB = openHostRun(evidence, idB, pinsB);
     assert.equal(evidenceTouched(JSON.parse(fs.readFileSync(markerB, "utf8")).snapshot, evidence, pinsB), null);
-    assert.deepEqual(extraRounds(dirB), [], "the forged grant did not survive");
+    assert.deepEqual(reviewRetries(dirB), [], "the forged retry did not survive");
     fs.rmSync(markerB);
     // A marker left by a retired attempt (its collector is gone) is settled by the next opening, never blocking forever.
     const stale = openHostRun(evidence, idA, pinsA);
@@ -412,7 +376,7 @@ test("MONO-482 host runs are serialized per root: B neither snapshots nor runs w
 // the retired-attempt settlement already settled (every settle takes launch.lock and re-checks the marker).
 test("MONO-482 a marker settled meanwhile is never settled twice: recovery re-checks it under launch.lock", async () => {
   const { openHostRun, settleRetiredHostRunsSync } = await import("./review-rounds.mjs");
-  const { recordExtraRound, extraRounds } = await import("./orchestrator/command-state.mjs");
+  const { recordReviewRetry, reviewRetries } = await import("./orchestrator/command-state.mjs");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-host-settle-")), evidence = path.join(root, "evidence");
   try {
     const dirA = path.join(root, "dispatch", "MONO-1-a1"), dirB = path.join(root, "dispatch", "MONO-2-a1"), pinsA = path.join(dirA, "pins.json");
@@ -422,12 +386,12 @@ test("MONO-482 a marker settled meanwhile is never settled twice: recovery re-ch
     openHostRun(evidence, id, pinsA);
     let grant = null;
     const result = await recoverHostRun(evidence, id, pinsA, { afterStop() {
-      // Meanwhile: the retired attempt's marker is settled by the next opening, then B's resume records a real grant.
+      // Meanwhile: the retired attempt's marker is settled by the next opening, then B's resume records a real retry.
       settleRetiredHostRunsSync(root);
-      grant = recordExtraRound(dirB, "QA fix", "run-3");
+      grant = recordReviewRetry(dirB);
     } });
     assert.equal(result, null, "the marker was already settled");
-    assert.deepEqual(extraRounds(dirB), [grant], "the stale snapshot was not reapplied over the real grant");
+    assert.deepEqual(reviewRetries(dirB), [grant], "the stale snapshot was not reapplied over the real retry");
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

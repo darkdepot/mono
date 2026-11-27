@@ -1,26 +1,23 @@
 # Review Admission
 
-A collection is one read-only review round on the committed head (reviewer and
-checker of different model families). The gate line is the result; findings are
+A collection is one read-only review round on the committed head (reviewer, and
+for P0/P1 of a `risky` task a checker of another model family). The gate line is the result; findings are
 in the receipt (`review.record.findings`).
 Behavior changes: a live main-scenario run before round 1.
 
-Rounds per attempt by pinned risk: `risky` up to three, task changes
-included, plus at most one extra round the orchestrator grants after them;
-others one, plus one per task change, same head too. Round 1 reads
+Rounds per attempt by pinned risk, at most two: `risky` two, task changes
+included; others one, plus one per task change, same head too. Round 1 reads
 the whole change; later ones, a task change's and a new attempt's first too,
 read fixes and open findings. Same head reuses its round.
 
 - `review clean` or `clean-with-successors` with your verification: pass.
-- `review not-converged (round 1|2 of 3)`: fix the error class of each open
+- `review not-converged (round 1 of 2)`: fix the error class of each open
   finding, check, commit, request the next round.
 - Fast path after its round (`of 1`): fix; verify and request the final head
   as the line says (`hostVerification`: just request).
 - `worker verification missing`: run it, request again.
-- `needs-decision:` (round 3 not-converged, raised risk, round limit): park
-  with that line. If the orchestrator resumes you with an extra round, fix and
-  request the next round as usual: its line reads `round 4 of 4, extra` and
-  judges like round 3; a `needs-decision … (extra round used)` line parks again.
+- `needs-decision:` (round 2 not-converged, raised risk, round limit): park
+  with that line; there is no further round.
 - `not-reviewed:` (a role failed or coverage incomplete): no round spent;
   request this head again. `blocked:` (twice in a row): park blocked; the line
   says `(environment: …)` when the review failed on the host (timeout, sleep,
@@ -32,13 +29,13 @@ read fixes and open findings. Same head reuses its round.
 
 One defect the checker merged under one `mergeKey` counts as one open finding
 at its heaviest weight; it closes when every merged report closes.
-A fixed finding closes when the checker verifies the fix on a new head and
-the reviewer stops reporting it. Fixed PR remarks (bot, CI, owner) go in
+A fixed finding closes when the reviewer stops reporting it on a new head
+(a checked one also needs the checker's verified fix). Fixed PR remarks (bot, CI, owner) go in
 `prRemarks` as open findings; a P0/P1 one needs a fix.
 
 Successor candidates pass, not block: an older defect the task did not
 introduce (on `risky` only a harmless one); a P3 leftover from round 2 on, unless
-about data, security or a gate bypass; on round 3 (and the extra round 4) any
+about data, security or a gate bypass; an unchecked P2/P3; on round 2 any
 leftover both roles call harmless. Out-of-contract or risk-raised fixes never pass. List them in
 certificate/report. After merge the task's Linear writer files each
 `must-file` one and decides the rest.

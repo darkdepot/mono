@@ -221,7 +221,7 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     assert.equal(envelope.receipt.base, head);
     setReview(bin, { findings: blocking });
     write(gateRequest, { ...preflight, collect: true });
-    assert.match(preflightCall().stdout.trim(), /^gate preflight: fail: review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 tracked\.txt:1 Invalid input is accepted \(when: value is negative; why: The changed line accepts the value\.\)$/);
+    assert.match(preflightCall().stdout.trim(), /^gate preflight: fail: review not-converged \(round 1 of 2\); fix and request the next round; 1 open: P2 tracked\.txt:1 Invalid input is accepted \(when: value is negative; why: The changed line accepts the value\.\)$/);
     setReview(bin, { findings: [] });
     write(receiptFile, envelope); write(gateRequest, preflight); pass(preflightCall());
     // Request pins describe the worker boundary; they never become collector grants.
@@ -232,12 +232,12 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     write(gateRequest, { ...preflight, collect: true });
     const findingResult = preflightCall();
     assert.equal(findingResult.status, 1);
-    assert.match(findingResult.stdout.trim(), /^gate preflight: fail: review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 tracked\.txt:1 Invalid input is accepted \(when: value is negative; why: The changed line accepts the value\.\)$/);
+    assert.match(findingResult.stdout.trim(), /^gate preflight: fail: review not-converged \(round 1 of 2\); fix and request the next round; 1 open: P2 tracked\.txt:1 Invalid input is accepted \(when: value is negative; why: The changed line accepts the value\.\)$/);
     const failedReview = json(receiptFile).receipt;
     assert.deepEqual([failedReview.review.outcome, failedReview.review.spent, failedReview.verification.exitCode], ["not-converged", true, null], "no verification after an unaccepted review");
     setReview(bin, { findings: [] });
     write(gateRequest, preflight);
-    assert.match(preflightCall().stdout.trim(), /^gate preflight: fail: review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 tracked\.txt:1 Invalid input is accepted \(when: value is negative; why: The changed line accepts the value\.\)$/);
+    assert.match(preflightCall().stdout.trim(), /^gate preflight: fail: review not-converged \(round 1 of 2\); fix and request the next round; 1 open: P2 tracked\.txt:1 Invalid input is accepted \(when: value is negative; why: The changed line accepts the value\.\)$/);
     write(receiptFile, envelope);
     const tree = pass(run("git", ["rev-parse", "HEAD^{tree}"], repo, env)).stdout.trim();
     const alternate = pass(run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit-tree", tree, "-m", "alternate"], repo, env)).stdout.trim();
@@ -389,7 +389,7 @@ console.log(JSON.stringify(result));
       [r => { r.head = alternate; }, /missing or stale review receipt\/head\/base/],
       [r => { r.base = alternate; }, /missing or stale review receipt\/head\/base/],
       [r => { r.producer = "gate-autoreview-v2"; }, /old receipt format/],
-      [r => { r.review.outcome = "not-converged"; }, /review not-converged \(round 1 of 3\)/],
+      [r => { r.review.outcome = "not-converged"; }, /review not-converged \(round 1 of 2\)/],
       [r => { r.verification.exitCode = 1; }, /needs-decision: verification failed/],
       [r => { r.workerVerification.exitCode = 1; }, /receipt workerVerification differs from the request/],
     ]) {
@@ -1139,7 +1139,7 @@ fs.chmodSync(root,0o500);let r;try{r=cp.spawnSync(command[0],command.slice(1),{s
     assert.deepEqual([json(receiptPath).receipt.review.spent,reviewCalls(bin)],[false,[]],'no role is launched and no round is spent');
     // The same head against a base without the override resolves the default pair, whatever the diff says.
     write(file,request(ancestor,2));
-    assert.match(pass(call()).stdout,/pass: review clean \(round 1 of 3\)/);
+    assert.match(pass(call()).stdout,/pass: review clean \(round 1 of 2\)/);
     assert.deepEqual(reviewCalls(bin),['reviewer','reviewer'],'a risky first round adds the ordinary pass');
   } finally { fs.rmSync(root,{recursive:true,force:true}); }
 });

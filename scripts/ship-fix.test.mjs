@@ -77,7 +77,7 @@ for (const [risk, host] of [['standard', false], ['risky', false], ['standard', 
       }
       return JSON.parse(fs.readFileSync(path.join(evidence, `${value.head}.json`), 'utf8')).receipt;
     };
-    const limit = risk === 'risky' ? 3 : 1;
+    const limit = risk === 'risky' ? 2 : 1;
 
     // Round 1 is clean; the PR leaves draft.
     setReview(bin, { findings: [], verdict: reviewVerdict({ outcome: 'rejected', closed: true }) });
@@ -118,7 +118,7 @@ for (const [risk, host] of [['standard', false], ['risky', false], ['standard', 
       body: p2.body, urgent: false, head: first }];
     const fixRequest = at(fixed, { prRemarks });
     const receipt = round(fixRequest, risk === 'risky'
-      ? /pass: review clean \(round 2 of 3\) and verification verified on head/
+      ? /pass: review clean \(round 2 of 2\) and verification verified on head/
       : host ? /pass: review clean \(round 1 of 1\), fixes after it confirmed by the full verification on the host/
       : /pass: review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification/);
     assert.deepEqual(receipt.prRemarks, prRemarks);
