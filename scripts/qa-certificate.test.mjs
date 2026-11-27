@@ -354,7 +354,7 @@ test('MONO-503 successor bugs do not hold the green verdict and are listed', t =
   green.verdict = 'passed';
   const result = checkA(green);
   assert.equal(result.verdict, 'passed');
-  assert.deepEqual(result.successors, [certA.bugs[1]]);
+  assert.deepEqual(result.successors, [{ ...certA.bugs[1], head: f.heads.A }]);
   // A failed item without any bug still holds; an acceptance item cannot be a successor.
   assert.throws(() => checkA({ ...green, bugs: [] }), /green verdict/);
   const acceptance = structuredClone(green);
@@ -416,4 +416,26 @@ test('MONO-503 from the second pass the recheck block or a recorded full-pass re
   const fullC = { ...full, head: f.heads.C, items: f.items.map(item => ({ ...item, outcome: 'passed', evidence: [f.proof(f.heads.C, `${item.id}.cast`)] })) };
   const finalC = f.expectedFor(f.heads.C, { purpose: 'change', fullPass: { reason: 'Final gate again', final: true } });
   assert.throws(() => validateQaCertificate(f.report(fullC), finalC), /final full pass already ran/);
+});
+
+test('MONO-503 successors found on an earlier head stay listed through a green recheck', t => {
+  const f = recheckFixture(t);
+  // A: C3 blocking, C2 a successor (mockup delta) and one more successor without an item.
+  const certA = structuredClone(f.certA);
+  Object.assign(certA.items[1], { outcome: 'failed', reason: 'Hint offset' });
+  certA.bugs = [{ id: 'B1', class: 'blocking', why: 'acceptance', item: 'C3', summary: 'Draft is lost after save' },
+    { id: 'B2', class: 'successor', item: 'C2', summary: 'Hint offset against the mockup' },
+    { id: 'B3', class: 'successor', summary: 'Tooltip typo' }];
+  f.save(f.heads.A, certA, f.expectedA);
+  // B: C3 fixed live, C2 still off (failed A, so live again) and repeated; nothing else found.
+  const certB = structuredClone(f.certB);
+  certB.items[1] = { ...f.items[1], outcome: 'failed', reason: 'Hint offset', evidence: [f.proof(f.heads.B, 'c2.cast')] };
+  certB.bugs = [{ id: 'B1', class: 'successor', item: 'C2', summary: 'Hint offset against the mockup' }];
+  const listed = f.check(certB).successors;
+  assert.deepEqual(listed.map(bug => [bug.summary, bug.head]),
+    [['Tooltip typo', f.heads.A], ['Hint offset against the mockup', f.heads.B]]);
+  // If C2 passes live on B, its successor is gone; the item-less one stays.
+  const fixed = structuredClone(f.certB);
+  fixed.items[1] = { ...f.items[1], outcome: 'passed', evidence: [f.proof(f.heads.B, 'c2-ok.cast')] };
+  assert.deepEqual(f.check(fixed).successors.map(bug => bug.summary), ['Tooltip typo']);
 });

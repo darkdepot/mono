@@ -93,7 +93,8 @@ function priorPass(cert, expected, ctx) {
     const old = prevExpectations.get(item.id);
     if (!old || old.source !== item.source || old.expectation !== item.expectation) live.add(item.id);
   }
-  return { taskDir, live, items: new Map(prevCert.items.map(item => [item.id, item])), previousHead: block.previousHead };
+  return { taskDir, live, items: new Map(prevCert.items.map(item => [item.id, item])), previousHead: block.previousHead,
+    successors: prevCert.successors };
 }
 
 function carriedItem(item, prior) {
@@ -144,7 +145,13 @@ function triage(cert, expected, prior) {
     || cert.items.some(item => item.outcome === 'unverified' || (item.outcome === 'failed' && !successorFor(item.id)));
   if (cert.verdict === 'passed') need(!holding, 'green verdict has a blocking bug, a failed or an unverified item');
   else need(holding || !bugs.length, 'successor bugs alone cannot hold the verdict');
-  return bugs.filter(bug => bug.class === 'successor');
+  // Successors found on earlier heads of a recheck chain stay listed unless their item now passes live.
+  const own = bugs.filter(bug => bug.class === 'successor').map(bug => ({ ...bug, head: cert.head }));
+  const key = bug => JSON.stringify([bug.item ?? null, bug.summary]);
+  const seen = new Set(own.map(key));
+  const earlier = (prior?.successors ?? []).filter(bug => !seen.has(key(bug)) && seen.add(key(bug))
+    && !(bug.item && items.get(bug.item)?.outcome === 'passed' && items.get(bug.item).carriedFrom === undefined));
+  return [...earlier, ...own];
 }
 
 const HEAD = /^[a-f0-9]{40}$/;

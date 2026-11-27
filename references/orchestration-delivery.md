@@ -32,9 +32,11 @@ Merge still waits for green ship and green QA of one and the same head.
 Failed/unverified holds merge and wave installation. The certificate's `bugs` are
 triaged: only `blocking` ones (an acceptance item fails, a passing item regressed,
 data, security, crash) hold merge. Send them, with steps, expected/actual and
-evidence, to the same worker session on the same branch: a resume whose resume
-file lists them, no «Изменение задачи» and no new attempt (`extraRound` when the
-rounds are spent); the task contract does not change. `successor` bugs never hold
+evidence, to the same worker session on the same branch: a plain resume whose
+resume file lists them, no «Изменение задачи» and no new attempt; the task
+contract does not change. The fix head passes the gate like any fix after a round
+(fast path: the worker's full verification; strict path: the next round, or
+`extraRound` once the rounds are spent). `successor` bugs never hold
 merge: `qa-status` lists them as `successors`, and after merge the task's Linear
 writer files each as a new Issue. From the second pass on a task, before the pass,
 write `purpose`, `recipeDigest` (`qa.mjs digest`, saved for every pass) and the
@@ -121,7 +123,8 @@ certificate; rerun the full final list and publish/read back the new project rep
 Earlier tasks may deploy individually when merge deploys immediately, each after
 its own green task certificate.
 
-A final-pass bug becomes a new approved implementation Issue, branched from the
+A blocking final-pass bug becomes a new approved implementation Issue (successor
+bugs are filed after merge and never hold it), branched from the
 held task's branch. Retain **both** in `heldIssues` in dependency order, with
 each in `tasks` and `issues`; additional bugs extend the same held chain. Run task
 QA for each, final QA at the last held successor's head/test merge with the whole build.

@@ -476,8 +476,8 @@ test('MONO-484 review: an early pass on a head that never got green Ship carries
     assert.equal(result.state, 'failed'); assert.match(result.reason, /ship certificate|Head SHA|head/i);
   }
   // Even with A's ship certificate, A's own verdict is failed.
-  // MONO-503: with B on disk, A also reads as a pass without a recheck block; either refusal holds merge.
-  assert.match(qaDeliveryState({ ...f.input, head: f.prevHead, shipCertificate: f.ship(f.prevHead) }).reason, /task QA failed|second pass/);
+  // MONO-503: with B on disk, A also reads as a pass without a recheck block, refused before its verdict.
+  assert.match(qaDeliveryState({ ...f.input, head: f.prevHead, shipCertificate: f.ship(f.prevHead) }).reason, /second pass/);
 });
 
 test('MONO-503 the gate opens with successor bugs, lists them, and refuses a second pass without recheck', t => {
@@ -488,7 +488,7 @@ test('MONO-503 the gate opens with successor bugs, lists them, and refuses a sec
   cert.bugs = [{ id: 'B1', class: 'successor', item: 'C2', summary: 'Hint offset against the mockup' }];
   fs.writeFileSync(file, JSON.stringify({ certificate: 'mono-qa certificate\n' + JSON.stringify(cert) }));
   assert.deepEqual(qaDeliveryState(f.input), { state: 'passed', reason: 'task QA passed',
-    successors: [{ ...cert.bugs[0], scope: 'task' }] });
+    successors: [{ ...cert.bugs[0], head: f.head, scope: 'task' }] });
   const expectedFile = path.join(f.dir(f.head), 'task-expected.json');
   const { recheck, ...plain } = JSON.parse(fs.readFileSync(expectedFile, 'utf8'));
   fs.writeFileSync(expectedFile, JSON.stringify(plain));
