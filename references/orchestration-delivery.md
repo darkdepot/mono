@@ -29,17 +29,23 @@ read back. If the head changes first, that saved report is the carry source for 
 new head (checked without ship, never a gate by itself).
 Merge still waits for green ship and green QA of one and the same head.
 
-Failed/unverified holds merge and wave installation. Send concrete bugs, steps,
-expected/actual and evidence through a ship-fix task change, preserving
-the task attempt and prior ship state. On the new head choose a scoped recheck
-or a full pass and, before the pass, write `purpose`, `recipeDigest` (`qa.mjs digest`,
-saved for every pass) and the `recheck` block
-(prior head, its report/expectations, live items with reasons) into
-`task-expected.json` per `mono:qa`: failed/unverified, new or changed and touched
-items run live, the rest carry with the prior head's evidence. Full pass when the
-fix changes the task/expectations or shared surfaces; project and release passes
-stay full. Never narrow `expectedItems` by hand: the script cannot catch that,
-the host is the trusted boundary. Do not cap QA attempts. Recheck disputed items
+Failed/unverified holds merge and wave installation. The certificate's `bugs` are
+triaged: only `blocking` ones (an acceptance item fails, a passing item regressed,
+data, security, crash) hold merge. Send them, with steps, expected/actual and
+evidence, to the same worker session on the same branch: a resume whose resume
+file lists them, no «Изменение задачи» and no new attempt (`extraRound` when the
+rounds are spent); the task contract does not change. `successor` bugs never hold
+merge: `qa-status` lists them as `successors`, and after merge the task's Linear
+writer files each as a new Issue. From the second pass on a task, before the pass,
+write `purpose`, `recipeDigest` (`qa.mjs digest`, saved for every pass) and the
+`recheck` block (prior head, its report/expectations, `live` items with reasons:
+screens of touched files, `smoke`: a short smoke set) into `task-expected.json` per
+`mono:qa`; failed/unverified, new and changed items run live too, the rest carry.
+A full task pass instead needs `fullPass: {reason}`; the full list once more at the
+last gate before merge is `fullPass: {reason, final: true}`, once per task. The
+certificate check refuses a second pass with neither. Project, release and
+acceptance passes stay full. Never narrow `expectedItems` by hand: the script
+cannot catch that, the host is the trusted boundary. Recheck disputed items
 yourself; keep false alarms in the report with the removal reason. Missing/contradictory expectations stay unverified until a
 recorded decision; changed user-visible behavior goes to the owner before rerun.
 
