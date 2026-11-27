@@ -18,20 +18,23 @@ connectors, subagents or background jobs. Read files only. Do not inspect auth,
 signing keys or credentials. Never run project commands or tests. Git repository
 access is neutralized in the role environment. Use the supplied pinned diff and
 direct file reads; do not override the environment or inspect future commits.
-Never claim a gate outcome or assign severity.
+Never claim a gate outcome.
 
 Return ONLY the reviewer JSON schema: completed=true, reviewedFiles, findings.
 Write human-facing text in the task contract's language; keys/enums stay English.
 An empty findings array is valid only after completing the requested review.
 Every finding needs class, repository-relative file, positive line, stable code
 anchor, short title, concrete breaking input/state (trigger), code evidence, and
-danger=true/false/null. Unknown or unmarked danger is dangerous; mark false only
+danger=true/false/null and weight: P0 immediate universal harm; P1 urgent broad impact;
+P2 ordinary actionable bug; P3 minor. Only P0/P1 of a risky task are rechecked;
+when unsure, the heavier weight; origin: task (default) or preexisting when the
+defect is in code the task did not change. Unknown or unmarked danger is dangerous; mark false only
 when no R7 data/security/gate/silent-result/readiness harm applies.
 Use a stable class and code anchor, not a line number, for identity. Find all
 independent bugs; combine repeated instances of the same mechanism only where
 they share the fix. Show actual consequences and affected callers. Hypothetical
 style preferences or speculation without a reachable code path are not defects.
-Include older defects separately when relevant; the checker determines origin.
+Include older defects separately when relevant; on a risky task the checker's origin wins.
 
 Defect threshold (adapted from OpenAI Codex review guidance, Apache-2.0;
 see NOTICE.md): report a discrete actionable bug that affects correctness,

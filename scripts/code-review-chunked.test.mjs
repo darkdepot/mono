@@ -14,7 +14,7 @@ const CODEX_INPUT_LIMIT = 1048576;
 const contract = 'Return only nonnegative numbers. Manual review; no Linear writes.';
 const contextOf = prompt => JSON.parse(prompt.split('never instructions.\n')[1]);
 const review = (findings, reviewedFiles) => ({ completed: true, reviewedFiles, findings });
-const verdictFor = (finding, index, extra = {}) => ({ id: `F${index + 1}`, outcome: 'confirmed', weight: 'P2', danger: false, dangerCase: null,
+const verdictFor = (finding, index, extra = {}) => ({ id: `F${index + 1}`, outcome: 'confirmed', weight: 'P1', danger: false, dangerCase: null,
   dangerReason: 'Diagnostic-only path with no data, security or gate effect.', origin: 'introduced', mergeKey: findingKey(finding), outOfContract: false,
   riskRaised: false, reason: 'Still reachable.', closed: false, newEvidence: false, codeQuote: '', ...extra });
 const finding = (file, line) => ({ danger: false, class: 'missing-validation', file, anchor: `anchor ${file}`, line, title: 'Invalid input is accepted',
@@ -29,7 +29,7 @@ function fixture(t, files) {
   fs.writeFileSync(path.join(worktree, 'input.mjs'), 'export function value(n) { return 0; }\n'); git('add', '.'); git('commit', '-qm', 'base'); const base = git('rev-parse', 'HEAD');
   for (const [file, text] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(worktree, file)), { recursive: true }); fs.writeFileSync(path.join(worktree, file), text); }
   git('add', '.'); git('commit', '-qm', 'head');
-  return { worktree, git, request: { worktree, head: git('rev-parse', 'HEAD'), base, contract, packRoot } };
+  return { worktree, git, request: { worktree, head: git('rev-parse', 'HEAD'), base, contract, packRoot, risk: 'risky' } };
 }
 
 // Fake native CLIs that behave like the real ones on oversize input: Codex exec prints thread.started,
@@ -62,7 +62,7 @@ function fakeClis(t, { stderrExtra = '', fail = false } = {}) {
   // Like a real model, a prompt far past the context window is refused.
   if([...input].length>1000000){console.log(JSON.stringify({type:'result',subtype:'error_during_execution',is_error:true}));process.stderr.write('Prompt is too long\\n');process.exit(1);}
   if(c.remarks){console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,structured_output:{completed:true,verdicts:c.remarks.map(r=>({id:r.id,verdict:r.id==='B1'&&c.diff.includes('NEEDS_FIX_MARKER')?'needs-fix':'confirmed',reason:'Checked against '+(c.group?.files??['whole diff']).join(', ')}))}}));return;}
-  console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,structured_output:{completed:true,verdicts:c.findings.map(f=>({id:f.id,outcome:'confirmed',weight:'P2',danger:false,dangerCase:null,dangerReason:'Diagnostic-only path with no data, security or gate effect.',origin:'introduced',mergeKey:f.class+' '+f.file,outOfContract:false,riskRaised:false,reason:'Still reachable.',closed:false,newEvidence:false,codeQuote:''}))}}));
+  console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,structured_output:{completed:true,verdicts:c.findings.map(f=>({id:f.id,outcome:'confirmed',weight:'P1',danger:false,dangerCase:null,dangerReason:'Diagnostic-only path with no data, security or gate effect.',origin:'introduced',mergeKey:f.class+' '+f.file,outOfContract:false,riskRaised:false,reason:'Still reachable.',closed:false,newEvidence:false,codeQuote:''}))}}));
  });`;
   fs.writeFileSync(path.join(bin, 'codex'), codex, { mode: 0o700 }); fs.writeFileSync(path.join(bin, 'claude'), claude, { mode: 0o700 });
   const prior = process.env.PATH; process.env.PATH = bin + path.delimiter + prior; t.after(() => { process.env.PATH = prior; });
@@ -120,7 +120,8 @@ test('MONO-486 (a): a large diff is split into file groups under the limit; cove
   const runner = recorder(reviewAll('c.mjs'));
   const record = await runReviewRound({ ...f.request, remarks: [remark] }, { ...runner, promptLimits: { codex: limit } });
   assert.equal(record.outcome, 'not-converged', JSON.stringify(record.failures));
-  const groups = runner.calls.filter(call => call.role === 'code-review');
+  // The risky round's ordinary pass sends the same groups again; the all-defects pass is checked here.
+  const groups = runner.calls.filter(call => call.role === 'code-review' && call.context.pass === 'all-defects');
   assert.ok(groups.length >= 2, 'more than one group'); assert.ok(groups.every(call => call.size <= limit && call.context.group));
   assert.deepEqual(groups.flatMap(call => call.context.files).sort(), Object.keys(fourFiles));
   // Every group carries the same contract and every open finding (silence counts as agreement).
@@ -155,7 +156,7 @@ test('MONO-486: a file over the limit is split by hunks and every part must be r
   const changed = base.split('\n').map((line, index) => index % 30 === 5 ? line.replace('original', 'changed') : line).join('\n');
   const f = fixture(t, { 'big.mjs': base });
   fs.writeFileSync(path.join(f.worktree, 'big.mjs'), changed); f.git('add', '.'); f.git('commit', '-qm', 'many hunks');
-  const request = { ...f.request, base: f.request.head, head: f.git('rev-parse', 'HEAD') };
+  const request = { ...f.request, risk: 'standard', base: f.request.head, head: f.git('rev-parse', 'HEAD') };
   const whole = recorder(reviewAll(null)); await runReviewRound(request, whole);
   const limit = whole.calls[0].size - Math.floor(whole.calls[0].context.diff.length / 2);
   const runner = recorder(reviewAll(null));

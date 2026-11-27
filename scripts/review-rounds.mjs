@@ -35,12 +35,11 @@ const issueOfAttempt = (receiptPins, pinsFile) => typeof receiptPins === "string
 // While the run is going only this attempt's collection writes receipts bound to its pins, so a changed
 // history file, or a new or changed receipt bound to these pins, means the run touched the evidence.
 // Head receipts of other attempts may be replaced legitimately meanwhile and are not judged.
-// MONO-483: the attempt's host-owned control files beside the launch pins (task-changes.json, review-retries.json,
-// MONO-482 extra-round.json) are judged too: the run has host rights, and a planted task change, review retry or
-// extra round would steer the review gate.
-const CONTROL_FILES = ["task-changes.json", "review-retries.json", "extra-round.json"];
+// MONO-483: the attempt's host-owned control files beside the launch pins (task-changes.json, review-retries.json)
+// are judged too: the run has host rights, and a planted task change or review retry would steer the review gate.
+const CONTROL_FILES = ["task-changes.json", "review-retries.json"];
 // Control files whose entries a refused startup may void during the run: each is restored under its own lock.
-const VOIDABLE = { "review-retries.json": "review-retries.lock", "extra-round.json": "extra-round.lock" };
+const VOIDABLE = { "review-retries.json": "review-retries.lock" };
 // MONO-482 review: the run's host rights reach every attempt of the root, so the control files of every attempt
 // directory under dispatch/ are judged (a later attempt's directory created during the run too), not only its own.
 const attemptDirectories = pinsFile => {
@@ -72,7 +71,7 @@ export function evidenceSnapshot(evidenceRoot, pinsFile) {
   }
   return files;
 }
-// The snapshot of review-retries.json (and extra-round.json) goes back under its own lock, but a void the current file
+// The snapshot of review-retries.json goes back under its own lock, but a void the current file
 // carries for the same entry is kept: a void only narrows what an entry may do (a refused startup may void it during the host run).
 function restoreVoidable(file, bytes) {
   withLockSync(path.join(path.dirname(file), VOIDABLE[path.basename(file)]), () => {

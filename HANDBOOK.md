@@ -12,8 +12,8 @@ Canonical repository: [darkdepot/mono](https://github.com/darkdepot/mono).
 This handbook is the complete rule reference and owner-rule index. Follow its links for executable instructions, artifact contracts, templates, and runtime commands. Keep it current in the same PR whenever described behavior changes, as required by [Change Discipline](AGENTS.md#change-discipline).
 
 Code review before the PR is a read-only round inside the orchestrator's
-collection: a reviewer and an independent checker from different model families
-read the pinned diff of the committed head and one receipt is written. By
+collection: a reviewer (and, for P0/P1 of a risky task, an independent checker
+from another model family) read the pinned diff of the committed head and one receipt is written. By
 default the collection does not verify: the worker runs the full product
 verification on the head and sends `workerVerification {head, exitCode}`, and the
 receipt passes only with exit 0 on its head. A product whose full verification
@@ -22,7 +22,7 @@ forbids) sets `orchestration.delivery.hostVerification: true`; see
 [host verification](#host-verification). The change sets the path: Handoff marks installer,
 delivery, deploy and release, product prod scripts, user data and migrations,
 security, public API and review-gate changes `risky` (the strict path, at most
-three rounds per task attempt plus one extra round the orchestrator may grant); everything else, `deep` included, takes the fast
+two rounds per task attempt, no extra round); everything else, `deep` included, takes the fast
 path with one round, after which the worker fixes and the final head passes on
 its full verification without another round. A behavior change gets a live run
 of its main scenario before the first round (pack skills and stages: the
@@ -33,16 +33,15 @@ other round, after a task change or in a new attempt on the same branch (its rec
 and last reviewed head carry over, its round count starts afresh), reads only the
 fixes since the last reviewed head and open findings, plus the files the task change
 names and any reviewed file rewritten by more than half. The worker fixes open findings and asks for the next round without
-waiting for anyone. A fixed finding closes when the checker verifies the fix
-and the reviewer stops reporting it. Older defects (on the strict path only
-harmless ones), minor leftovers from the
-second round on (never about data, security or a gate bypass) and, from the
-third round on, leftovers both roles call harmless pass as successor candidates;
-anything else left after the third round parks `needs-decision` for the
-orchestrator: first one extra round in the same attempt (resume with `extraRound`,
-once per attempt, only with at most one open finding and no raised risk,
-out-of-contract work or open owner remark), then merge by the rule, split the
-Issue or change the approach. The collector host needs both the Codex and Claude CLIs logged in by
+waiting for anyone. The checker rechecks only P0/P1 findings of a `risky` task;
+elsewhere findings stand as the reviewer reported them, and a finding closes when
+the reviewer stops reporting it (a checked one also needs the checker's verified
+fix). Older defects (on the strict path only harmless ones), minor leftovers from the
+second round on (never about data, security or a gate bypass), unchecked P2/P3
+findings and, on the second round, leftovers marked harmless pass as
+successor candidates; anything else left after the second round parks
+`needs-decision` with the exits: merge by the rule, merge what is done and split
+the rest, move findings to successors, or change the approach. The collector host needs both the Codex and Claude CLIs logged in by
 subscription, from different model families; a single-family setup gives
 `not-reviewed`, and so does a logged-out CLI whose role has to run. The Claude login refreshes itself: before each Claude role on the host, and every five minutes from the watcher while a worker is registered; a role that fails on an expired login names it («вход Claude истёк или не найден»), gets one refresh and one relaunch. A `not-reviewed` receipt names its cause: `environment` when every failed role attempt timed out, met a sleeping host, the network, a login still failing after its refresh, an overloaded model or a rate limit (the second attempt waits a minute), otherwise `review`, with the host load and a sleep flag; two in a row on one head park `blocked`, and a pair is retried by resuming the worker with `reviewRetry` after the host or the cause is fixed, never with a task change; a `review` pair names the work's cause on its blocked line (a malformed or incomplete answer, incomplete coverage, a single model family, unreadable or binary files, a CLI that could not start) and mentions the CLI login only when a login failed. See [review rounds](references/orchestration-delivery.md#review-rounds).
 A large change (over about 200 KB of diff, or over the engine's input limit: Codex 1,000,000 bytes, Claude 800,000) is reviewed in small file groups of about 200 KB of diff, files of one directory together, a large file by its hunks (one indivisible hunk over 200 KB gets a group of its own up to the engine limit), with the same contract and open findings in every group plus a bounded map of the whole change (every changed file with its added and removed lines and the headers of its changed places; hunk headers are dropped first when the map is too large); the groups of one pass run two at a time, each call with its own single retry (the PR remark check also goes in groups, where one group's needs-fix decides). Every role call keeps the fixed 600 s limit, and a timeout names it (`role failed (timeout after 600 s)`, cause `timeout`). Answers of finished groups are kept in the host's evidence root (`review-groups/<head>.json`, outside every worker grant, bound to head, base, contract and launch pins and judged by the host-run evidence snapshot for every attempt of the root: any change, a symlink or a missing file discards the saved answers instead of restoring them, it is touched evidence for the attempt whose run it was). Reuse is off under host verification: when this attempt or any attempt of the orchestrator root has `hostVerification` pinned (checked under launch.lock at opening and again right before every read and write), nothing is saved or read and every collection reviews every group, because host verification runs worker code with host rights that could plant saved answers; isolating it is MONO-489. Otherwise, when a group fails twice the round is `not-reviewed` and spends nothing, and the next collection on the same head and contract runs only the missing groups; any change of head, contract, open findings or group plan reuses nothing. The round is spent only when every group of every pass is covered: each pass must cover every changed file from its own answers (an answer that leaves out files it was sent gets its pass one focused pass on them, then the round is `not-reviewed`), so an empty answer never rides on an earlier pass; from round 2 on (same contract) the checker reads the fixes since the last round and the change and files only around the open findings; the checker's evidence is otherwise cut to the findings' regions to fit; over 16 findings go to the checker in batches of at most 16 (whole files, one directory together, halved when over the input limit, two at a time, each with its own retry), a merge holds only inside one batch (a duplicate across a batch boundary counts twice) and one failed batch leaves the round `not-reviewed`; what cannot fit fails with its reason, as does a role failure, which keeps the engine's trimmed stderr.
@@ -845,10 +844,7 @@ with the Issue. After an environmental `not-reviewed` streak, `resume.mjs` with
 `reviewRetry: true` (never with `taskChange`) records a retry in
 `dispatch/KEY-aN/review-retries.json` instead, dropped when the launch is refused;
 it lets the next collection on the same head run a round and changes neither the
-contract nor the round count. On the strict path after its three rounds,
-`resume.mjs` with `extraRound: {reason}` (with or without `taskChange`, never with
-`reviewRetry`) checks the right to one extra round and records it in
-`dispatch/KEY-aN/extra-round.json`, bound to the last spent receipt. Resume carries no grants or network override; a risk, critical or
+contract nor the round count. Resume carries no grants or network override; a risk, critical or
 grant change is a new attempt on the same branch. A task has at most 3 counted attempts and there is no raise.
 Spawn refuses a counted attempt without progress (open blockers did not decrease over
 two passes, a blocker came back twice, the change is oversized) or with the same
@@ -977,38 +973,28 @@ head and merge-base: review `clean` or `clean-with-successors` and the worker's
 verification exit 0 on that head (`workerVerification`), or with host
 verification the collection's own run exit 0 on that head; receipts of older
 attempts keep their sandbox verification. Rounds are counted from receipts per task
-attempt: three at most, the same head reuses its round,
+attempt: two at most for any risk, the same head reuses its round,
 `not-reviewed` spends nothing (two in a row on a head park `blocked`: an
 `environment` pair is retried with `reviewRetry` after restoring the host, a
 `review` pair is fixed (a code fix is a new head) or retried the same way; a retry is
 never a task change), a task change continues the record (on the
 strict path it keeps the count; the fast path gets one round on the changed task,
-inside the record's three), and main merged into the branch continues it with the same
+inside the record's two), and main merged into the branch continues it with the same
 count (main's own files stay out of the delta). A new attempt on the same branch with the
 same risk carries the last record's findings and reviewed head with a fresh count (its
 rounds are never reused). Round 1 reads the whole change;
-later rounds read the fixes and open findings. After the strict path's third
-round the orchestrator may grant one extra round per attempt (`resume.mjs`
-`extraRound: {reason}`): only when at most one finding is open (successor
-candidates of an accepted round aside; findings the checker merged under one
-`mergeKey` on the same head count once at their heaviest weight, here and in the
-gate's open list and successor lines, while a closed member never closes an open one) and the last round raised no risk, found no
-out-of-contract work and left no open owner remark on the PR. Resume checks this
-before writing anything and records the grant in `dispatch/KEY-aN/extra-round.json`
-beside the launch pins under `extra-round.lock` (host-only, outside worker grants,
-bound to the attempt's third spent receipt; dropped on a refused spawn, voided on
-a refused startup, guarded by the host-run evidence snapshot, which covers the
-control files of every attempt of the root, with one host run per root at a time
-(another collection's run refuses this one before anything runs, no round spent;
-a retired attempt's marker, its group ended or its id reused, is settled by the next
-opening; every settlement holds launch.lock and re-reads the marker; a collection
-with a host run reads the contract, retries and grant again only after its run
-opened); a resume writing one waits for every
-host run and, with a retry or extra round, for the attempt's round in flight); the gate's strict
-limit becomes 4 and the review round accepts a fourth (`round 4 of 4, extra`),
-which judges like round 3. A not-converged extra round parks
-`needs-decision … (extra round used)` with no second grant. After
-the limit the orchestrator merges by the rule, splits the Issue or changes approach in a new attempt.
+later rounds read the fixes and open findings. Findings the checker merged under one
+`mergeKey` on the same head count once at their heaviest weight in the gate's open
+list and successor lines, while a closed member never closes an open one. The
+host-run evidence snapshot covers the control files of every attempt of the root,
+with one host run per root at a time (another collection's run refuses this one
+before anything runs, no round spent; a retired attempt's marker is settled by the
+next opening; every settlement holds launch.lock and re-reads the marker; a
+collection with a host run reads the contract and retries again only after its run
+opened); a resume writing one waits for every host run and, with a retry, for the
+attempt's round in flight. There is no extra round (MONO-512): after the limit the
+line names the exits and the orchestrator merges by the rule, splits the Issue or
+changes approach in a new attempt.
 Refusals are receipts too and reach the worker as a `gate preflight: fail:`
 line. With pin `screenCheck` the attempt's first round waits for the host's
 screen check of the same head; waiting and mismatches spend no round. Every review role and
@@ -1437,7 +1423,7 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-19.** Require a green Ship certificate bound to the current PR head; prove delivery only through the owner-approved deploy.targets block — [Project Config](HANDBOOK.md#project-config).
 - **K-20.** Grant issue-only delivery only when all nine conditions hold and the owner approves the exact Issue fingerprint, falling back to Project-first on doubt, so the shortcut cannot bypass its boundary — [Nine eligibility conditions](skills/issue/references/run.md#девять-условий) and [Trust boundary](references/issue-only-lane.md#trust-boundary).
 - **K-21.** Invalidate approval whenever an approved issue-only body changes and obtain new review and fingerprint approval, so the approved text remains the executed contract — [Renewal recovery](skills/issue/references/decisions.md#повторный-вход).
-- **K-22.** Run the code review round at every risk class with the policy's reviewer and checker from different model families, pinned at launch, so the reviewer has the capability and depth to challenge the author — [Roles](references/model-policy.md#roles) and [Review admission](references/review-admission.md#review-admission).
+- **K-22.** Run the code review round at every risk class with the policy's reviewer, and for P0/P1 findings of a risky task a checker from a different model family, pinned at launch, so the reviewer has the capability and depth to challenge the author — [Roles](references/model-policy.md#roles) and [Review admission](references/review-admission.md#review-admission).
 - **K-23.** Classify work as tiny, standard, deep or risky to set artifact requirements and review depth, treating money, data, access, production and public interfaces as risky domains, so dangerous work cannot pass through a light process — [Risk Classification](references/readiness-gates.md#risk-classification).
 - **K-24.** Require both pre-write package reviewers for a single Issue at every risk, including tiny; multiple Issues keep up to three rounds and tiny advisory with reason. Formal pre-ship review for standard/deep/risky stays unchanged — [Review Gate Policy](references/readiness-gates.md#review-gate-policy).
 - **K-25.** Close an Issue on confirmed merge and keep delivery truth, proof, checker and date in its closeout comment — [Deploy](skills/deploy/SKILL.md#run).
@@ -1568,9 +1554,11 @@ optional `stageRecord`; output has schemaVersion, base, contractDigest, rounds,
 findings, failures, the current round and the code-computed outcome. Callers own
 persistence. Technical failure returns no round and is retried once.
 Changed-file coverage gets one focused pass. Risky/1000-line first rounds add an
-ordinary second pass, combined by stable class/file/code-anchor key. The checker
-sees every open finding (over 16, split into batches), original base content, current files and prior decisions;
-only its evidence closes or reopens a key. Checker wire IDs are F1..Fn; code maps
+ordinary second pass, combined by stable class/file/code-anchor key. The reviewer
+weighs each finding P0-P3 and marks its origin (task or preexisting; without a checker a
+preexisting one is a successor, never blocking); the checker runs only for P0/P1 (unweighted counts as P1)
+of a risky task, and sees each such open finding (over 16, split into batches), original base content, current files and prior decisions;
+only its evidence closes or reopens a checked key. Checker wire IDs are F1..Fn; code maps
 them back to stable keys. Each failed answer is kept in the record, capped at 8 KiB. The checker assigns P0-P3, R7 danger/case,
 origin relative to task base, merge key and scope/risk flags. Code adds whether
 the location changed after round one (±2 context lines), costs and failures.
@@ -1609,7 +1597,7 @@ Role stdout/stderr accumulate bounded raw Buffers (16 MiB/1 MiB) and decode once
 
 Outcome vocabulary is `clean`, `clean-with-successors`, `not-converged`,
 `not-reviewed`. The round itself reports successorKeys as `not-converged`; the
-collection gate decides which leftovers pass as successor candidates. A
+collection gate decides which leftovers pass as successor candidates. A checked
 dangerous finding closes only by an agreed fix on a later head: the checker
 verifies it gone and the reviewer no longer reports it. No model selects a
 stage outcome.

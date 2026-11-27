@@ -384,59 +384,6 @@ export function voidReviewRetry(pinsDirectory, retry, reason, options) {
     return true;
   }, options);
 }
-// MONO-482: one extra review round per attempt on the strict path. Resume with extraRound {reason} records the grant in
-// extra-round.json beside the launch pins, outside every worker grant like task-changes.json, bound to the attempt's last
-// spent receipt (the gate checks the right to it before anything is written). The file is a list so a grant voided by a
-// refused startup stays visible; at most one grant is effective. Every read-modify-write holds extra-round.lock.
-const EXTRA_REASON_LIMIT = 500;
-const extraRoundsFile = pinsDirectory => path.join(pinsDirectory, "extra-round.json");
-export const extraRoundLock = pinsDirectory => path.join(pinsDirectory, "extra-round.lock");
-const validExtraRound = (grant, index) => grant?.number === index + 1 && typeof grant.reason === "string" && grant.reason.trim() !== "" &&
-  grant.reason.length <= EXTRA_REASON_LIMIT && typeof grant.receipt === "string" && grant.receipt !== "" && typeof grant.recordedAt === "string" &&
-  !Number.isNaN(Date.parse(grant.recordedAt)) && new Date(grant.recordedAt).toISOString() === grant.recordedAt &&
-  Object.keys(grant).every(key => ["number", "reason", "receipt", "recordedAt", "void"].includes(key)) &&
-  (grant.void === undefined || (typeof grant.void === "string" && grant.void.trim() !== ""));
-export function extraRounds(pinsDirectory) {
-  const file = extraRoundsFile(pinsDirectory);
-  if (!fs.existsSync(file)) return [];
-  const grants = readJson(file);
-  if (!Array.isArray(grants) || !grants.every(validExtraRound) || grants.filter(grant => grant.void === undefined).length > 1)
-    throw new Error("invalid extra-round.json");
-  return grants;
-}
-export function validExtraRoundRequest(value) {
-  if (value === undefined) return;
-  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).join() !== "reason" ||
-      typeof value.reason !== "string" || !value.reason.trim() || value.reason.length > EXTRA_REASON_LIMIT)
-    throw new Error(`extraRound must be {reason} with a non-empty reason of at most ${EXTRA_REASON_LIMIT} characters`);
-}
-export function recordExtraRound(pinsDirectory, reason, receipt, options) {
-  return withLockSync(extraRoundLock(pinsDirectory), () => {
-    const grants = extraRounds(pinsDirectory);
-    if (grants.some(grant => grant.void === undefined)) throw new Error("extraRound refused: one extra round per attempt and this attempt already has it; split the Issue or change approach in a new attempt");
-    const grant = { number: grants.length + 1, reason: reason.trim(), receipt, recordedAt: new Date().toISOString() };
-    atomicJson(extraRoundsFile(pinsDirectory), [...grants, grant]);
-    return grant;
-  }, options);
-}
-// A proven refused spawn delivered nothing: drop exactly the grant it recorded.
-export function dropExtraRound(pinsDirectory, grant, options) {
-  withLockSync(extraRoundLock(pinsDirectory), () => {
-    const grants = extraRounds(pinsDirectory);
-    if (canonical(grants.at(-1) ?? null) === canonical(grant)) atomicJson(extraRoundsFile(pinsDirectory), grants.slice(0, -1));
-  }, options);
-}
-// A refused startup: the grant it recorded is marked void wherever it stands; returns whether it was found.
-export function voidExtraRound(pinsDirectory, grant, reason, options) {
-  return withLockSync(extraRoundLock(pinsDirectory), () => {
-    const grants = extraRounds(pinsDirectory);
-    const index = grants.findIndex(item => item.number === grant.number && item.recordedAt === grant.recordedAt);
-    if (index < 0) return false;
-    grants[index] = { ...grants[index], void: String(reason || "startup refused").replace(/\s+/g, " ").slice(0, 300) };
-    atomicJson(extraRoundsFile(pinsDirectory), grants);
-    return true;
-  }, options);
-}
 // MONO-505: a fixed limit of counted attempts per task, with no raise; uncounted attempts (MONO-504) never count.
 // An attempt-cap-raises.json left by an older pack and orchestration.delivery.attemptCap are ignored.
 export const ATTEMPT_LIMIT = 3;

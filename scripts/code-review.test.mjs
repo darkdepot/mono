@@ -8,7 +8,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runReviewRound, runRemarkCheck, remarkDigest, prRemarkFindings, parseReviewer, parseChecker, findingKey, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, reviewGit, MAX_ANSWER_BYTES } from './code-review.mjs';
 import { requiredPairings, validateModels, digest, REVIEW_PRODUCER } from './runtime.mjs';
-import { reviewHistory } from './gate.mjs';
+import { reviewHistory, roundOutcome } from './gate.mjs';
 import { scoreCheckerProbes } from './code-review-eval.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 let catalogBin, originalPath;
@@ -41,14 +41,14 @@ test('C51/r7: binary assets are absent from role inputs and never block text rev
   const f=fixture(t),file='fixtures/screen.png';fs.mkdirSync(path.join(f.worktree,'fixtures'));if(mode!=='added')fs.writeFileSync(path.join(f.worktree,file),mode==='text-to-binary'?'ordinary text\n':png);f.git('add','.');f.git('commit','--allow-empty','-qm','asset base');const base=f.git('rev-parse','HEAD');
   if(mode==='deleted')fs.unlinkSync(path.join(f.worktree,file));else if(mode!=='unchanged')fs.writeFileSync(path.join(f.worktree,file),mode==='binary-to-text'?'ordinary new text\n':Buffer.concat([png,Buffer.from([0xff])]));
   fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// C51 text change\n');f.git('add','.');f.git('commit','-qm','text head');let calls=0;
-  const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.deepEqual(c.files,['input.mjs']);assert.deepEqual(c.unreviewedFiles,[]);assert.ok(!fs.existsSync(path.join(request.worktree,file)));assert.ok(c.diff.includes('C51 text change'));return {response:review([],c.files)};}});
+  const result=await runReviewRound({...f.request,risk:'standard',base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.deepEqual(c.files,['input.mjs']);assert.deepEqual(c.unreviewedFiles,[]);assert.ok(!fs.existsSync(path.join(request.worktree,file)));assert.ok(c.diff.includes('C51 text change'));return {response:review([],c.files)};}});
   assert.equal(calls,1,JSON.stringify(result.failures));assert.deepEqual(result.failures,[]);assert.equal(result.outcome,'clean');assert.deepEqual(result.unreviewedFiles,[]);assert.deepEqual(result.binaryFiles,mode==='unchanged'?[]:[file]);assert.equal(formatReviewReport(result).includes('двоичный файл, не проверялся'),mode!=='unchanged');assert.equal(f.git('status','--porcelain'),'');
  });
 });
 test('C51/r7: binary-only and over-capture-limit assets remain report-only exclusions',async t=>{
  for(const large of [false,true])await t.test(large?'large binary':'binary-only',async t=>{
   const f=fixture(t),base=f.git('rev-parse','HEAD'),file='asset.bin';fs.writeFileSync(path.join(f.worktree,file),large?Buffer.alloc(33*1024*1024,0xff):Buffer.from([0xff]));f.git('add','.');f.git('commit','-qm','binary head');let calls=0;
-  const record=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.deepEqual(c.files,[]);assert.equal(c.diff,'');assert.ok(!fs.existsSync(path.join(request.worktree,file)));return {response:review([],[])};}});
+  const record=await runReviewRound({...f.request,risk:'standard',base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.deepEqual(c.files,[]);assert.equal(c.diff,'');assert.ok(!fs.existsSync(path.join(request.worktree,file)));return {response:review([],[])};}});
   assert.equal(calls,1,JSON.stringify(record.failures));assert.deepEqual(record.failures,[]);assert.equal(record.outcome,'clean');assert.deepEqual(record.binaryFiles,[file]);assert.deepEqual(record.unreviewedFiles,[]);assert.match(formatReviewReport(record),/asset\.bin; двоичный файл, не проверялся/);
  });
 });
@@ -65,8 +65,8 @@ test('C51/r7: unreadable role answers keep the existing single retry and measure
  const f=fixture(t);
  assert.throws(()=>parseReviewer(' '.repeat(MAX_ANSWER_BYTES+1)),/size limit/);assert.throws(()=>parseReviewer('[]'),/object required/);
  for(const bad of ['{"completed":true,"verdicts":[',{completed:true,verdicts:[]},{completed:true,verdicts:[],extra:'field'}]){
-  const runner=responder({responses:[review([sample]),bad,bad]}),record=await runReviewRound(f.request,runner);
-  assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);assert.equal(runner.calls.length,3);const failed=record.costs.filter(cost=>cost.role==='code-review-checker');assert.equal(failed.length,2);assert.ok(failed.every(cost=>cost.usage.input_tokens===12));assert.equal(record.failures.filter(failure=>failure.role==='code-review-checker').length,2);
+  const runner=responder({responses:[review([sample]),review([sample]),bad,bad]}),record=await runReviewRound(f.request,runner);
+  assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);assert.equal(runner.calls.length,4);const failed=record.costs.filter(cost=>cost.role==='code-review-checker');assert.equal(failed.length,2);assert.ok(failed.every(cost=>cost.usage.input_tokens===12));assert.equal(record.failures.filter(failure=>failure.role==='code-review-checker').length,2);
  }
 });
 const hostR6=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/host-r6-regressions.json'),'utf8'));
@@ -74,7 +74,7 @@ test('C50: scope and risk are the OR over all rounds before reopening shortcuts 
  for(const flag of ['outOfContract','riskRaised'])for(const outcome of ['confirmed','rejected','unresolved'])await t.test(`${flag}/${outcome}`,async t=>{
   const f=fixture(t),first=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({outcome:'rejected'})]}));assert.equal(first.outcome,'clean');
   const second=await runReviewRound({...f.request,stageRecord:first},responder({findings:[sample],verdicts:[verdict({outcome,[flag]:true,newEvidence:false})]}));assert.equal(second.findings[0][flag],true);assert.equal(second.outcome,'not-converged');
-  const third=await runReviewRound({...f.request,stageRecord:second},responder({findings:[sample],verdicts:[verdict({outcome:'rejected',closed:true,newEvidence:true,[flag]:false})]}));assert.equal(third.findings[0][flag],true);assert.equal(third.outcome,'not-converged');assert.equal(third.findings[0].dangerMaximum,false);
+  const third=await runReviewRound({...f.request,stageRecord:room(second)},responder({findings:[sample],verdicts:[verdict({outcome:'rejected',closed:true,newEvidence:true,[flag]:false})]}));assert.equal(third.findings[0][flag],true);assert.equal(third.outcome,'not-converged');assert.equal(third.findings[0].dangerMaximum,false);
  });
 });
 
@@ -93,7 +93,8 @@ test('an amended contract judges scope and risk objections again; same contract 
 });
 
 test('PR remarks enter the round as open findings; a fix closes only when the checker verifies it on the new head',async t=>{
- const f=fixture(t),older=f.request.base,remark=(extra={})=>({id:'PRRT_1',source:'bot',file:'input.mjs',line:1,title:'Negative input passes',body:'value(-1) returns -1',urgent:false,head:older,...extra});
+ // MONO-512: an urgent (P1) remark of a risky task goes to the checker; a P2 one stands as the reviewer reports it (below).
+ const f=fixture(t),older=f.request.base,remark=(extra={})=>({id:'PRRT_1',source:'bot',file:'input.mjs',line:1,title:'Negative input passes',body:'value(-1) returns -1',urgent:true,head:older,...extra});
  const [seeded]=prRemarkFindings([remark()]);
  const fixed=await runReviewRound({...f.request,remarks:[remark()]},responder({verdicts:[verdict({outcome:'rejected',closed:true,reason:'The new guard rejects negative input.'})]}));
  assert.deepEqual([fixed.outcome,fixed.findings[0].key,fixed.findings[0].status],['clean',seeded.key,'closed'],'a verified fix closes the bot remark');
@@ -116,6 +117,10 @@ test('PR remarks enter the round as open findings; a fix closes only when the ch
  assert.deepEqual([repeated.outcome,repeated.findings[0].source],['not-converged','owner'],'the reviewer repeating an owner instruction keeps its source');
  for(const bad of [{...remark(),id:'bad id'},{...remark(),source:'chat'},{...remark(),file:'../x'},{...remark(),head:'x'},{...remark(),extra:1}])assert.throws(()=>prRemarkFindings([bad]));
  assert.throws(()=>prRemarkFindings([remark(),remark()]),/repeated/);
+ const plain=responder(),gone=await runReviewRound({...f.request,remarks:[remark({urgent:false})]},plain);
+ assert.deepEqual([gone.outcome,gone.findings[0].status,plain.calls.some(call=>call.role==='code-review-checker')],['clean','closed',false],'a P2 remark closes when the reviewer stops reporting it, without the checker');
+ const again=await runReviewRound({...f.request,remarks:[remark({urgent:false})]},responder({findings:[{class:'pr-remark',file:'input.mjs',anchor:'bot PRRT_1',line:1,title:'still there',trigger:'t',evidence:'e',weight:'P2'}]}));
+ assert.deepEqual([again.outcome,again.successorKeys],['not-converged',[gone.findings[0].key]],'a P2 remark reported again leaves as a successor');
 });
 test('remark check: a fresh read-only pass on the checker engine confirms or sends back each decision without a code change',async t=>{
  const f=fixture(t),remarks=[{id:'B1',source:'bot',title:'Summary',body:'Greptile summary',urgent:false,head:f.request.head,decision:'informational',evidence:'No change requested.'},
@@ -185,7 +190,7 @@ test('C47: maximum danger survives serialized rounds, weaker later flags and ori
   assert.equal(first.outcome,'not-converged');assert.equal(first.findings[0].dangerMaximum,initial);
   const second=await runReviewRound({...f.request,stageRecord:JSON.parse(JSON.stringify(first))},responder({findings:[{...sample,danger:later}],verdicts:[verdict({danger:false,origin:'pre-existing',outcome:'rejected',closed:true})]}));
   assert.equal(second.outcome,'not-converged');assert.equal(second.findings[0].dangerMaximum,maximum);assert.equal(second.findings[0].danger,true);assert.equal(second.findings[0].origin,'contract');assert.equal(second.findings[0].status,'unresolved');
-  const third=await runReviewRound({...f.request,stageRecord:JSON.parse(JSON.stringify(second))},responder({verdicts:[verdict({outcome:'rejected',closed:true})]}));
+  const third=await runReviewRound({...f.request,stageRecord:room(JSON.parse(JSON.stringify(second)))},responder({verdicts:[verdict({outcome:'rejected',closed:true})]}));
   assert.equal(third.outcome,'not-converged');assert.equal(third.findings[0].dangerMaximum,maximum);assert.equal(third.findings[0].status,'unresolved');assert.deepEqual(third.successorKeys,[]);
  });
 });
@@ -207,9 +212,9 @@ test('C47: host r6 probes stay disputed after a previous safe rejection of the s
   const f=fixture(t),file=probe.finding.file,source='\n'.repeat(probe.finding.line-1)+probe.checker.codeQuote+'\n';
   fs.mkdirSync(path.dirname(path.join(f.worktree,file)),{recursive:true});fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','probe base');const base=f.git('rev-parse','HEAD');
   fs.appendFileSync(path.join(f.worktree,file),'// reviewed head\n');f.git('add','.');f.git('commit','-qm','probe head');const request={...f.request,base,head:f.git('rev-parse','HEAD')};
-  const first=await runReviewRound(request,responder({findings:[{...probe.finding,danger:false}],responses:[review([{...probe.finding,danger:false}],[file]),{completed:true,verdicts:[{...probe.checker,danger:false,dangerCase:null,closed:true}]}]}));
+  const first=await runReviewRound(request,responder({findings:[{...probe.finding,danger:false}],responses:[review([{...probe.finding,danger:false}],[file]),review([{...probe.finding,danger:false}],[file]),{completed:true,verdicts:[{...probe.checker,weight:'P1',danger:false,dangerCase:null,closed:true}]}]}));
   assert.equal(first.outcome,'clean');
-  const next=await runReviewRound({...request,stageRecord:first},responder({responses:[review([probe.finding],[file]),{completed:true,verdicts:[{...probe.checker,newEvidence:false}]}]}));
+  const next=await runReviewRound({...request,stageRecord:first},responder({responses:[review([probe.finding],[file]),{completed:true,verdicts:[{...probe.checker,weight:'P1',newEvidence:false}]}]}));
   assert.equal(next.outcome,'not-converged',JSON.stringify(next.failures));assert.equal(next.findings[0].status,'unresolved');assert.equal(next.findings[0].danger,true);assert.equal(next.findings[0].codeQuote,probe.checker.codeQuote);
  });
 });
@@ -254,11 +259,11 @@ test('C43: reopening a closed or rejected dangerous finding preserves its danger
   // Replay a historical pre-C44 closure/rejection to preserve C43's legacy reopening boundary.
   const legacy={...second,findings:second.findings.map(item=>({...item,status:closed?'closed':'rejected',outcome:'rejected',closed}))};
   for(const outcome of ['confirmed','rejected']){
-   const third=await runReviewRound({...f.request,stageRecord:legacy},responder({findings:[sample],verdicts:[verdict({outcome,newEvidence:true,origin:'pre-existing'})]}));
+   const third=await runReviewRound({...f.request,stageRecord:room(legacy)},responder({findings:[sample],verdicts:[verdict({outcome,newEvidence:true,origin:'pre-existing'})]}));
    assert.equal(third.findings[0].danger,true,'saved danger cannot be removed when the same key returns');
    assert.equal(third.findings[0].origin,origin,'saved dangerous provenance cannot be changed by reopening');
    assert.equal(third.findings[0].status,outcome==='confirmed'?'confirmed':'unresolved','dangerous rejection stays disputed even after a legacy closure');
-   assert.equal(third.outcome,'not-converged');assert.equal(third.rounds.length,3);
+   assert.equal(third.outcome,'not-converged');assert.equal(third.rounds.length,2);
   }
  });
 });
@@ -277,7 +282,7 @@ test('C35/C44: pinned deletion is recorded and closes a dangerous or unmarked fi
   assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.equal(result.findings[0].status,'closed');assert.equal(result.findings[0].closed,true);assert.equal(result.findings[0].danger,true);
   assert.deepEqual(result.findings[0].deletionEvidence,{before:fromBase?f.request.base:first.round.head,head});
   fs.writeFileSync(path.join(f.worktree,'other.mjs'),'export const other = 1;\n');f.git('add','.');f.git('commit','-qm','later unrelated change');
-  const later=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:result},{runRole:async request=>{
+  const later=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:room(result)},{runRole:async request=>{
    const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:request.role==='code-review'?review([],context.files):{completed:true,verdicts:[verdict({outcome:'rejected',closed:true,reason:'The affected file stays deleted.'})]}};
   }});
   assert.equal(later.outcome,'clean',JSON.stringify(later.failures));assert.equal(later.findings[0].status,'closed','an agreed fix stays closed after its file left the diff');
@@ -287,10 +292,10 @@ test('an established data, security or gate-bypass case survives a later uncerta
  const f=fixture(t),finding={...sample,danger:true};
  const roles=verdicts=>({runRole:async request=>{const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);
   return {response:request.role==='code-review'?review([finding],context.files):{completed:true,verdicts}};}});
- const first=await runReviewRound(f.request,roles([verdict({weight:'P3',danger:true,dangerCase:'data',dangerReason:'Retained records are overwritten.'})]));
+ const first=await runReviewRound(f.request,roles([verdict({weight:'P1',danger:true,dangerCase:'data',dangerReason:'Retained records are overwritten.'})]));
  assert.equal(first.findings[0].dangerCase,'data');
  fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// later\n');f.git('add','.');f.git('commit','-qm','later');
- const second=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:first},roles([verdict({weight:'P3',outcome:'unresolved',danger:null,dangerCase:'unknown',dangerReason:'Cannot exclude the earlier effect.'})]));
+ const second=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:first},roles([verdict({weight:'P1',outcome:'unresolved',danger:null,dangerCase:'unknown',dangerReason:'Cannot exclude the earlier effect.'})]));
  assert.equal(second.findings[0].dangerCase,'data','the strict case is not downgraded to unknown');assert.equal(second.findings[0].status,'unresolved');
 });
 test('a dangerous finding closes only by an agreed fix on a later head and then stays closed',async t=>{
@@ -307,9 +312,9 @@ test('a dangerous finding closes only by an agreed fix on a later head and then 
  const second=await runReviewRound({...f.request,head,stageRecord:first},roles([],closing));
  assert.equal(second.findings[0].status,'closed','checker verified the fix and the reviewer stopped reporting it');assert.equal(second.outcome,'clean');assert.equal(second.findings[0].danger,true);
  head=commit('// later\n');
- const third=await runReviewRound({...f.request,head,stageRecord:second},roles([],closing));
- assert.equal(third.round.number,3);assert.equal(third.findings[0].status,'closed','it stays closed');assert.equal(third.outcome,'clean');
- const reopened=await runReviewRound({...f.request,head,stageRecord:second},roles([finding],closing));
+ const third=await runReviewRound({...f.request,head,stageRecord:room(second)},roles([],closing));
+ assert.equal(third.round.number,2);assert.equal(third.findings[0].status,'closed','it stays closed');assert.equal(third.outcome,'clean');
+ const reopened=await runReviewRound({...f.request,head,stageRecord:room(second)},roles([finding],closing));
  assert.equal(reopened.findings[0].status,'unresolved','a new report reopens it');assert.equal(reopened.outcome,'not-converged');
 });
 test('C58: present unavailable files cannot become deletion evidence or close an open finding',async t=>{
@@ -426,9 +431,11 @@ test('C23: roles get a read-only pinned export without repository Git helpers',a
   assert.ok(context.symlinks.includes('link'));seen.push(r.worktree);
   return {response:r.role==='code-review'?review([sample],context.files):{completed:true,verdicts:[verdict({outcome:'rejected',reason:'Fixture finding is absent.'})]}};
  }});
- assert.equal(record.outcome,'clean',JSON.stringify(record.failures));assert.deepEqual(record.unreviewedFiles,[]);assert.equal(seen.length,2);assert.equal(seen[0],seen[1]);assert.equal(fs.existsSync(seen[0]),false,'export removed after circle');
+ assert.equal(record.outcome,'clean',JSON.stringify(record.failures));assert.deepEqual(record.unreviewedFiles,[]);assert.equal(seen.length,3,'two reviewer passes (risky) and the checker');assert.equal(seen[0],seen[2]);assert.equal(fs.existsSync(seen[0]),false,'export removed after circle');
 });
-const verdict=(extra={})=>({id:'F1',outcome:'confirmed',weight:'P2',danger:false,dangerCase:null,dangerReason:'This diagnostic-only path has no data, security or gate effects.',origin:'introduced',mergeKey:key,outOfContract:false,riskRaised:false,reason:'Negative values pass through the changed public function.',closed:false,newEvidence:false,codeQuote:'',...extra});
+// MONO-512: two rounds per attempt; a longer history keeps only its last round so the next round fits the limit.
+const room=record=>({...record,rounds:record.rounds.slice(-1)});
+const verdict=(extra={})=>({id:'F1',outcome:'confirmed',weight:'P1',danger:false,dangerCase:null,dangerReason:'This diagnostic-only path has no data, security or gate effects.',origin:'introduced',mergeKey:key,outOfContract:false,riskRaised:false,reason:'Negative values pass through the changed public function.',closed:false,newEvidence:false,codeQuote:'',...extra});
 const review=(findings=[],reviewedFiles=['input.mjs'])=>({...transcripts.clean,findings,reviewedFiles});
 function fixture(t) {
  const worktree=fs.mkdtempSync(path.join(os.tmpdir(),'mono-circle-test-')); t.after(()=>fs.rmSync(worktree,{recursive:true,force:true}));
@@ -436,7 +443,7 @@ function fixture(t) {
  git('init','-q');git('config','user.email','fixture@example.test');git('config','user.name','Fixture');
  fs.writeFileSync(path.join(worktree,'input.mjs'),'export function value(n) { return 0; }\n');git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
  fs.writeFileSync(path.join(worktree,'input.mjs'),'export function value(n) { return n; }\n');git('add','.');git('commit','-qm','head');const head=git('rev-parse','HEAD');
- const request={worktree,head,base,contract:'Return only nonnegative numbers. Manual review; no Linear writes.',packRoot};
+ const request={worktree,head,base,contract:'Return only nonnegative numbers. Manual review; no Linear writes.',packRoot,risk:'risky'};
  return {worktree,git,request};
 }
 function responder({findings=[],verdicts=[verdict()],responses=[]}={}) {
@@ -445,7 +452,7 @@ function responder({findings=[],verdicts=[verdict()],responses=[]}={}) {
   return {response,elapsedMs:10,usage:{input_tokens:12,output_tokens:8}};}};
 }
 test('AE1: completed covered clean first round stops without checker and prints an owner report',async t=>{
- const f=fixture(t),runner=responder();const record=await runReviewRound(f.request,runner);
+ const f=fixture(t),runner=responder();const record=await runReviewRound({...f.request,risk:'standard'},runner);
  assert.equal(record.outcome,'clean');assert.equal(record.rounds.length,1);assert.equal(runner.calls.length,1);
  for(const field of ['Проверено:','Найдено:','Осталось:','Можно идти дальше'])assert.ok(formatReviewReport(record).includes(field));
  assert.equal(record.round.costs[0].usage.input_tokens,12);
@@ -465,8 +472,8 @@ test('C1: four recorded danger-removal shapes fail calibration; corrected contro
   assert.equal(scoreCheckerProbes([expected],[observed]).releaseBlocked,true);
   assert.equal(scoreCheckerProbes([expected],[expected]).releaseBlocked,false);
   const f=fixture(t);let record;
-  for(let i=0;i<3;i++)record=await runReviewRound({...f.request,stageRecord:record},responder({findings:[item.finding],verdicts:[item.correctedControl]}));
-  assert.equal(record.rounds.length,3);assert.equal(record.outcome,'not-converged');assert.deepEqual(record.successorKeys,[]);
+  for(let i=0;i<2;i++)record=await runReviewRound({...f.request,stageRecord:record},responder({findings:[item.finding],verdicts:[{...item.correctedControl,weight:'P1'}]}));
+  assert.equal(record.rounds.length,2);assert.equal(record.outcome,'not-converged');assert.deepEqual(record.successorKeys,[]);
   assert.equal(record.findings[0].danger,true);assert.equal(record.findings[0].dangerCase,expected.dangerCase);
   assert.match(formatReviewReport(record),/опасность/);assert.ok(!formatReviewReport(record).includes('неопасное'));
  });
@@ -512,9 +519,9 @@ test('AE4: two unreadable reviewer responses consume no round, never clean',asyn
  assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);assert.equal(runner.calls.length,2);assert.ok(record.failures.length>=2);
 });
 test('one malformed checker response retries once, missing response fails whole batch',async t=>{
- const f=fixture(t);let r=responder({responses:[review([sample]),'{', {completed:true,verdicts:[verdict()]}]});
- assert.equal((await runReviewRound(f.request,r)).outcome,'not-converged');assert.equal(r.calls.length,3);
- r=responder({responses:[review([sample]),{completed:true,verdicts:[]},{completed:true,verdicts:[]}]});
+ const f=fixture(t);let r=responder({responses:[review([sample]),review([sample]),'{', {completed:true,verdicts:[verdict()]}]});
+ assert.equal((await runReviewRound(f.request,r)).outcome,'not-converged');assert.equal(r.calls.length,4);
+ r=responder({responses:[review([sample]),review([sample]),{completed:true,verdicts:[]},{completed:true,verdicts:[]}]});
  const result=await runReviewRound(f.request,r);assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);
 });
 test('incomplete coverage gets one focused pass then not-reviewed',async t=>{
@@ -545,41 +552,109 @@ test('checker covers every open finding even when reviewer omits it, only checke
 test('closed key does not reopen without checker new evidence',async t=>{
  const f=fixture(t);const first=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({outcome:'rejected'})]}));
  const second=await runReviewRound({...f.request,stageRecord:first},responder({findings:[sample]}));assert.equal(second.outcome,'clean');assert.equal(second.findings[0].status,'rejected');
- const third=await runReviewRound({...f.request,stageRecord:second},responder({findings:[sample],verdicts:[verdict({newEvidence:true})]}));assert.equal(third.outcome,'not-converged');
+ const third=await runReviewRound({...f.request,stageRecord:room(second)},responder({findings:[sample],verdicts:[verdict({newEvidence:true})]}));assert.equal(third.outcome,'not-converged');
 });
 test('risk/scope expansion cannot be hidden by rejecting a finding; pre-existing danger requires successor',async t=>{
  const f=fixture(t);for(const flag of ['outOfContract','riskRaised']){
  const record=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({outcome:'rejected',[flag]:true})]}));assert.equal(record.outcome,'not-converged');}
  const record=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({origin:'pre-existing',danger:true,dangerCase:'data',dangerReason:'Existing deletion can lose user records.'})]}));assert.deepEqual(record.successorKeys,[key]);
 });
-test('three-round cap cannot reset by changing contract/base; an amended contract continues the record, read whole once',async t=>{
+test('two-round cap cannot reset by changing contract/base; an amended contract continues the record, read whole once',async t=>{
  const f=fixture(t);let record;
- for(let i=1;i<=3;i++){record=await runReviewRound({...f.request,stageRecord:record},responder({findings:[sample]}));assert.equal(record.rounds.length,i);assert.equal(record.round.scope,i===1?'full':'fixes-and-open-findings');}
- const runner=responder();const over=await runReviewRound({...f.request,stageRecord:record},runner);assert.equal(over.outcome,'not-reviewed');assert.equal(over.rounds.length,3);assert.equal(runner.calls.length,0);
+ for(let i=1;i<=2;i++){record=await runReviewRound({...f.request,stageRecord:record},responder({findings:[sample]}));assert.equal(record.rounds.length,i);assert.equal(record.round.scope,i===1?'full':'fixes-and-open-findings');}
+ const runner=responder();const over=await runReviewRound({...f.request,stageRecord:record},runner);assert.equal(over.outcome,'not-reviewed');assert.equal(over.rounds.length,2);assert.equal(runner.calls.length,0);assert.match(over.failures.at(-1).reason,/2-round limit/);
  const amended=await runReviewRound({...f.request,contract:'changed',stageRecord:record},runner);assert.equal(amended.outcome,'not-reviewed');assert.equal(runner.calls.length,0,'an amendment does not reset the cap');
  const continued=await runReviewRound({...f.request,contract:'changed',stageRecord:{...record,rounds:record.rounds.slice(0,1)}},responder({findings:[sample]}));
  assert.deepEqual([continued.rounds.length,continued.round.scope,continued.outcome],[2,'fixes-and-open-findings','not-converged'],'the open finding survives the amendment; MONO-502: the changed contract reads the fixes and open findings');
- const next=await runReviewRound({...f.request,contract:'changed',stageRecord:continued},responder({findings:[sample]}));
- assert.deepEqual([next.rounds.length,next.round.scope],[3,'fixes-and-open-findings'],'later rounds on the same contract stay narrow');
+ const next=await runReviewRound({...f.request,contract:'changed',stageRecord:room(continued)},responder({findings:[sample]}));
+ assert.deepEqual([next.rounds.length,next.round.scope],[2,'fixes-and-open-findings'],'later rounds on the same contract stay narrow');
  const rebased=await runReviewRound({...f.request,stageRecord:{...record,base:'f'.repeat(40),rounds:record.rounds.slice(0,1)}},runner);assert.equal(rebased.outcome,'not-reviewed');assert.match(rebased.failures.at(-1).reason,/stage base changed/);
 });
-// MONO-482: the gate passes the round limit it allows (3, or 4 with the attempt's extra round). The fourth round
-// works like the third (same scope choice, same successor rule); a fifth never runs and no other limit is taken.
-test('MONO-482 extra round: a gate-granted fourth round runs like the third, never a fifth',async t=>{
+// MONO-512: the gate passes ROUND_LIMIT (2) for every risk; round 2 applies the last-round successor rule and a
+// third round never runs; no other limit is taken (the MONO-482 extra round is gone).
+test('MONO-512: two rounds per attempt, the second is the last, never a third',async t=>{
  const f=fixture(t);let record;
- for(let i=1;i<=3;i++)record=await runReviewRound({...f.request,stageRecord:record},responder({findings:[sample]}));
- assert.deepEqual(record.successorKeys,[key],'round 3 lists a harmless blocking leftover as a successor');
- const fourth=await runReviewRound({...f.request,stageRecord:record,roundLimit:4},responder({findings:[sample]}));
- assert.deepEqual([fourth.rounds.length,fourth.round.number,fourth.round.scope],[4,4,'fixes-and-open-findings'],'the fourth round reads the fixes and open findings');
- assert.deepEqual(fourth.successorKeys,[key],'round 4 applies the round-3 successor rule');
+ for(let i=1;i<=2;i++)record=await runReviewRound({...f.request,stageRecord:record},responder({findings:[sample]}));
+ assert.deepEqual([record.outcome,record.successorKeys],['not-converged',[]],'MONO-512 (E): round 2 never lists an open P1 of the task as a successor');
  const runner=responder();
- const fifth=await runReviewRound({...f.request,stageRecord:fourth,roundLimit:4},runner);
- assert.deepEqual([fifth.outcome,fifth.rounds.length,runner.calls.length],['not-reviewed',4,0]);assert.match(fifth.failures.at(-1).reason,/four-round limit/);
- for(const roundLimit of [2,5,'4',null]){const bad=await runReviewRound({...f.request,stageRecord:record,roundLimit},runner);
+ const third=await runReviewRound({...f.request,stageRecord:record,roundLimit:2},runner);
+ assert.deepEqual([third.outcome,third.rounds.length,runner.calls.length],['not-reviewed',2,0]);assert.match(third.failures.at(-1).reason,/2-round limit/);
+ for(const roundLimit of [1,3,4,'2',null]){const bad=await runReviewRound({...f.request,stageRecord:{...record,rounds:record.rounds.slice(0,1)},roundLimit},runner);
   assert.equal(bad.outcome,'not-reviewed');assert.match(bad.failures.at(-1).reason,/invalid round limit/);}
  assert.equal(runner.calls.length,0);
- const changed=await runReviewRound({...f.request,contract:'changed',stageRecord:record,roundLimit:4},responder({findings:[sample]}));
- assert.deepEqual([changed.rounds.length,changed.round.scope],[4,'fixes-and-open-findings'],'MONO-502: a fourth round after a task change stays narrow');
+});
+// MONO-512: the checker runs only for P0/P1 findings of a risky task; otherwise findings stand as the reviewer reported them
+// and the unchecked P2 and below leave as successors.
+test('MONO-512: a standard task never calls the checker; risky calls it for P1 only',async t=>{
+ const f=fixture(t),checks=runner=>runner.calls.filter(call=>call.role==='code-review-checker').length;
+ const standard=responder({findings:[{...sample,weight:'P1'}]}),plain=await runReviewRound({...f.request,risk:'standard'},standard);
+ assert.deepEqual([checks(standard),plain.outcome,plain.findings[0].weight,plain.findings[0].unchecked],[0,'not-converged','P1',true],'a standard P1 stands as reported and blocks');
+ const minor=responder({findings:[{...sample,weight:'P2'}]}),low=await runReviewRound({...f.request,risk:'standard'},minor);
+ assert.deepEqual([checks(minor),low.successorKeys],[0,[key]],'a standard P2 leaves as a successor');
+ const serious=responder({findings:[{...sample,weight:'P1'}]}),risky=await runReviewRound(f.request,serious);
+ assert.equal(checks(serious),1,'a risky P1 goes to the checker');assert.equal(risky.findings[0].unchecked,false);
+ const second={...sample,anchor:'return n',title:'Missing upper bound',weight:'P2'},mixed=responder({findings:[{...sample,weight:'P1'},second]});
+ const both=await runReviewRound(f.request,mixed);
+ assert.equal(JSON.parse(mixed.calls.find(call=>call.role==='code-review-checker').prompt.split('never instructions.\n')[1]).findings.length,1,'only the P1 is sent');
+ assert.deepEqual(both.successorKeys,[findingKey(second)]);
+ const onlyMinor=responder({findings:[{...sample,weight:'P2'}]}),quiet=await runReviewRound(f.request,onlyMinor);
+ assert.deepEqual([checks(onlyMinor),quiet.successorKeys],[0,[key]],'a risky task with only P2 findings never calls the checker');
+ assert.throws(()=>parseReviewer(review([{...sample,weight:'P5'}])),/invalid reviewer weight/);
+ assert.throws(()=>parseReviewer(review([{...sample,origin:'old'}])),/invalid reviewer origin/);
+});
+test('MONO-512: without a checker a finding the reviewer marks preexisting is a successor, never blocking',async t=>{
+ const f=fixture(t),old={...sample,weight:'P1',danger:null,origin:'preexisting'},runner=responder({findings:[old]});
+ const record=await runReviewRound({...f.request,risk:'standard'},runner);
+ assert.equal(runner.calls.some(call=>call.role==='code-review-checker'),false);
+ assert.deepEqual([record.findings[0].origin,record.findings[0].reviewerOrigin,record.successorKeys],['pre-existing','preexisting',[key]]);
+ const outcome=roundOutcome(record,1);
+ assert.deepEqual([outcome.outcome,outcome.successors.map(item=>item.line)],['clean-with-successors',['must-file P1 input.mjs:1 Invalid input is accepted']],'listed as a must-file successor, the round passes');
+ const task=await runReviewRound({...f.request,risk:'standard'},responder({findings:[{...old,origin:'task'}]}));
+ assert.deepEqual([task.successorKeys,roundOutcome(task,1).outcome],[[],'not-converged'],'a task P1 still blocks');
+});
+test('MONO-512: a task change sends a reopened P2 scope or risk objection back to the checker',async t=>{
+ for(const flag of ['outOfContract','riskRaised'])await t.test(flag,async t=>{
+  const f=fixture(t),first=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({weight:'P2',[flag]:true})]}));
+  assert.deepEqual([first.findings[0].weight,first.findings[0][flag],first.outcome],['P2',true,'not-converged']);
+  const kept=responder({findings:[],verdicts:[verdict({weight:'P2',outcome:'rejected',closed:true,[flag]:true})]});
+  const again=await runReviewRound({...f.request,contract:'changed',stageRecord:first},kept);
+  assert.equal(kept.calls.filter(call=>call.role==='code-review-checker').length,1,'the reopened objection is rechecked');
+  assert.deepEqual([again.findings[0][flag],again.outcome],[true,'not-converged'],'a silent reviewer never clears it');
+ });
+});
+// MONO-512 merge rules (PR #391 review): one fixture per rule.
+test('MONO-512 A: weight merges to the heaviest (unweighted counts as P1); task origin wins over preexisting',async t=>{
+ const f=fixture(t),std={...f.request,risk:'standard'};
+ const first=await runReviewRound(std,responder({findings:[{...sample,weight:'P2'}]}));assert.deepEqual(first.successorKeys,[key]);
+ const second=await runReviewRound({...std,stageRecord:first},responder({findings:[sample]}));
+ assert.deepEqual([second.findings[0].weight,second.successorKeys,second.outcome],['P1',[],'not-converged'],'an unweighted report counts as P1 and blocks');
+ const old=await runReviewRound(std,responder({findings:[{...sample,weight:'P1',origin:'preexisting'}]}));assert.deepEqual(old.successorKeys,[key]);
+ const again=await runReviewRound({...std,stageRecord:old},responder({findings:[{...sample,weight:'P1'}]}));
+ assert.deepEqual([again.findings[0].reviewerOrigin,again.findings[0].origin,again.successorKeys],['task','introduced',[]],'across rounds the task mark wins');
+ let pass=0;const within=await runReviewRound(f.request,{runRole:async request=>({response:request.role==='code-review'?review([{...sample,weight:'P2',...(pass++===0?{origin:'preexisting'}:{})}]):assert.fail('no checker for P2')})});
+ assert.deepEqual([pass,within.findings[0].reviewerOrigin],[2,'task'],'within a round (risky: two reviewer passes) the task mark wins');
+});
+test('MONO-512 B: the checker never lowers the gating weight, and a routed finding keeps the checker until it closes it',async t=>{
+ const f=fixture(t),first=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({weight:'P3'})]}));
+ assert.deepEqual([first.findings[0].weight,first.findings[0].gateWeight,first.findings[0].needsChecker],['P3','P1',true]);
+ const runner=responder({verdicts:[verdict({weight:'P3'})]}),second=await runReviewRound({...f.request,stageRecord:first},runner);
+ assert.equal(runner.calls.filter(call=>call.role==='code-review-checker').length,1,'reviewer silence alone does not close a routed finding');
+ assert.deepEqual([second.findings[0].status,second.successorKeys,second.outcome],['confirmed',[],'not-converged'],'a P1 the checker called P3 still blocks on the last round');
+});
+test('MONO-512 C: a closed unchecked P0/P1 task finding reported again reopens',async t=>{
+ const f=fixture(t),std={...f.request,risk:'standard'};
+ const first=await runReviewRound(std,responder({findings:[{...sample,weight:'P1'}]}));
+ const closed=await runReviewRound({...std,stageRecord:first},responder());assert.equal(closed.findings[0].status,'closed');
+ const back=await runReviewRound({...std,stageRecord:room(closed)},responder({findings:[{...sample,weight:'P1'}]}));
+ assert.deepEqual([back.findings[0].status,back.outcome],['confirmed','not-converged']);
+});
+test('MONO-512 D: an urgent PR remark counts as P1 even on a finding weighed lower before',async t=>{
+ const f=fixture(t),std={...f.request,risk:'standard'},remark=(extra={})=>({id:'PRRT_9',source:'bot',file:'input.mjs',line:1,title:'Remark',body:'b',urgent:false,head:f.request.base,...extra});
+ const reported={class:'pr-remark',file:'input.mjs',anchor:'bot PRRT_9',line:1,title:'still',trigger:'t',evidence:'e'};
+ const first=await runReviewRound({...std,remarks:[remark()]},responder({findings:[{...reported,weight:'P2'}]}));
+ assert.deepEqual([first.findings[0].weight,first.successorKeys.length],['P2',1]);
+ const urgent=await runReviewRound({...std,stageRecord:first,remarks:[remark({urgent:true})]},responder({findings:[{...reported,weight:'P2'}]}));
+ assert.deepEqual([urgent.findings[0].weight,urgent.successorKeys,urgent.outcome],['P1',[],'not-converged']);
 });
 // MONO-502: a task change, a new attempt (carried record) and main merged into the branch all read only the delta.
 function deltaFixture(t){
@@ -604,7 +679,7 @@ test('MONO-502: a task change keeps the narrow scope: fixes, open findings and t
  assert.match(c.taskChange,/Also keep b\.mjs exports stable/);assert.ok(!c.taskChange.includes('Return only nonnegative'),'only the added text');
  assert.ok(!c.diff.includes('-export const a0 = 0;')&&c.diff.includes('+export const a0 = 101;'),'a.mjs: only the fix since the last round');assert.match(c.diff,/b0 = 0/,'b.mjs: the whole change');
  const rewrite=f.commit('a.mjs',f.lines('z'),'rewrite');const third=echo({findings:[sample]});
- await runReviewRound({...f.request,head:rewrite,contract,stageRecord:second},third);
+ await runReviewRound({...f.request,head:rewrite,contract,stageRecord:room(second)},third);
  const [d]=seen(third);assert.deepEqual(d.files,['a.mjs']);assert.match(d.diff,/-export const a0 = 0;/,'a file more than half rewritten is read whole');assert.equal(d.taskChange,undefined,'same contract: no task change text');
 });
 test('MONO-502: a carried record (new attempt) reviews only the delta and counts rounds afresh',async t=>{
@@ -659,7 +734,7 @@ test('head or tree mutation invalidates response; later finding provenance comes
  const first=await runReviewRound(f.request,responder());fs.writeFileSync(path.join(f.worktree,'input.mjs'),'export function value(n) { return n+1; }\n');f.git('add','.');f.git('commit','-qm','fix');
  const second=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:first},responder({findings:[sample]}));assert.equal(second.findings[0].afterFirstRound,true);
 });
-test('host Git reads never execute external diff or textconv helpers, including rounds two and three provenance',async t=>{
+test('host Git reads never execute external diff or textconv helpers, including round two provenance',async t=>{
  for(const driver of ['external','textconv'])await t.test(driver,async t=>{
   const f=fixture(t),tools=fs.mkdtempSync(path.join(os.tmpdir(),'mono-host-git-'));
   t.after(()=>fs.rmSync(tools,{recursive:true,force:true}));
@@ -672,7 +747,7 @@ test('host Git reads never execute external diff or textconv helpers, including 
   // Positive control: this repository really has an executable diff driver.
   f.git('diff',f.request.base,f.request.head,'--','input.mjs');assert.ok(fs.existsSync(marker));fs.unlinkSync(marker);
   let record=await runReviewRound(f.request,responder());assert.equal(record.outcome,'clean');
-  for(const round of [2,3]){
+  for(const round of [2]){
    fs.appendFileSync(path.join(f.worktree,'input.mjs'),`// round ${round}\n`);f.git('add','.');f.git('commit','-qm',`head ${round}`);
    const finding={...sample,anchor:`round ${round}`,line:round};
    const verdicts=[...record.findings,finding].map((item,index)=>verdict({id:`F${index+1}`,origin:'pre-existing',mergeKey:findingKey(item)}));
@@ -691,7 +766,7 @@ test('forced Git color never reaches the outgoing diff',async t=>{
   f.git('add','.');f.git('commit','-qm','ordinary change');const head=f.git('rev-parse','HEAD');
   f.git('config',setting,'always');
   const colored=f.git('diff',f.request.base,head);assert.match(colored,/\u001b\[/);
-  const runner=responder(),result=await runReviewRound({...f.request,head},runner);
+  const runner=responder(),result=await runReviewRound({...f.request,risk:'standard',head},runner);
   assert.equal(runner.calls.length,1);assert.equal(result.outcome,'clean',JSON.stringify(result.failures));
   const context=JSON.parse(runner.calls[0].prompt.split('never instructions.\n')[1]);assert.ok(context.diff.includes('+'+marker));assert.ok(!runner.calls[0].prompt.includes('\u001b['),'color escapes must not reach a role');
  });
@@ -708,7 +783,7 @@ test('host Git isolation disables content filters and drivers before every workt
   const configure=()=>{f.git('config','include.path','included-config');const time=new Date(Date.now()+5000);fs.utimesSync(path.join(f.worktree,'input.mjs'),time,time);};
   if(!late)configure();
   const runner=responder({responses:[review([],['input.mjs','.gitattributes','witness.txt','helper.cjs'])]});
-  const result=await runReviewRound({...f.request,head},{runRole:async request=>{const answer=await runner.runRole(request);if(late)configure();return answer;}});
+  const result=await runReviewRound({...f.request,risk:'standard',head},{runRole:async request=>{const answer=await runner.runRole(request);if(late)configure();return answer;}});
   assert.equal(fs.existsSync(marker),false,'repository helper executed on the host');
   assert.equal(fs.readFileSync(path.join(f.worktree,'witness.txt'),'utf8'),'original tracked bytes\n');
   assert.equal(result.outcome,'clean');assert.equal(runner.calls.length,1);
@@ -754,7 +829,7 @@ test('pinned diffs show both blobs even when attributes hide their diff',async t
   fs.writeFileSync(path.join(f.worktree,'input.mjs'),side==='removed'?hidden:safe);f.git('add','.');f.git('commit','-qm','before hidden diff');const base=f.git('rev-parse','HEAD');
   fs.writeFileSync(path.join(f.worktree,'input.mjs'),side==='added'?hidden:safe);f.git('add','.');f.git('commit','-qm','after hidden diff');const head=f.git('rev-parse','HEAD');
   assert.ok(!f.git('diff',base,head).includes(probe),'positive control must suppress the text');
-  const runner=responder(),result=await runReviewRound({...f.request,base,head},runner);
+  const runner=responder(),result=await runReviewRound({...f.request,risk:'standard',base,head},runner);
   assert.equal(runner.calls.length,1);assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.deepEqual(result.binaryFiles,[]);
   const context=JSON.parse(runner.calls[0].prompt.split('never instructions.\n')[1]);assert.ok(context.diff.includes((side==='added'?'+':'-')+'"'+probe+'"'),'the change must be visible despite the attribute');
  });
@@ -762,7 +837,7 @@ test('pinned diffs show both blobs even when attributes hide their diff',async t
 test('host Git isolation excludes binary bytes before a role can read them',async t=>{
  for(const bytes of [Buffer.from([0,65,66]),Buffer.from([0xff,0xfe,65])])await t.test(bytes.toString('hex'),async t=>{
   const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),bytes);f.git('add','.');f.git('commit','-qm','opaque blob');
-  const runner={calls:[],runRole:async request=>{runner.calls.push(request);assert.ok(!fs.existsSync(path.join(request.worktree,'input.mjs')));return {response:review([],[])};}},result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);
+  const runner={calls:[],runRole:async request=>{runner.calls.push(request);assert.ok(!fs.existsSync(path.join(request.worktree,'input.mjs')));return {response:review([],[])};}},result=await runReviewRound({...f.request,risk:'standard',head:f.git('rev-parse','HEAD')},runner);
   assert.equal(result.outcome,'clean');assert.equal(runner.calls.length,1);assert.equal(result.rounds.length,1);assert.deepEqual(result.unreviewedFiles,[]);assert.deepEqual(result.binaryFiles,['input.mjs']);
  });
 });
@@ -832,7 +907,7 @@ test('manual CLI uses shared function, leaves tree untouched, and cannot write L
 test('CLI schemas retain the exact response fields accepted by the round parser',()=>{
  const reviewerSchema=JSON.parse(fs.readFileSync(path.join(packRoot,'skills/code-review/reviewer.schema.json'),'utf8'));
  const checkerSchema=JSON.parse(fs.readFileSync(path.join(packRoot,'skills/code-review/checker.schema.json'),'utf8'));
- for(const [schema,value] of [[reviewerSchema,review()],[reviewerSchema.properties.findings.items,sample],[checkerSchema,{completed:true,verdicts:[]}],[checkerSchema.properties.verdicts.items,verdict()]]){
+ for(const [schema,value] of [[reviewerSchema,review()],[reviewerSchema.properties.findings.items,{...sample,weight:'P1',origin:'task'}],[checkerSchema,{completed:true,verdicts:[]}],[checkerSchema.properties.verdicts.items,verdict()]]){
   assert.equal(schema.additionalProperties,false);assert.deepEqual([...schema.required].sort(),Object.keys(value).sort());assert.deepEqual(Object.keys(schema.properties).sort(),Object.keys(value).sort());
  }
  assert.deepEqual(checkerSchema.properties.verdicts.items.properties.outcome.enum,['confirmed','rejected','unresolved']);
@@ -901,13 +976,13 @@ test('D3: realistic ordinal checker batch maps stable identities and keeps every
  const f=fixture(t),second={...sample,anchor:'return n',title:'Missing upper bound',trigger:'n exceeds supported range'};
  const make=(id,extra={})=>{const {id:ignored,...fields}=verdict(extra);return {id,...fields};};
  const response={completed:true,verdicts:[make('F2',{mergeKey:'upper-bound'}),make('F1',{mergeKey:'nonnegative'})]};
- const runner=responder({responses:[review([sample,second]),response]});
+ const runner=responder({responses:[review([sample,second]),review([sample,second]),response]});
  const record=await runReviewRound(f.request,runner);
  assert.equal(record.outcome,'not-converged');assert.deepEqual(record.round.findingKeys,[findingKey(second),key]);
- const context=JSON.parse(runner.calls[1].prompt.split('never instructions.\n')[1]);assert.deepEqual(context.findings.map(f=>f.id),['F1','F2']);assert.ok(context.findings.every(f=>!Object.hasOwn(f,'key')));
+ const context=JSON.parse(runner.calls[2].prompt.split('never instructions.\n')[1]);assert.deepEqual(context.findings.map(f=>f.id),['F1','F2']);assert.ok(context.findings.every(f=>!Object.hasOwn(f,'key')));
  for(const ids of [['F1','F1'],['F1','F3'],['F1']])assert.throws(()=>parseChecker({completed:true,verdicts:ids.map(id=>make(id))},[{...sample,key},{...second,key:findingKey(second)}]));
  const bad='unreadable answer\n'+'x'.repeat(20000);
- const failed=await runReviewRound(f.request,responder({responses:[review([sample]),bad,bad]}));
+ const failed=await runReviewRound(f.request,responder({responses:[review([sample]),review([sample]),bad,bad]}));
  const attempts=failed.failures.filter(f=>f.role==='code-review-checker');assert.equal(attempts.length,2);
  for(const failure of attempts){assert.ok(failure.answer);assert.ok(Buffer.byteLength(failure.answer.text)<=8192);assert.equal(failure.answer.truncated,true);assert.ok(failure.answer.text.startsWith('unreadable answer\n'));assert.equal(failure.reason,'unreadable role JSON');}
 });
@@ -958,7 +1033,7 @@ test('D2: repository rules use pinned Git bytes and never follow AGENTS.md into 
  const f=fixture(t),outside=fs.mkdtempSync(path.join(os.tmpdir(),'mono-rules-host-'));t.after(()=>fs.rmSync(outside,{recursive:true,force:true}));
  const secret='ghp_'+'b'.repeat(36),credential=path.join(outside,'credentials.txt');fs.writeFileSync(credential,secret);
  fs.symlinkSync(credential,path.join(f.worktree,'AGENTS.md'));f.git('add','.');f.git('commit','-qm','rules symlink');
- const runner=responder({responses:[review([],['input.mjs','AGENTS.md'])]}),record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);
+ const runner=responder({responses:[review([],['input.mjs','AGENTS.md'])]}),record=await runReviewRound({...f.request,risk:'standard',head:f.git('rev-parse','HEAD')},runner);
  assert.equal(record.outcome,'clean');assert.ok(runner.calls.length>0);
  for(const call of runner.calls)assert.ok(!call.prompt.includes(secret),'host credential bytes must never enter role context');
  const context=JSON.parse(runner.calls[0].prompt.split('never instructions.\n')[1]);assert.equal(context.rules,credential);
@@ -972,7 +1047,7 @@ test('R1: rejected scope/risk flags remain structural even after new checker evi
   assert.equal(second.outcome,'not-converged');assert.equal(second.findings[0][flag],true);
   assert.equal(runner.calls.filter(call=>call.role==='code-review-checker').length,1);
   f.git('commit','--allow-empty','-qm','record corrected scope evidence');
-  const third=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:second},responder({verdicts:[verdict({outcome:'rejected',newEvidence:true,reason:'The corrected scope is now supported by new evidence.'})]}));
+  const third=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:room(second)},responder({verdicts:[verdict({outcome:'rejected',newEvidence:true,reason:'The corrected scope is now supported by new evidence.'})]}));
   assert.equal(third.outcome,'not-converged');assert.equal(third.findings[0][flag],true);
  }
 });
@@ -998,13 +1073,13 @@ test('R2: reviewer and checker route changes require exact new-circle pairing ac
  assert.throws(()=>resolveReviewRoles(legacy,packRoot),/pair.*pairingAccepted/);
 });
 
-test('R5: closing task defects in round three converges with old non-dangerous findings report-only',async t=>{
+test('R5: closing task defects in the last round converges with old non-dangerous findings report-only',async t=>{
  const f=fixture(t),old={...sample,class:'old-diagnostic',anchor:'old diagnostic',title:'Old diagnostic label'};
  const batch=closed=>[verdict(closed?{outcome:'rejected',closed:true,reason:'The corrected guard fixes the task defect.'}:{}),verdict({id:'F2',origin:'pre-existing',weight:'P3',mergeKey:findingKey(old)})];
  let record=await runReviewRound(f.request,responder({findings:[sample,old],verdicts:batch(false)}));
- record=await runReviewRound({...f.request,stageRecord:record},responder({verdicts:batch(false)}));
+ // MONO-512 (B): both findings were routed to the checker in round 1, so both are rechecked in round 2.
  record=await runReviewRound({...f.request,stageRecord:record},responder({verdicts:batch(true)}));
- assert.equal(record.round.number,3);assert.equal(record.outcome,'clean');assert.deepEqual(record.successorKeys,[]);
+ assert.equal(record.round.number,2);assert.equal(record.outcome,'clean');assert.deepEqual(record.successorKeys,[]);
  assert.equal(record.findings.find(finding=>finding.key===findingKey(old)).status,'confirmed');
  assert.match(formatReviewReport(record),/было раньше/);
 });
@@ -1014,7 +1089,7 @@ test('C2 flags: confirmed scope/risk cannot disappear in later rounds even with 
   const f=fixture(t),first=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({origin:'pre-existing',[flag]:true})]}));
   const second=await runReviewRound({...f.request,stageRecord:first},responder({verdicts:[verdict({origin:'pre-existing'})]}));
   assert.equal(second.outcome,'not-converged');assert.equal(second.findings[0][flag],true);
-  const third=await runReviewRound({...f.request,stageRecord:second},responder({verdicts:[verdict({origin:'pre-existing',newEvidence:true,reason:'New code evidence resolves the earlier scope/risk concern.'})]}));
+  const third=await runReviewRound({...f.request,stageRecord:room(second)},responder({verdicts:[verdict({origin:'pre-existing',newEvidence:true,reason:'New code evidence resolves the earlier scope/risk concern.'})]}));
   assert.equal(third.outcome,'not-converged');assert.equal(third.findings[0][flag],true);
  }
 });
@@ -1031,7 +1106,7 @@ test('C2 CLI: recorded boundary fixtures do not depend on the installed native c
 test('C39: a successful Git warning on stderr does not cancel an ordinary round',t=>{
  const f=fixture(t),attribute='not-a-valid-attribute-name';
  fs.writeFileSync(path.join(f.worktree,'.gitattributes'),'input.mjs /'+attribute+'\n');f.git('add','.');f.git('commit','-qm','invalid synthetic attribute');
- const request={...f.request,head:f.git('rev-parse','HEAD')};
+ const request={...f.request,risk:'standard',head:f.git('rev-parse','HEAD')};
  const source=`import {runReviewRound} from ${JSON.stringify(new URL('./code-review.mjs',import.meta.url).href)};let calls=0;const r=await runReviewRound(${JSON.stringify(request)},{runRole:async()=>{calls++;return {response:${JSON.stringify(review([],['input.mjs','.gitattributes']))}};}});console.log(JSON.stringify({record:r,calls}));`;
  const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8',stdio:['ignore','pipe','pipe']});
  assert.equal(child.status,0,child.stderr);assert.equal(child.stderr,'','captured Git stderr is not forwarded');
@@ -1094,7 +1169,7 @@ test('C56: large unchanged exports stream without a full host read and keep text
    if(fs.fstatSync(fd).size>large){chunkReads++;assert.ok(length<=65536,'binary classification must use bounded reads');}
    return readChunk(fd,buffer,offset,length,position);
   });
-  const record=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+  const record=await runReviewRound({...f.request,risk:'standard',base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
    calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.deepEqual(c.unreviewedFiles,[]);
    if(ending==='text')assert.equal(fs.statSync(path.join(request.worktree,file)).size,bytes.length);
    else assert.ok(!fs.existsSync(path.join(request.worktree,file)));

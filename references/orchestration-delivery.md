@@ -35,8 +35,8 @@ data, security, crash) hold merge. Send them, with steps, expected/actual and
 evidence, to the same worker session on the same branch: a plain resume whose
 resume file lists them, no «Изменение задачи» and no new attempt; the task
 contract does not change. The fix head passes the gate like any fix after a round
-(fast path: the worker's full verification; strict path: the next round, or
-`extraRound` once the rounds are spent). `successor` bugs never hold
+(fast path: the worker's full verification; strict path: the next round while
+one is left, else the exits below). `successor` bugs never hold
 merge: `qa-status` lists them as `successors`, and after merge the task's Linear
 writer files each as a new Issue. From the second pass on a task, before the pass,
 write `purpose`, `recipeDigest` (`qa.mjs digest`, saved for every pass) and the
@@ -254,7 +254,8 @@ fast path accepts a fixed head on this run. No orchestrator step: the worker req
 `workerVerification` ([HANDBOOK](../HANDBOOK.md#host-verification)). The collector host needs both the Codex and
 Claude CLIs logged in by subscription; a single-family setup gives
 `not-reviewed`, and so does a logged-out CLI whose role has to run (the checker
-runs only when the reviewer reports findings). The Claude login refreshes itself
+runs only for P0/P1 findings of a `risky` task; elsewhere findings stand as the
+reviewer reported them and unchecked P2/P3 leave as successors). The Claude login refreshes itself
 on the host (before each Claude role and from the watcher); a role failed on it
 reads «вход Claude истёк или не найден» and gets one refresh and one relaunch.
 Every failed role attempt names its cause in the receipt: `timeout` (the role
@@ -273,8 +274,8 @@ Every review role and host verification first takes one of the host's shared slo
 outside the role timer and the gate's stuck ceiling and never yields `not-reviewed`.
 
 Between rounds do nothing: the worker fixes open findings and requests the next
-round itself. The pinned risk sets the completed rounds per task attempt (`risky`
-three, the fast path one plus one per task change, even on an unchanged head),
+round itself. The pinned risk sets the completed rounds per task attempt, at most
+two for any risk (`risky` two, the fast path one plus one per task change, even on an unchanged head),
 counted from the attempt's receipts; every round after the first reads only the
 fixes since the last reviewed head and the open findings, a task change's round
 too (plus the files its text names; a reviewed file rewritten by more than half is
@@ -283,17 +284,16 @@ attempt on the same branch and risk carries the last record (findings, last
 reviewed head) and counts rounds afresh: its first round reads only the delta; an
 earlier attempt's round is never reused. After main is merged into the branch the
 delta leaves out files main changed whose head content is main's; a file the
-branch itself restored to its base stays in the delta. `ROUND_LIMIT` stays 3 and
-`reviewContext` in `gate.mjs` counts from the receipt history. The strict path
-gets at most one extra round per attempt (below): with it the limit is 4.
+branch itself restored to its base stays in the delta. `ROUND_LIMIT` is 2, with
+no extra round, and `reviewContext` in `gate.mjs` counts from the receipt history.
 
 Fast path: after its round the worker fixes, runs the full verification on the
 final head and requests it with `workerVerification: {head, exitCode: 0}`; the
 collection accepts that head without another round (`review clean (round 1 of 1),
 fixes after it confirmed by the worker's full verification`; with host
 verification the worker only requests the fixed head and the collection's run
-confirms it), unless the round
-found out-of-contract work or a raised risk (needs-decision). The bot sees the
+confirms it), unless an older checked round
+found out-of-contract work or a raised risk (needs-decision; fast-path rounds run no checker). The bot sees the
 result on the PR.
 
 Live run (before review): the worker runs the main scenario of a behavior change
@@ -306,38 +306,12 @@ round never sees the code report. Screens of a task with a mockup: [Screen check
 before review](#screen-check-before-review).
 
 Parks:
-- needs-decision, `review not-converged after round 3 of 3` or `review round
-  limit reached (3 of 3 …)` (strict path): the orchestrator decides in this order.
-  1. Extra round: when the rounds are spent and a fix from outside still needs a
-     round (QA bugs, a bot remark, red CI, a task change) or at most one finding
-     is open, resume the worker with `extraRound: {reason}` (a task change in the
-     same resume or later is fine). Resume first checks the right to it against
-     the attempt's last spent receipt and refuses, writing nothing, when rounds
-     are left, the attempt already has its extra round, the path is not `risky`,
-     the last round has `riskRaised` or `outOfContract` (open or closed) or an
-     open owner remark on the PR, or more than one finding is open (successor
-     candidates of an accepted round do not count). The grant goes to
-     `dispatch/KEY-aN/extra-round.json` beside the launch pins under its own
-     `extra-round.lock`, outside every worker grant, bound to that receipt; a
-     refused spawn drops it, a refused startup voids it, a host verification run
-     that touches it fails consistency and puts it back, and a new attempt never
-     sees it. `reviewRetry` and `extraRound` never go in one resume, and both
-     wait for this attempt's round in flight; any resume writing a control file
-     (also `taskChange`) waits for every host verification run of the root,
-     whose snapshot covers the control files of all attempts; host runs of a
-     root never overlap (a second is refused, no round spent). The fourth
-     round reads the fixes and open findings and judges leftovers like round 3; its lines say
-     `round 4 of 4, extra`. Write the grant to the journal in one line with the
-     reason; no separate Linear record.
-  2. Merge: green CI, passed required checks and no open finding harming the
-     main path, data or the owner's install.
-  3. Otherwise merge what is done and split the rest, or change the approach in a
-     new attempt (spawn checks it, see the attempt limit). A task change by itself
-     keeps the count and adds no rounds.
-- needs-decision, `review not-converged after round 4 of 4 (extra round used)`
-  or `review round limit reached (4 of 4 …, extra round used)`: no second extra
-  round; merge by the rule above, or split the Issue or change the approach in a
-  new attempt.
+- needs-decision, `review not-converged after round 2 of 2` or `review round
+  limit reached (2 of 2 …)`: no further round; the line names the exits. Merge
+  when CI is green, required checks pass and no open finding harms the main path,
+  data or the owner's install; otherwise merge what is done and split the rest,
+  move open findings to successors, or change the approach in a new attempt
+  (spawn checks it, see the attempt limit). A task change keeps the count.
 - needs-decision, `verification failed on the reviewed head` (older attempts):
   decide whether the code or the environment is wrong.
 - blocked, `not-reviewed twice in a row on this head (environment: …)`: restore
@@ -360,8 +334,8 @@ Parks:
 
 `clean-with-successors` passes. Its candidates are older defects (on the strict
 path only harmless ones), minor P3
-leftovers from round 2 on (never data, security or gate bypass) and, on round 3
-and the extra round 4, leftovers both roles call harmless. After merge the task's Linear writer (the
+leftovers from round 2 on (never data, security or gate bypass), unchecked
+P2/P3 findings and, on round 2, leftovers marked harmless. After merge the task's Linear writer (the
 worker through Linear MCP when it has access, otherwise the orchestrator) files
 every `must-file` entry of the receipt's `review.successors` list (an older dangerous defect; a minor one
 only for data, security or gate bypass) and decide

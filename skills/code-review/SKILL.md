@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Read-only manual code review of a ready branch, with an independent finding checker. Use when asked to review code and report what remains; delivery runs the same round inside collection.
+description: Read-only manual code review of a ready branch; an independent checker rechecks P0/P1 findings when risk is risky. Use when asked to review code and report what remains; delivery runs the same round inside collection.
 ---
 
 # Mono Code Review
@@ -19,7 +19,7 @@ clean full HEAD and immutable base; obtain the task contract from the approved
 Issue or the owner's request. Never invent missing intent. Put the request JSON
 in host temporary storage outside the reviewed tree:
 `{worktree,head,base,contract,risk,config}`. `config` is the parsed product config;
-omission uses policy defaults. Roles are [role:code-review](<pack-root>/references/model-policy.md#roles)
+omission uses policy defaults; `risk` defaults to `standard` (no checker). Roles are [role:code-review](<pack-root>/references/model-policy.md#roles)
 and [role:code-review-checker](<pack-root>/references/model-policy.md#roles).
 
 ```bash
