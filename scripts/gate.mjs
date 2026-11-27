@@ -153,7 +153,10 @@ const openDefects = record => openItems(leftover(record));
 const sameAttempt = (file, pinsFile) => typeof file === 'string' && path.dirname(file) === path.dirname(pinsFile);
 // MONO-483: a not-reviewed receipt names its cause; an old one without it counts as the work's own.
 const notReviewedCause = receipt => receipt.review.cause === 'environment' ? 'environment' : 'review';
-export function reviewHistory(receipts, { pins, head, base, contractDigest, retries = [], now = new Date().toISOString() }) {
+// MONO-502: sources are spent receipts of earlier attempts of the same issue on the same branch (sourceReceipts): only
+// their record carries over (carriedRecord); a round of an earlier attempt is never reused;
+// ancestor(a, b) says the review may build on commit a at b (the gate injects git ancestry; pure callers get equality).
+export function reviewHistory(receipts, { pins, head, base, contractDigest, retries = [], now = new Date().toISOString(), sources = [], ancestor = (a, b) => a === b }) {
   const mine = receipts.filter(receipt => receipt?.producer === REVIEW_PRODUCER && sameAttempt(receipt.pins?.file, pins.file) && receipt.review)
     .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)));
   const completed = mine.filter(receipt => receipt.review.spent === true);
@@ -163,8 +166,9 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest, retr
     receipt.review.contractDigest === contractDigest);
   let start = onHead.length;
   while (start > 0 && onHead[start - 1].review.outcome === 'not-reviewed') start--;
-  // MONO-483: a review retry (resume with reviewRetry, recorded on the host) cuts the streak where it was recorded,
-  // only when everything before it in the streak failed on the environment. It never accepts a head or spends a round.
+  // MONO-483: a review retry (resume with reviewRetry, recorded on the host) cuts the streak where it was recorded.
+  // MONO-502: whatever the streak's cause: a collection again on the same head never needs a task change. It never
+  // accepts a head, changes the contract or spends a round.
   let streak = onHead.slice(start);
   // A retry dated later than now (the collection judging it) is no delivered resume: it never counts.
   // A retry voided after a refused startup never counts either.
@@ -172,7 +176,7 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest, retr
   for (let index = streak.length - 1; index >= 0; index--) {
     const after = streak[index].recordedAt, next = streak[index + 1]?.recordedAt;
     const cut = retries.some(retry => String(retry.recordedAt) > String(after) && (next === undefined || String(retry.recordedAt) < String(next)));
-    if (cut && streak.slice(0, index + 1).every(receipt => notReviewedCause(receipt) === 'environment')) { streak = streak.slice(index + 1); break; }
+    if (cut) { streak = streak.slice(index + 1); break; }
   }
   const causes = streak.flatMap(receipt => (receipt.review.failures ?? []).filter(failure => failure?.role && failure.cause).map(failure => failure.cause));
   return { spent: completed.length, onContract: completed.filter(receipt => receipt.review.contractDigest === contractDigest).length, notReviewed: streak.length,
@@ -183,7 +187,21 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest, retr
     notReviewedWork: [...new Set(streak.flatMap(receipt => receiptWork(receipt.review)))],
     notReviewedReason: streak.length && !receiptWork(streak.at(-1).review).length ? streak.at(-1).review.reason ?? null : null,
     reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,
-    record: completed.findLast(receipt => receipt.base === base)?.review.record ?? null };
+    record: carriedRecord(completed, sources, head, base, ancestor) };
+}
+// The record the next round continues: this attempt's latest on this base, or on an older base main moved forward from
+// (main merged into the branch). Without one, the latest record of an earlier attempt whose reviewed head and base the
+// branch still contains: its findings and last reviewed head carry over, its rounds and failures do not (a new
+// attempt counts its rounds afresh). A rewritten branch carries nothing and reads the whole change.
+function carriedRecord(completed, sources, head, base, ancestor) {
+  const own = completed.findLast(receipt => receipt.base === base || (ancestor(receipt.base, base) && ancestor(receipt.head, head)));
+  if (own) return own.review.record ?? null;
+  const source = sources.findLast(receipt => receipt.review?.record && ancestor(receipt.base, base) && ancestor(receipt.head, head));
+  if (!source) return null;
+  const { base: _base, rounds = [], failures: _failures, ...rest } = source.review.record;
+  return { ...rest, rounds: [], failures: [], carried: { head: source.head, base: source.base, runId: source.runId,
+    // Files reviewed in every earlier attempt, not only the last: a source record may itself be a carried one.
+    reviewedFiles: [...new Set([...(rest.carried?.reviewedFiles ?? []), ...rounds.flatMap(round => round.reviewedFiles ?? [])])] } };
 }
 // MONO-482: one extra round per attempt on the strict path. The orchestrator asks for it with resume extraRound
 // {reason} once the attempt's rounds are spent; resume records it in extra-round.json beside the launch pins (host-only,
@@ -379,11 +397,12 @@ const limitRefusal = (limit, host = false, strict = limit >= ROUND_LIMIT) => !st
   : limit > ROUND_LIMIT ? `needs-decision: review round limit reached (${limit} of ${limit} on this task attempt, extra round used); split the Issue or change approach in a new attempt`
   : `needs-decision: review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); ${EXTRA_HINT}`;
 // MONO-483: the refusal names the cause and the next step. The environment (a role timeout, a sleeping host, the network,
-// a login still failing after its refresh) is restored and retried without a task change; the work's own cause needs one.
+// a login still failing after its refresh) is restored and retried without a task change; MONO-502: so is the work's own
+// cause once fixed (a code fix is a new head; anything else is a review retry): a retry is never a task change.
 // MONO-488: the work's cause is named; login is mentioned only when a role failed on its login.
 const notReviewedTwice = (cause, causes = [], work = []) => cause === 'environment'
   ? `not-reviewed twice in a row on this head (environment${causes.length ? `: ${causes.join(', ')}` : ''}); restore the environment (host awake, load down, network, CLI login) and resume the worker with reviewRetry, without a task change`
-  : `not-reviewed twice in a row on this head (review${work.length ? `: ${work.join(', ')}` : ''}); ${work.includes(LOGIN_CAUSE) ? 'check that both review CLIs are logged in, then ' : ''}resume with a task change`;
+  : `not-reviewed twice in a row on this head (review${work.length ? `: ${work.join(', ')}` : ''}); ${work.includes(LOGIN_CAUSE) ? 'check that both review CLIs are logged in, then ' : ''}fix it (a code fix is a new head) or resume the worker with reviewRetry, without a task change`;
 export const blockedTwice = prior => `blocked: ${notReviewedTwice(prior.notReviewedCause, prior.notReviewedCauses, prior.notReviewedWork)}` +
   (prior.notReviewedCause !== 'environment' && prior.notReviewedReason ? `: ${clip(prior.notReviewedReason, 300)}` : '');
 // MONO-488: only the exact messages behind each cause are mapped; any other reason gets no label (the line keeps the raw reason).
@@ -417,6 +436,30 @@ export function roundWork(record, head, number) {
 const receiptWork = review => review.workCauses ?? [reasonCause(review.reason)].filter(Boolean);
 // Other issues' and older receipts share this folder: only this attempt's pins files are read further;
 // unreadable or irregular files are skipped, never counted. No worker grant reaches evidenceRoot.
+// MONO-502: spent review receipts of earlier attempts of the same issue (dispatch/KEY-aM, M < N) on the same branch
+// and worktree, with the same risk and critical: a risk change is a new attempt that reads the whole change again.
+// The history folder is outside every worker grant; a receipt whose host verification did not finish is skipped,
+// and a host run that plants or edits one fails consistency (review-rounds.mjs evidenceSnapshot).
+const attemptKey = pinsFile => /^([A-Z][A-Z0-9]*-[1-9][0-9]*)-a([1-9][0-9]*)$/.exec(path.basename(path.dirname(pinsFile ?? '')));
+export function sourceReceipts(evidenceRoot, pinsFile, current) {
+  const own = attemptKey(pinsFile), history = path.join(evidenceRoot, "history");
+  if (!own || !fs.existsSync(history)) return [];
+  const pinsOf = new Map();
+  const sameBranch = file => {
+    if (!pinsOf.has(file)) { try { regularEvidence(file); const read = readJson(file); pinsOf.set(file, read.worktree === current.worktree && read.branch === current.branch); } catch { pinsOf.set(file, false); } }
+    return pinsOf.get(file);
+  };
+  return fs.readdirSync(history).filter(name => name.endsWith(".json")).flatMap(name => {
+    try {
+      regularEvidence(path.join(history, name));
+      const receipt = readJson(path.join(history, name)).receipt, file = receipt?.pins?.file, key = attemptKey(file);
+      const earlier = key && path.dirname(path.dirname(file)) === path.dirname(path.dirname(pinsFile)) && key[1] === own[1] && Number(key[2]) < Number(own[2]);
+      return earlier && receipt.producer === REVIEW_PRODUCER && receipt.review?.spent === true && receipt.risk === current.risk &&
+        (receipt.critical ?? null) === (current.critical ?? null) && !fs.existsSync(hostRunMarker(evidenceRoot, receipt.collectionId ?? "")) &&
+        sameBranch(file) ? [receipt] : [];
+    } catch { return []; }
+  }).sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)));
+}
 function receiptHistory(evidenceRoot, pinsFile) {
   const history = path.join(evidenceRoot, "history");
   if (!fs.existsSync(history)) return [];
@@ -486,7 +529,10 @@ function attemptContext(request, pins, head, base) {
   contractDigest = digest(contract);
   // Review retries live beside the launch pins too, outside every worker grant; they never enter the contract.
   const receipts = receiptHistory(request.evidenceRoot, request.pins.file), now = new Date().toISOString();
-  const history = reviewHistory(receipts, { pins: request.pins, head, base, contractDigest, retries: reviewRetries(path.dirname(request.pins.file)), now });
+  const repo = fs.realpathSync(request.worktree);
+  const ancestor = (a, b) => { try { return a === b || git(repo, "merge-base", a, b) === a; } catch { return false; } };
+  const sources = sourceReceipts(request.evidenceRoot, request.pins.file, { worktree: pins.worktree, branch: pins.branch, risk: request.risk, critical: request.critical });
+  const history = reviewHistory(receipts, { pins: request.pins, head, base, contractDigest, retries: reviewRetries(path.dirname(request.pins.file)), now, sources, ancestor });
   // MONO-482: the extra round granted by resume lives beside the launch pins too; it raises only the strict path's limit.
   history.extra = extraRoundGranted(receipts, { pins: request.pins, grants: extraRounds(path.dirname(request.pins.file)), now });
   return { contract, contractDigest, history };
@@ -1032,7 +1078,7 @@ preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,ri
   Rounds per task attempt from the pinned risk (risky 3 with task changes counted, plus one extra round granted by resume extraRound and recorded in extra-round.json beside the pins; else 1 per contract: a task change gets one round), counted from receipt history; rounds after the first review only the fixes and open findings; the same head reuses its round; not-reviewed spends nothing.
   not-reviewed names review.cause: environment (every failed role attempt timed out, met a sleeping host, the network or a login still failing after its refresh)
   or review (anything else, and older receipts); with host load at the start and end of the round and a sleep flag. Twice in a row on a head is blocked:
-  environment -> restore it and resume the worker with reviewRetry (no task change, no round, same contract); review -> resume with a task change.
+  environment -> restore it and resume the worker with reviewRetry (no task change, no round, same contract); review -> fix the cause (a code fix is a new head) or resume with reviewRetry; never a task change.
   Refusals are receipts too: fix and request the next round, or park on a needs-decision:/blocked: line.
   The sandbox write boundary is the trust anchor: evidenceRoot is outside every worker grant, so receipts are not worker-writable.
 ship request: {preflight:<complete preflight collect:false request>, repo:"owner/repo", number:123, attempt:1, stateFile:"/absolute/file", judgmentFile:"/absolute/file", config:"/project/.agents/mono-workflow.config.json", watch:true, policy:{requiredChecks:[],nonBlockingChecks:[{name,reason}],botChecks:["Greptile Review"],botUnavailable:null}}

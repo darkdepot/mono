@@ -26,6 +26,11 @@ export function quarantineEvidence(evidenceRoot, file) {
   fs.mkdirSync(path.dirname(target), { recursive: true }); fs.renameSync(file, target);
 }
 const attemptOf = (receiptPins, pinsFile) => typeof receiptPins === "string" && path.dirname(receiptPins) === path.dirname(pinsFile);
+// MONO-502: the review gate reads history receipts of earlier attempts of the same issue (their record carries over),
+// so in history any receipt of the issue is judged and kept like this attempt's own.
+const issueOf = file => /^([A-Z][A-Z0-9]*-[1-9][0-9]*)-a[1-9][0-9]*$/.exec(path.basename(path.dirname(file)))?.[1];
+const issueOfAttempt = (receiptPins, pinsFile) => typeof receiptPins === "string" && path.dirname(path.dirname(receiptPins)) === path.dirname(path.dirname(pinsFile)) &&
+  !!issueOf(pinsFile) && issueOf(receiptPins) === issueOf(pinsFile);
 // Receipts a host run could plant or edit: history (append-only for every attempt) and the head receipts.
 // While the run is going only this attempt's collection writes receipts bound to its pins, so a changed
 // history file, or a new or changed receipt bound to these pins, means the run touched the evidence.
@@ -59,7 +64,8 @@ export function evidenceSnapshot(evidenceRoot, pinsFile) {
     for (const name of fs.readdirSync(directory).filter(name => name.endsWith(".json"))) {
       const file = path.join(directory, name);
       let bytes; try { if (!fs.lstatSync(file).isFile()) continue; bytes = fs.readFileSync(file); } catch { continue; }
-      let ours = false; try { ours = attemptOf(JSON.parse(bytes).receipt?.pins?.file, pinsFile); } catch {}
+      let ours = false;
+      try { const pins = JSON.parse(bytes).receipt?.pins?.file; ours = attemptOf(pins, pinsFile) || (directory === path.join(evidenceRoot, "history") && issueOfAttempt(pins, pinsFile)); } catch {}
       files.push([file, { hash: crypto.createHash("sha256").update(bytes).digest("hex"), ours, history: directory === path.join(evidenceRoot, "history"),
         ...(ours ? { bytes: bytes.toString("base64") } : {}) }]);
     }

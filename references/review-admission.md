@@ -7,9 +7,9 @@ Behavior changes: a live main-scenario run before round 1.
 
 Rounds per attempt by pinned risk: `risky` up to three, task changes
 included, plus at most one extra round the orchestrator grants after them;
-others one, plus one per task change, same head too. Round 1
-and the first after a task change read the whole change, later ones fixes and
-open findings. Same head reuses its round; new base, fresh record.
+others one, plus one per task change, same head too. Round 1 reads
+the whole change; later ones, a task change's and a new attempt's first too,
+read fixes and open findings. Same head reuses its round.
 
 - `review clean` or `clean-with-successors` with your verification: pass.
 - `review not-converged (round 1|2 of 3)`: fix the error class of each open

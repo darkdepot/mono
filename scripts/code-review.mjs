@@ -865,8 +865,11 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     requireValue(roundLimit === 3 || roundLimit === 4, 'invalid round limit: 3, or 4 with the attempt\'s extra round');
     requireValue(number <= roundLimit, roundLimit === 3 ? 'three-round limit reached for this task attempt' : 'four-round limit (extra round) reached for this task attempt');
     const contractDigest = digest(contract);
-    // A changed contract (a delivered task change) continues the record: open findings stay open.
-    requireValue(!record.base || record.base === base, 'stage base changed');
+    // MONO-502: a commit `a` the review may build on: an ancestor of (or equal to) `b`.
+    const ancestor = (a, b) => { try { return a === b || git(worktree, ['merge-base', a, b]).trim() === a; } catch { return false; } };
+    // A changed contract (a delivered task change) continues the record: open findings stay open. A new base continues
+    // it too when main moved forward under the branch (main merged in); any other base change refuses.
+    requireValue(!record.base || ancestor(record.base, base), 'stage base changed');
     // The task change may approve disputed work, so scope and risk objections are judged again against it:
     // they return to the checker this round and stand only if the checker raises them again.
     const rejudge = new Set(record.contractDigest && record.contractDigest !== contractDigest
@@ -892,13 +895,41 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     requireValue(!git(worktree, ['diff', '--raw', '--no-renames', base, head, '--']).split('\n')
       .some(row => /^:(?:160000 \d{6}|\d{6} 160000) /.test(row)), 'gitlink changes are unsupported; review the submodule separately');
     const changedFiles = (from, to) => git(worktree, ['diff', '--name-only', '--no-renames', '-z', from, to, '--']).split('\0').filter(Boolean);
-    const previous = record.rounds.at(-1)?.head;
-    const full = pinnedDiff(worktree, base, head, changedFiles(base, head));
-    // Only the first round reads the whole change; later rounds read the fixes since the last round and the open findings,
-    // except the first round after a task change: the changed contract is checked against the whole change.
-    const narrow = number > 1 && (!record.contractDigest || record.contractDigest === contractDigest);
-    const scopeFiles = narrow ? changedFiles(previous, head) : changedFiles(base, head);
-    const scoped = narrow ? pinnedDiff(worktree, previous, head, scopeFiles) : full;
+    // MONO-502: the last reviewed head: this record's last round, or the head an earlier attempt of the issue reviewed
+    // (the gate carries its record with the round count started afresh).
+    const previous = record.rounds.at(-1)?.head ?? record.carried?.head;
+    const baseFiles = changedFiles(base, head);
+    const full = pinnedDiff(worktree, base, head, baseFiles);
+    // Only a round without a reviewed head reads the whole change (round 1 of the first attempt, or a branch rewritten
+    // under the record). Every other round, a task change's and a new attempt's first included, reads the fixes since
+    // the last reviewed head and the open findings. A file leaves the delta only when the branch never changed it: it held
+    // the last reviewed base's content at the last reviewed head and holds this base's content at head (main merged in).
+    // Any file the branch touched stays, a restore to base or to main's version (a removed guard) included.
+    const previousBase = record.rounds.at(-1)?.base ?? record.carried?.base;
+    const blob = (revision, file) => git(worktree, ['ls-tree', revision, '--', file]).split('\t')[0].split(' ')[2] ?? null;
+    const fromMain = file => !!previousBase && previousBase !== base && blob(previous, file) === blob(previousBase, file) && blob(head, file) === blob(base, file);
+    const delta = previous && ancestor(previous, head) ? changedFiles(previous, head).filter(file => baseFiles.includes(file) || !fromMain(file)) : null;
+    const narrow = delta !== null;
+    // The text a task change added since the last round (the whole contract when its earlier text cannot be found):
+    // the changed files it names are read whole, as is a reviewed file more than half rewritten since the last round.
+    let taskChange = '';
+    if (narrow && record.contractDigest && record.contractDigest !== contractDigest) {
+      const cut = [...contract.matchAll(/\n\n## Изменение задачи /g)].map(match => match.index).find(index => digest(contract.slice(0, index)) === record.contractDigest);
+      taskChange = cut === undefined ? contract : contract.slice(cut).trim();
+    }
+    const reviewedBefore = new Set([...record.rounds.flatMap(round => round.reviewedFiles ?? []), ...(record.carried?.reviewedFiles ?? [])]);
+    const rewritten = file => {
+      if (!reviewedBefore.has(file) || !/^\d{6} blob /.test(git(worktree, ['ls-tree', previous, '--', file]))) return false;
+      const [added, removed] = git(worktree, ['diff', '--numstat', '--no-renames', previous, head, '--', file]).split('\t').map(Number);
+      if (!Number.isFinite(added) || !Number.isFinite(removed)) return false;
+      return Math.max(added, removed) > git(worktree, ['cat-file', 'blob', `${previous}:${file}`]).split('\n').length / 2;
+    };
+    const named = file => taskChange.includes(file) || taskChange.includes(path.posix.basename(file));
+    const whole = new Set(narrow ? baseFiles.filter(file => named(file) || (delta.includes(file) && rewritten(file))) : []);
+    const scopeFiles = narrow ? [...baseFiles.filter(file => whole.has(file) || delta.includes(file)), ...delta.filter(file => !baseFiles.includes(file))] : baseFiles;
+    const fixes = narrow ? pinnedDiff(worktree, previous, head, delta.filter(file => !whole.has(file))) : full;
+    const scoped = narrow ? { parts: scopeFiles.flatMap(file => [...fixes.parts, ...full.parts.filter(part => whole.has(part.file))].filter(part => part.file === file)),
+      binary: [...fixes.binary, ...full.binary.filter(file => whole.has(file))] } : full;
     binaryFiles.push(...new Set([...full.binary, ...scoped.binary]));
     const binary = new Set(binaryFiles), files = scopeFiles.filter(file => !binary.has(file));
     const view = result => result.parts.filter(part => !binary.has(part.file)).map(part => part.diff).join('');
@@ -906,7 +937,7 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     exported = exportReviewTree(worktree, head, binary);
     const rulesFile = path.join(exported.root, 'AGENTS.md');
     const rules = fs.existsSync(rulesFile) ? fs.readFileSync(rulesFile, 'utf8') : '';
-    const context = { worktree: exported.root, symlinks: exported.symlinks, head, base, contract, rules, round: number, scope: narrow ? 'fixes-and-open-findings' : 'full', files, diff: view(scoped) };
+    const context = { worktree: exported.root, symlinks: exported.symlinks, head, base, contract, rules, round: number, scope: narrow ? 'fixes-and-open-findings' : 'full', files, diff: view(scoped), ...(taskChange ? { taskChange } : {}) };
     // MONO-494: every group carries the map of the whole change; reused lists the groups answered by an earlier collection.
     const map = changeMap(full.parts.filter(part => !binary.has(part.file)), [...binary]), reused = [];
     const limitFor = role => {
@@ -1025,7 +1056,7 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     };
     await runPass({ openFindings: open, pass: 'all-defects' });
     const lines = git(worktree, ['diff', '--numstat', base, head, '--']).trim().split('\n').reduce((total, row) => total + row.split('\t').slice(0, 2).reduce((sum, part) => sum + (Number(part) || 0), 0), 0);
-    if (number === 1 && (risk.startsWith('risky') || lines >= 1000)) await runPass({ openFindings: open, pass: 'ordinary', instruction: ORDINARY_INSTRUCTION });
+    if (number === 1 && !narrow && (risk.startsWith('risky') || lines >= 1000)) await runPass({ openFindings: open, pass: 'ordinary', instruction: ORDINARY_INSTRUCTION });
     const merged = new Map(record.findings.map(finding => [finding.key, finding])), byKey = new Map(), reported = new Set(found.map(finding => finding.key));
     for (const finding of [...open, ...found]) {
       const prior = byKey.get(finding.key), saved = merged.get(finding.key);
@@ -1109,7 +1140,7 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
       if (old && ['closed', 'rejected'].includes(old.status) && !verdict.newEvidence && verdict.dangerMaximum === false && !verdict.outOfContract && !verdict.riskRaised && verdict.outcome !== 'unresolved') continue;
       let afterFirstRound = old?.afterFirstRound ?? false;
       if (!old && previous) {
-        const changed = git(worktree, ['diff', '--unified=2', record.rounds[0].head, head, '--', finding.file]);
+        const changed = git(worktree, ['diff', '--unified=2', record.rounds[0]?.head ?? previous, head, '--', finding.file]);
         afterFirstRound = [...changed.matchAll(/^@@ .*\+(\d+)(?:,(\d+))? @@/gm)].some(match => finding.line >= Number(match[1]) && finding.line < Number(match[1]) + Number(match[2] ?? 1));
       }
       merged.set(verdict.key, { ...finding, ...verdict, status: verdict.closed ? 'closed' : verdict.outcome,

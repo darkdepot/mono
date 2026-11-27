@@ -200,6 +200,31 @@ test("MONO-483 host run: planted, edited or removed review retries and task chan
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+// MONO-502: the review gate reads an earlier attempt's history receipts (their record carries over), so a host
+// run of a later attempt that plants or edits one bound to the earlier attempt is touched evidence: edited ones are put
+// back, planted ones quarantined; another issue's receipts stay out of it.
+test("MONO-502 host run: a planted or edited history receipt of an earlier attempt of the issue is touched evidence", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-source-receipts-")), evidence = path.join(root, "evidence"), history = path.join(evidence, "history");
+  try {
+    const pinsOf = name => path.join(root, "dispatch", name, "pins.json"), pinsFile = pinsOf("MONO-999-a2");
+    fs.mkdirSync(path.dirname(pinsFile), { recursive: true }); fs.mkdirSync(history, { recursive: true }); fs.writeFileSync(pinsFile, "{}");
+    const seal = (name, attempt, outcome) => fs.writeFileSync(path.join(history, `${name}.json`), JSON.stringify({ receipt: { pins: { file: pinsOf(attempt) }, head, review: { spent: true, outcome } } }));
+    seal("source", "MONO-999-a1", "not-converged"); seal("other-issue", "MONO-998-a1", "not-converged");
+    const original = fs.readFileSync(path.join(history, "source.json"), "utf8");
+    let snapshot = evidenceSnapshot(evidence, pinsFile);
+    seal("source", "MONO-999-a1", "clean");
+    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /evidence changed during host verification: history\/source\.json/);
+    assert.equal(fs.readFileSync(path.join(history, "source.json"), "utf8"), original, "an edited source receipt is put back");
+    snapshot = evidenceSnapshot(evidence, pinsFile);
+    seal("planted", "MONO-999-a1", "clean");
+    assert.match(evidenceTouched(snapshot, evidence, pinsFile), /history\/planted\.json/);
+    assert.equal(fs.existsSync(path.join(history, "planted.json")), false, "a planted source receipt is quarantined");
+    snapshot = evidenceSnapshot(evidence, pinsFile);
+    seal("foreign", "MONO-998-a1", "clean");
+    assert.equal(evidenceTouched(snapshot, evidence, pinsFile), null, "another issue's new receipt is not this run's");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 // MONO-483 review round 3: every read-modify-write of review-retries.json holds review-retries.lock, so a record
 // waits for a void in progress instead of overwriting it; a restore of touched evidence keeps a later void.
 test("MONO-483 review retries: a record waits for a void under review-retries.lock and the void survives", async () => {

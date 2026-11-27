@@ -338,7 +338,7 @@ export function dropTaskChange(pinsDirectory, change) {
 }
 // MONO-483: a review retry is a resume with reviewRetry after the orchestrator restored the environment
 // (a role timeout, a sleeping host, the network, a login). Resume records it append-only beside the launch pins,
-// outside every worker grant like task-changes.json; the gate lets it cut only an environmental not-reviewed streak.
+// outside every worker grant like task-changes.json; the gate lets it cut a not-reviewed streak recorded before it (MONO-502: either cause).
 // It never changes the contract, the round count or the acceptance of a head.
 // A retry whose startup was refused stays in the file marked void (with the reason) and never counts.
 const reviewRetriesFile = pinsDirectory => path.join(pinsDirectory, "review-retries.json");
