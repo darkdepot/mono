@@ -1016,8 +1016,9 @@ line. With pin `screenCheck` the attempt's first round waits for the host's
 screen check of the same head; waiting and mismatches spend no round. Every review role and
 host verification takes one of the machine's shared slots first (`scripts/host-slots.mjs`:
 `host-slots/` under the state root, `MONO_HOST_SLOTS`, default 2, for every orchestrator on
-the host; a dead owner's slot is reclaimed); the wait is outside the role timer and never
-yields `not-reviewed`. The orchestrator approves nothing between rounds and after merge decides
+the host; a dead owner's slot is reclaimed); the wait is outside the role timer, the role's
+time and sleep check and the gate's stuck ceiling, never yields `not-reviewed`, and Ctrl-C
+ends it without launching; a stopped gate ends its host-verification group before releasing. The orchestrator approves nothing between rounds and after merge decides
 which candidates from the receipt's list become Issues (every `must-file` one does; the task's Linear writer files them): [review rounds](references/orchestration-delivery.md#review-rounds),
 worker [round rule](references/review-admission.md).
 

@@ -452,13 +452,7 @@ export function runInvocation(invocation, prompt, timeoutMs, { limitSec = timeou
     });
 }
 // The boundary probe shares the role's time limit.
-// MONO-507: the role first takes a machine-wide host slot; the wait is outside the role's time limit and never fails it.
-async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = ROLE_TIMEOUT_SEC * 1000, limitSec = timeoutMs / 1000, ensureLogin = ensureClaudeLogin, login: checked = null, slotPollMs = SLOT_POLL_MS }) {
-  const hostSlot = await acquireHostSlot({ label: `review ${role}`, pollMs: slotPollMs });
-  try { return await executeRoleInSlot({ role, route, prompt, worktree, packRoot, timeoutMs, limitSec, ensureLogin, checked }); }
-  finally { hostSlot.release(); }
-}
-async function executeRoleInSlot({ role, route, prompt, worktree, packRoot, timeoutMs, limitSec, ensureLogin, checked }) {
+async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = ROLE_TIMEOUT_SEC * 1000, limitSec = timeoutMs / 1000, ensureLogin = ensureClaudeLogin, login: checked = null }) {
   // A Claude role first gets a fresh login: on the host an expiring one is refreshed, in the worker sandbox it is only read.
   // A relaunch after a forced refresh reuses that refresh's result instead of checking again.
   const login = route.engine === 'claude' ? checked ?? await ensureLogin() : null;
@@ -848,7 +842,14 @@ export function checkerBatches(findings, promptFor, limit = CHECKER_BATCH_FINDIN
 // MONO-494: every role call (reviewer, checker, remark check, each group, the boundary probe and the retry) has the same
 // fixed limit, the OpenAI and Anthropic SDK default; it is not configurable. secondMs only scales seconds in tests.
 export const ROLE_TIMEOUT_SEC = 600;
-const roleTimeout = secondMs => ({ timeoutMs: ROLE_TIMEOUT_SEC * secondMs, limitSec: ROLE_TIMEOUT_SEC, slotPollMs: Math.max(20, SLOT_POLL_MS * secondMs / 1000) });
+const roleTimeout = secondMs => ({ timeoutMs: ROLE_TIMEOUT_SEC * secondMs, limitSec: ROLE_TIMEOUT_SEC });
+// MONO-507: every role launch first takes a machine-wide host slot. The wait comes before the role's timer, its
+// duration and its sleep check, so it never counts toward a timeout, a role's time or host-slept; a stopping signal
+// during the wait rejects it as interrupted, so a queued role never launches after Ctrl-C.
+const inHostSlot = async (role, secondMs, launch) => {
+  const slot = await acquireHostSlot({ label: `review ${role}`, pollMs: Math.max(20, SLOT_POLL_MS * secondMs / 1000) });
+  try { return await launch(); } finally { slot.release(); }
+};
 // The only round boundary. Callers persist/sign the returned record; manual mode only prints it.
 export async function runReviewRound(input, { runRole = executeRole, ensureLogin: baseLogin = ensureClaudeLogin, promptLimits = {}, clock = systemClock, load = hostLoad, secondMs = 1000, groupStore = null, pause = pauseFor } = {}) {
   const { worktree, head, base, contract, risk = 'standard', config = {}, packRoot = runtimePackRoot() } = input;
@@ -966,10 +967,12 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
       const cost = { role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id, ...(group ? { group } : {}) };
       let login = null;
       for (let attempt = 1; attempt <= 2; attempt++) {
-        const started = Date.now(), wall = clock.wall(), mono = clock.mono();
-        let result, answered = false;
+        let started, wall, mono, result, answered = false;
         try {
-          result = await runRole({ role, route: roles[role], worktree: exported.root, packRoot, prompt, ensureLogin, ...timeout, ...(login ? { login } : {}) });
+          result = await inHostSlot(role, secondMs, () => {
+            started = Date.now(); wall = clock.wall(); mono = clock.mono();
+            return runRole({ role, route: roles[role], worktree: exported.root, packRoot, prompt, ensureLogin, ...timeout, ...(login ? { login } : {}) });
+          });
           answered = true;
           costs.push({ ...cost, attempt, elapsedMs: result?.elapsedMs ?? null, usage: result?.usage ?? null, boundary: result?.boundary ?? null });
           const parsed = parse(result?.response, attempt);
@@ -980,8 +983,8 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
           // A login failure gets one login refresh before that single retry.
           if (error?.loginFailure && attempt === 1 && error?.interrupted !== true) login = await refreshAfterLoginFailure(error, ensureLogin);
           const reason = clipped(String(error?.message ?? error)).text, interrupted = error?.interrupted === true;
-          const cause = roleFailureCause(error, { answered, slept: gap(wall, mono) });
-          if (!answered) costs.push({ ...cost, attempt, elapsedMs: Date.now() - started, usage: null, boundary: error?.boundary ?? null, failure: true });
+          const cause = roleFailureCause(error, { answered, slept: started !== undefined && gap(wall, mono) });
+          if (!answered) costs.push({ ...cost, attempt, elapsedMs: started === undefined ? 0 : Date.now() - started, usage: null, boundary: error?.boundary ?? null, failure: true });
           record.failures.push({ head, round: number, role, ...(group ? { group } : {}), attempt, reason, cause, answer: error?.answerDiagnostic ?? clipped(answered ? result?.response : error?.rawAnswer) });
           if (attempt === 2 || interrupted) { roleFailure = true; throw Object.assign(new Error(reason), { interrupted }); }
           if (cause === 'capacity' || cause === 'rate-limit') await pause(INFRA_PAUSE_SEC * secondMs);
@@ -1214,7 +1217,7 @@ export async function runRemarkCheck(input, { runRole = executeRole, ensureLogin
     exported = exportReviewTree(worktree, head, binary);
     const context = { worktree: exported.root, head, base, diff: changed.parts.map(part => part.diff).join(''), binaryFiles: [...binary], remarks };
     const own = promptLimits?.[route.engine], limit = Math.min(PROMPT_LIMITS[route.engine] ?? 0, Number.isSafeInteger(own) && own > 0 ? own : Infinity);
-    const launch = (prompt, login) => runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt, ensureLogin, ...timeout, ...(login ? { login } : {}) });
+    const launch = (prompt, login) => inHostSlot('remark-check', secondMs, () => runRole({ role: 'remark-check', route, worktree: exported.root, packRoot, prompt, ensureLogin, ...timeout, ...(login ? { login } : {}) }));
     const run = async prompt => {
       requireValue(promptSize(prompt) <= limit, `remark-check input of ${promptSize(prompt)} bytes is over the ${route.engine} input limit of ${limit} bytes`);
       // Only a login failure is retried here: one login refresh, one relaunch.

@@ -303,10 +303,11 @@ const failureLines = text => text.split("\n").filter(line => /^\s*(FAIL\b|not ok
 // Inherited Git routing would point the command's Git back at the worker repository whatever its directory.
 const GIT_ROUTING = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX"];
 // MONO-507: the run first takes a machine-wide host slot (shared with review roles); the wait is outside its duration.
+// A gate stopped by SIGINT/SIGTERM ends the detached verification group before its slot is released.
 export async function runHostVerification(verification, repo, head, evidenceRoot, collectionId, pinsFile) {
-  return withHostSlot({ label: `host verification ${collectionId}` }, () => runHostVerificationInSlot(verification, repo, head, evidenceRoot, collectionId, pinsFile));
+  return withHostSlot({ label: `host verification ${collectionId}` }, slot => runHostVerificationInSlot(verification, repo, head, evidenceRoot, collectionId, pinsFile, slot));
 }
-async function runHostVerificationInSlot({ command, args }, repo, head, evidenceRoot, collectionId, pinsFile) {
+async function runHostVerificationInSlot({ command, args }, repo, head, evidenceRoot, collectionId, pinsFile, slot) {
   const marker = hostRunMarker(evidenceRoot, collectionId), log = marker.replace(/\.running$/, ".log"), checkout = hostRunCheckout(evidenceRoot, collectionId);
   // MONO-482 review: one host run per orchestrator root; another open run refuses this one before anything runs.
   try { openHostRun(evidenceRoot, collectionId, pinsFile); }
@@ -341,12 +342,13 @@ if(r.error)console.error(r.error.message);process.exit(r.status??(r.signal?128:1
     let group = null, registered = null;
     const { exitCode, error } = await new Promise(resolve => {
       const child = spawn(process.execPath, ["--input-type=commonjs", "-e", wrapper, JSON.stringify([command, ...args])], { cwd: checkout, detached: true, stdio: ["pipe", fd, fd],
-        env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !GIT_ROUTING.includes(key))), TMPDIR: tempRoot, TMP: tempRoot, TEMP: tempRoot } });
+        env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !GIT_ROUTING.includes(key) && key !== "MONO_HOST_SLOTS_WAIT_FILE")), TMPDIR: tempRoot, TMP: tempRoot, TEMP: tempRoot } });
       child.stdin.on("error", () => {});
       child.once("error", cause => resolve({ exitCode: null, error: cause.message }));
       child.once("exit", (code, signal) => resolve({ exitCode: code ?? (signal ? 128 : null), error: signal ? `signal ${signal}` : null }));
       try {
-        group = child.pid; const procStart = processStart(group);
+        group = child.pid; slot.setStop(() => { try { process.kill(-group, "SIGKILL"); } catch {} });
+        const procStart = processStart(group);
         if (!procStart) throw new Error("verification group incarnation unavailable");
         atomicJson(marker, { ...readJson(marker), group, procStart });
         registered = true; child.stdin.end("go\n");
@@ -355,6 +357,7 @@ if(r.error)console.error(r.error.message);process.exit(r.status??(r.signal?128:1
     fs.closeSync(fd);
     // Descendants left by the command could still write evidence: the whole group ends before the evidence check.
     const descendants = group ? await stopHostGroup(group) : null;
+    slot.setStop(null);
     stopped = !descendants;
     const text = fs.readFileSync(log, "utf8");
     return { command, args, host: true, head, exitCode: registered === true ? exitCode ?? 1 : 1, ...(error ? { error } : {}),

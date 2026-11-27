@@ -39,22 +39,74 @@ test('a third claimant waits while two slots are held and takes the one released
   assert.deepEqual(fs.readdirSync(dir), [], 'released slots leave nothing behind');
 });
 
-test('a dead or reused pid frees its slot on the next acquire', async t => {
-  const dir = scratch(t), options = { dir, count: 2, pollMs: 10 };
+test('a dead, reused, garbage or own released claim frees its slot; an unreadable one stays held', async t => {
+  const dir = scratch(t), options = { dir, count: 4, pollMs: 10 };
   const dead = spawnSync(process.execPath, ['-e', '']).pid;
   fs.writeFileSync(path.join(dir, 'slot-1'), JSON.stringify({ pid: dead, token: 'gone' }));
   // A live pid that started at another time is a reused pid: the owner is gone.
-  fs.writeFileSync(path.join(dir, 'slot-2'), JSON.stringify({ pid: process.pid, procStart: 'Mon Jan  1 00:00:00 2001', token: 'reused' }));
-  const a = await acquireHostSlot(options), b = await acquireHostSlot(options);
-  assert.deepEqual([a.slot, b.slot, a.waitedMs < 1000], [1, 2, true]);
-  assert.equal(await pending(acquireHostSlot(options), 100), 'pending', 'live owners are never reclaimed');
-  a.release(); b.release();
+  fs.writeFileSync(path.join(dir, 'slot-2'), JSON.stringify({ pid: process.ppid, procStart: 1, token: 'reused' }));
+  fs.writeFileSync(path.join(dir, 'slot-3'), '');
+  // This process's own claim whose release failed to unlink: its token is no longer held.
+  fs.writeFileSync(path.join(dir, 'slot-4'), JSON.stringify({ pid: process.pid, token: 'released' }));
+  const got = [];
+  for (let n = 0; n < 4; n++) got.push(await acquireHostSlot(options));
+  assert.deepEqual(got.map(slot => slot.slot), [1, 2, 3, 4]);
+  assert.equal(await pending(acquireHostSlot({ ...options, signal: AbortSignal.timeout(500) }).catch(() => {}), 100), 'pending', 'live owners are never reclaimed');
+  got.forEach(slot => slot.release());
+  // An owner file that cannot be read (EACCES) is treated as held, never evicted.
+  const locked = path.join(dir, 'slot-1');
+  fs.writeFileSync(locked, JSON.stringify({ pid: dead, token: 'x' })); fs.chmodSync(locked, 0);
+  t.after(() => { try { fs.chmodSync(locked, 0o600); } catch {} });
+  const blocked = acquireHostSlot({ dir, count: 1, pollMs: 10, signal: AbortSignal.timeout(300) });
+  await assert.rejects(blocked, error => error.interrupted === true, 'the wait ends only by its abort');
+  assert.ok(fs.existsSync(locked));
 });
 
-test('a process stopped by SIGTERM releases its slot and still stops', async t => {
-  const dir = scratch(t);
+test('a waiting claimant rejects on abort and on a stopping signal instead of launching', async t => {
+  const dir = scratch(t), holder = await acquireHostSlot({ dir, count: 1 });
+  t.after(() => holder.release());
+  const controller = new AbortController();
+  const waiting = acquireHostSlot({ dir, count: 1, pollMs: 10, signal: controller.signal });
+  setTimeout(() => controller.abort(), 50);
+  await assert.rejects(waiting, error => error.interrupted === true);
+  // Another process queued behind the held slot: SIGINT rejects its wait (another handler, like a running role, keeps it alive).
   const code = `import(${JSON.stringify(path.join(packRoot, 'scripts/host-slots.mjs'))}).then(async ({ acquireHostSlot }) => {
-    await acquireHostSlot({ dir: ${JSON.stringify(dir)}, count: 1 }); console.log('held'); setInterval(() => {}, 1000); });`;
+    process.on('SIGINT', () => {}); console.log('waiting');
+    try { await acquireHostSlot({ dir: ${JSON.stringify(dir)}, count: 1, pollMs: 10 }); console.log('launched'); }
+    catch (error) { console.log(error.interrupted ? 'interrupted' : 'failed'); } process.exit(0); });`;
+  const child = spawn(process.execPath, ['-e', code], { stdio: ['ignore', 'pipe', 'inherit'] });
+  let out = '';
+  await new Promise(resolve => child.stdout.on('data', data => { out += data; if (out.includes('waiting')) resolve(); }));
+  await new Promise(resolve => setTimeout(resolve, 100));
+  child.kill('SIGINT');
+  await new Promise(resolve => child.once('exit', resolve));
+  assert.match(out, /interrupted/); assert.doesNotMatch(out, /launched/);
+});
+
+test('independent processes reclaiming the same dead slot never hold it together', async t => {
+  const dir = scratch(t);
+  fs.writeFileSync(path.join(dir, 'slot-1'), JSON.stringify({ pid: spawnSync(process.execPath, ['-e', '']).pid, token: 'gone' }));
+  const code = `import(${JSON.stringify(path.join(packRoot, 'scripts/host-slots.mjs'))}).then(async ({ acquireHostSlot }) => {
+    const fs = await import('node:fs'), inside = ${JSON.stringify(path.join(dir, 'inside'))};
+    const slot = await acquireHostSlot({ dir: ${JSON.stringify(dir)}, count: 1, pollMs: 5 });
+    try { fs.writeFileSync(inside, String(process.pid), { flag: 'wx' }); } catch { console.log('overlap'); }
+    await new Promise(resolve => setTimeout(resolve, 40));
+    fs.rmSync(inside, { force: true }); slot.release(); console.log('done'); });`;
+  const runs = Array.from({ length: 6 }, () => new Promise(resolve => {
+    const child = spawn(process.execPath, ['-e', code], { stdio: ['ignore', 'pipe', 'inherit'] });
+    let out = ''; child.stdout.on('data', data => out += data); child.once('exit', () => resolve(out));
+  }));
+  const outputs = await Promise.all(runs);
+  assert.deepEqual(outputs.map(out => out.trim()), Array(6).fill('done'));
+  assert.deepEqual(fs.readdirSync(dir), []);
+});
+
+test('a process stopped by SIGTERM runs the slot\'s stop action, releases its slot and still stops', async t => {
+  const dir = scratch(t), stopped = path.join(dir, 'stopped');
+  const code = `import(${JSON.stringify(path.join(packRoot, 'scripts/host-slots.mjs'))}).then(async ({ acquireHostSlot }) => {
+    const slot = await acquireHostSlot({ dir: ${JSON.stringify(dir)}, count: 1 });
+    slot.setStop(() => require('node:fs').writeFileSync(${JSON.stringify(stopped)}, 'yes'));
+    console.log('held'); setInterval(() => {}, 1000); });`;
   const child = spawn(process.execPath, ['-e', code], { stdio: ['ignore', 'pipe', 'inherit'] });
   await new Promise(resolve => child.stdout.on('data', data => { if (String(data).includes('held')) resolve(); }));
   assert.ok(fs.existsSync(path.join(dir, 'slot-1')));
@@ -62,6 +114,7 @@ test('a process stopped by SIGTERM releases its slot and still stops', async t =
   child.kill('SIGTERM');
   assert.equal(await exit, 'SIGTERM');
   assert.equal(fs.existsSync(path.join(dir, 'slot-1')), false);
+  assert.equal(fs.existsSync(stopped), true, 'the work the slot covered was stopped first');
 });
 
 test('a review role waits for a slot outside its time limit and is reviewed, not timed out', async t => {
