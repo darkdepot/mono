@@ -130,8 +130,8 @@ workflows; without a deploy block merges close unverified. `workflows.deploy` ha
 ## Project Policy
 
 The review round is mandatory: the collector host needs both review CLIs
-logged in. The round runs [role:code-review](model-policy.md#roles) and
-[role:code-review-checker](model-policy.md#roles), pinned at launch from BASE config. Optional
+logged in. The round runs [role:code-review](model-policy.md#roles), and
+[role:code-review-checker](model-policy.md#roles) for P0/P1 of a risky task, pinned at launch from BASE config. Optional
 `"orchestration"` selects transport/concurrency; model routes come from BASE config.
 
 Transport `claude-cli` additionally requires the Claude Code CLI installed on the

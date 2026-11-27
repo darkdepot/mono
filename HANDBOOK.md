@@ -1501,7 +1501,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | [mono:tech-evaluation](skills/tech-evaluation/SKILL.md) | One checked technical solution, one version-approved plain-language page, then a short Tech Spec; same stage for owner or delegated orchestrator |
 | [mono:issue](skills/issue/SKILL.md) | Одна задача без проекта: короткий итог, согласие со стартом или на потом, отзыв и восстановление |
 | [mono:handoff](skills/handoff/SKILL.md) | Team lead: reconciles approved inputs, slices (one Issue by default), one reviewed package record, Ready; work starts by owner or delegated orchestrator; repair by the record |
-| [mono:code-review](skills/code-review/SKILL.md) | Manual code report with an independent checker; delivery still uses Preflight |
+| [mono:code-review](skills/code-review/SKILL.md) | Manual code report; the checker joins only for P0/P1 at risk=risky; delivery still uses Preflight |
 | [mono:review](skills/review/SKILL.md) | Report-only quality/risk review |
 | [mono:check](skills/check/SKILL.md) | Readiness-only transition assessment |
 | [mono:deliver](skills/deliver/SKILL.md) | One delivery context sequencing its three phase owners |

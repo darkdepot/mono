@@ -228,7 +228,7 @@ Required:
 - Branch/worktree state inspected.
 - Local diff compared against Project, PRD, Tech Spec, and Issue.
 - Targeted tests/checks run or explicitly reported as not run.
-- The collection's read-only review round by [role:code-review](model-policy.md#roles) and [role:code-review-checker](model-policy.md#roles) ends `clean` or `clean-with-successors` within two rounds and verification passes, or preflight parks.
+- The collection's read-only review round by [role:code-review](model-policy.md#roles) ([role:code-review-checker](model-policy.md#roles) only for P0/P1 of a risky task) ends `clean` or `clean-with-successors` within two rounds and verification passes, or preflight parks.
 - Commit state reported, with commits created only when safe and configured.
 - Preflight certificate emitted with status `ready`, `blocked`, `drift-candidate`, or `needs-human`.
 
