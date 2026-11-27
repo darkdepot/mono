@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { atomicJson, REVIEW_PRODUCER } from './runtime.mjs';
 import { checkSpawnAvailability } from './orchestrator/launch.mjs';
 import { uncountedFile } from './orchestrator/command-state.mjs';
+import { QA_MARKER } from './qa-certificate.mjs';
 import { validatePreflight } from './gate.mjs';
 
 // MONO-505: at most 3 counted attempts per task, no raise; a new attempt needs progress, and after a stalled pass a
@@ -32,10 +33,11 @@ function fixture(used = 1) {
     atomicJson(path.join(evidence, 'history', `run-${++runs}.json`), { receipt: { producer: REVIEW_PRODUCER, pins: { file: pinsOf(attempt) },
       recordedAt: new Date(clock += 60_000).toISOString(), review: { outcome: open.length ? 'not-converged' : 'clean', spent: true, record: { findings } }, ...extra } });
   };
-  // One QA pass at a head: blocking bugs as item ids.
+  // One QA pass at a head, in the real report format (certificate after its marker line): blocking bugs as item ids.
   const qa = (head, blocking, verdict = blocking.length ? 'failed' : 'passed') => {
     const file = path.join(root, 'qa', ISSUE, head, 'task-report.json');
-    atomicJson(file, { verdict, bugs: blocking.map((item, n) => ({ id: `B${n}`, class: 'blocking', why: 'acceptance', item })) });
+    atomicJson(file, { certificate: `${QA_MARKER}\n${JSON.stringify({ scope: 'task', issue: ISSUE, head, verdict,
+      bugs: blocking.map((item, n) => ({ id: `B${n}`, class: 'blocking', why: 'acceptance', item, summary: item })) })}` });
     const at = new Date(clock += 60_000); fs.utimesSync(file, at, at);
   };
   const spawnCheck = (extra = {}) => checkSpawnAvailability({ root, issue: ISSUE, ...extra });
@@ -83,6 +85,11 @@ test('the same approach after a non-converged review or a failed QA is refused; 
     g.qa('c'.repeat(40), ['item-1']);
     assert.equal(g.spawnCheck().used, 1, 'a blocking QA bug is a critical defect');
   } finally { g.cleanup(); }
+  const h = fixture();
+  try {
+    h.round(1, [['k1', 'P2']]); h.qa('d'.repeat(40), []);
+    assert.equal(h.spawnCheck().used, 1, 'a passed QA after the review leaves no stalled pass');
+  } finally { h.cleanup(); }
 });
 
 test('the progress breaker trips on blockers that do not decrease, a blocker back twice or an oversized change', () => {

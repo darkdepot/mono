@@ -7,6 +7,8 @@ import { readQaRecipeFile } from './qa-recipe.mjs';
 
 const SOURCES = ['task', 'requirement', 'acceptance', 'design', 'heuristic', 'scenario'];
 export const QA_MARKER = 'mono-qa certificate';
+// The certificate a task report carries after its marker line.
+export const reportCertificate = report => JSON.parse(report.certificate.slice(QA_MARKER.length).trim());
 const text = value => typeof value === 'string' && value.trim().length > 0;
 const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
 const need = (ok, message) => { if (!ok) throw new Error(`qa certificate: ${message}`); };
@@ -183,8 +185,7 @@ function secondPass(expected, ctx, prior, enforce) {
   for (const name of others) {
     // Host-written reports of this task; an unreadable one is checked where it is carried, not here.
     try {
-      const raw = JSON.parse(fs.readFileSync(path.join(taskDir, name, 'task-report.json'), 'utf8')).certificate;
-      const old = JSON.parse(raw.slice(QA_MARKER.length).trim());
+      const old = reportCertificate(JSON.parse(fs.readFileSync(path.join(taskDir, name, 'task-report.json'), 'utf8')));
       for (const item of old.items ?? []) if (item?.outcome === 'passed') passed.push(item);
       for (const bug of old.bugs ?? []) if (bug?.class === 'successor') successors.push({ ...bug, head: name });
     } catch { /* not a behavior report */ }
@@ -202,7 +203,7 @@ function validate(report, expected, ctx) {
   need(object(expected), 'expected identity required');
   const raw = report?.certificate;
   need(typeof raw === 'string' && raw.startsWith(QA_MARKER + '\n'), 'one marker required');
-  const cert = JSON.parse(raw.slice(QA_MARKER.length).trim());
+  const cert = reportCertificate(report);
   need(object(cert), 'JSON object required');
   need(['task', 'project'].includes(cert.scope) && cert.scope === expected.scope, 'scope mismatch');
   const target = cert.scope === 'task' ? 'issue' : 'project';

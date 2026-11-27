@@ -9,6 +9,7 @@ import { atomicJson, canonical, digest, readJson, flags, identity, isMain, proce
 import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, taskChanges, reviewRetries, extraRounds } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
+import { reportCertificate } from './qa-certificate.mjs';
 import { hostRunMarker, hostRunCheckout, removeHostCheckout, openHostRun, settleHostRun, stopHostGroup, screenCheckHold, readScreenCheck, reviewGroupStore } from './review-rounds.mjs';
 
 export { reviewEnvironment } from "./model-environment.mjs";
@@ -420,7 +421,7 @@ export function issuePasses(root, issue, used) {
   const qa = path.join(root, "qa", issue);
   for (const head of fs.existsSync(qa) ? fs.readdirSync(qa) : []) {
     const file = path.join(qa, head, "task-report.json");
-    let report; try { report = readJson(file); } catch { continue; }
+    let report; try { report = reportCertificate(readJson(file)); } catch { continue; }
     passes.push({ kind: "qa", at: fs.statSync(file).mtime.toISOString(), stalled: report?.verdict !== "passed",
       blockers: (Array.isArray(report?.bugs) ? report.bugs : []).filter(bug => bug?.class === "blocking").map(bug => ({ id: `qa:${bug.item ?? bug.id}`, critical: true })) });
   }
