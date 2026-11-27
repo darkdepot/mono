@@ -9,6 +9,7 @@ import { copyPluginFixture } from './plugin-fixture.mjs';
 import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
 import { atomicJson } from './runtime.mjs';
 import { createHash } from 'node:crypto';
+process.env.MONO_CODEX_PROBE_BIN ??= new URL('./test-fixtures/fake-codex-linear.mjs', import.meta.url).pathname; // MONO-509 Linear path probe
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = file => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -312,7 +313,7 @@ test('launch-watcher-required after launch preparation and before resume', async
       pulse(f.root);
       if (mode !== 'spawn') { pass(f.dispatch()); await stopped(f.entry().pid); }
       const launch = path.join(f.pack, 'scripts/orchestrator/launch.mjs'), source = fs.readFileSync(launch, 'utf8');
-      const anchor = mode === 'spawn' ? 'const gates = request.gates ?? [];' : 'const updated = { ...entry, capsule:';
+      const anchor = mode === 'spawn' ? 'const gates = request.gates ?? [];' : 'const updated = { ...entry, ...(linearPath';
       assert.ok(source.includes(anchor));
       put(launch, source.replace(anchor, `fs.unlinkSync(path.join(request.root, 'watcher.json')); ${anchor}`));
       const resumeFile = path.join(f.scratch, 'race-resume.md'); put(resumeFile, 'Continue.');

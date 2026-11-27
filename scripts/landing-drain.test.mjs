@@ -9,6 +9,7 @@ import { atomicJson, digest, processStart, withLock } from "./runtime.mjs";
 import * as state from "./orchestrator/command-state.mjs";
 import { checkSpawnAvailability, resumeWorker } from "./orchestrator/launch.mjs";
 import { updateBlockers } from './verify-pack-state.mjs';
+process.env.MONO_CODEX_PROBE_BIN ??= new URL('./test-fixtures/fake-codex-linear.mjs', import.meta.url).pathname; // MONO-509 Linear path probe
 
 const script = path.resolve("scripts/orchestrator/landing-drain.mjs");
 test('plugin update checks all products, including paused attempts, without changing registries', t => {

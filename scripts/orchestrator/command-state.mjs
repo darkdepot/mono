@@ -4,6 +4,7 @@ import { qaDeliveryState, requireQaPassed } from '../qa-gate.mjs';
 import path from "node:path";
 import crypto from "node:crypto";
 import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, withLockSync, shipBotChecks, baseModelConfig, processStart, workerDeathCause, INFRA_CAUSES } from "../runtime.mjs";
+import { configParseDeath } from "../transports/codex-linear.mjs";
 import { validatePhase, requirePredecessors } from "../delivery-state.mjs";
 import { readLedger, inFlight, admissionFor, admitRound, requestDigest, validRoundRequest } from "../review-rounds.mjs";
 import { checkIdea, IDEA_GATE_DEFAULT_SINCE } from '../idea-gate.mjs';
@@ -443,7 +444,7 @@ const REASON_LIMIT = 500;
 const filledText = (value, limit) => typeof value === "string" && value.trim() !== "" && value.length <= limit;
 // MONO-504: attempts that do not count toward the cap, beside attempts.json: {ISSUE: [{attempt, reason, recordedAt}]}.
 // Launch alone writes it, from evidence: the previous attempt's log ends on an environmental death (an overloaded model,
-// a rate limit, the network) or the pack surface changed since its dispatch. The attempt number still advances.
+// a rate limit, the network), Codex failing to parse its config before starting (MONO-509) or the pack surface changed since its dispatch. The attempt number still advances.
 export const uncountedFile = root => path.join(root, "attempts-uncounted.json");
 export function uncountedAttempts(root, issue) {
   const file = uncountedFile(root), all = fs.existsSync(file) ? readJson(file) : {};
@@ -456,8 +457,10 @@ export function uncountedAttempts(root, issue) {
 // Why the next attempt after `used` would not count: null when it counts.
 export function uncountedReason(root, issue, used, surfaceRevision) {
   if (used < 1) return null;
-  const died = workerDeathCause(path.join(root, "logs", `${issue}-mono-deliver-a${used}.jsonl`));
+  const log = path.join(root, "logs", `${issue}-mono-deliver-a${used}.jsonl`), died = workerDeathCause(log);
   if (INFRA_CAUSES.includes(died)) return `environment: attempt ${used} died of ${died}`;
+  // MONO-509: Codex could not parse its config before any thread started; not resumable, so not an infra cause.
+  if (configParseDeath(log)) return `environment: attempt ${used} died loading Codex config.toml before thread.started`;
   const pins = path.join(root, "dispatch", `${issue}-a${used}`, "pins.json");
   const prior = fs.existsSync(pins) ? readJson(pins).surfaceRevision : undefined;
   if (Number.isInteger(surfaceRevision) && Number.isInteger(prior) && prior !== surfaceRevision)

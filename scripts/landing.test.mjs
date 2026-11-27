@@ -11,6 +11,7 @@ import { checkSpawnAvailability } from "./orchestrator/launch.mjs";
 import { renderDispatch } from "./orchestrator/dispatch.mjs";
 import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
 import { guardScratch, ownerWatchdog, reapScratch } from './test-fixtures/fixture-processes.mjs';
+process.env.MONO_CODEX_PROBE_BIN ??= new URL('./test-fixtures/fake-codex-linear.mjs', import.meta.url).pathname; // MONO-509 Linear path probe
 
 const scenarios = ["clean-branch", "file-edit", "prefix-edit", "rename", "release", "forged-release", "branch-removes-policy", "inherited-after-rebase", "no-pins", "no-policy", "branch-introduces-policy"];
 test("landing U2 named gate fixtures", async t => {

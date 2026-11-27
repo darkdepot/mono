@@ -319,6 +319,14 @@ export async function spawnWorker(request, preparation = {}) {
       if (!Array.isArray(request.writable_roots) || request.writable_roots.some(p => !path.isAbsolute(p))) throw new Error("explicit writable roots required");
       fs.mkdirSync(path.join(request.root, "reports"), { recursive: true });
       const roots = effectiveGrants(request, request.root);
+      // MONO-509: the Linear write path is settled before anything of the attempt exists; a refusal spends nothing.
+      let linearPath;
+      try { linearPath = transport.resolveLinearPath?.(); }
+      catch (error) {
+        atomicJson(path.join(request.root, "launch-refusals", request.issue + "-a" + (used + 1) + ".json"),
+          { issue: request.issue, status: "refused", action: error.message, attempt_registered: false });
+        throw error;
+      }
       let prepared;
       try {
         prepared = transport.prepare?.(model_policy, { cwd: request.worktree,
@@ -351,6 +359,7 @@ export async function spawnWorker(request, preparation = {}) {
         collectionRetries: deliveryConfig(request.config).collectionRetries,
         capsule: { phase: "code", head: worktreeGit(request.worktree, ["HEAD"]),
           open_queue: [], decisions: [], writable_roots: roots } };
+      if (linearPath) entry.linearPath = linearPath;
       if (gates.length) entry.gates = gates;
       if (prepared?.credentialPaths) entry.githubCredentialPaths = prepared.credentialPaths;
       if (prepared?.githubConfigDir) entry.githubConfigDir = prepared.githubConfigDir;
@@ -434,7 +443,10 @@ export async function resumeWorker(request) {
     const prepared = transport.prepare?.(entry.modelRoutes.roles[entry.model_policy.role], { cwd: entry.worktree,
       roots, tempDir: temporaryDirectory(transport, entry, roots),
       githubConfigDir: entry.githubConfigDir, previousCredentialPaths: entry.githubCredentialPaths });
-    const updated = { ...entry, capsule: { ...entry.capsule, writable_roots: roots }, writable_roots: roots, workerWritableRoots: roots };
+    // MONO-509: a resume keeps the Linear path its attempt launched with and refuses when it is gone; an older entry
+    // without one resolves it now: assuming the MCP server could repeat a launch Codex cannot parse.
+    const linearPath = transport.resolveLinearPath?.({ recorded: entry.linearPath ?? null });
+    const updated = { ...entry, ...(linearPath ? { linearPath } : {}), capsule: { ...entry.capsule, writable_roots: roots }, writable_roots: roots, workerWritableRoots: roots };
     if (prepared?.credentialPaths) updated.githubCredentialPaths = [...new Set([...(entry.githubCredentialPaths ?? []), ...prepared.credentialPaths])];
     const registry = readJson(path.join(request.root, "workers.json")); registry[request.issue] = updated;
     atomicJson(path.join(request.root, "workers.json"), registry);

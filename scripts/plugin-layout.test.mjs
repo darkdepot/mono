@@ -9,6 +9,7 @@ import { checkPlugin } from './validate-plugin.mjs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writeWatcherFixture } from './plugin-fixture.mjs';
+process.env.MONO_CODEX_PROBE_BIN ??= new URL('./test-fixtures/fake-codex-linear.mjs', import.meta.url).pathname; // MONO-509 Linear path probe
 
 // U2's incompatible protocol change; expected values do not come from runtime.
 const currentProtocol = 6, previousProtocol = 5;
