@@ -433,7 +433,8 @@ export function progressStop(passes) {
   const latest = {}, totals = [], seen = new Map();
   for (const pass of passes) {
     latest[pass.kind] = pass.blockers;
-    for (const item of pass.blockers) seen.set(item.id, (seen.get(item.id) ?? 0) + 1);
+    // Once per pass: several blockers of one item (distinct QA bugs on the same acceptance item) are not a return.
+    for (const id of new Set(pass.blockers.map(item => item.id))) seen.set(id, (seen.get(id) ?? 0) + 1);
     totals.push((latest.review?.length ?? 0) + (latest.qa?.length ?? 0));
   }
   if (passes.findLast(pass => pass.kind === "review")?.oversized) return "the change is oversized";

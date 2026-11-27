@@ -9,7 +9,7 @@ import { atomicJson, REVIEW_PRODUCER } from './runtime.mjs';
 import { checkSpawnAvailability } from './orchestrator/launch.mjs';
 import { uncountedFile } from './orchestrator/command-state.mjs';
 import { QA_MARKER } from './qa-certificate.mjs';
-import { validatePreflight } from './gate.mjs';
+import { validatePreflight, progressStop } from './gate.mjs';
 
 // MONO-505: at most 3 counted attempts per task, no raise; a new attempt needs progress, and after a stalled pass a
 // critical defect or a changed approach.
@@ -147,4 +147,10 @@ test('an attempt after a death by an overloaded model or a pack surface change i
     assert.equal(f.spawnCheck({ surfaceRevision: 6 }).uncounted, 'pack change: attempt 4 ran surface 5, this one 6');
     assert.throws(() => f.spawnCheck({ surfaceRevision: 5 }), /attempt limit reached/, 'the same surface counts');
   } finally { f.cleanup(); }
+});
+
+test('several blocking bugs on one item in one pass are not a returned blocker (MONO-505)', () => {
+  const qa = n => ({ kind: 'qa', at: `2026-11-27T0${n}:00:00Z`, stalled: true, blockers: [1, 2, 3].map(() => ({ id: 'qa:AC-1', critical: true })) });
+  assert.equal(progressStop([qa(1)]), null);
+  assert.equal(progressStop([qa(1), { kind: 'qa', at: '2026-11-27T02:00:00Z', stalled: true, blockers: [{ id: 'qa:AC-1', critical: true }] }]), null);
 });
