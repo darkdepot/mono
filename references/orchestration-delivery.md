@@ -197,10 +197,17 @@ No unfinished command means ordinary stall; missing writer evidence and `dead`
 remain unchanged. A hung command that keeps writing progress still has a fresh
 log: detecting it remains outside this rule.
 
-No-ack/no-report exit: resume the same thread once demanding its capsule/report;
-second reportless exit or failed resume rebuilds from Linear plus capsule/worktree
-and uses a verified new attempt, preserving outstanding write IDs and reconciliation.
-Use installed resume/spawn tools; do not reset Issue or attempt counts.
+A `dead` or `failed` line names the cause the worker's log ended on: `cause=capacity`,
+`rate-limit`, `network` or `other`. An environmental death (the first three) is
+resumed in the same attempt after 1, 5 and 15 minutes, then every 15, for as long
+as the cause stays environmental; it never opens a new attempt. Should a new
+attempt follow one anyway, or follow a pack surface change (resume refuses an
+incompatible surface), spawn records it in `attempts-uncounted.json` beside
+`attempts.json` and it does not count toward the cap.
+No-ack/no-report exit (`cause=other`): resume the same thread once demanding its
+capsule/report; a second reportless exit or failed resume rebuilds from Linear plus
+capsule/worktree and uses a verified new attempt, preserving outstanding write IDs
+and reconciliation. Use installed resume/spawn tools; do not reset Issue or attempt counts.
 The attempt cap is the base from `orchestration.delivery.attemptCap` in the product
 config committed at BASE (like model routes; pack default 3), at most the ceiling
 of 6, plus the raises recorded for that Issue; spawn refuses at the cap and names
@@ -220,7 +227,7 @@ and the last raise's cap, so a later BASE change never re-judges a recorded rais
 caps strictly increase and a record above 6 without owner words is invalid. The
 record `attempt-cap-raises.json` (`{number, reason, recordedAt, cap, ownerWords?}`
 per raise) sits beside `attempts.json` under its own lock, outside every worker
-grant; the ceiling of 6 is not configurable. `attempt-cap.mjs show` prints used attempts, base, raises and the
+grant; the ceiling of 6 is not configurable. `attempt-cap.mjs show` prints used, counted and uncounted attempts, base, raises and the
 effective cap; report recorded raises with the attempt state.
 Keep dirty work on same-thread resume. If that thread cannot resume, park
 needs-decision with its capsule and preserved dirty tree; never loop new spawns,
@@ -257,10 +264,12 @@ reads «вход Claude истёк или не найден» and gets one refre
 Every failed role attempt names its cause in the receipt: `timeout` (the role
 timer), `host-slept` (the wall clock ran more than 60 s ahead of the monotonic
 one), `network` (an unresolved host, a reset or dropped connection in the CLI's
-stderr), `login` (still failing after its refresh) or `other` (a malformed
+stderr), `login` (still failing after its refresh), `capacity` or `rate-limit`
+(an overloaded model, 529, or a 429 in the CLI's error event or stderr, never in
+the answer; the second attempt waits a minute first) or `other` (a malformed
 answer, an output limit, a CLI that could not start). A `not-reviewed` receipt
 carries `review.cause`: `environment` when a role failed and every failed
-attempt of the round has one of the first four causes with every file read,
+attempt of the round has one of the first six causes with every file read,
 otherwise `review` (also every older receipt); and `review.host`, the host load
 at the start and end of the round with a sleep flag, as facts, not a threshold.
 
@@ -333,7 +342,8 @@ Parks:
   decide whether the code or the environment is wrong.
 - blocked, `not-reviewed twice in a row on this head (environment: …)`: restore
   the environment (wait for the host to wake and the load to drop, the network,
-  the CLI login), then resume the worker with `reviewRetry: true` and no task
+  the CLI login; an overloaded model or a rate limit: wait 1, 5, 15 minutes,
+  then every 15), then resume the worker with `reviewRetry: true` and no task
   change; the next collection on the same head runs a round. The retry is
   recorded in `dispatch/KEY-aN/review-retries.json` beside the launch pins,
   outside every worker grant; it cuts the streak recorded before it, never accepts a head, and changes neither the

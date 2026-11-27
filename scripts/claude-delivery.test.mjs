@@ -112,6 +112,9 @@ test("Claude watcher recognizes foreground round waits, a stopped collector, pro
   assert.match(f.watch(), /EVENT:completed-without-report/);
   f.journal([...f.events, { type: "result", session_id: f.entry.thread_id, is_error: true }]);
   assert.match(f.watch(), /EVENT:failed/);
+  assert.doesNotMatch(f.watch(), /cause=(capacity|rate-limit|network)/, "an error result without a provider status names no environment cause");
+  f.journal([...f.events, { type: "result", session_id: f.entry.thread_id, is_error: true, api_error_status: 529 }]);
+  assert.match(f.watch(), /EVENT:failed .* cause=capacity/, "a failed turn names the provider cause like a dead worker");
 }));
 
 test("historical malformed output does not invalidate current-instance wait or completion", () => withFixture(f => {

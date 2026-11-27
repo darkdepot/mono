@@ -6,7 +6,7 @@ import { startGate, extraRoundCheck } from "../gate.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
 import { workerTransport } from "../worker-transport.mjs";
-import { effectivePins, attemptState, recordTaskChange, dropTaskChange, recordReviewRetry, dropReviewRetry, voidReviewRetry, validExtraRoundRequest, recordExtraRound, dropExtraRound, voidExtraRound, attemptCapState, ATTEMPT_CAP_CEILING } from "./command-state.mjs";
+import { effectivePins, attemptState, recordTaskChange, dropTaskChange, recordReviewRetry, dropReviewRetry, voidReviewRetry, validExtraRoundRequest, recordExtraRound, dropExtraRound, voidExtraRound, attemptCapState, ATTEMPT_CAP_CEILING, uncountedReason, uncountedAttempts, uncountedFile } from "./command-state.mjs";
 import { ensureCollector } from "./collector.mjs";
 import { hostRunsInProgress, settleRetiredHostRunsSync, inFlight, readLedger } from "../review-rounds.mjs";
 
@@ -278,10 +278,12 @@ export function checkSpawnAvailability(request) {
   // MONO-490: the cap is the BASE config cap (at most the ceiling) plus the raises recorded by attempt-cap.mjs raise.
   const cap = attemptCapState(request.root, request.issue, { worktree: request.worktree, base: request.base, config: request.config });
   for (const warning of cap.warnings) console.error(`attempt cap: ${warning}`);
-  if (used >= cap.cap) throw new Error(`attempt cap reached: ${used} of ${cap.cap} used (base ${cap.baseCap}, raises ${cap.raises.length}); ` +
+  // MONO-504: an attempt after an environmental death or a pack surface change does not count, so the cap never stops it.
+  const uncounted = uncountedReason(request.root, request.issue, used, request.surfaceRevision);
+  if (!uncounted && cap.counted >= cap.cap) throw new Error(`attempt cap reached: ${cap.counted} of ${cap.cap} used (base ${cap.baseCap}, raises ${cap.raises.length}${cap.uncounted ? `, ${cap.uncounted} uncounted` : ""}); ` +
     `a raise is a recorded step: attempt-cap.mjs raise --root <root> --config <config> --issue ${request.issue} --reason <why>` +
     ` (above ${ATTEMPT_CAP_CEILING} also --owner-words <the owner's words>)`);
-  return { file, registry, attemptsFile, attempts, used, cap };
+  return { file, registry, attemptsFile, attempts, used, cap, uncounted };
 }
 export async function spawnWorker(request, preparation = {}) {
   checkRequest(request);
@@ -292,7 +294,7 @@ export async function spawnWorker(request, preparation = {}) {
   const launched = await withLock(path.join(request.root, "launch.lock"), async () => {
     guard(request.root);
     requireWatcher(request.root);
-    const { file, registry, attemptsFile, attempts, used } = checkSpawnAvailability(request);
+    const { file, registry, attemptsFile, attempts, used, uncounted } = checkSpawnAvailability(request);
     try {
       await preparation.beforeStart?.();
       startGate(request, { beforeSpawn: true });
@@ -340,9 +342,11 @@ export async function spawnWorker(request, preparation = {}) {
       if (prepared?.githubConfigDir) entry.githubConfigDir = prepared.githubConfigDir;
       try { return { entry, ...await launchTransport(request.root, entry, prompt, false, prepared, { beforeSpawn() {
         attempts[request.issue] = attempt; atomicJson(attemptsFile, attempts);
+        if (uncounted) { const { all, list } = uncountedAttempts(request.root, request.issue);
+          atomicJson(uncountedFile(request.root), { ...all, [request.issue]: [...list, { attempt, reason: uncounted, recordedAt: entry.spawned_at }] }); }
         registry[request.issue] = entry; atomicJson(file, registry);
         appendLog(log, { type: "mono.launch", timestamp: entry.spawned_at, issue: entry.issue, attempt, modelRoutes, model_policy, model_launch,
-          model: entry.model, effort: entry.effort });
+          model: entry.model, effort: entry.effort, ...(uncounted ? { uncounted } : {}) });
       } }) }; }
       catch (error) { if (!registry[request.issue]) fs.unlinkSync(log); throw error; }
     } catch (error) {

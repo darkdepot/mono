@@ -19,6 +19,7 @@
 //       process identity stays quiet for one startup window, then spawn-fail;
 //   (d) a log that stopped growing with no writer process evidence
 //       (registry pid gone, or silent for 2x the stall threshold) -> dead.
+//       MONO-504: its detail ends with cause=capacity|rate-limit|network|other from the log's last CLI event.
 // Stall and dead (both branches) are suppressed when the same correlated
 // report snapshot used for delivery shows the stage completed: issue, stage,
 // A5 identity, registry log, and freshness all match. The report is at least
@@ -55,7 +56,7 @@ import path from "node:path";
 import process from "node:process";
 import { validatePhase, correlatedDeliveryReport, PARKED_REASONS } from "./delivery-state.mjs";
 import { readLedger, admissionFor, collectorAlive, roundRequestName, screenCheckRequestFile } from "./review-rounds.mjs";
-import { atomicJson, deliveryConfig, processStart, IDENTITY_FIELDS, identity, packLayout, runtimePackRoot } from "./runtime.mjs";
+import { atomicJson, deliveryConfig, processStart, IDENTITY_FIELDS, identity, packLayout, runtimePackRoot, workerDeathCause } from "./runtime.mjs";
 
 import { workerTransport } from "./worker-transport.mjs";
 import { loginKeepalive } from "./claude-login.mjs";
@@ -953,7 +954,9 @@ function checkLog(log, gateAck, report, registry, nowMs, phasePending = false) {
   const turn = transport.turnState?.(registryEntry);
   if (turn && !report && !gateAck) {
     const event = turn.status === "failed" ? "failed" : "completed-without-report";
-    emitEvent(event, log.issue, `${turn.status} turn without an attempt-correlated terminal report; resume the same session for a report`, `${event}:${log.name}`, nowMs);
+    // MONO-504: a failed turn names the same environment cause as a dead worker, so recovery treats both alike.
+    const found = event === "failed" ? workerDeathCause(log.filePath) : null;
+    emitEvent(event, log.issue, `${turn.status} turn without an attempt-correlated terminal report; resume the same session for a report${found ? ` cause=${found}` : ""}`, `${event}:${log.name}`, nowMs);
     return;
   }
   if (ageSec < args.stallSec) return;
@@ -1070,11 +1073,13 @@ function checkLog(log, gateAck, report, registry, nowMs, phasePending = false) {
   const ordinaryCommand = !pausedOnAck && !continuationPending && !phasePending ? command : null;
   if (ordinaryCommand && nowMs - command.since < RUNNING_COMMAND_LIMIT_MS) return;
 
+  // MONO-504: the cause the worker's log ended on (capacity | rate-limit | network | other) decides resume vs new attempt.
+  const cause = () => { const found = workerDeathCause(log.filePath); return found ? ` cause=${found}` : ""; };
   if (pidState === "dead") {
     emitEvent(
       "dead",
       log.issue,
-      `log ${log.name} silent for ${ageSec}s and writer pid ${registry[log.issue].pid} is gone`,
+      `log ${log.name} silent for ${ageSec}s and writer pid ${registry[log.issue].pid} is gone${cause()}`,
       `dead:${log.name}`,
       nowMs
     );
@@ -1082,7 +1087,7 @@ function checkLog(log, gateAck, report, registry, nowMs, phasePending = false) {
     emitEvent(
       "dead",
       log.issue,
-      `log ${log.name} silent for ${ageSec}s (over 2x stall threshold ${args.stallSec}s) with no writer evidence`,
+      `log ${log.name} silent for ${ageSec}s (over 2x stall threshold ${args.stallSec}s) with no writer evidence${cause()}`,
       `dead:${log.name}`,
       nowMs
     );

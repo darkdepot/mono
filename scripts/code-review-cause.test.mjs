@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { runReviewRound, runInvocation, roleFailureCause } from './code-review.mjs';
+import { runReviewRound, runInvocation, roleFailureCause, INFRA_PAUSE_SEC } from './code-review.mjs';
+import { installReviewClis } from './test-fixtures/review-clis.mjs';
+import { streamFailureCause, infraCause, workerDeathCause } from './runtime.mjs';
 
 // MONO-483: every failed role attempt names its cause, and the round names the host load and a sleep.
 // Role processes are small node scripts; clocks and host load are injected.
@@ -87,4 +89,54 @@ test('a round names each failed attempt\'s cause, the host load and a sleep; onl
 
   const clean = await round(async () => ({ response: review(), elapsedMs: 1, usage: null }));
   assert.deepEqual([clean.outcome, clean.host.end.load1, Object.hasOwn(clean, 'cause')], ['clean', 98.5, false], 'a completed round carries the host facts too');
+});
+
+// MONO-504: an overloaded model or a rate limit is the environment: no round is spent and the second attempt waits first.
+test('an overloaded model or a rate limit is an environmental cause, read only from error events', async t => {
+  const capacity = 'Selected model is at capacity. Please try a different model.';
+  const events = list => list.map(event => JSON.stringify(event)).join('\n');
+  const failed = await failure(node(`console.log(${JSON.stringify(events([{ type: 'error', message: capacity }, { type: 'turn.failed', error: { message: capacity } }]))}); process.exit(1)`));
+  assert.equal(roleFailureCause(failed), 'capacity', 'a failed turn on an overloaded model');
+  const limited = await failure(node('console.error("unexpected status 429 Too Many Requests"); process.exit(1)'));
+  assert.equal(roleFailureCause(limited), 'rate-limit', 'a 429 on the CLI error stream');
+  const innocent = await failure(node('console.error("line 429: overloaded constructor; 529 files"); process.exit(1)'));
+  assert.equal(roleFailureCause(innocent), 'other', 'a bare number or word on stderr is not a status');
+  // The model's own text about capacity is not an error event.
+  const spoken = await failure(node(`console.log(${JSON.stringify(events([{ type: 'item.completed', item: { type: 'agent_message', text: 'the server is at capacity (529)' } }]))}); process.exit(1)`));
+  assert.equal(roleFailureCause(spoken), 'other', 'the answer text never names an environmental cause');
+  assert.equal(streamFailureCause(events([{ type: 'result', is_error: true, api_error_status: 529, result: 'API Error' }])), 'capacity', 'a Claude result on 529');
+  assert.equal(streamFailureCause(events([{ type: 'error', message: capacity }, { type: 'turn.completed' }])), null, 'a recovered turn did not end on the error');
+  // A number in prose is not a status; a tool's own limit is not the model's; a resumed worker or a broken tail ends the failure.
+  assert.equal(streamFailureCause(events([{ type: 'error', message: 'unexpected status 400 Bad Request: requested 529 tokens' }])), null, 'a bare 529 in prose');
+  assert.equal(infraCause('rate limit exceeded for file search'), null, 'a tool-level rate limit');
+  assert.equal(infraCause('unexpected status 529 Overloaded'), 'capacity', 'an HTTP 529 status');
+  assert.equal(streamFailureCause(events([{ type: 'result', is_error: true, api_error_status: null, result: capacity }])), null, 'a Claude result counts by its status, never its text');
+  const toolLimit = await failure(node('console.error("Tool file_search failed: HTTP 429 Too Many Requests"); process.exit(1)'));
+  assert.equal(roleFailureCause(toolLimit), 'other', 'a tool failure on stderr is not the model\'s rate limit');
+  const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mono-death-')), 'worker.jsonl');
+  t.after(() => fs.rmSync(path.dirname(log), { recursive: true, force: true }));
+  for (const [tail, why] of [[{ type: 'mono.worker-instance' }, 'a later worker instance'], ['{"type":"item.comp', 'a malformed tail']]) {
+    fs.writeFileSync(log, events([{ type: 'turn.failed', error: { message: capacity } }]) + '\n' + (typeof tail === 'string' ? tail : JSON.stringify(tail)) + '\n');
+    assert.equal(workerDeathCause(log), 'other', why);
+  }
+  fs.writeFileSync(log, events([{ type: 'mono.worker-instance' }, { type: 'turn.failed', error: { message: capacity } }]) + '\n');
+  assert.equal(workerDeathCause(log), 'capacity', 'a failure after the latest worker instance');
+  assert.equal(roleFailureCause({ infra: 'capacity' }, { answered: true }), 'other', 'an answered role stays with the work');
+
+  const f = fixture(t), pauses = [];
+  const clock = () => { let wall = 0, mono = 0; return { wall: () => wall += 10, mono: () => mono += 10 }; };
+  const processError = extra => Object.assign(new Error('role failed (1); no response admitted'), { processFailure: true, exceeded: false, ...extra });
+  const busy = await runReviewRound(f, { runRole: async () => { throw processError({ infra: 'capacity' }); }, ensureLogin: async () => ({ status: 'fresh' }),
+    clock: clock(), load: () => ({ load1: 1, cpus: 12 }), pause: async ms => { pauses.push(ms); } });
+  assert.deepEqual([busy.outcome, busy.cause, busy.failures.filter(item => item.role).map(item => item.cause)], ['not-reviewed', 'environment', ['capacity', 'capacity']]);
+  assert.deepEqual(pauses, [INFRA_PAUSE_SEC * 1000], 'the second attempt waits once before it runs');
+});
+
+test('a Codex role that exits cleanly on a failed turn of an overloaded model is the environment, no round spent', async t => {
+  const f = fixture(t), bin = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-cause-bin-')), oldPath = process.env.PATH;
+  t.after(() => { process.env.PATH = oldPath; fs.rmSync(bin, { recursive: true, force: true }); });
+  installReviewClis(bin, { packRoot, failRole: 'capacity' });
+  process.env.PATH = `${bin}${path.delimiter}${oldPath}`;
+  const record = await runReviewRound(f, { ensureLogin: async () => ({ status: 'fresh' }), secondMs: 1 });
+  assert.deepEqual([record.outcome, record.cause, record.failures.filter(item => item.role).map(item => item.cause)], ['not-reviewed', 'environment', ['capacity', 'capacity']]);
 });

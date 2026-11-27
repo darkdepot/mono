@@ -411,6 +411,58 @@ export function requireCompatiblePack(installed, expected) {
   if (installed.surfaceRevision !== expected.surfaceRevision)
     throw new Error(`surfaceRevision expected ${expected.surfaceRevision} but installed ${installed.surfaceRevision}; start a new attempt`);
 }
+// MONO-483: a narrow list of network failure signs in a CLI's error text (unresolved host, reset or dropped connection).
+export const NETWORK_SIGNS = /could not resolve host|failed to lookup address|getaddrinfo|ENOTFOUND|EAI_AGAIN|nodename nor servname|name or service not known|temporary failure in name resolution|dns error|ECONNRESET|connection reset|ECONNABORTED|connection aborted|ECONNREFUSED|connection refused|ENETUNREACH|network is unreachable|EHOSTUNREACH|socket hang up|stream disconnected|error sending request|connection closed before/i;
+// MONO-504: the environmental causes of a model CLI failure: an overloaded model, a rate limit, the network. They are read
+// only from an error message or an error event, never from the model's own output.
+export const INFRA_CAUSES = Object.freeze(["capacity", "rate-limit", "network"]);
+// 529 and 429 count only as an HTTP status or the provider's own error type or message, never as a bare number in prose;
+// a tool's own limit (search, files) is not the model's.
+const httpStatus = code => new RegExp(`(?:\\bstatus(?: code)?[:=]?\\s*|"status"\\s*:\\s*|\\bHTTP(?:/[\\d.]+)?\\s+)${code}\\b`, "i");
+const CAPACITY = [httpStatus(529), /\bmodel is (?:currently )?at capacity\b|\boverloaded_error\b|\b529 overloaded\b/i];
+const RATE_LIMIT = [httpStatus(429), /\brate_limit_error\b|\b429 too many requests\b|\brate limit reached for \S+ in organization\b|\byou've hit your usage limit\b|\bclaude ai usage limit reached\b/i];
+export function infraCause(message) {
+  const text = String(message ?? "");
+  if (CAPACITY.some(sign => sign.test(text))) return "capacity";
+  if (RATE_LIMIT.some(sign => sign.test(text))) return "rate-limit";
+  return NETWORK_SIGNS.test(text) ? "network" : null;
+}
+const statusCause = status => status === 529 ? "capacity" : status === 429 ? "rate-limit" : null;
+const typeCause = type => type === "overloaded_error" ? "capacity" : type === "rate_limit_error" ? "rate-limit" : null;
+// A CLI's stderr: the same provider-only rules, line by line; a line about a tool's failure is the tool's, not the model's.
+export function stderrInfraCause(stderr) {
+  return infraCause(String(stderr ?? "").split("\n").filter(line => !/\btool\b/i.test(line)).join("\n"));
+}
+// The failure a CLI's JSONL event stream (Codex exec --json, Claude stream-json) ended on: only its last CLI event counts
+// (an error, a failed turn, a retry or an error result) after the latest worker instance; anything later means it was not the end.
+export function streamFailureCause(stdout) {
+  const lines = String(stdout ?? "").split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].trim()) continue;
+    // A malformed tail is not a known failure.
+    let event; try { event = JSON.parse(lines[i]); } catch { return null; }
+    if (!event || typeof event !== "object") return null;
+    if (event.type === "turn.failed") return infraCause(event.error?.message);
+    if (event.type === "error") return infraCause(event.message);
+    if (event.type === "system" && event.subtype === "api_retry") return statusCause(event.error_status);
+    // A Claude result counts only by its provider status or error type, never by its text.
+    if (event.type === "result") return event.is_error === true ? statusCause(event.api_error_status) ?? typeCause(event.error?.type) : null;
+    // Any other event (more work, or a pack line such as a resumed worker instance) means the failure was not the end.
+    return null;
+  }
+  return null;
+}
+// Why a worker died, from the last 64 KB of its attempt log: capacity | rate-limit | network | other; null when unreadable.
+export function workerDeathCause(logFile, bytes = 64 * 1024) {
+  try {
+    const size = fs.statSync(logFile).size, start = Math.max(0, size - bytes), buffer = Buffer.alloc(size - start);
+    const fd = fs.openSync(logFile, "r");
+    try { fs.readSync(fd, buffer, 0, buffer.length, start); } finally { fs.closeSync(fd); }
+    let text = buffer.toString("utf8");
+    if (start > 0) text = text.slice(text.indexOf("\n") + 1);
+    return streamFailureCause(text) ?? "other";
+  } catch { return null; }
+}
 export const isMain = (url) => process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(url));
 export function positive(value, fallback, name) {
   value = value ?? fallback;

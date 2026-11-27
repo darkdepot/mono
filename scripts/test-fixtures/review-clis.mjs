@@ -3,7 +3,8 @@
 // Behaviour is read from review.json next to the binaries, because role launches
 // receive only an allowlisted environment:
 //   {findings:[reviewer finding], verdict:{checker fields}, loggedOut:'claude'|'codex'|null,
-//    failRole:'network'|'malformed'|null (MONO-483: the Codex role launch itself fails; catalog, login and probe still answer),
+//    failRole:'network'|'capacity'|'malformed'|null (MONO-483: the Codex role launch itself fails; catalog, login and probe still answer;
+//      MONO-504: 'capacity' ends a clean exit on a failed turn),
 //    skipCoverage:true (MONO-488: the reviewer lists no reviewed files)}
 // Every role launch appends its role to review.log.
 import fs from 'node:fs';
@@ -33,6 +34,7 @@ if(process.argv[2]!=='sandbox'){
   onInput(input=>{
     const fail=input.startsWith('Boundary audit')?null:state().failRole;
     if(fail==='network'){console.error('error: Could not resolve host: api.openai.com');process.exit(1);}
+    if(fail==='capacity'){const message='Selected model is at capacity. Please try a different model.';console.log(JSON.stringify({type:'error',message}));console.log(JSON.stringify({type:'turn.failed',error:{message}}));process.exit(0);}
     if(fail==='malformed'){console.log(JSON.stringify({type:'turn.completed'}));process.exit(0);}
     const value=input.startsWith('Boundary audit')?{tools:['exec_command','write_stdin'],mcpServers:[]}:roleAnswer(input);
     console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(value)}}));console.log(JSON.stringify({type:'turn.completed'}));

@@ -245,9 +245,8 @@ Workflow states:
      --attempt N` and read its reports log. A task change: write «Изменение
      задачи» on the Issue in words, then resume.mjs with taskChange set to its
      link and those words in the resume file; a risk or grant change is a new attempt on the same branch.
-     A `not-reviewed twice … (environment: …)` park needs no task change: restore
-     the host (wake, load, network, CLI login), then resume.mjs with reviewRetry: true;
-     a `(review: …)` park still needs the task change.
+     A `not-reviewed twice … (environment: …)` park: restore the host (wake, load,
+     network, login; capacity or rate limit: wait), then resume.mjs with reviewRetry: true.
      A strict-path `needs-decision` after round 3: first an extra round, resume.mjs
      with extraRound: {reason} (once per attempt, at most one open finding, no raised
      risk, out-of-contract work or open owner remark; never with reviewRetry), with
@@ -267,9 +266,9 @@ Workflow states:
      Ordinary silent live writers with pending commands defer stall for a fixed
      60-minute best-effort diagnostic from first watcher observation; process descendants alone prove
      nothing. At «идёт команда дольше 60 минут», inspect progress.
-     Missing writer evidence and dead are not deferred. No report: same-thread resume once to demand capsule
-     and report; failed recovery uses a new attempt within cap, not a restarted
-     Issue. Record every healing step/result. Do not steer progressing workers.
+     Missing writer evidence and dead are not deferred. dead|failed cause=capacity|rate-limit|network:
+     resume this attempt at 1, 5, 15, then every 15 min. Else no report: resume once for
+     capsule and report, then a new attempt within cap. Record every healing step/result. Do not steer progressing workers.
 6. `decide-or-escalate`
    - Technical questions: decide, ledger «Решил сам:» with a one-line reason,
      answer the worker. Owner said to work without him: reversible ones too.
