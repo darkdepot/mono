@@ -110,6 +110,9 @@ test('an overloaded model or a rate limit is an environmental cause, read only f
   assert.equal(streamFailureCause(events([{ type: 'error', message: 'unexpected status 400 Bad Request: requested 529 tokens' }])), null, 'a bare 529 in prose');
   assert.equal(infraCause('rate limit exceeded for file search'), null, 'a tool-level rate limit');
   assert.equal(infraCause('unexpected status 529 Overloaded'), 'capacity', 'an HTTP 529 status');
+  assert.equal(streamFailureCause(events([{ type: 'result', is_error: true, api_error_status: null, result: capacity }])), null, 'a Claude result counts by its status, never its text');
+  const toolLimit = await failure(node('console.error("Tool file_search failed: HTTP 429 Too Many Requests"); process.exit(1)'));
+  assert.equal(roleFailureCause(toolLimit), 'other', 'a tool failure on stderr is not the model\'s rate limit');
   const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mono-death-')), 'worker.jsonl');
   t.after(() => fs.rmSync(path.dirname(log), { recursive: true, force: true }));
   for (const [tail, why] of [[{ type: 'mono.worker-instance' }, 'a later worker instance'], ['{"type":"item.comp', 'a malformed tail']]) {

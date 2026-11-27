@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { digest, resolveRole, runtimePackRoot, isMain, NETWORK_SIGNS, infraCause, streamFailureCause } from './runtime.mjs';
+import { digest, resolveRole, runtimePackRoot, isMain, NETWORK_SIGNS, stderrInfraCause, streamFailureCause } from './runtime.mjs';
 export { NETWORK_SIGNS };
 import { ensureClaudeLogin, claudeLoginFailure, LOGIN_FAILURE_REASON } from './claude-login.mjs';
 
@@ -443,7 +443,7 @@ export function runInvocation(invocation, prompt, timeoutMs, { limitSec = timeou
           if (interrupted) throw Object.assign(new Error('review interrupted; role process group stopped'), { rawAnswer: result.stdout });
           const exceeded = timedOut || outputLimit;
           if (code !== 0 || exceeded) throw Object.assign(new Error(`role failed (${timedOut ? `timeout after ${limitSec} s` : outputLimit ? 'output limit' : code}); no response admitted`),
-            { rawAnswer: result.stdout, stderrText: result.stderr, exceeded, timedOut, outputLimit, processFailure: true, infra: exceeded ? null : streamFailureCause(result.stdout) ?? infraCause(result.stderr) });
+            { rawAnswer: result.stdout, stderrText: result.stderr, exceeded, timedOut, outputLimit, processFailure: true, infra: exceeded ? null : streamFailureCause(result.stdout) ?? stderrInfraCause(result.stderr) });
           resolve(result);
         } catch (error) { error.interrupted = interrupted; reject(error); }
       });

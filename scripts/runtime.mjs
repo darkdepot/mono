@@ -428,6 +428,11 @@ export function infraCause(message) {
   return NETWORK_SIGNS.test(text) ? "network" : null;
 }
 const statusCause = status => status === 529 ? "capacity" : status === 429 ? "rate-limit" : null;
+const typeCause = type => type === "overloaded_error" ? "capacity" : type === "rate_limit_error" ? "rate-limit" : null;
+// A CLI's stderr: the same provider-only rules, line by line; a line about a tool's failure is the tool's, not the model's.
+export function stderrInfraCause(stderr) {
+  return infraCause(String(stderr ?? "").split("\n").filter(line => !/\btool\b/i.test(line)).join("\n"));
+}
 // The failure a CLI's JSONL event stream (Codex exec --json, Claude stream-json) ended on: only its last CLI event counts
 // (an error, a failed turn, a retry or an error result) after the latest worker instance; anything later means it was not the end.
 export function streamFailureCause(stdout) {
@@ -440,7 +445,8 @@ export function streamFailureCause(stdout) {
     if (event.type === "turn.failed") return infraCause(event.error?.message);
     if (event.type === "error") return infraCause(event.message);
     if (event.type === "system" && event.subtype === "api_retry") return statusCause(event.error_status);
-    if (event.type === "result") return event.is_error === true ? statusCause(event.api_error_status) ?? infraCause(event.result) : null;
+    // A Claude result counts only by its provider status or error type, never by its text.
+    if (event.type === "result") return event.is_error === true ? statusCause(event.api_error_status) ?? typeCause(event.error?.type) : null;
     // Any other event (more work, or a pack line such as a resumed worker instance) means the failure was not the end.
     return null;
   }
