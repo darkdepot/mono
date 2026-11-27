@@ -389,7 +389,7 @@ async function startCollector(root, entry) {
 export async function resumeWorker(request) {
   checkRequest(request); guard(request.root, true);
   const extra = Object.keys(request).filter(key => !["root", "issue", "resumeFile", "taskChange", "reviewRetry"].includes(key));
-  if (extra.length) throw new Error(`resume takes only root, issue, resumeFile, taskChange and reviewRetry; ${extra.join(", ")}: a risk or grant change is a new attempt on the same branch`);
+  if (extra.length) throw new Error(`resume takes only root, issue, resumeFile, taskChange and reviewRetry; ${extra.join(", ")}: a risk or grant change is a new attempt on the same branch${extra.includes("extraRound") ? "; there is no extra review round (at most two rounds per attempt)" : ""}`);
   if (request.reviewRetry !== undefined && request.reviewRetry !== true) throw new Error("reviewRetry must be true when given");
   if (request.reviewRetry && request.taskChange !== undefined)
     throw new Error("reviewRetry and taskChange are exclusive: a review retry repeats a round on the same contract, a task change changes the contract");
