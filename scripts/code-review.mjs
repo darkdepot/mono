@@ -938,7 +938,7 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
           const reason = clipped(String(error?.message ?? error)).text, interrupted = error?.interrupted === true;
           const cause = roleFailureCause(error, { answered, slept: gap(wall, mono) });
           if (!answered) costs.push({ ...cost, attempt, elapsedMs: Date.now() - started, usage: null, boundary: error?.boundary ?? null, failure: true });
-          record.failures.push({ head, round: number, role, attempt, reason, cause, answer: error?.answerDiagnostic ?? clipped(answered ? result?.response : error?.rawAnswer) });
+          record.failures.push({ head, round: number, role, ...(group ? { group } : {}), attempt, reason, cause, answer: error?.answerDiagnostic ?? clipped(answered ? result?.response : error?.rawAnswer) });
           if (attempt === 2 || interrupted) { roleFailure = true; throw Object.assign(new Error(reason), { interrupted }); }
         }
       }

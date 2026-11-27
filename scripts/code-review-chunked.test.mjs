@@ -370,6 +370,7 @@ test('MONO-500: one failed checker batch fails the round and records no finding'
   // The failing file's findings may span two batches; each failing batch keeps its single retry.
   const tries = attempt => failures.filter(item => item.attempt === attempt).length;
   assert.ok(tries(1) >= 1 && tries(1) === tries(2) && failures.length === tries(1) * 2, 'each failing batch keeps its single retry');
+  assert.ok(failures.every(item => /^checker \d+\/\d+$/.test(item.group)), 'each failure names its batch');
   assert.ok(runner.calls.filter(call => call.role === 'code-review-checker').length > 2, 'the other batches still ran');
 });
 
