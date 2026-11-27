@@ -19,9 +19,7 @@ project config (`languages.linear`).
 
 Handoff summary belongs to `mono:handoff`. Ask about starting in plain text per
 `references/owner-dialog.md`; only the owner's answer authorizes ordinary work.
-The summary never holds other waves. If more than three Issues are needed,
-explain the tradeoff, recommend splitting the project when it fits, and ask
-whether to narrow this project or allow the larger Issue set. No answer labels.
+The summary never holds other waves. No answer labels.
 
 ## Эталоны первого продукта
 

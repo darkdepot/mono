@@ -53,8 +53,7 @@ config is absent.
 
 ## IS-007 — One Issue by default
 
-Create one Issue by default. A Project package has at most three without the
-owner's answer; each extra Issue names its reason under IS-023.
+Create one Issue by default; each extra Issue names its reason under IS-023.
 
 ## IS-008 — Project-first sources
 
@@ -144,10 +143,11 @@ Do not attach PRD or Tech Spec documents to the Issue.
 ## IS-023 — Vertical slicing
 
 Only `mono:handoff` may split work, by behavior that can be verified, never by
-layer. A second or third Issue needs one recorded reason: `too-big` (one change
-does not pass one review), `shared-base` (several parts wait for it), or `probe`
-(an external service needs a live sample first). A fourth needs the owner's
-answer. A request for slicing is ineligible for `mono:issue`.
+layer. An Issue is one screen or one flow, about 400 changed lines or 25 files.
+Each extra Issue needs one recorded reason: `too-big` (past that size or one
+review), `shared-base` (several parts wait for it), or `probe` (an external
+service needs a live sample first). The count is not capped. A request for
+slicing is ineligible for `mono:issue`.
 
 ## IS-024 — Ready before coding
 

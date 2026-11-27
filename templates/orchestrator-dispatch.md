@@ -89,6 +89,7 @@ construct a replacement request from the error text.
 - Verification surface: {{verification_items}}
   Retain every line verbatim/in order as verification_items under references/worker-contract.md.
 - Constraints: {{constraints}}
+- Approach change for this attempt: {{approach_change}} (do this differently from the previous attempt)
 - Blocked protocol: follow the stage and worker contract; report failed/skipped
   verification, never wave it through.
 - Delivery budget: {{budget}} (guidance, not a gate)

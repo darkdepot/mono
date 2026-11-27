@@ -54,7 +54,7 @@ PRD:
 Package record:
 
 - Input versions name the approved PRD and Research; reconciliation findings are resolved; `U` decisions include every Spec decision needed by the Issues (deep/risky: at least one); a single Issue uses their numbers without retelling, omitted work is in non-goals.
-- One Issue unless a recorded `too-big`, `shared-base` or `probe` reason; at most three without the owner; every PRD requirement has an Issue and every Issue a requirement.
+- One Issue unless a recorded `too-big`, `shared-base` or `probe` reason; every PRD requirement has an Issue and every Issue a requirement.
 - No `approval_status`, `mono-idea:` or `mono-idea-snapshot` inside it.
 
 Tech Spec:

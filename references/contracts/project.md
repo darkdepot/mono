@@ -84,10 +84,10 @@ document: one current version holds input versions, shared decisions, «Реши
 
 ## PC-009 — Default Issue plan
 
-Plan one active execution Issue by default. A second and third need a named,
-recorded reason (too big for one review, a shared base several parts wait for,
-or an external-service probe first); more than three only with the owner's
-answer (split the Project or allow more).
+Plan one active execution Issue by default. Each extra one needs a named,
+recorded reason (past one screen or flow of about 400 lines or 25 files, a shared
+base several parts wait for, or an external-service probe first); the count is
+not capped.
 
 ## PC-010 — Review-gate record
 
@@ -147,8 +147,7 @@ the start names outside fences («Согласие наперёд:») the owner'
 `mono-forward: revoked` for it before the start, its PRD version equal to the
 latest `mono-prd: approved` before the start and to the PRD in `mono-tech: approved`
 if any, its Design equal to the latest `mono-design: approved` before the start
-(`none` without Design), at most three Issues in `issues=`, and the consent words
-quoted verbatim in the start. A start on neither path fails. Both paths keep the
+(`none` without Design), and the consent words quoted verbatim in the start. A start on neither path fails. Both paths keep the
 same machine record. Ordinary Projects require `by=owner`; only Projects delegated
 with work start (PC-019, not the narrow mode) accept `by=orchestrator` with a reason
 and the countercheck verdict outside fences.

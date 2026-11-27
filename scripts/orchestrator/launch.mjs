@@ -2,11 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { atomicJson, readJson, identity, requireCompatiblePack, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart, processStartEpoch, packLayout, runtimePackRoot } from "../runtime.mjs";
-import { startGate, extraRoundCheck } from "../gate.mjs";
+import { startGate, extraRoundCheck, issuePasses, progressStop } from "../gate.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
 import { workerTransport } from "../worker-transport.mjs";
-import { effectivePins, attemptState, recordTaskChange, dropTaskChange, recordReviewRetry, dropReviewRetry, voidReviewRetry, validExtraRoundRequest, recordExtraRound, dropExtraRound, voidExtraRound, attemptCapState, ATTEMPT_CAP_CEILING, uncountedReason, uncountedAttempts, uncountedFile } from "./command-state.mjs";
+import { effectivePins, attemptState, recordTaskChange, dropTaskChange, recordReviewRetry, dropReviewRetry, voidReviewRetry, validExtraRoundRequest, recordExtraRound, dropExtraRound, voidExtraRound, attemptCapState, ATTEMPT_LIMIT, uncountedReason, uncountedAttempts, uncountedFile } from "./command-state.mjs";
 import { ensureCollector } from "./collector.mjs";
 import { hostRunsInProgress, settleRetiredHostRunsSync, inFlight, readLedger } from "../review-rounds.mjs";
 
@@ -265,6 +265,15 @@ function checkReleaseAvailability(root, registry, issue) {
     effectivePins(entry).release === true && attemptState(root, entry).state === "active");
   if (existing) throw new Error(`release task already registered: ${existing.issue}; retire it before another release`);
 }
+// MONO-505: what the orchestrator picks itself, records with «Решил сам:» and reports to the owner without a question.
+const EXITS = "pick an exit yourself, record it with «Решил сам:» and tell the owner (no question): merge what is done (behind a flag if incomplete) " +
+  "and file the rest as successor issues; move the open findings to successor issues; or park the task";
+const CHANGE = "; or change the approach: dispatch --approach-changed <one-line reason>";
+export function approachChange(value) {
+  if (value !== undefined && (!value || Object.keys(value).sort().join() !== "changed,reason" || value.changed !== true ||
+      typeof value.reason !== "string" || !value.reason.trim() || value.reason.length > 300 || /[\r\n]/.test(value.reason)))
+    throw new Error("approach must be {changed: true, reason} with a one-line reason of at most 300 characters");
+}
 export function checkSpawnAvailability(request) {
   guard(request.root);
   const file = path.join(request.root, "workers.json"), registry = readJson(file);
@@ -275,14 +284,19 @@ export function checkSpawnAvailability(request) {
   const used = attempts[request.issue] ?? 0;
   if (!Number.isInteger(used) || used < 0) throw new Error("invalid attempt registry");
   if (request.attempt !== undefined && request.attempt !== used + 1) throw new Error('stale dispatch attempt');
-  // MONO-490: the cap is the BASE config cap (at most the ceiling) plus the raises recorded by attempt-cap.mjs raise.
-  const cap = attemptCapState(request.root, request.issue, { worktree: request.worktree, base: request.base, config: request.config });
-  for (const warning of cap.warnings) console.error(`attempt cap: ${warning}`);
-  // MONO-504: an attempt after an environmental death or a pack surface change does not count, so the cap never stops it.
+  const cap = attemptCapState(request.root, request.issue);
+  // MONO-504: an attempt after an environmental death or a pack surface change does not count and continues the work.
   const uncounted = uncountedReason(request.root, request.issue, used, request.surfaceRevision);
-  if (!uncounted && cap.counted >= cap.cap) throw new Error(`attempt cap reached: ${cap.counted} of ${cap.cap} used (base ${cap.baseCap}, raises ${cap.raises.length}${cap.uncounted ? `, ${cap.uncounted} uncounted` : ""}); ` +
-    `a raise is a recorded step: attempt-cap.mjs raise --root <root> --config <config> --issue ${request.issue} --reason <why>` +
-    ` (above ${ATTEMPT_CAP_CEILING} also --owner-words <the owner's words>)`);
+  approachChange(request.approach);
+  if (!uncounted) {
+    // MONO-505: a fixed limit with no raise; then no progress, then the same approach after a stalled pass without a
+    // critical defect. A changed approach (dispatch --approach-changed) passes the last two, a critical defect the last.
+    if (cap.counted >= ATTEMPT_LIMIT) throw new Error(`attempt limit reached: ${cap.counted} of ${ATTEMPT_LIMIT} counted attempts used${cap.uncounted ? ` (${cap.uncounted} uncounted)` : ""}; there is no raise; ${EXITS}`);
+    const passes = issuePasses(request.root, request.issue, used), stop = request.approach ? null : progressStop(passes), last = passes.at(-1);
+    if (stop) throw new Error(`no progress: ${stop}; ${EXITS}${CHANGE}`);
+    if (!request.approach && last?.stalled && !last.blockers.some(item => item.critical))
+      throw new Error(`same approach refused: the last ${last.kind === "qa" ? "QA pass failed" : "review did not converge"} without a critical defect; ${EXITS}${CHANGE}`);
+  }
   return { file, registry, attemptsFile, attempts, used, cap, uncounted };
 }
 export async function spawnWorker(request, preparation = {}) {
@@ -346,7 +360,7 @@ export async function spawnWorker(request, preparation = {}) {
           atomicJson(uncountedFile(request.root), { ...all, [request.issue]: [...list, { attempt, reason: uncounted, recordedAt: entry.spawned_at }] }); }
         registry[request.issue] = entry; atomicJson(file, registry);
         appendLog(log, { type: "mono.launch", timestamp: entry.spawned_at, issue: entry.issue, attempt, modelRoutes, model_policy, model_launch,
-          model: entry.model, effort: entry.effort, ...(uncounted ? { uncounted } : {}) });
+          model: entry.model, effort: entry.effort, ...(uncounted ? { uncounted } : {}), ...(request.approach ? { approach: request.approach } : {}) });
       } }) }; }
       catch (error) { if (!registry[request.issue]) fs.unlinkSync(log); throw error; }
     } catch (error) {

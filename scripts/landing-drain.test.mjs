@@ -8,8 +8,6 @@ import { test } from "node:test";
 import { atomicJson, digest, processStart, withLock } from "./runtime.mjs";
 import * as state from "./orchestrator/command-state.mjs";
 import { checkSpawnAvailability, resumeWorker } from "./orchestrator/launch.mjs";
-// MONO-490: spawn availability takes the attempt cap from the config committed at BASE (here this checkout's HEAD).
-const BASE_SOURCE = (worktree => ({ worktree, base: spawnSync("git", ["rev-parse", "HEAD"], { cwd: worktree, encoding: "utf8" }).stdout.trim() }))(path.resolve(path.dirname(new URL(import.meta.url).pathname), ".."));
 import { updateBlockers } from './verify-pack-state.mjs';
 
 const script = path.resolve("scripts/orchestrator/landing-drain.mjs");
@@ -214,7 +212,7 @@ test("landing U7 attempt state: conservative order and stopped landed identity",
 
 test("landing U7 release slot is released only by stopped landed attempts", t => {
   const f = fixture(t), file = path.join(f.root, "next-pins.json"); atomicJson(file, { release: true });
-  const request = { ...BASE_SOURCE, root: f.root, issue: "MONO-902", pins: { file, digest: state.sha256File(file) }, config: {} };
+  const request = { root: f.root, issue: "MONO-902", pins: { file, digest: state.sha256File(file) }, config: {} };
   assert.throws(() => checkSpawnAvailability(request), /release.*MONO-901/);
   atomicJson(f.pending, [f.record]);
   assert.doesNotThrow(() => checkSpawnAvailability(request));
@@ -401,7 +399,7 @@ test("landing U7 verify freezes per-task proof; failed install and close interru
   r = f.run("verify", ["--install-sha", f.tip]); assert.equal(r.status, 0, r.stdout + r.stderr); assert.equal(fs.readFileSync(batchFile, "utf8"), original);
   assert.deepEqual(JSON.parse(fs.readFileSync(f.pending)), [f.record], "installation is outside this script; failure retains records");
   atomicJson(path.join(f.root, "control.json"), { state: "active", halt: false });
-  assert.doesNotThrow(() => checkSpawnAvailability({ ...BASE_SOURCE, root: f.root, issue: "MONO-902", config: {} }), "fix-forward can launch after unhalt");
+  assert.doesNotThrow(() => checkSpawnAvailability({ root: f.root, issue: "MONO-902", config: {} }), "fix-forward can launch after unhalt");
   fs.writeFileSync(path.join(f.repo, "repair"), "repair"); f.git("add", "repair"); f.git("commit", "-m", "repair"); f.mock.tip = f.git("rev-parse", "HEAD"); f.github();
   atomicJson(path.join(f.root, "control.json"), { state: "active", halt: true });
   r = f.run("verify", ["--install-sha", f.mock.tip]); assert.equal(r.status, 0, r.stdout + r.stderr);
@@ -434,7 +432,7 @@ for (const transition of ["spawn", "resume"]) test(`landing U7 verify waits for 
 
 test("landing U7 halt rejects both spawn and resume; per-merge and absent block are inert", async t => {
   const f = fixture(t); atomicJson(path.join(f.root, "control.json"), { state: "active", halt: true });
-  assert.throws(() => checkSpawnAvailability({ ...BASE_SOURCE, root: f.root, issue: "MONO-902", config: {} }), /halt/);
+  assert.throws(() => checkSpawnAvailability({ root: f.root, issue: "MONO-902", config: {} }), /halt/);
   await assert.rejects(resumeWorker({ root: f.root, issue: f.issue }), /halt/);
   for (const config of [{ landing: { install: "per-merge" } }, {}]) {
     atomicJson(f.config, config);

@@ -1197,6 +1197,8 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
           // open findings; when it does not converge either it needs a decision and there is no second extra round.
           setReview(bin, { findings: leftover, verdict: dangerous });
           let receipt = await round(at(commit('export const one = 1;\n')), 1, /fail: review not-converged \(round 1 of 3\)/);
+          // MONO-505: the collection measures the change against the base; a small one is not oversized.
+          assert.ok(receipt.size.lines > 0 && receipt.size.files > 0 && receipt.size.taskChanges === 0 && receipt.size.oversized === false, JSON.stringify(receipt.size));
           receipt = await round(at(commit('export const two = 2;\n')), 1, /fail: review not-converged \(round 2 of 3\)/);
           const third = await round(at(commit('export const three = 3;\n')), 1, /fail: needs-decision: review not-converged after round 3 of 3; 1 open: P2 input\.mjs:1 Leftover/);
           assert.match(call(at(third.head)).stdout, hint, 'the round-3 line names the extra round');

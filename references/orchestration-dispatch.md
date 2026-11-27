@@ -87,7 +87,7 @@ parseable; the dispatch label `Tech Spec:` stays) and `approval.md` is the autho
 start comment; before dispatch verify ordinary `by=owner` (PC-016: an answer to
 the shown summary, or a named «Согласие наперёд:» whose `mono-forward: granted
 scope=start` you check in Linear: not revoked before the start, same PRD and Design
-versions, at most three Issues, same words; the worker accepts the pinned
+versions, same words; the worker accepts the pinned
 `approval.md` prose and is not BLOCKED by missing consent records), or delegated
 `by=orchestrator` with reason/countercheck (latest Idea mark or earlier owner decision),
 never bundling unapproved stale/legacy Idea: owner agreement/record/fresh check first; listing this
@@ -558,7 +558,7 @@ in full for both audiences. Never substitute a checkout's `SURFACE_REVISION`.
 A mono:deliver process needs the union of phase capabilities from launch:
 workspace-write, network, writable worktree, the worktree-specific Git directory and the common Git directory, derived from the worktree, and only <root>/reports as mailbox.
 codex 0.153.4 protects the metadata directory of an explicitly listed linked worktree.
-Keep workers.json, attempts.json, attempt-cap-raises.json, control.json, consumed/,
+Keep workers.json, attempts.json, control.json, consumed/,
 logs/ and dispatch/ outside worker grants. Spawn uses --add-dir <root>/reports;
 resume uses the supported writable_roots config override. Persist the complete
 write-grant list in the launch capsule; phase capsules copy these dispatch pins.
@@ -583,8 +583,7 @@ recorded launch pins; do not resolve new policy values for an existing thread.
   and node '<pack-root>/scripts/orchestrator/resume.mjs' --request <json>,
   never a product checkout or session helper.
   Run --help for request fields. Spawn enforces start gate, control halt/state,
-  attempt cap (config base plus recorded raises, see
-  [attempt cap raises](orchestration-delivery.md#monitoring-protocol)), durable
+  [attempt limit and progress](orchestration-delivery.md#monitoring-protocol), durable
   empty-log pre-registration and explicit model/effort.
   It persists launch metadata in the attempt log before execution, preserving
   price evidence after registry retirement. No shell interpolation: prompt is
