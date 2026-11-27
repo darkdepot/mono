@@ -6,7 +6,7 @@ Ask one outcome question at a time, with options, consequences, recommendation a
 
 Decide repo/Linear/GitHub/config facts, layout, naming, libraries, patterns, refactors, docs, risk and gates. Record material choices as «Решил сам:» with reasons for owner override.
 
-Always ask contested scope, slicing beyond three Issues, money/data/production/access risk. In owner-led Design, show the stage’s Paper screens before owner choices and approval.
+Always ask contested scope, money/data/production/access risk. In owner-led Design, show the stage’s Paper screens before owner choices and approval.
 
 Idea: up to three meaning questions from the last answer (independent: together); no scope. Raw idea: start open-ended. Host choice window: recommendation/reason first, custom answer supported; Codex without it: one text question/recommendation, end turn. Route question first, outside the limit. «Пиши сам»: recommendations disclosed in «Решил сам:». Owner yes is mandatory.
 

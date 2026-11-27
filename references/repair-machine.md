@@ -76,7 +76,7 @@ The highest matching class wins. Risk growth always selects class 3. Ambiguity i
 A package record changes only by a new Project comment version naming its
 `previous` version and `class`; earlier versions stay as evidence. The owner's
 start binds one version's `sha256` and its Issue set. Before the start there is
-nothing to supersede: re-slicing within three Issues is a new version with review,
+nothing to supersede: re-slicing is a new version with review,
 check and a new summary, without a separate question, and the Project stays Ready.
 The start stays bound to the version it named and is never rewritten; later
 versions keep it valid only through a verified chain of class 1-2 versions with
