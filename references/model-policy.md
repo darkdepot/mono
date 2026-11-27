@@ -33,7 +33,7 @@ Owner approves pairs; disclose equal-model review.
 `.agents/mono-workflow.config.json`: `models.roles` overrides engine|transport,
 model, effort|effortByRisk, provider{id,endpoint,credentialEnv}; omissions inherit.
 Unknown fields/secrets fail. Native auth: null endpoint/credentialEnv. Engine
-changes require compatible model/effort/provider. `orchestrator` and
+changes need compatible model/effort/provider. `orchestrator` and
 `second-voice-alt` cannot be overridden; Second Voice requires native Codex.
 Workers: codex-cli → worker-default|worker-complex; claude-cli → worker-claude
 (native subscription). Engine matrix: `ROLE_ENGINES`.
@@ -55,8 +55,8 @@ reviewer.checker routes. Either change renews acceptance. Default: legacy `autor
 `resolveRole(role, config)`: table → override; fingerprint binds route/config digest.
 Launch from immutable BASE; pin `modelRoutes{base,configDigest,roles}` in
 dispatch/request/registry; roles: launch role, `code-review`, `code-review-checker`
-(older pins: legacy `autoreview`, still valid). Resume preserves routes without backfill; config edits
-affect new launches only.
+(legacy pins: `autoreview`, valid). Resume keeps route pins; edits
+reach new launches only. Change role models only between waves.
 [Pack compatibility](install.md#compatibility).
 
 ## Orchestrator self-check

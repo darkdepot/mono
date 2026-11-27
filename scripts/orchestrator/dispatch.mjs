@@ -14,6 +14,7 @@ import { workerTransport } from "../worker-transport.mjs";
 import { spawnWorker } from "./launch.mjs";
 import { IDEA_GATE_DEFAULT_SINCE, checkResearchSnapshot } from '../idea-gate.mjs';
 import { SCREEN_HOST_CONFLICT, screenHostConflict } from '../qa-recipe.mjs';
+import { qaRecipeSource } from '../qa-gate.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const q = value => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -38,11 +39,14 @@ export function renderDispatch(template, values) {
 }
 
 const requireThat = (condition, message) => { if (!condition) throw new Error(message); };
-// MONO-481: the screen check before review needs both the product's switch on BASE and a mockup in the task snapshot,
-// and never runs with host verification pinned (worker code with host rights could forge it).
+// MONO-481/506: the screen check before review is on by default for a task with a mockup in its snapshot when the
+// product has a QA recipe (config or registry: someone must be able to run it); `qa.screenCheck: false` turns it off.
+// It steps aside under host verification (worker code with host rights could forge it); only an explicit
+// `screenCheck: true` together with hostVerification refuses.
 export function screenCheckPinned(baseConfig, designSnapshot) {
   if (screenHostConflict(baseConfig)) throw new Error(SCREEN_HOST_CONFLICT);
-  return Boolean(designSnapshot) && baseConfig?.qa?.screenCheck === true;
+  if (!designSnapshot || baseConfig?.qa?.screenCheck === false || baseConfig?.orchestration?.delivery?.hostVerification === true) return false;
+  return qaRecipeSource(baseConfig ?? {}) !== null;
 }
 export async function dispatch(args) {
   if (!path.isAbsolute(args.root ?? "")) throw new Error("absolute --root required");
@@ -162,7 +166,7 @@ async function prepareDispatch(args) {
   pins.idea = ideaBinding(snapshot, ideaResult);
   // MONO-481: from BASE like hostVerification, and only for a task with an approved mockup (design.json in its snapshot):
   // the first review round then waits for the host's screen check of the committed head.
-  if (screenCheckPinned(baseConfig, designSnapshot)) pins.screenCheck = true;
+  if (!pins.hostVerification && screenCheckPinned(baseConfig, designSnapshot)) pins.screenCheck = true;
   atomicJson(pinsFile, pins); const pinsDigest = sha256File(pinsFile);
   Object.assign(gate, { root: args.root, issue, attempt, risk, critical, pins: { file: pinsFile, digest: pinsDigest } });
   atomicJson(gateFile, gate);

@@ -143,11 +143,10 @@ with that mandate; feature code always routes through delivery workers.
 
 ## Linear Write Verification
 
-Verify-after-write, mandatory for every Linear mutation the orchestrator
-applies: after the write, read back the mutated entity and confirm the
-change actually applied — a success response alone is not confirmation.
-Wave-1 precedent: `save_project` returned success while the project status
-stayed unchanged (silent success-no-op). On a failed read-back, retry the
+Verify-after-write for every Linear mutation the orchestrator applies:
+read back the mutated entity and confirm the
+change actually applied — a success response alone is not confirmation
+(a write can succeed silently without applying). On a failed read-back, retry the
 mutation once; if the read-back still shows the old state, record a ledger
 failure entry naming both attempts and treat the mutation as pending —
 never report it as applied.
@@ -159,13 +158,16 @@ Never bring the user an unprepared question. Before asking:
 1. Exhaust autonomous work; ask only when the question is the item's last
    blocker.
 2. Prepare visual variants for design questions.
-3. Refresh item state immediately before asking; never re-ask an answered
-   question and never present a stale item as decision-ready.
+3. Refresh item state right before asking; never re-ask an answered
+   question or present a stale item as decision-ready.
 
 Brief contents per `templates/orchestrator-brief.md`: what changes and for
 whom, why the decision is needed now, completed proof (tests, review round, CI,
 certificates as applicable), recommendation with rationale, exact options.
-Ask immediately and interactively; unblocked work continues in parallel.
+Ask at once; unblocked work continues. Owner said to work without him (e.g.
+night): decide technical and reversible questions with a «Решил сам:» ledger line;
+send owner questions as non-blocking messages, never a question window
+(AskUserQuestion); keep working.
 
 Brief integrity — five rules bind every decision brief; the
 user-facing shapes live in `templates/orchestrator-brief.md`
@@ -195,8 +197,7 @@ user-facing shapes live in `templates/orchestrator-brief.md`
 ## Context Budget
 
 Orchestrator session context usage is a first-class operational metric,
-not an implementation detail. Wave-1 precedent: the session peaked at 92%
-of a 1M-token window with no signal to the owner.
+not an implementation detail.
 
 - Report current usage as «Контекст: ~N%» in every status update; a rough
   estimate is fine — the trend matters more than precision.
