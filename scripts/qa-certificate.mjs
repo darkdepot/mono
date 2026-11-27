@@ -120,7 +120,7 @@ export function validateQaCertificate(report, expected, { taskDir } = {}) {
 // crash) or successor (filed as a new issue after merge, never holds it).
 const BLOCKING = ['acceptance', 'regression', 'data', 'security', 'crash'];
 const PROTECTED = ['task', 'requirement', 'acceptance', 'scenario'];
-function triage(cert, expected, prior, passedBefore) {
+function triage(cert, expected, prior, before) {
   const bugs = cert.bugs ?? [];
   need(Array.isArray(bugs), 'bugs must be an array');
   const items = new Map(cert.items.map(item => [item.id, item])), ids = new Set();
@@ -140,17 +140,24 @@ function triage(cert, expected, prior, passedBefore) {
   for (const item of cert.items) {
     if (item.outcome !== 'failed' || !successorFor(item.id)) continue;
     need(!PROTECTED.includes(item.source) && !expected.taskCriteria.includes(item.id), `failed acceptance item ${item.id} is a blocking bug`);
-    need(!(prior?.items.get(item.id)?.outcome === 'passed' || passedBefore.has(item.id)), `item ${item.id} passed on the previous head: regression is a blocking bug`);
+    // A baseline counts only for the same expectation: changed text under the same id is a new item.
+    const same = old => old?.outcome === 'passed' && old.source === item.source && old.expectation === item.expectation;
+    need(!(same(prior?.items.get(item.id)) || before.passed.some(old => old.id === item.id && same(old))),
+      `item ${item.id} passed on the previous head: regression is a blocking bug`);
   }
   const holding = bugs.some(bug => bug.class === 'blocking')
     || cert.items.some(item => item.outcome === 'unverified' || (item.outcome === 'failed' && !successorFor(item.id)));
   if (cert.verdict === 'passed') need(!holding, 'green verdict has a blocking bug, a failed or an unverified item');
   else need(holding || !bugs.length, 'successor bugs alone cannot hold the verdict');
-  // Successors found on earlier heads of a recheck chain stay listed unless their item now passes live.
+  // Successors found on earlier heads stay listed in every second pass until the current pass sees their item
+  // pass live or lists them in `resolved` ({head, id}).
+  const resolved = cert.resolved ?? [];
+  need(Array.isArray(resolved) && resolved.every(entry => object(entry) && sha(entry.head) && text(entry.id)), 'resolved entries need head and id');
   const own = bugs.filter(bug => bug.class === 'successor').map(bug => ({ ...bug, head: cert.head }));
   const key = bug => JSON.stringify([bug.item ?? null, bug.summary]);
   const seen = new Set(own.map(key));
-  const earlier = (prior?.successors ?? []).filter(bug => !seen.has(key(bug)) && seen.add(key(bug))
+  const earlier = [...(prior?.successors ?? []), ...before.successors].filter(bug => !seen.has(key(bug)) && seen.add(key(bug))
+    && !resolved.some(entry => entry.head === bug.head && entry.id === bug.id)
     && !(bug.item && items.get(bug.item)?.outcome === 'passed' && items.get(bug.item).carriedFrom === undefined));
   return [...earlier, ...own];
 }
@@ -165,28 +172,30 @@ function derivedTaskDir(expected) {
 // reason, and the full list at the final gate (`fullPass.final`) runs once per task. Returns the ids that passed
 // on another head of this task, so a full second pass cannot call a regression a successor either.
 function secondPass(expected, ctx, prior, enforce) {
-  const passed = new Set();
+  const passed = [], successors = [], found = { passed, successors };
   const taskDir = ctx.taskDir ?? prior?.taskDir ?? derivedTaskDir(expected);
   const full = expected.fullPass;
   need(full === undefined || (object(full) && text(full.reason) && [undefined, true].includes(full.final)), 'fullPass requires a reason');
   need(!(full && expected.recheck), 'recheck and fullPass exclude each other');
-  if (!taskDir || !fs.existsSync(taskDir)) return passed;
+  if (!taskDir || !fs.existsSync(taskDir)) return found;
   const others = fs.readdirSync(taskDir).filter(name => HEAD.test(name) && name !== expected.head
     && fs.existsSync(path.join(taskDir, name, 'task-report.json')));
   for (const name of others) {
     // Host-written reports of this task; an unreadable one is checked where it is carried, not here.
     try {
       const raw = JSON.parse(fs.readFileSync(path.join(taskDir, name, 'task-report.json'), 'utf8')).certificate;
-      for (const item of JSON.parse(raw.slice(QA_MARKER.length).trim()).items ?? []) if (item?.outcome === 'passed') passed.add(item.id);
+      const old = JSON.parse(raw.slice(QA_MARKER.length).trim());
+      for (const item of old.items ?? []) if (item?.outcome === 'passed') passed.push(item);
+      for (const bug of old.bugs ?? []) if (bug?.class === 'successor') successors.push({ ...bug, head: name });
     } catch { /* not a behavior report */ }
   }
-  if (!others.length || !enforce) return passed;
+  if (!others.length || !enforce) return found;
   need(expected.recheck !== undefined || full, 'second pass on this task requires a recheck block or fullPass.reason');
   if (full?.final) for (const name of others) {
     let saved; try { saved = JSON.parse(fs.readFileSync(path.join(taskDir, name, 'task-expected.json'), 'utf8')); } catch { continue; }
     need(saved?.fullPass?.final !== true, `final full pass already ran on head ${name}`);
   }
-  return passed;
+  return found;
 }
 
 function validate(report, expected, ctx) {
@@ -258,7 +267,7 @@ function validate(report, expected, ctx) {
   need(Array.isArray(expected.expectedItems) && expected.expectedItems.length > 0
     && expected.expectedItems.length === ids.size && expected.expectedItems.every(item => ids.has(item.id)), 'expectation list missing or incomplete');
   const passedBefore = ctx.top && cert.scope === 'task' && cert.mode === 'ship' && cert.recipeSource !== 'file'
-    ? secondPass(expected, ctx, prior, !['release', 'acceptance'].includes(expected.purpose)) : new Set();
+    ? secondPass(expected, ctx, prior, !['release', 'acceptance'].includes(expected.purpose)) : { passed: [], successors: [] };
   const successors = triage(cert, expected, prior, passedBefore);
   return { ...cert, gateEligible, successors };
 }

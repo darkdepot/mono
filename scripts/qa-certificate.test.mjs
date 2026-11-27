@@ -466,3 +466,31 @@ test('MONO-503 review: a successor bug cannot carry a blocking reason', t => {
   certA.bugs = [{ id: 'B1', class: 'successor', summary: 'Tooltip typo' }];
   assert.equal(validateQaCertificate(f.report(certA), f.expectedA).verdict, 'passed');
 });
+
+test('MONO-503 review 2: a full second pass keeps an earlier item-less successor until resolved', t => {
+  const f = recheckFixture(t);
+  const certA = structuredClone(f.certA);
+  certA.bugs = [{ id: 'B1', class: 'blocking', why: 'acceptance', item: 'C3', summary: 'Draft is lost after save' },
+    { id: 'B2', class: 'successor', summary: 'Tooltip typo' }];
+  f.save(f.heads.A, certA, f.expectedA);
+  const { recheck, ...plain } = f.expectedB;
+  const expected = { ...plain, fullPass: { reason: 'Fix rewrote the shared navigation' } };
+  const full = structuredClone(f.certB);
+  full.items = f.items.map(item => ({ ...item, outcome: 'passed', evidence: [f.proof(f.heads.B, `${item.id}.cast`)] }));
+  assert.deepEqual(f.check(full, expected).successors.map(bug => [bug.id, bug.summary, bug.head]),
+    [['B2', 'Tooltip typo', f.heads.A]]);
+  assert.deepEqual(f.check({ ...full, resolved: [{ head: f.heads.A, id: 'B2' }] }, expected).successors, []);
+});
+
+test('MONO-503 review 2: a changed expectation under the same id is not a regression baseline', t => {
+  const f = recheckFixture(t);
+  // C2 passed on A with its old text; B rewrites C2 and the new expectation fails as a successor.
+  const { recheck, ...plain } = f.expectedB;
+  const expected = { ...structuredClone(plain), fullPass: { reason: 'Fix rewrote the shared navigation' } };
+  expected.expectedItems[1].expectation = 'Empty list shows a hint with a link';
+  const cert = structuredClone(f.certB);
+  cert.items = expected.expectedItems.map(item => ({ ...item, outcome: 'passed', evidence: [f.proof(f.heads.B, `${item.id}.cast`)] }));
+  cert.items[1] = { ...expected.expectedItems[1], outcome: 'failed', reason: 'No link', evidence: [f.proof(f.heads.B, 'c2.cast')] };
+  cert.bugs = [{ id: 'B1', class: 'successor', item: 'C2', summary: 'Hint has no link' }];
+  assert.equal(f.check(cert, expected).verdict, 'passed');
+});
