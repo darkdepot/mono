@@ -16,7 +16,7 @@ Link `role:<role>` to `#roles`; report values.
 | `idea-helper` | claude-code: `claude-opus-5-5`; codex: `gpt-6.2-sol` | `high` | Read-only idea facts. | Owner, 2026-11-27. |
 | `scout` | claude-code: `sonnet`; codex: `gpt-6-luna` | claude-code: `medium`; codex: `high` | Read-only scouts. | Owner, 2026-10-17. |
 | `qa` | `claude-opus-5-5` | `high` | Independent QA; overridable. | Owner. |
-| `code-review` | `gpt-6.1-sol` | `high` | Round reviewer. | Owner, 2026-09-30. |
+| `code-review` | `gpt-6.1-sol` | `high` | Round reviewer. | Owner, 2026-11-01. |
 | `code-review-checker` | `claude-opus-5-5` | `high` | Finding checker. | Owner, 2026-11-27. |
 | `autoreview` | `claude-opus-5-5` | tiny: `low`; standard: `medium`; deep: `high`; risky: `high`; riskyCritical: `xhigh` | Legacy pins/configs; never runs. | Owner. |
 

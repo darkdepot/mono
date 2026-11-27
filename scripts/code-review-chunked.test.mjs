@@ -324,7 +324,7 @@ test('MONO-486 review fix: a JSON cookie value with escaped quotes is redacted t
   for (const secret of ['inner-cookie', 'nested-cookie']) assert.ok(!nested.includes(secret), nested);
 });
 
-// MONO-500: a Zeni round sent 121 findings to one checker call and failed on the input limit. 150 findings whose own
+// MONO-500: a product round sent 121 findings to one checker call and failed on the input limit. 150 findings whose own
 // text alone is over the limit go in batches; their verdicts make one round as if one call had answered.
 const manyFiles = Object.fromEntries(Array.from({ length: 10 }, (_, index) => [`pkg${index % 3}/m${index}.mjs`, body(`m${index}`, 30)]));
 const manyFindings = files => files.flatMap(file => Array.from({ length: 15 }, (_, index) => ({ danger: false, class: 'missing-validation', file,
