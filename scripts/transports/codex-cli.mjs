@@ -67,13 +67,16 @@ function startIdentity(event) {
 // attempt is registered and kept in the entry (linearPath). mcp: the user's logged-in `linear` server gets the grants
 // and built-in ChatGPT apps are disabled, so the model cannot pick the app connector the grants do not cover (MONO-460).
 // app: no usable server, so apps stay on and only the Linear app's save_comment and save_issue are approved, as one
-// inline table (a dotted key splits the quoted tool name); no mcp_servers.linear keys, which would break config parsing.
+// inline table (a dotted key splits the quoted tool name); the app's other tools keep asking (auto), even under an
+// approving apps._default. No mcp_servers.linear grant keys, which would break config parsing without the server; an
+// existing server is turned off so the model cannot pick it.
 export const LINEAR_WRITE_TOOLS = Object.freeze(["save_comment", "save_issue"]);
 
 export function linearArgs(linearPath) {
   if (linearPath?.kind === "app") {
     const tools = LINEAR_APP_WRITE_TOOLS.map(tool => `${JSON.stringify(tool)}={approval_mode="approve"}`).join(",");
-    return ["-c", `apps.${linearPath.connectorId}.tools={${tools}}`];
+    return ["-c", `apps.${linearPath.connectorId}.default_tools_approval_mode="auto"`, "-c", `apps.${linearPath.connectorId}.tools={${tools}}`,
+      ...(linearPath.mcpServerPresent ? ["-c", "mcp_servers.linear.enabled=false"] : [])];
   }
   return ["--disable", "apps", ...LINEAR_WRITE_TOOLS.flatMap(tool => ["-c", `mcp_servers.linear.tools.${tool}.approval_mode="approve"`])];
 }
