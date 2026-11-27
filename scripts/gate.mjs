@@ -10,6 +10,7 @@ import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effective
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
 import { reportCertificate } from './qa-certificate.mjs';
+import { withHostSlot } from './host-slots.mjs';
 import { hostRunMarker, hostRunCheckout, removeHostCheckout, openHostRun, settleHostRun, stopHostGroup, screenCheckHold, readScreenCheck, reviewGroupStore } from './review-rounds.mjs';
 
 export { reviewEnvironment } from "./model-environment.mjs";
@@ -301,7 +302,11 @@ const failureLines = text => text.split("\n").filter(line => /^\s*(FAIL\b|not ok
 // that died mid-run (collector recovery).
 // Inherited Git routing would point the command's Git back at the worker repository whatever its directory.
 const GIT_ROUTING = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX"];
-export async function runHostVerification({ command, args }, repo, head, evidenceRoot, collectionId, pinsFile) {
+// MONO-507: the run first takes a machine-wide host slot (shared with review roles); the wait is outside its duration.
+export async function runHostVerification(verification, repo, head, evidenceRoot, collectionId, pinsFile) {
+  return withHostSlot({ label: `host verification ${collectionId}` }, () => runHostVerificationInSlot(verification, repo, head, evidenceRoot, collectionId, pinsFile));
+}
+async function runHostVerificationInSlot({ command, args }, repo, head, evidenceRoot, collectionId, pinsFile) {
   const marker = hostRunMarker(evidenceRoot, collectionId), log = marker.replace(/\.running$/, ".log"), checkout = hostRunCheckout(evidenceRoot, collectionId);
   // MONO-482 review: one host run per orchestrator root; another open run refuses this one before anything runs.
   try { openHostRun(evidenceRoot, collectionId, pinsFile); }

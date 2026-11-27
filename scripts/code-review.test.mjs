@@ -1,3 +1,4 @@
+import './test-fixtures/host-slots-isolation.mjs';
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

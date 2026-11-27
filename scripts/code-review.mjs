@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { digest, resolveRole, runtimePackRoot, isMain, NETWORK_SIGNS, stderrInfraCause, streamFailureCause } from './runtime.mjs';
 export { NETWORK_SIGNS };
 import { ensureClaudeLogin, claudeLoginFailure, LOGIN_FAILURE_REASON } from './claude-login.mjs';
+import { acquireHostSlot, SLOT_POLL_MS } from './host-slots.mjs';
 
 export const DANGER_CASES = ['data', 'security', 'gate-bypass', 'gate-stall', 'silent-result', 'readiness', 'unknown'];
 const text = value => typeof value === 'string' && value.trim().length > 0;
@@ -451,7 +452,13 @@ export function runInvocation(invocation, prompt, timeoutMs, { limitSec = timeou
     });
 }
 // The boundary probe shares the role's time limit.
-async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = ROLE_TIMEOUT_SEC * 1000, limitSec = timeoutMs / 1000, ensureLogin = ensureClaudeLogin, login: checked = null }) {
+// MONO-507: the role first takes a machine-wide host slot; the wait is outside the role's time limit and never fails it.
+async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = ROLE_TIMEOUT_SEC * 1000, limitSec = timeoutMs / 1000, ensureLogin = ensureClaudeLogin, login: checked = null, slotPollMs = SLOT_POLL_MS }) {
+  const hostSlot = await acquireHostSlot({ label: `review ${role}`, pollMs: slotPollMs });
+  try { return await executeRoleInSlot({ role, route, prompt, worktree, packRoot, timeoutMs, limitSec, ensureLogin, checked }); }
+  finally { hostSlot.release(); }
+}
+async function executeRoleInSlot({ role, route, prompt, worktree, packRoot, timeoutMs, limitSec, ensureLogin, checked }) {
   // A Claude role first gets a fresh login: on the host an expiring one is refreshed, in the worker sandbox it is only read.
   // A relaunch after a forced refresh reuses that refresh's result instead of checking again.
   const login = route.engine === 'claude' ? checked ?? await ensureLogin() : null;
@@ -841,7 +848,7 @@ export function checkerBatches(findings, promptFor, limit = CHECKER_BATCH_FINDIN
 // MONO-494: every role call (reviewer, checker, remark check, each group, the boundary probe and the retry) has the same
 // fixed limit, the OpenAI and Anthropic SDK default; it is not configurable. secondMs only scales seconds in tests.
 export const ROLE_TIMEOUT_SEC = 600;
-const roleTimeout = secondMs => ({ timeoutMs: ROLE_TIMEOUT_SEC * secondMs, limitSec: ROLE_TIMEOUT_SEC });
+const roleTimeout = secondMs => ({ timeoutMs: ROLE_TIMEOUT_SEC * secondMs, limitSec: ROLE_TIMEOUT_SEC, slotPollMs: Math.max(20, SLOT_POLL_MS * secondMs / 1000) });
 // The only round boundary. Callers persist/sign the returned record; manual mode only prints it.
 export async function runReviewRound(input, { runRole = executeRole, ensureLogin: baseLogin = ensureClaudeLogin, promptLimits = {}, clock = systemClock, load = hostLoad, secondMs = 1000, groupStore = null, pause = pauseFor } = {}) {
   const { worktree, head, base, contract, risk = 'standard', config = {}, packRoot = runtimePackRoot() } = input;

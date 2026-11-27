@@ -268,6 +268,9 @@ carries `review.cause`: `environment` when a role failed and every failed
 attempt of the round has one of the first six causes with every file read,
 otherwise `review` (also every older receipt); and `review.host`, the host load
 at the start and end of the round with a sleep flag, as facts, not a threshold.
+Every review role and host verification first takes one of the host's shared slots
+(`MONO_HOST_SLOTS`, default 2, for all orchestrators on the machine); the wait is
+outside the role timer and never yields `not-reviewed`.
 
 Between rounds do nothing: the worker fixes open findings and requests the next
 round itself. The pinned risk sets the completed rounds per task attempt (`risky`

@@ -70,7 +70,7 @@ const steps = [
   { label: "node --test deploy", cmd: "node", cmdArgs: ["--test", "scripts/deploy.test.mjs"] },
   { label: "node scripts/read-budget.mjs", cmd: "node", cmdArgs: ["scripts/read-budget.mjs"] },
   { label: "node --test pack installation", cmd: "node", cmdArgs: ["--test", "scripts/pack-install.test.mjs"] },
-  { label: "node --test code review rounds and dataset", cmd: "node", cmdArgs: ["--test", "scripts/code-review.test.mjs", "scripts/code-review-eval.test.mjs", "scripts/code-review-real.test.mjs", "scripts/code-review-login.test.mjs", "scripts/code-review-chunked.test.mjs", "scripts/code-review-cause.test.mjs", "scripts/review-groups.test.mjs", "scripts/claude-login.test.mjs"] },
+  { label: "node --test code review rounds and dataset", cmd: "node", cmdArgs: ["--test", "scripts/code-review.test.mjs", "scripts/code-review-eval.test.mjs", "scripts/code-review-real.test.mjs", "scripts/code-review-login.test.mjs", "scripts/code-review-chunked.test.mjs", "scripts/code-review-cause.test.mjs", "scripts/host-slots.test.mjs", "scripts/review-groups.test.mjs", "scripts/claude-login.test.mjs"] },
   { label: "node --test skills probe samples", cmd: "node", cmdArgs: ["--test", "scripts/skills-probe.test.mjs", "scripts/skills-owner.test.mjs", "scripts/skills-run.test.mjs", "scripts/skills-trace.test.mjs", "scripts/skills-proof.test.mjs", "scripts/skills-records.test.mjs", "scripts/skills-process.test.mjs", "scripts/skills-catalog.test.mjs", "scripts/skills-dialogue.test.mjs", "scripts/skills-window-roles.test.mjs", "scripts/skills-release.test.mjs"] },
   { label: "node --test QA fixtures", cmd: "node", cmdArgs: ["--test", "scripts/qa-certificate.test.mjs", "scripts/qa-evals.test.mjs", "scripts/ship-evals.test.mjs", "scripts/qa-gate.test.mjs"] },
   { label: `git ${whitespaceArgs.join(" ")}`, cmd: "git", cmdArgs: whitespaceArgs },
@@ -94,6 +94,9 @@ const steps = [
 // its own --test-concurrency for the files inside it. Those long steps start
 // first so the short ones fill the gaps. MONO_VERIFY_JOBS=1 brings back one
 // step at a time.
+// MONO-507: test steps use their own host slots, never the real ones live reviews hold.
+const hostSlotsDir = fs.mkdtempSync(path.join(os.tmpdir(), "mono-verify-host-slots-"));
+process.on("exit", () => fs.rmSync(hostSlotsDir, { recursive: true, force: true }));
 const requestedJobs = Number(process.env.MONO_VERIFY_JOBS);
 const jobs = Number.isInteger(requestedJobs) && requestedJobs > 0
   ? requestedJobs
@@ -103,7 +106,7 @@ function runStep(step) {
   return new Promise((resolve) => {
     const out = [], err = [];
     // Checks never read the real Claude login or start the real CLI (scripts/claude-login.mjs).
-    const child = spawn(step.cmd, step.cmdArgs, { cwd: root, env: { ...process.env, MONO_CLAUDE_LOGIN_CHECK: "off" }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(step.cmd, step.cmdArgs, { cwd: root, env: { ...process.env, MONO_CLAUDE_LOGIN_CHECK: "off", MONO_HOST_SLOTS_DIR: hostSlotsDir, MONO_HOST_SLOTS: process.env.MONO_HOST_SLOTS ?? "64" }, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout.on("data", (chunk) => out.push(chunk));
     child.stderr.on("data", (chunk) => err.push(chunk));
     const finish = (ok, extra = "") => resolve({
