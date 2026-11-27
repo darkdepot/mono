@@ -105,13 +105,17 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
         { taskDir: path.join(root, 'qa', target.issue) });
       need(cert.gateEligible, `${scope} certificate cannot open gates`);
       need(cert.verdict === 'passed', `${scope} QA ${cert.verdict}`);
+      successors.push(...cert.successors.map(bug => ({ ...bug, scope })));
     };
+    // MONO-503: successor bugs never hold merge; the orchestrator files each one as a new issue.
+    const successors = [];
     check('task', { issue, head }, { shipCertificate });
     if (final) {
       check('project', final, { project: task.project, build,
         ...(final.issue === issue ? { shipCertificate } : {}) });
     }
-    return { state: 'passed', reason: final ? 'task and project QA passed' : 'task QA passed' };
+    return { state: 'passed', reason: final ? 'task and project QA passed' : 'task QA passed',
+      ...(successors.length ? { successors } : {}) };
   } catch (error) {
     return { state: error.code === 'ENOENT' ? 'waiting' : 'failed',
       reason: error.message.startsWith('QA: ') ? error.message : `QA: ${error.message}`, connected };

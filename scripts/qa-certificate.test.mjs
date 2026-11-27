@@ -188,7 +188,7 @@ function recheckFixture(t) {
   save(heads.A, certA, expectedA);
   const recheck = (previous, live = []) => ({ previousHead: previous,
     previousReport: path.join(dir(previous), 'task-report.json'),
-    previousExpected: path.join(dir(previous), 'task-expected.json'), live });
+    previousExpected: path.join(dir(previous), 'task-expected.json'), live, smoke: ['C3'] });
   // Head B: only C3 (failed on A) is checked live; C1 and C2 carry over from A.
   const expectedB = expectedFor(heads.B, { purpose: 'change', recheck: recheck(heads.A) });
   const certB = { ...certA, head: heads.B, verdict: 'passed', items: [
@@ -334,4 +334,163 @@ test('MONO-484 review: a symlinked head folder cannot carry evidence from outsid
   assert.equal(validateQaCertificate(f.report(certNext), expectedC).verdict, 'passed');
   const moved = path.join(f.root, 'moved-a'); fs.renameSync(f.dir(f.heads.A), moved); fs.symlinkSync(moved, f.dir(f.heads.A));
   assert.throws(() => validateQaCertificate(f.report(certNext), expectedC), /real folder inside qa/);
+});
+
+// MONO-503: only blocking bugs hold merge; successor bugs are listed for new issues.
+test('MONO-503 successor bugs do not hold the green verdict and are listed', t => {
+  const f = recheckFixture(t);
+  // C2 (heuristic) fails on A as a mockup delta: a successor bug next to the blocking C3.
+  const certA = structuredClone(f.certA);
+  Object.assign(certA.items[1], { outcome: 'failed', reason: 'Hint is 4px lower than the mockup' });
+  certA.bugs = [{ id: 'B1', class: 'blocking', why: 'acceptance', item: 'C3', summary: 'Draft is lost after save' },
+    { id: 'B2', class: 'successor', item: 'C2', summary: 'Hint offset against the mockup' }];
+  const checkA = cert => validateQaCertificate(f.report(cert), f.expectedA);
+  assert.equal(checkA(certA).verdict, 'failed');
+  assert.throws(() => checkA({ ...certA, verdict: 'passed' }), /green verdict has a blocking bug/);
+  // Without the blocking bug and with C3 green, the successor alone cannot hold the verdict.
+  const green = structuredClone(certA); green.bugs = [certA.bugs[1]];
+  green.items[2] = { ...f.items[2], outcome: 'passed', evidence: [f.proof(f.heads.A, 'c3-ok.cast')] };
+  assert.throws(() => checkA(green), /successor bugs alone cannot hold/);
+  green.verdict = 'passed';
+  const result = checkA(green);
+  assert.equal(result.verdict, 'passed');
+  assert.deepEqual(result.successors, [{ ...certA.bugs[1], head: f.heads.A }]);
+  // A failed item without any bug still holds; an acceptance item cannot be a successor.
+  assert.throws(() => checkA({ ...green, bugs: [] }), /green verdict/);
+  const acceptance = structuredClone(green);
+  acceptance.items[0] = { ...f.items[0], outcome: 'failed', reason: 'Accepts invalid input', evidence: [] };
+  acceptance.bugs.push({ id: 'B3', class: 'successor', item: 'C1', summary: 'Invalid input accepted' });
+  assert.throws(() => checkA(acceptance), /failed acceptance item C1 is a blocking bug/);
+});
+
+test('MONO-503 a blocking bug names its class, why and the failed item it breaks', t => {
+  const f = recheckFixture(t);
+  const check = bugs => validateQaCertificate(f.report({ ...f.certA, bugs }), f.expectedA);
+  const bug = { id: 'B1', class: 'blocking', why: 'acceptance', item: 'C3', summary: 'Draft is lost after save' };
+  assert.equal(check([bug]).verdict, 'failed');
+  const { item, ...noItem } = bug;
+  assert.throws(() => check([noItem]), /must name the failed item it breaks/);
+  assert.throws(() => check([{ ...bug, item: 'C1' }]), /must name the failed item it breaks/);
+  assert.throws(() => check([{ ...bug, item: 'C9' }]), /unknown item/);
+  assert.throws(() => check([{ ...bug, why: undefined }]), /requires why/);
+  assert.throws(() => check([{ ...bug, class: undefined }]), /class blocking or successor/);
+  assert.throws(() => check([{ ...bug, summary: '' }]), /unique id and summary/);
+  assert.throws(() => check([bug, bug]), /unique id/);
+  // Data, security and crash bugs may stand without an item.
+  assert.equal(check([{ id: 'B1', class: 'blocking', why: 'crash', summary: 'App closes on save' }]).verdict, 'failed');
+});
+
+test('MONO-503 a regression of an item that passed on the previous head is blocking', t => {
+  const f = recheckFixture(t);
+  // B checks C2 live (touched) and it now fails although it passed on A.
+  const expected = structuredClone(f.expectedB); expected.recheck.live = [{ id: 'C2', reason: 'Fix touched the empty state' }];
+  const cert = structuredClone(f.certB);
+  cert.items[1] = { ...f.items[1], outcome: 'failed', reason: 'Hint disappeared', evidence: [f.proof(f.heads.B, 'c2.cast')] };
+  cert.bugs = [{ id: 'B1', class: 'successor', item: 'C2', summary: 'Hint disappeared' }];
+  assert.throws(() => f.check(cert, expected), /C2 passed on the previous head: regression/);
+  cert.verdict = 'failed'; cert.bugs[0] = { ...cert.bugs[0], class: 'blocking', why: 'regression' };
+  assert.equal(f.check(cert, expected).verdict, 'failed');
+});
+
+test('MONO-503 from the second pass the recheck block or a recorded full-pass reason is mandatory', t => {
+  const f = recheckFixture(t);
+  const full = structuredClone(f.certB);
+  full.items = f.items.map(item => ({ ...item, outcome: 'passed', evidence: [f.proof(f.heads.B, `${item.id}.cast`)] }));
+  const { recheck, ...plain } = f.expectedB;
+  // Head A is on disk: a full pass on B without a reason is refused, by the folder layout and at the gate.
+  assert.throws(() => f.check(full, plain), /second pass on this task requires a recheck block or fullPass.reason/);
+  assert.throws(() => validateQaCertificate(f.report(full), plain, { taskDir: path.join(f.root, 'qa', f.issue) }), /second pass/);
+  assert.equal(f.check(full, { ...plain, fullPass: { reason: 'Fix rewrote the shared navigation' } }).verdict, 'passed');
+  assert.throws(() => f.check(full, { ...plain, fullPass: {} }), /fullPass requires a reason/);
+  assert.throws(() => f.check(f.certB, { ...f.expectedB, fullPass: { reason: 'x' } }), /exclude each other/);
+  // The first pass on a task needs neither; release and acceptance stay full by purpose.
+  assert.equal(validateQaCertificate(f.report(f.certA), f.expectedA).verdict, 'failed');
+  assert.equal(f.check(full, { ...plain, purpose: 'release' }).verdict, 'passed');
+  // The recheck names a short smoke set, run live.
+  assert.throws(() => f.check(f.certB, { ...f.expectedB, recheck: { ...f.expectedB.recheck, smoke: [] } }), /smoke/);
+  assert.throws(() => f.check(f.certB, { ...f.expectedB, recheck: { ...f.expectedB.recheck, smoke: ['C1'] } }), /C1 must be checked live/);
+  // The final full list runs once per task.
+  const finalPass = { ...plain, fullPass: { reason: 'Final gate before merge', final: true } };
+  assert.equal(f.check(full, finalPass).verdict, 'passed');
+  f.save(f.heads.B, full, finalPass);
+  const fullC = { ...full, head: f.heads.C, items: f.items.map(item => ({ ...item, outcome: 'passed', evidence: [f.proof(f.heads.C, `${item.id}.cast`)] })) };
+  const finalC = f.expectedFor(f.heads.C, { purpose: 'change', fullPass: { reason: 'Final gate again', final: true } });
+  assert.throws(() => validateQaCertificate(f.report(fullC), finalC), /final full pass already ran/);
+});
+
+test('MONO-503 successors found on an earlier head stay listed through a green recheck', t => {
+  const f = recheckFixture(t);
+  // A: C3 blocking, C2 a successor (mockup delta) and one more successor without an item.
+  const certA = structuredClone(f.certA);
+  Object.assign(certA.items[1], { outcome: 'failed', reason: 'Hint offset' });
+  certA.bugs = [{ id: 'B1', class: 'blocking', why: 'acceptance', item: 'C3', summary: 'Draft is lost after save' },
+    { id: 'B2', class: 'successor', item: 'C2', summary: 'Hint offset against the mockup' },
+    { id: 'B3', class: 'successor', summary: 'Tooltip typo' }];
+  f.save(f.heads.A, certA, f.expectedA);
+  // B: C3 fixed live, C2 still off (failed A, so live again) and repeated; nothing else found.
+  const certB = structuredClone(f.certB);
+  certB.items[1] = { ...f.items[1], outcome: 'failed', reason: 'Hint offset', evidence: [f.proof(f.heads.B, 'c2.cast')] };
+  certB.bugs = [{ id: 'B1', class: 'successor', item: 'C2', summary: 'Hint offset against the mockup' }];
+  const listed = f.check(certB).successors;
+  assert.deepEqual(listed.map(bug => [bug.summary, bug.head]),
+    [['Tooltip typo', f.heads.A], ['Hint offset against the mockup', f.heads.B]]);
+  // If C2 passes live on B, its successor is gone; the item-less one stays.
+  const fixed = structuredClone(f.certB);
+  fixed.items[1] = { ...f.items[1], outcome: 'passed', evidence: [f.proof(f.heads.B, 'c2-ok.cast')] };
+  assert.deepEqual(f.check(fixed).successors.map(bug => bug.summary), ['Tooltip typo']);
+});
+
+test('MONO-503 review: a full second pass cannot label a regression a successor', t => {
+  const f = recheckFixture(t);
+  // C2 passed on A; a full pass on B (recorded reason) finds it failing and calls it a successor.
+  const { recheck, ...plain } = f.expectedB;
+  const expected = { ...plain, fullPass: { reason: 'Fix rewrote the shared navigation' } };
+  const cert = structuredClone(f.certB);
+  cert.items = f.items.map(item => ({ ...item, outcome: 'passed', evidence: [f.proof(f.heads.B, `${item.id}.cast`)] }));
+  cert.items[1] = { ...f.items[1], outcome: 'failed', reason: 'Hint disappeared', evidence: [f.proof(f.heads.B, 'c2.cast')] };
+  cert.bugs = [{ id: 'B1', class: 'successor', item: 'C2', summary: 'Hint disappeared' }];
+  assert.throws(() => f.check(cert, expected), /C2 passed on the previous head: regression/);
+  cert.verdict = 'failed'; cert.bugs[0] = { ...cert.bugs[0], class: 'blocking', why: 'regression' };
+  assert.equal(f.check(cert, expected).verdict, 'failed');
+});
+
+test('MONO-503 review: a successor bug cannot carry a blocking reason', t => {
+  const f = recheckFixture(t);
+  const certA = structuredClone(f.certA);
+  certA.items[2] = { ...f.items[2], outcome: 'passed', evidence: [f.proof(f.heads.A, 'c3-ok.cast')] };
+  certA.verdict = 'passed';
+  for (const why of ['crash', 'data', 'security', 'regression', 'acceptance']) {
+    certA.bugs = [{ id: 'B1', class: 'successor', why, summary: 'App closes on save' }];
+    assert.throws(() => validateQaCertificate(f.report(certA), f.expectedA), /is a blocking bug, not a successor/, why);
+  }
+  certA.bugs = [{ id: 'B1', class: 'successor', summary: 'Tooltip typo' }];
+  assert.equal(validateQaCertificate(f.report(certA), f.expectedA).verdict, 'passed');
+});
+
+test('MONO-503 review 2: a full second pass keeps an earlier item-less successor until resolved', t => {
+  const f = recheckFixture(t);
+  const certA = structuredClone(f.certA);
+  certA.bugs = [{ id: 'B1', class: 'blocking', why: 'acceptance', item: 'C3', summary: 'Draft is lost after save' },
+    { id: 'B2', class: 'successor', summary: 'Tooltip typo' }];
+  f.save(f.heads.A, certA, f.expectedA);
+  const { recheck, ...plain } = f.expectedB;
+  const expected = { ...plain, fullPass: { reason: 'Fix rewrote the shared navigation' } };
+  const full = structuredClone(f.certB);
+  full.items = f.items.map(item => ({ ...item, outcome: 'passed', evidence: [f.proof(f.heads.B, `${item.id}.cast`)] }));
+  assert.deepEqual(f.check(full, expected).successors.map(bug => [bug.id, bug.summary, bug.head]),
+    [['B2', 'Tooltip typo', f.heads.A]]);
+  assert.deepEqual(f.check({ ...full, resolved: [{ head: f.heads.A, id: 'B2' }] }, expected).successors, []);
+});
+
+test('MONO-503 review 2: a changed expectation under the same id is not a regression baseline', t => {
+  const f = recheckFixture(t);
+  // C2 passed on A with its old text; B rewrites C2 and the new expectation fails as a successor.
+  const { recheck, ...plain } = f.expectedB;
+  const expected = { ...structuredClone(plain), fullPass: { reason: 'Fix rewrote the shared navigation' } };
+  expected.expectedItems[1].expectation = 'Empty list shows a hint with a link';
+  const cert = structuredClone(f.certB);
+  cert.items = expected.expectedItems.map(item => ({ ...item, outcome: 'passed', evidence: [f.proof(f.heads.B, `${item.id}.cast`)] }));
+  cert.items[1] = { ...expected.expectedItems[1], outcome: 'failed', reason: 'No link', evidence: [f.proof(f.heads.B, 'c2.cast')] };
+  cert.bugs = [{ id: 'B1', class: 'successor', item: 'C2', summary: 'Hint has no link' }];
+  assert.equal(f.check(cert, expected).verdict, 'passed');
 });

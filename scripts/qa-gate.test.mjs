@@ -370,7 +370,7 @@ function recheckGate(t) {
     { ...items[1], outcome: 'failed', reason: 'Hint missing', evidence: [proof(prevHead, 'c2.cast')] }] };
   write(prevHead, { ...common, head: prevHead, evidenceRoot: dir(prevHead) }, prevCert);
   const expected = { ...common, head: f.head, evidenceRoot: dir(f.head), recheck: { previousHead: prevHead,
-    previousReport: path.join(dir(prevHead), 'task-report.json'), previousExpected: path.join(dir(prevHead), 'task-expected.json'), live: [] } };
+    previousReport: path.join(dir(prevHead), 'task-report.json'), previousExpected: path.join(dir(prevHead), 'task-expected.json'), live: [], smoke: ['C2'] } };
   const cert = { ...common, head: f.head, verdict: 'passed', gateEligible: true, items: [
     { ...prevCert.items[0], carriedFrom: prevHead },
     { ...items[1], outcome: 'passed', evidence: [proof(f.head, 'c2.cast')] }] };
@@ -476,5 +476,26 @@ test('MONO-484 review: an early pass on a head that never got green Ship carries
     assert.equal(result.state, 'failed'); assert.match(result.reason, /ship certificate|Head SHA|head/i);
   }
   // Even with A's ship certificate, A's own verdict is failed.
-  assert.match(qaDeliveryState({ ...f.input, head: f.prevHead, shipCertificate: f.ship(f.prevHead) }).reason, /task QA failed/);
+  // MONO-503: with B on disk, A also reads as a pass without a recheck block, refused before its verdict.
+  assert.match(qaDeliveryState({ ...f.input, head: f.prevHead, shipCertificate: f.ship(f.prevHead) }).reason, /second pass/);
+});
+
+test('MONO-503 the gate opens with successor bugs, lists them, and refuses a second pass without recheck', t => {
+  const f = recheckGate(t);
+  const file = path.join(f.dir(f.head), 'task-report.json');
+  const cert = JSON.parse(JSON.parse(fs.readFileSync(file, 'utf8')).certificate.replace(/^mono-qa certificate\n/, ''));
+  cert.items[1] = { ...cert.items[1], outcome: 'failed', reason: 'Hint offset' };
+  cert.bugs = [{ id: 'B1', class: 'successor', item: 'C2', summary: 'Hint offset against the mockup' }];
+  fs.writeFileSync(file, JSON.stringify({ certificate: 'mono-qa certificate\n' + JSON.stringify(cert) }));
+  assert.deepEqual(qaDeliveryState(f.input), { state: 'passed', reason: 'task QA passed',
+    successors: [{ ...cert.bugs[0], head: f.head, scope: 'task' }] });
+  const expectedFile = path.join(f.dir(f.head), 'task-expected.json');
+  const { recheck, ...plain } = JSON.parse(fs.readFileSync(expectedFile, 'utf8'));
+  fs.writeFileSync(expectedFile, JSON.stringify(plain));
+  // A full pass: C1 is checked live on this head too.
+  const live = path.join(f.dir(f.head), 'c1.cast'); fs.writeFileSync(live, 'scratch recording');
+  const { carriedFrom, ...c1 } = cert.items[0]; cert.items[0] = { ...c1, evidence: [live] };
+  fs.writeFileSync(file, JSON.stringify({ certificate: 'mono-qa certificate\n' + JSON.stringify(cert) }));
+  const result = qaDeliveryState(f.input);
+  assert.equal(result.state, 'failed'); assert.match(result.reason, /second pass/);
 });
