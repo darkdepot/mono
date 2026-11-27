@@ -1,3 +1,4 @@
+import './test-fixtures/host-slots-isolation.mjs';
 import { packLayout, canonical } from './runtime.mjs';
 import { copyPluginFixture, writeWatcherFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";

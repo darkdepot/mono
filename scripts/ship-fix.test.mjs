@@ -1,3 +1,4 @@
+import './test-fixtures/host-slots-isolation.mjs';
 // A timely bot remark that needs code is fixed inside the same worker session (skills/ship step 8):
 // fix, round per path, reply/resolve, next ship-gate attempt. No undo, park, task change or orchestrator turn.
 // Drives the real preflight and ship gates through their CLI; GitHub is a fake `gh` reading gh-state.json.

@@ -88,14 +88,19 @@ async function runGate(options, request, heldLock = null, startedFile = null) {
   // Each reviewer role has its own time limit, so a hung CLI ends the gate. The gate also
   // holds the safety ceiling itself, on wall-clock time (sleep pauses timers), so it ends
   // even when its collector died.
+  // MONO-507: time the gate spends queued for a host slot extends the ceiling: inside the gate from its own count,
+  // here from the wait file the gate keeps current while it waits.
   const ceilingAt = Date.now() + (options.gateStuckMs ?? GATE_STUCK_MS);
+  const waitFile = path.join(options.root, "reports", `${options.issue}-collector-a${options.attempt}-slot-wait.json`);
+  fs.rmSync(waitFile, { force: true });
+  const slotWait = () => { try { return Math.max(0, Number(readJson(waitFile).waitMs) || 0); } catch { return 0; } };
   const runner = `let token=""; for await (const chunk of process.stdin) token += chunk;
 if (token !== "go\\n") process.exit(1);
-setInterval(() => { if (Date.now() >= ${ceilingAt}) { try { process.kill(-process.pid, 'SIGKILL'); } catch { process.exit(1); } } }, 1000).unref();
+setInterval(() => { if (Date.now() >= ${ceilingAt} + (globalThis.monoHostSlotWaitMs?.() ?? 0)) { try { process.kill(-process.pid, 'SIGKILL'); } catch { process.exit(1); } } }, 1000).unref();
 process.argv = ${JSON.stringify([process.execPath, script, "preflight", "--request", file])};
 try { await import(${JSON.stringify(pathToFileURL(script).href)}); }
 catch (error) { console.error(error); process.exitCode = 1; }`;
-  const child = spawn(process.execPath, ["--input-type=module", "-e", runner], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, ["--input-type=module", "-e", runner], { detached: true, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, MONO_HOST_SLOTS_WAIT_FILE: waitFile } });
   const locks = [lockPath(options), heldLock].filter(Boolean);
   child.stdin.on("error", () => {}); // Child exit may close the release pipe.
   let gate;
@@ -122,7 +127,7 @@ catch (error) { console.error(error); process.exitCode = 1; }`;
   let stuck = false, ceiling;
   await new Promise((resolve, reject) => {
     child.once("error", reject); child.once("exit", resolve);
-    ceiling = setInterval(() => { if (Date.now() >= ceilingAt) { stuck = true; resolve(); } }, 250);
+    ceiling = setInterval(() => { if (Date.now() >= ceilingAt + slotWait()) { stuck = true; resolve(); } }, 250);
   });
   clearInterval(ceiling);
   if (stuck) await stopGate(gate);
