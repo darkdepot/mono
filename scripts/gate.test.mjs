@@ -525,7 +525,7 @@ test("preflight accepts only a v3 receipt with an accepted review, exact head/ba
     [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed (1); no response admitted', repeated: true, streakWork: ['CLI login', 'malformed or incomplete reviewer answer'] } },
       /^blocked: not-reviewed twice in a row on this head \(review: CLI login, malformed or incomplete reviewer answer\); check that both review CLIs are logged in, then fix it \(a code fix is a new head\) or resume the worker with reviewRetry, without a task change: role failed/],
     [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed (timeout)', repeated: true, cause: 'environment', causes: ['timeout', 'host-slept'] } },
-      /^blocked: not-reviewed twice in a row on this head \(environment: timeout, host-slept\); restore the environment \(host awake, load down, network, CLI login\) and resume the worker with reviewRetry, without a task change: role failed \(timeout\)$/],
+      /^blocked: not-reviewed twice in a row on this head \(environment: timeout, host-slept\); restore the environment \(host awake, load down, network, CLI login; an overloaded model or a rate limit: wait 1, 5, 15 minutes\) and resume the worker with reviewRetry, without a task change: role failed \(timeout\)$/],
     [{ review: { outcome: 'refused', round: null, reason: 'needs-decision: review round limit reached' } }, /^needs-decision: review round limit reached$/],
     [{ verification: { exitCode: 1, sandbox: { mode: "workspace-write", probed: true } } }, /^needs-decision: verification failed/],
     [{ verification: { exitCode: null } }, /^worker verification missing on this head/],

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { atomicJson } from './runtime.mjs';
 import { checkSpawnAvailability } from './orchestrator/launch.mjs';
-import { capRaisesFile, ATTEMPT_CAP_CEILING } from './orchestrator/command-state.mjs';
+import { capRaisesFile, uncountedFile, ATTEMPT_CAP_CEILING } from './orchestrator/command-state.mjs';
 
 // MONO-490: a task's attempt cap is raised only through a recorded host step, never by a local config.
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'orchestrator/attempt-cap.mjs');
@@ -34,7 +34,7 @@ function fixture({ used = 3, cap = 3, issues = { [ISSUE]: used } } = {}) {
   // A new commit on main changes the BASE cap for spawn and raise alike.
   const commitBase = value => { local(value); git('commit', '-q', '-am', `cap ${value}`); git('push', '-q', 'origin', 'main'); base = git('rev-parse', 'HEAD'); };
   const raise = (...args) => spawnSync(process.execPath, [script, 'raise', '--root', root, '--config', config, ...args], { encoding: 'utf8', env: gitEnv });
-  const spawnCheck = (issue = ISSUE) => checkSpawnAvailability({ root, issue, config, worktree: repo, base });
+  const spawnCheck = (issue = ISSUE, extra = {}) => checkSpawnAvailability({ root, issue, config, worktree: repo, base, ...extra });
   const setUsed = (n, issue = ISSUE) => {
     const attempts = JSON.parse(fs.readFileSync(path.join(root, 'attempts.json'), 'utf8'));
     atomicJson(path.join(root, 'attempts.json'), { ...attempts, [issue]: n });
@@ -62,7 +62,7 @@ test('a raise of +1 with a reason allows exactly one more attempt', () => {
     assert.throws(() => f.spawnCheck(), /attempt cap reached: 4 of 4 used \(base 3, raises 1\)/);
     // The record is shown where the orchestrator reads attempt state.
     const shown = ok(spawnSync(process.execPath, [script, 'show', '--root', f.root, '--config', f.config, '--issue', ISSUE], { encoding: 'utf8' }));
-    assert.deepEqual({ ...shown, raises: shown.raises.length }, { issue: ISSUE, used: 4, baseCap: 3, cap: 4, ceiling: ATTEMPT_CAP_CEILING, exhausted: true, raises: 1, warnings: [] });
+    assert.deepEqual({ ...shown, raises: shown.raises.length }, { issue: ISSUE, used: 4, counted: 4, uncounted: 0, baseCap: 3, cap: 4, ceiling: ATTEMPT_CAP_CEILING, exhausted: true, raises: 1, warnings: [] });
   } finally { f.cleanup(); }
 });
 
@@ -234,5 +234,33 @@ test('without attemptCap in the committed config the pack default of 3 stays', (
     assert.equal(state.cap.baseCap, 3); assert.deepEqual(state.cap.warnings, []);
     f.setUsed(3);
     assert.throws(() => f.spawnCheck(), /attempt cap reached: 3 of 3 used \(base 3, raises 0\)/);
+  } finally { f.cleanup(); }
+});
+
+// MONO-504: an attempt after an environmental death or a pack surface change does not count toward the cap.
+test('an attempt after a death by an overloaded model or a pack surface change is uncounted; a death of its own counts', () => {
+  const f = fixture();
+  try {
+    const capacity = 'Selected model is at capacity. Please try a different model.';
+    const log = attempt => path.join(f.root, 'logs', `${ISSUE}-mono-deliver-a${attempt}.jsonl`);
+    const writeLog = (attempt, events) => { fs.mkdirSync(path.dirname(log(attempt)), { recursive: true });
+      fs.writeFileSync(log(attempt), events.map(event => JSON.stringify(event)).join('\n') + '\n'); };
+    writeLog(3, [{ type: 'mono.launch', attempt: 3 }, { type: 'turn.started' }, { type: 'error', message: capacity }, { type: 'turn.failed', error: { message: capacity } }]);
+    const free = f.spawnCheck();
+    assert.equal(free.uncounted, 'environment: attempt 3 died of capacity', 'the cap does not stop the attempt after an environmental death');
+    assert.equal(free.cap.counted, 3);
+
+    // Launch records it beside attempts.json; that attempt then never counts.
+    atomicJson(uncountedFile(f.root), { [ISSUE]: [{ attempt: 4, reason: free.uncounted, recordedAt: new Date().toISOString() }] });
+    f.setUsed(4);
+    writeLog(4, [{ type: 'turn.started' }, { type: 'error', message: capacity }, { type: 'turn.completed' }, { type: 'turn.started' }]);
+    assert.throws(() => f.spawnCheck(), /attempt cap reached: 3 of 3 used \(base 3, raises 0, 1 uncounted\)/, 'a death of its own after a recovered error counts');
+    const shown = ok(spawnSync(process.execPath, [script, 'show', '--root', f.root, '--config', f.config, '--issue', ISSUE], { encoding: 'utf8' }));
+    assert.deepEqual([shown.used, shown.counted, shown.uncounted, shown.exhausted], [4, 3, 1, true]);
+
+    // The pack surface changed since attempt 4's dispatch: the next attempt is uncounted too.
+    atomicJson(path.join(f.root, 'dispatch', `${ISSUE}-a4`, 'pins.json'), { surfaceRevision: 5 });
+    assert.equal(f.spawnCheck(ISSUE, { surfaceRevision: 6 }).uncounted, 'pack change: attempt 4 ran surface 5, this one 6');
+    assert.throws(() => f.spawnCheck(ISSUE, { surfaceRevision: 5 }), /attempt cap reached/, 'the same surface counts');
   } finally { f.cleanup(); }
 });

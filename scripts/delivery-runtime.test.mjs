@@ -719,6 +719,12 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     await assert.rejects(spawnWorker(request), /attempt cap/);
     const price = pass(run(process.execPath, [path.join(runtime, "wave-cost.mjs"), request.issue, "--root", state], root, env));
     assert.equal(JSON.parse(price.stdout.split("\nЦена волны")[0]).model.model, entry.model);
+    // MONO-504: attempt 3 died of an overloaded model: the next attempt opens past the cap and is recorded as uncounted.
+    fs.writeFileSync(path.join(state, "logs", `${request.issue}-mono-deliver-a3.jsonl`), JSON.stringify({ type: "turn.failed", error: { message: "Selected model is at capacity." } }) + "\n");
+    const free = await spawnWorker(request); livePid = free.pid;
+    assert.equal(free.attempt, 4);
+    assert.deepEqual(json(path.join(state, "attempts-uncounted.json"))[request.issue].map(item => [item.attempt, item.reason]), [[4, "environment: attempt 3 died of capacity"]]);
+    process.kill(livePid, "SIGTERM"); livePid = null;
     passed = true;
   } finally {
     process.env.PATH = oldPath;
@@ -1284,6 +1290,35 @@ await import(${JSON.stringify(pathToFileURL(path.join(checkout, 'scripts/watch-w
     // Deregistration ends the reminder.
     write(path.join(root, 'workers.json'), {});
     assert.doesNotMatch(watch(), /EVENT:(parked|green)/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// MONO-504: a dead worker's line names the cause its log ended on, so an environmental death is resumed in the same attempt.
+test('watcher names the cause a dead worker died of: capacity, rate-limit, network or other', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-death-cause-'));
+  const env = watcherProcessFixture(root);
+  const capacity = 'Selected model is at capacity. Please try a different model.';
+  const tails = {
+    'MONO-981': [{ type: 'error', message: capacity }, { type: 'turn.failed', error: { message: capacity } }],
+    'MONO-982': [{ type: 'error', message: 'unexpected status 429 Too Many Requests' }],
+    'MONO-983': [{ type: 'turn.failed', error: { message: 'stream disconnected before completion: error sending request' } }],
+    // A capacity error the worker recovered from, then a death of its own: not the environment.
+    'MONO-984': [{ type: 'error', message: capacity }, { type: 'turn.completed' }, { type: 'turn.started' },
+      { type: 'item.completed', item: { type: 'agent_message', text: 'the server is at capacity (529)' } }],
+  };
+  try {
+    const workers = {};
+    for (const [issue, events] of Object.entries(tails)) {
+      const log = path.join(root, 'logs', `${issue}-mono-deliver-a1.jsonl`);
+      write(log, [{ type: 'thread.started', thread_id: 'fixture-thread' }, { type: 'turn.started' }, ...events].map(event => JSON.stringify(event)).join('\n') + '\n');
+      const old = new Date(Date.now() - 3600_000); fs.utimesSync(log, old, old);
+      workers[issue] = { issue, stage: 'mono-deliver', transport: 'codex-cli', attempt: 1, packVersion: 'test', sourceCommit: 'a'.repeat(40), surfaceRevision: 4,
+        pid: 999_999_999, procStart: 'fixture-start', thread_id: 'fixture-thread', worktree: path.join(root, 'repo'), log };
+    }
+    write(path.join(root, 'workers.json'), workers); write(path.join(root, 'control.json'), { state: 'active' });
+    const out = pass(run(process.execPath, ['scripts/watch-workers.mjs', '--root', root, '--once'], checkout, env)).stdout;
+    for (const [issue, cause] of [['MONO-981', 'capacity'], ['MONO-982', 'rate-limit'], ['MONO-983', 'network'], ['MONO-984', 'other']])
+      assert.match(out, new RegExp(`EVENT:dead ${issue} .* cause=${cause}$`, 'm'), issue);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

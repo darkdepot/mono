@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { digest, resolveRole, runtimePackRoot, isMain } from './runtime.mjs';
+import { digest, resolveRole, runtimePackRoot, isMain, NETWORK_SIGNS, infraCause, streamFailureCause } from './runtime.mjs';
+export { NETWORK_SIGNS };
 import { ensureClaudeLogin, claudeLoginFailure, LOGIN_FAILURE_REASON } from './claude-login.mjs';
 
 export const DANGER_CASES = ['data', 'security', 'gate-bypass', 'gate-stall', 'silent-result', 'readiness', 'unknown'];
@@ -418,8 +419,6 @@ function observeServedModels(boundary, stdout, phase = 'task') {
       }
   }
 }
-// MONO-483: a narrow list of network failure signs in a role CLI's stderr (unresolved host, reset or dropped connection).
-export const NETWORK_SIGNS = /could not resolve host|failed to lookup address|getaddrinfo|ENOTFOUND|EAI_AGAIN|nodename nor servname|name or service not known|temporary failure in name resolution|dns error|ECONNRESET|connection reset|ECONNABORTED|connection aborted|ECONNREFUSED|connection refused|ENETUNREACH|network is unreachable|EHOSTUNREACH|socket hang up|stream disconnected|error sending request|connection closed before/i;
 export function runInvocation(invocation, prompt, timeoutMs, { limitSec = timeoutMs / 1000 } = {}) {
   return new Promise((resolve, reject) => {
       const child = spawn(invocation.command, invocation.args, { cwd: invocation.cwd, env: invocation.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
@@ -444,7 +443,7 @@ export function runInvocation(invocation, prompt, timeoutMs, { limitSec = timeou
           if (interrupted) throw Object.assign(new Error('review interrupted; role process group stopped'), { rawAnswer: result.stdout });
           const exceeded = timedOut || outputLimit;
           if (code !== 0 || exceeded) throw Object.assign(new Error(`role failed (${timedOut ? `timeout after ${limitSec} s` : outputLimit ? 'output limit' : code}); no response admitted`),
-            { rawAnswer: result.stdout, stderrText: result.stderr, exceeded, timedOut, outputLimit, processFailure: true, network: !exceeded && NETWORK_SIGNS.test(result.stderr) });
+            { rawAnswer: result.stdout, stderrText: result.stderr, exceeded, timedOut, outputLimit, processFailure: true, infra: exceeded ? null : streamFailureCause(result.stdout) ?? infraCause(result.stderr) });
           resolve(result);
         } catch (error) { error.interrupted = interrupted; reject(error); }
       });
@@ -511,6 +510,8 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
     return { response, usage, elapsedMs: Date.now() - started, boundary: invocation.boundary };
   } catch (error) {
     error.rawAnswer ??= captured;
+    // MONO-504: a CLI that exits cleanly on a failed turn (an overloaded model, a rate limit) names that cause too.
+    if (!error.processFailure && !error.infra) error.infra = streamFailureCause(error.rawAnswer);
     if (boundary) observeServedModels(boundary, error.rawAnswer);
     // An expired or missing login is named, never a bare «role failed (N)».
     if (route.engine === 'claude' && !error.interrupted && !error.exceeded &&
@@ -525,17 +526,22 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
     error.boundary = boundary; throw error;
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
-// MONO-483: why a role attempt failed. Environmental causes (timeout, host-slept, network, login) let the orchestrator
-// retry the review after restoring the host without a task change; everything else (a malformed answer, a CLI that
-// could not start, an output limit, an interruption) is 'other' and stays with the work.
-export const ENVIRONMENT_CAUSES = ['timeout', 'host-slept', 'network', 'login'];
+// MONO-483: why a role attempt failed. Environmental causes (timeout, host-slept, network, login; MONO-504: an overloaded
+// model, a rate limit) let the orchestrator retry the review after restoring the host without a task change and without
+// a round; everything else (a malformed answer, a CLI that could not start, an output limit, an interruption) is 'other'
+// and stays with the work.
+export const ENVIRONMENT_CAUSES = ['timeout', 'host-slept', 'network', 'login', 'capacity', 'rate-limit'];
 export const SLEEP_GAP_MS = 60_000;
+// MONO-504: an overloaded model or a rate limit waits this long before the role's second attempt (scaled by secondMs).
+export const INFRA_PAUSE_SEC = 60;
+const pauseFor = ms => new Promise(resolve => setTimeout(resolve, ms));
 export function roleFailureCause(error, { answered = false, slept = false } = {}) {
   // Work signals first: an output limit or a malformed answer stays with the work even across a host sleep.
   if (answered || error?.interrupted === true || error?.outputLimit) return 'other';
   if (error?.loginFailure || error?.codexLoginMissing) return 'login';
   if (error?.processFailure && slept) return 'host-slept';
   if (error?.timedOut) return 'timeout';
+  if (error?.infra) return error.infra;
   if (error?.processFailure && error?.network) return 'network';
   return 'other';
 }
@@ -837,7 +843,7 @@ export function checkerBatches(findings, promptFor, limit = CHECKER_BATCH_FINDIN
 export const ROLE_TIMEOUT_SEC = 600;
 const roleTimeout = secondMs => ({ timeoutMs: ROLE_TIMEOUT_SEC * secondMs, limitSec: ROLE_TIMEOUT_SEC });
 // The only round boundary. Callers persist/sign the returned record; manual mode only prints it.
-export async function runReviewRound(input, { runRole = executeRole, ensureLogin: baseLogin = ensureClaudeLogin, promptLimits = {}, clock = systemClock, load = hostLoad, secondMs = 1000, groupStore = null } = {}) {
+export async function runReviewRound(input, { runRole = executeRole, ensureLogin: baseLogin = ensureClaudeLogin, promptLimits = {}, clock = systemClock, load = hostLoad, secondMs = 1000, groupStore = null, pause = pauseFor } = {}) {
   const { worktree, head, base, contract, risk = 'standard', config = {}, packRoot = runtimePackRoot() } = input;
   const record = structuredClone(input.stageRecord ?? { schemaVersion: 1, rounds: [], findings: [], failures: [] });
   requireValue(object(record) && ['rounds', 'findings', 'failures'].every(key => Array.isArray(record[key] ?? [])), 'stage record unreadable');
@@ -971,6 +977,7 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
           if (!answered) costs.push({ ...cost, attempt, elapsedMs: Date.now() - started, usage: null, boundary: error?.boundary ?? null, failure: true });
           record.failures.push({ head, round: number, role, ...(group ? { group } : {}), attempt, reason, cause, answer: error?.answerDiagnostic ?? clipped(answered ? result?.response : error?.rawAnswer) });
           if (attempt === 2 || interrupted) { roleFailure = true; throw Object.assign(new Error(reason), { interrupted }); }
+          if (cause === 'capacity' || cause === 'rate-limit') await pause(INFRA_PAUSE_SEC * secondMs);
         }
       }
     };

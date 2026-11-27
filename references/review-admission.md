@@ -24,7 +24,7 @@ read fixes and open findings. Same head reuses its round.
 - `not-reviewed:` (a role failed or coverage incomplete): no round spent;
   request this head again. `blocked:` (twice in a row): park blocked; the line
   says `(environment: …)` when the review failed on the host (timeout, sleep,
-  network, login), which the orchestrator restores and retries without a task
+  network, login, model capacity or rate limit), which the orchestrator restores and retries without a task
   change, or `(review: …)` when it failed on the work (a malformed or incomplete
   answer, incomplete coverage, a single model family, unreadable or binary
   files, a CLI that could not start; login only when a login failed), which

@@ -397,11 +397,11 @@ const limitRefusal = (limit, host = false, strict = limit >= ROUND_LIMIT) => !st
   : limit > ROUND_LIMIT ? `needs-decision: review round limit reached (${limit} of ${limit} on this task attempt, extra round used); split the Issue or change approach in a new attempt`
   : `needs-decision: review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); ${EXTRA_HINT}`;
 // MONO-483: the refusal names the cause and the next step. The environment (a role timeout, a sleeping host, the network,
-// a login still failing after its refresh) is restored and retried without a task change; MONO-502: so is the work's own
+// a login still failing after its refresh, MONO-504: an overloaded model or a rate limit) is restored and retried without a task change; MONO-502: so is the work's own
 // cause once fixed (a code fix is a new head; anything else is a review retry): a retry is never a task change.
 // MONO-488: the work's cause is named; login is mentioned only when a role failed on its login.
 const notReviewedTwice = (cause, causes = [], work = []) => cause === 'environment'
-  ? `not-reviewed twice in a row on this head (environment${causes.length ? `: ${causes.join(', ')}` : ''}); restore the environment (host awake, load down, network, CLI login) and resume the worker with reviewRetry, without a task change`
+  ? `not-reviewed twice in a row on this head (environment${causes.length ? `: ${causes.join(', ')}` : ''}); restore the environment (host awake, load down, network, CLI login; an overloaded model or a rate limit: wait 1, 5, 15 minutes) and resume the worker with reviewRetry, without a task change`
   : `not-reviewed twice in a row on this head (review${work.length ? `: ${work.join(', ')}` : ''}); ${work.includes(LOGIN_CAUSE) ? 'check that both review CLIs are logged in, then ' : ''}fix it (a code fix is a new head) or resume the worker with reviewRetry, without a task change`;
 export const blockedTwice = prior => `blocked: ${notReviewedTwice(prior.notReviewedCause, prior.notReviewedCauses, prior.notReviewedWork)}` +
   (prior.notReviewedCause !== 'environment' && prior.notReviewedReason ? `: ${clip(prior.notReviewedReason, 300)}` : '');
@@ -1076,7 +1076,7 @@ preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,ri
   Pinned hostVerification (BASE orchestration.delivery.hostVerification): collect:true first runs the pinned verification in a clean checkout of the head
   outside the worker sandbox (log in <evidenceRoot>/verification/); exit 0 passes in place of workerVerification, a red head spends no round.
   Rounds per task attempt from the pinned risk (risky 3 with task changes counted, plus one extra round granted by resume extraRound and recorded in extra-round.json beside the pins; else 1 per contract: a task change gets one round), counted from receipt history; rounds after the first review only the fixes and open findings; the same head reuses its round; not-reviewed spends nothing.
-  not-reviewed names review.cause: environment (every failed role attempt timed out, met a sleeping host, the network or a login still failing after its refresh)
+  not-reviewed names review.cause: environment (every failed role attempt timed out, met a sleeping host, the network, a login still failing after its refresh, an overloaded model or a rate limit)
   or review (anything else, and older receipts); with host load at the start and end of the round and a sleep flag. Twice in a row on a head is blocked:
   environment -> restore it and resume the worker with reviewRetry (no task change, no round, same contract); review -> fix the cause (a code fix is a new head) or resume with reviewRetry; never a task change.
   Refusals are receipts too: fix and request the next round, or park on a needs-decision:/blocked: line.
