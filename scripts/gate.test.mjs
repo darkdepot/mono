@@ -327,7 +327,7 @@ test("MONO-491 findings the checker merged count once; distinct ones, old receip
   // Live: one planted defect reported twice after round 3 is one open finding.
   assert.equal(decide(live), 1);
   assert.throws(() => validatePreflight(third, third.head, third.base),
-    { message: /^needs-decision: review not-converged after round 3 of 3; 1 open: P2 average\.mjs:6 Empty arrays return NaN instead of throwing RangeError \(when: [^;]*; why: Verified on pinned head 201437c[^;]*; pick an exit yourself/ });
+    { message: /^needs-decision: review not-converged after round 3 of 3; 1 open: P2 average\.mjs:6 Empty arrays return NaN instead of throwing RangeError \(when: [^;]*; why: Verified on pinned head 201437c[^;]*; no further round; the worker parks and the orchestrator decides: pick an exit yourself/ });
   assert.throws(() => validatePreflight(live[0], live[0].head, live[0].base), { message: /^review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 average\.mjs:5 / });
   const withFindings = (list, receipts = live) => receipts.map((item, index) => index < receipts.length - 1 ? item : { ...item, review: { ...item.review, record: { ...item.review.record, findings: list } } });
   // An old receipt without merge keys counts as before.
@@ -764,7 +764,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.equal(reviewCalls(bin).length, calls2, 'the same head reuses its round');
         setReview(bin, { findings: leftover('Second leftover'), verdict: reviewVerdict() });
         // MONO-512: two rounds per attempt; a third is refused with the exits and never launched.
-        const fourth = commit('export const four = 4;\n'), calls = reviewCalls(bin).length, limit = /^gate preflight: fail: needs-decision: review round limit reached \(2 of 2 on this task attempt\); pick an exit yourself/;
+        const fourth = commit('export const four = 4;\n'), calls = reviewCalls(bin).length, limit = /^gate preflight: fail: needs-decision: review round limit reached \(2 of 2 on this task attempt\); no further round; the worker parks and the orchestrator decides: pick an exit yourself/;
         const unpublished = call(at(fourth)); assert.equal(unpublished.status, 1, 'refused before the worker publishes'); assert.match(unpublished.stdout, limit);
         receipt = await round(at(fourth), 1, limit);
         assert.equal(receipt.review.outcome, 'refused'); assert.equal(reviewCalls(bin).length, calls, 'a third round is never launched');
@@ -1075,7 +1075,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.equal(reviewers(), before, 'no second round without another task change');
         // MONO-512: the stage record holds two rounds; a further task change after them needs a new attempt (the exits).
         changeTask(2); before = reviewers();
-        const full = call(at(afterChange, 2)); assert.equal(full.status, 1); assert.match(full.stdout, /fail: needs-decision: review round limit reached \(2 of 2 on this task attempt\); pick an exit yourself/);
+        const full = call(at(afterChange, 2)); assert.equal(full.status, 1); assert.match(full.stdout, /fail: needs-decision: review round limit reached \(2 of 2 on this task attempt\); no further round; the worker parks and the orchestrator decides: pick an exit yourself/);
         assert.equal(reviewers(), before);
         const fresh =() => { for (const name of fs.readdirSync(path.join(evidence, 'history'))) fs.unlinkSync(path.join(evidence, 'history', name)); };
         // MONO-512: the fast path never calls the checker. A P2 the reviewer reports leaves as a successor candidate on
@@ -1083,6 +1083,8 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         fresh(); setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'Minor', title: 'Minor', weight: 'P2' })] });
         const minorHead = commit('export const minor = 1;\n'), checkers = () => reviewCalls(bin).filter(role => role === 'checker').length, checked = checkers();
         await round(at(minorHead), 0, /pass: review clean-with-successors \(round 1 of 1\).*successor candidates: P2 input\.mjs:1 Minor$/m);
+        const minorFix = commit('export const minorFix = 1;\n');
+        await round(at(minorFix), 0, /pass: review clean-with-successors \(round 1 of 1\), fixes after it confirmed by the worker's full verification.*successor candidates: P2 input\.mjs:1 Minor$/m);
         fresh(); setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'Serious', title: 'Serious', weight: 'P1' })] });
         await round(at(commit('export const serious = 1;\n')), 1, /fail: review not-converged \(round 1 of 1\); fix, run the full verification.*1 open: P1 input\.mjs:1 Serious/);
         assert.equal(checkers(), checked, 'no checker on the fast path');
@@ -1105,10 +1107,10 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         let receipt = await round(at(commit('export const one = 1;\n')), 1, /fail: review not-converged \(round 1 of 2\)/);
         // MONO-505: the collection measures the change against the base; a small one is not oversized.
         assert.ok(receipt.size.lines > 0 && receipt.size.files > 0 && receipt.size.taskChanges === 0 && receipt.size.oversized === false, JSON.stringify(receipt.size));
-        receipt = await round(at(commit('export const two = 2;\n')), 1, /fail: needs-decision: review not-converged after round 2 of 2; 1 open: P1 input\.mjs:1 Leftover.*; pick an exit yourself, record it with «Решил сам:»/);
+        receipt = await round(at(commit('export const two = 2;\n')), 1, /fail: needs-decision: review not-converged after round 2 of 2; 1 open: P1 input\.mjs:1 Leftover.*; no further round; the worker parks and the orchestrator decides: pick an exit yourself, record it with «Решил сам:»/);
         assert.doesNotMatch(receipt.review.reason ?? '', /extra/);
         const third = commit('export const three = 3;\n'), calls = reviewers();
-        receipt = await round(at(third), 1, /fail: needs-decision: review round limit reached \(2 of 2 on this task attempt\); pick an exit yourself.*merge what is done.*successor issues.*--approach-changed/);
+        receipt = await round(at(third), 1, /fail: needs-decision: review round limit reached \(2 of 2 on this task attempt\); no further round; the worker parks and the orchestrator decides: pick an exit yourself.*merge what is done.*successor issues.*--approach-changed/);
         assert.deepEqual([receipt.review.outcome, reviewers()], ['refused', calls], 'a third round never runs');
         return;
       }

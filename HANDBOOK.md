@@ -12,8 +12,8 @@ Canonical repository: [darkdepot/mono](https://github.com/darkdepot/mono).
 This handbook is the complete rule reference and owner-rule index. Follow its links for executable instructions, artifact contracts, templates, and runtime commands. Keep it current in the same PR whenever described behavior changes, as required by [Change Discipline](AGENTS.md#change-discipline).
 
 Code review before the PR is a read-only round inside the orchestrator's
-collection: a reviewer and an independent checker from different model families
-read the pinned diff of the committed head and one receipt is written. By
+collection: a reviewer (and, for P0/P1 of a risky task, an independent checker
+from another model family) read the pinned diff of the committed head and one receipt is written. By
 default the collection does not verify: the worker runs the full product
 verification on the head and sends `workerVerification {head, exitCode}`, and the
 receipt passes only with exit 0 on its head. A product whose full verification
@@ -38,7 +38,7 @@ elsewhere findings stand as the reviewer reported them, and a finding closes whe
 the reviewer stops reporting it (a checked one also needs the checker's verified
 fix). Older defects (on the strict path only harmless ones), minor leftovers from the
 second round on (never about data, security or a gate bypass), unchecked P2/P3
-findings and, on the second round, leftovers both roles call harmless pass as
+findings and, on the second round, leftovers marked harmless pass as
 successor candidates; anything else left after the second round parks
 `needs-decision` with the exits: merge by the rule, merge what is done and split
 the rest, move findings to successors, or change the approach. The collector host needs both the Codex and Claude CLIs logged in by
@@ -1557,7 +1557,7 @@ Changed-file coverage gets one focused pass. Risky/1000-line first rounds add an
 ordinary second pass, combined by stable class/file/code-anchor key. The reviewer
 weighs each finding P0-P3; the checker runs only for P0/P1 (unweighted counts as P1)
 of a risky task, and sees each such open finding (over 16, split into batches), original base content, current files and prior decisions;
-only its evidence closes or reopens a key. Checker wire IDs are F1..Fn; code maps
+only its evidence closes or reopens a checked key. Checker wire IDs are F1..Fn; code maps
 them back to stable keys. Each failed answer is kept in the record, capped at 8 KiB. The checker assigns P0-P3, R7 danger/case,
 origin relative to task base, merge key and scope/risk flags. Code adds whether
 the location changed after round one (±2 context lines), costs and failures.

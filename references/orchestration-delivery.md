@@ -292,8 +292,8 @@ final head and requests it with `workerVerification: {head, exitCode: 0}`; the
 collection accepts that head without another round (`review clean (round 1 of 1),
 fixes after it confirmed by the worker's full verification`; with host
 verification the worker only requests the fixed head and the collection's run
-confirms it), unless the round
-found out-of-contract work or a raised risk (needs-decision). The bot sees the
+confirms it), unless an older checked round
+found out-of-contract work or a raised risk (needs-decision; fast-path rounds run no checker). The bot sees the
 result on the PR.
 
 Live run (before review): the worker runs the main scenario of a behavior change
@@ -335,7 +335,7 @@ Parks:
 `clean-with-successors` passes. Its candidates are older defects (on the strict
 path only harmless ones), minor P3
 leftovers from round 2 on (never data, security or gate bypass), unchecked
-P2/P3 findings and, on round 2, leftovers both roles call harmless. After merge the task's Linear writer (the
+P2/P3 findings and, on round 2, leftovers marked harmless. After merge the task's Linear writer (the
 worker through Linear MCP when it has access, otherwise the orchestrator) files
 every `must-file` entry of the receipt's `review.successors` list (an older dangerous defect; a minor one
 only for data, security or gate bypass) and decide

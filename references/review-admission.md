@@ -36,6 +36,6 @@ A fixed finding closes when the reviewer stops reporting it on a new head
 Successor candidates pass, not block: an older defect the task did not
 introduce (on `risky` only a harmless one); a P3 leftover from round 2 on, unless
 about data, security or a gate bypass; an unchecked P2/P3; on round 2 any
-leftover both roles call harmless. Out-of-contract or risk-raised fixes never pass. List them in
+leftover marked harmless. Out-of-contract or risk-raised fixes never pass. List them in
 certificate/report. After merge the task's Linear writer files each
 `must-file` one and decides the rest.

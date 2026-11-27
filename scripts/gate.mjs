@@ -244,7 +244,7 @@ function reviewRefusal(review, host = false, risk = undefined) {
   const list = `${all.length} open: ${open.join('; ')}${open.length < all.length ? `; ${all.length - open.length} more in the next round` : ''}`;
   if (review.round < limit) return `review not-converged (${round}); fix and request the next round; ${list}`;
   if (!strictPath(risk, limit)) return `review not-converged (${round}); ${host ? HOST_FAST_FIX : FAST_FIX}; ${list}`;
-  return `needs-decision: review not-converged after ${round}; ${list}; ${EXITS}${CHANGE}`;
+  return `needs-decision: review not-converged after ${round}; ${list}; ${ORCHESTRATOR_EXITS}`;
 }
 // Strictness comes from the pinned risk (older receipts without it: from their limit, the fast path has one round).
 const strictPath = (risk, limit) => risk === undefined ? limit > 1 : risk === 'risky';
@@ -254,6 +254,8 @@ const roundText = (round, limit) => `round ${round} of ${limit}`;
 export const EXITS = "pick an exit yourself, record it with «Решил сам:» and tell the owner (no question): merge what is done (behind a flag if incomplete) " +
   "and file the rest as successor issues; move the open findings to successor issues; or park the task";
 export const CHANGE = "; or change the approach: dispatch --approach-changed <one-line reason>";
+// The gate line reaches the worker first: it parks, the orchestrator takes the exit.
+const ORCHESTRATOR_EXITS = `no further round; the worker parks and the orchestrator decides: ${EXITS}${CHANGE}`;
 const FAST_FIX = 'fix, run the full verification on the final head and request it with workerVerification {head, exitCode: 0}';
 const HOST_FAST_FIX = 'fix and request the final head; the collection runs the full verification on the host';
 // The worker cannot rerun a check that needs the host (process table): it fixes from this line and the log.
@@ -423,7 +425,7 @@ export function progressStop(passes) {
   return back ? `blocker ${back.id} came back twice` : null;
 }
 
-const ROUND_LIMIT_REACHED = `review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); ${EXITS}${CHANGE}`;
+const ROUND_LIMIT_REACHED = `review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); ${ORCHESTRATOR_EXITS}`;
 // Fast path: the spent round needs the worker's full verification on the final head instead of another round.
 // MONO-512: past the attempt's rounds the line names the MONO-505 exits; there is no further round.
 const limitRefusal = (limit, host = false, strict = limit >= ROUND_LIMIT) => !strict && limit < ROUND_LIMIT

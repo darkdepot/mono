@@ -1093,8 +1093,9 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     const findings = [...byKey.values()];
     // MONO-512: the checker rechecks only the P0/P1 findings (unweighted counts as P1) of a risky task; every other
     // finding stands as the reviewer reported it (an open one closes when the reviewer stops reporting it), and the
-    // unchecked P2 and below leave as successors.
-    const toCheck = risk.startsWith('risky') ? findings.filter(finding => !['P2', 'P3'].includes(finding.weight)) : [];
+    // unchecked P2 and below leave as successors. A scope or risk objection a task change reopened goes back to the
+    // checker whatever its weight: only the checker may raise it again.
+    const toCheck = risk.startsWith('risky') ? findings.filter(finding => !['P2', 'P3'].includes(finding.weight) || rejudge.has(finding.key)) : [];
     const existsAt = (revision, file, blobOnly = true) => git(worktree, ['ls-tree', '-z', revision, '--', file]).split('\0')
       .some(row => row.slice(row.indexOf('\t') + 1) === file && (!blobOnly || row.includes(' blob ')));
     const evidenceAt = revision => [...new Set(findings.map(finding => finding.file))].map(file => {

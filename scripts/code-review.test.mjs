@@ -601,6 +601,16 @@ test('MONO-512: a standard task never calls the checker; risky calls it for P1 o
  assert.deepEqual([checks(onlyMinor),quiet.successorKeys],[0,[key]],'a risky task with only P2 findings never calls the checker');
  assert.throws(()=>parseReviewer(review([{...sample,weight:'P5'}])),/invalid reviewer weight/);
 });
+test('MONO-512: a task change sends a reopened P2 scope or risk objection back to the checker',async t=>{
+ for(const flag of ['outOfContract','riskRaised'])await t.test(flag,async t=>{
+  const f=fixture(t),first=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({weight:'P2',[flag]:true})]}));
+  assert.deepEqual([first.findings[0].weight,first.findings[0][flag],first.outcome],['P2',true,'not-converged']);
+  const kept=responder({findings:[],verdicts:[verdict({weight:'P2',outcome:'rejected',closed:true,[flag]:true})]});
+  const again=await runReviewRound({...f.request,contract:'changed',stageRecord:first},kept);
+  assert.equal(kept.calls.filter(call=>call.role==='code-review-checker').length,1,'the reopened objection is rechecked');
+  assert.deepEqual([again.findings[0][flag],again.outcome],[true,'not-converged'],'a silent reviewer never clears it');
+ });
+});
 // MONO-502: a task change, a new attempt (carried record) and main merged into the branch all read only the delta.
 function deltaFixture(t){
  const f=fixture(t),lines=tag=>Array.from({length:10},(_,i)=>`export const ${tag}${i} = ${i};`).join('\n')+'\n';
