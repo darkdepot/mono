@@ -6,7 +6,8 @@ import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runReviewRound, runRemarkCheck, remarkDigest, prRemarkFindings, parseReviewer, parseChecker, findingKey, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, reviewGit, MAX_ANSWER_BYTES } from './code-review.mjs';
-import { requiredPairings, validateModels, digest } from './runtime.mjs';
+import { requiredPairings, validateModels, digest, REVIEW_PRODUCER } from './runtime.mjs';
+import { reviewHistory } from './gate.mjs';
 import { scoreCheckerProbes } from './code-review-eval.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 let catalogBin, originalPath;
@@ -622,6 +623,27 @@ test('MONO-502: a file the branch restores to its base content (a removed guard)
  const second=await runReviewRound({...f.request,head:reverted,stageRecord:first},runner);
  assert.ok(second.round,JSON.stringify(second.failures));const [c]=seen(runner);
  assert.deepEqual([second.round.scope,c.files],['fixes-and-open-findings',['b.mjs']]);assert.match(c.diff,/-export const b0 = 100;/,'the revert itself is reviewed');
+});
+test('MONO-502: a file the branch changed stays in the delta even when it ends on main\'s version after a merge',async t=>{
+ const f=deltaFixture(t),first=await runReviewRound(f.request,echo({findings:[sample]}));
+ const branch=f.git('rev-parse','--abbrev-ref','HEAD'),mainText=f.lines('a').replace('a9 = 9','a9 = 900');
+ f.git('checkout','-q','-b','main-line',f.base);const main=f.commit('a.mjs',mainText,'main changes another line');
+ f.git('checkout','-q',branch);f.git('merge','-q','--no-edit','main-line');const head=f.commit('a.mjs',mainText,'branch drops its guard: main\'s version');
+ const runner=echo(),second=await runReviewRound({...f.request,base:main,head,stageRecord:first},runner);
+ assert.ok(second.round,JSON.stringify(second.failures));const [c]=seen(runner);
+ assert.deepEqual(c.files,['a.mjs'],'the guard removal is reviewed');assert.match(c.diff,/-export const a0 = 100;/);
+});
+test('MONO-502: files reviewed in any earlier attempt carry over: untouched in attempt 2, rewritten in attempt 3, read whole',async t=>{
+ const f=deltaFixture(t),ancestor=(a,b)=>{try{return a===b||f.git('merge-base',a,b)===a;}catch{return false;}};
+ const carry=(record,n,head)=>reviewHistory([],{pins:{file:`/root/dispatch/MONO-1-a${n}/pins.json`},head,base:f.base,contractDigest:record.contractDigest,ancestor,
+  sources:[{producer:REVIEW_PRODUCER,pins:{file:`/root/dispatch/MONO-1-a${n-1}/pins.json`},head:record.rounds.at(-1).head,base:f.base,recordedAt:'2026-11-20T00:00:00Z',runId:`run-${n}`,review:{spent:true,outcome:'not-converged',record}}]}).record;
+ const first=await runReviewRound(f.request,echo({findings:[sample]}));assert.deepEqual(first.rounds[0].reviewedFiles,both);
+ const h2=f.commit('b.mjs',f.lines('b').replace('b0 = 0','b0 = 101'),'attempt 2 touches only b.mjs');
+ const second=await runReviewRound({...f.request,head:h2,stageRecord:carry(first,2,h2)},echo());assert.deepEqual(second.rounds[0].reviewedFiles,['b.mjs']);
+ const h3=f.commit('a.mjs',f.lines('z'),'attempt 3 rewrites a.mjs'),carried=carry(second,3,h3);
+ assert.deepEqual(carried.carried.reviewedFiles.sort(),both,'a.mjs reviewed in attempt 1 is still known');
+ const runner=echo();await runReviewRound({...f.request,head:h3,stageRecord:carried},runner);
+ const [c]=seen(runner);assert.deepEqual(c.files,['a.mjs']);assert.match(c.diff,/-export const a0 = 0;/,'more than half rewritten: read whole');
 });
 test('MONO-502: main merged into the branch continues the record; main\'s files stay out of the delta',async t=>{
  const f=deltaFixture(t),first=await runReviewRound(f.request,echo({findings:[sample]}));

@@ -200,7 +200,8 @@ function carriedRecord(completed, sources, head, base, ancestor) {
   if (!source) return null;
   const { base: _base, rounds = [], failures: _failures, ...rest } = source.review.record;
   return { ...rest, rounds: [], failures: [], carried: { head: source.head, base: source.base, runId: source.runId,
-    reviewedFiles: [...new Set(rounds.flatMap(round => round.reviewedFiles ?? []))] } };
+    // Files reviewed in every earlier attempt, not only the last: a source record may itself be a carried one.
+    reviewedFiles: [...new Set([...(rest.carried?.reviewedFiles ?? []), ...rounds.flatMap(round => round.reviewedFiles ?? [])])] } };
 }
 // MONO-482: one extra round per attempt on the strict path. The orchestrator asks for it with resume extraRound
 // {reason} once the attempt's rounds are spent; resume records it in extra-round.json beside the launch pins (host-only,

@@ -902,12 +902,13 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     const full = pinnedDiff(worktree, base, head, baseFiles);
     // Only a round without a reviewed head reads the whole change (round 1 of the first attempt, or a branch rewritten
     // under the record). Every other round, a task change's and a new attempt's first included, reads the fixes since
-    // the last reviewed head and the open findings. A file leaves the delta only when its change came from main (merged
-    // in): main changed it between the last reviewed base and this base and the head holds this base's content. A file
-    // the branch itself restored to its base content (a removed guard) stays in the delta.
+    // the last reviewed head and the open findings. A file leaves the delta only when the branch never changed it: it held
+    // the last reviewed base's content at the last reviewed head and holds this base's content at head (main merged in).
+    // Any file the branch touched stays, a restore to base or to main's version (a removed guard) included.
     const previousBase = record.rounds.at(-1)?.base ?? record.carried?.base;
-    const fromMain = new Set(previousBase && previousBase !== base ? changedFiles(previousBase, base) : []);
-    const delta = previous && ancestor(previous, head) ? changedFiles(previous, head).filter(file => baseFiles.includes(file) || !fromMain.has(file)) : null;
+    const blob = (revision, file) => git(worktree, ['ls-tree', revision, '--', file]).split('\t')[0].split(' ')[2] ?? null;
+    const fromMain = file => !!previousBase && previousBase !== base && blob(previous, file) === blob(previousBase, file) && blob(head, file) === blob(base, file);
+    const delta = previous && ancestor(previous, head) ? changedFiles(previous, head).filter(file => baseFiles.includes(file) || !fromMain(file)) : null;
     const narrow = delta !== null;
     // The text a task change added since the last round (the whole contract when its earlier text cannot be found):
     // the changed files it names are read whole, as is a reviewed file more than half rewritten since the last round.
