@@ -220,7 +220,7 @@ export function roundOutcome(record, round, strict = false) {
   const unchecked = finding => finding.unchecked === true && ['P2', 'P3'].includes(finding.weight);
   // An older dangerous defect is filed after merge, not left to choice, unless it is a minor one outside the strict cases;
   // so is an unchecked one the reviewer did not call harmless.
-  const mustFile = finding => (older(finding) || unchecked(finding)) && harmful(finding);
+  const mustFile = finding => (older(finding) || unchecked(finding) || finding.reviewerOrigin === 'preexisting') && harmful(finding);
   const harmless = finding => round >= ROUND_LIMIT && finding.danger === false && settled(finding);
   // An owner's instruction on the PR is done in the round or asked about; it never becomes a successor.
   const ownerRemark = finding => finding.class === 'pr-remark' && finding.source === 'owner';

@@ -8,7 +8,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runReviewRound, runRemarkCheck, remarkDigest, prRemarkFindings, parseReviewer, parseChecker, findingKey, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, reviewGit, MAX_ANSWER_BYTES } from './code-review.mjs';
 import { requiredPairings, validateModels, digest, REVIEW_PRODUCER } from './runtime.mjs';
-import { reviewHistory } from './gate.mjs';
+import { reviewHistory, roundOutcome } from './gate.mjs';
 import { scoreCheckerProbes } from './code-review-eval.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 let catalogBin, originalPath;
@@ -600,6 +600,17 @@ test('MONO-512: a standard task never calls the checker; risky calls it for P1 o
  const onlyMinor=responder({findings:[{...sample,weight:'P2'}]}),quiet=await runReviewRound(f.request,onlyMinor);
  assert.deepEqual([checks(onlyMinor),quiet.successorKeys],[0,[key]],'a risky task with only P2 findings never calls the checker');
  assert.throws(()=>parseReviewer(review([{...sample,weight:'P5'}])),/invalid reviewer weight/);
+ assert.throws(()=>parseReviewer(review([{...sample,origin:'old'}])),/invalid reviewer origin/);
+});
+test('MONO-512: without a checker a finding the reviewer marks preexisting is a successor, never blocking',async t=>{
+ const f=fixture(t),old={...sample,weight:'P1',danger:null,origin:'preexisting'},runner=responder({findings:[old]});
+ const record=await runReviewRound({...f.request,risk:'standard'},runner);
+ assert.equal(runner.calls.some(call=>call.role==='code-review-checker'),false);
+ assert.deepEqual([record.findings[0].origin,record.findings[0].reviewerOrigin,record.successorKeys],['pre-existing','preexisting',[key]]);
+ const outcome=roundOutcome(record,1);
+ assert.deepEqual([outcome.outcome,outcome.successors.map(item=>item.line)],['clean-with-successors',['must-file P1 input.mjs:1 Invalid input is accepted']],'listed as a must-file successor, the round passes');
+ const task=await runReviewRound({...f.request,risk:'standard'},responder({findings:[{...old,origin:'task'}]}));
+ assert.deepEqual([task.successorKeys,roundOutcome(task,1).outcome],[[],'not-converged'],'a task P1 still blocks');
 });
 test('MONO-512: a task change sends a reopened P2 scope or risk objection back to the checker',async t=>{
  for(const flag of ['outOfContract','riskRaised'])await t.test(flag,async t=>{
@@ -862,7 +873,7 @@ test('manual CLI uses shared function, leaves tree untouched, and cannot write L
 test('CLI schemas retain the exact response fields accepted by the round parser',()=>{
  const reviewerSchema=JSON.parse(fs.readFileSync(path.join(packRoot,'skills/code-review/reviewer.schema.json'),'utf8'));
  const checkerSchema=JSON.parse(fs.readFileSync(path.join(packRoot,'skills/code-review/checker.schema.json'),'utf8'));
- for(const [schema,value] of [[reviewerSchema,review()],[reviewerSchema.properties.findings.items,{...sample,weight:'P1'}],[checkerSchema,{completed:true,verdicts:[]}],[checkerSchema.properties.verdicts.items,verdict()]]){
+ for(const [schema,value] of [[reviewerSchema,review()],[reviewerSchema.properties.findings.items,{...sample,weight:'P1',origin:'task'}],[checkerSchema,{completed:true,verdicts:[]}],[checkerSchema.properties.verdicts.items,verdict()]]){
   assert.equal(schema.additionalProperties,false);assert.deepEqual([...schema.required].sort(),Object.keys(value).sort());assert.deepEqual(Object.keys(schema.properties).sort(),Object.keys(value).sort());
  }
  assert.deepEqual(checkerSchema.properties.verdicts.items.properties.outcome.enum,['confirmed','rejected','unresolved']);

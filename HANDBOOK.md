@@ -1555,7 +1555,8 @@ findings, failures, the current round and the code-computed outcome. Callers own
 persistence. Technical failure returns no round and is retried once.
 Changed-file coverage gets one focused pass. Risky/1000-line first rounds add an
 ordinary second pass, combined by stable class/file/code-anchor key. The reviewer
-weighs each finding P0-P3; the checker runs only for P0/P1 (unweighted counts as P1)
+weighs each finding P0-P3 and marks its origin (task or preexisting; without a checker a
+preexisting one is a successor, never blocking); the checker runs only for P0/P1 (unweighted counts as P1)
 of a risky task, and sees each such open finding (over 16, split into batches), original base content, current files and prior decisions;
 only its evidence closes or reopens a checked key. Checker wire IDs are F1..Fn; code maps
 them back to stable keys. Each failed answer is kept in the record, capped at 8 KiB. The checker assigns P0-P3, R7 danger/case,

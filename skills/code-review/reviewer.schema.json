@@ -52,6 +52,13 @@
               "P2",
               "P3"
             ]
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "task",
+              "preexisting"
+            ]
           }
         },
         "required": [
@@ -63,7 +70,8 @@
           "trigger",
           "evidence",
           "danger",
-          "weight"
+          "weight",
+          "origin"
         ],
         "additionalProperties": false
       }

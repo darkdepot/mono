@@ -231,12 +231,15 @@ export function prRemarkFindings(remarks = []) {
   });
 }
 function validateFinding(finding) {
-  exact(finding, ['class', 'file', 'anchor', 'line', 'title', 'trigger', 'evidence', ...['danger', 'weight'].filter(key => Object.hasOwn(finding, key))]);
+  exact(finding, ['class', 'file', 'anchor', 'line', 'title', 'trigger', 'evidence', ...['danger', 'weight', 'origin'].filter(key => Object.hasOwn(finding, key))]);
   requireValue(!Object.hasOwn(finding, 'danger') || [true, false, null].includes(finding.danger), 'invalid reviewer danger');
   requireValue(!Object.hasOwn(finding, 'weight') || WEIGHTS.includes(finding.weight), 'invalid reviewer weight');
+  requireValue(!Object.hasOwn(finding, 'origin') || ['task', 'preexisting'].includes(finding.origin), 'invalid reviewer origin');
   requireValue(['class', 'file', 'anchor', 'title', 'trigger', 'evidence'].every(key => text(finding[key])), 'finding needs code evidence and a breaking input');
   requireValue(!path.isAbsolute(finding.file) && !finding.file.split('/').includes('..') && Number.isSafeInteger(finding.line) && finding.line > 0, 'invalid finding location');
-  return { ...finding, danger: finding.danger ?? null, key: findingKey(finding) };
+  // MONO-512: the reviewer's own origin mark (default task) decides only where no checker runs.
+  const { origin, ...rest } = finding;
+  return { ...rest, ...(origin ? { reviewerOrigin: origin } : {}), danger: finding.danger ?? null, key: findingKey(finding) };
 }
 // A role answer is one bounded JSON object; anything else is unreadable and retried once.
 function readRoleAnswer(value) {
@@ -1146,7 +1149,8 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     const asReported = finding => {
       const gone = !reported.has(finding.key), saved = merged.get(finding.key);
       return { key: finding.key, outcome: gone ? 'rejected' : 'confirmed', weight: finding.weight ?? 'P1', danger: finding.reviewerDanger ?? null, dangerCase: null,
-        dangerReason: 'Проверяющий не вызывался: опасность по отметке ревьюера.', origin: saved?.origin ?? 'introduced', mergeKey: finding.key,
+        dangerReason: 'Проверяющий не вызывался: опасность по отметке ревьюера.', mergeKey: finding.key,
+        origin: finding.reviewerOrigin === 'preexisting' ? 'pre-existing' : finding.reviewerOrigin === 'task' ? 'introduced' : saved?.origin ?? 'introduced',
         outOfContract: false, riskRaised: false, closed: gone, newEvidence: false, codeQuote: '', unchecked: true,
         reason: gone ? 'Ревьюер больше не сообщает замечание; проверяющий не вызывался.' : 'Замечание ревьюера без перепроверки.' };
     };
@@ -1187,7 +1191,9 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     const active = current.filter(finding => !['closed', 'rejected'].includes(finding.status));
     // An owner's instruction on the PR stays blocking until it is done, whatever its origin.
     const ownerRemark = finding => finding.class === 'pr-remark' && finding.source === 'owner';
-    const minorUnchecked = finding => finding.unchecked === true && ['P2', 'P3'].includes(finding.weight) && finding.origin !== 'pre-existing' && !ownerRemark(finding);
+    // Unchecked: P2/P3 of the task, and anything the reviewer marked older code, leave as successors and never block.
+    const minorUnchecked = finding => finding.unchecked === true && !ownerRemark(finding) &&
+      ((['P2', 'P3'].includes(finding.weight) && finding.origin !== 'pre-existing') || finding.reviewerOrigin === 'preexisting');
     const blocking = active.filter(finding => !minorUnchecked(finding) && (finding.outcome === 'unresolved' || finding.origin !== 'pre-existing' || ownerRemark(finding)));
     // A round only lists successors; after merge the task's Linear writer files them (references/review-admission.md).
     const successors = active.filter(finding => minorUnchecked(finding) || (finding.origin === 'pre-existing' && finding.danger) || (number >= ROUND_LIMIT && blocking.includes(finding) && !finding.danger));
