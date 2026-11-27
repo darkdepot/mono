@@ -575,7 +575,7 @@ test('two-round cap cannot reset by changing contract/base; an amended contract 
 test('MONO-512: two rounds per attempt, the second is the last, never a third',async t=>{
  const f=fixture(t);let record;
  for(let i=1;i<=2;i++)record=await runReviewRound({...f.request,stageRecord:record},responder({findings:[sample]}));
- assert.deepEqual(record.successorKeys,[key],'round 2 lists a harmless blocking leftover as a successor');
+ assert.deepEqual([record.outcome,record.successorKeys],['not-converged',[]],'MONO-512 (E): round 2 never lists an open P1 of the task as a successor');
  const runner=responder();
  const third=await runReviewRound({...f.request,stageRecord:record,roundLimit:2},runner);
  assert.deepEqual([third.outcome,third.rounds.length,runner.calls.length],['not-reviewed',2,0]);assert.match(third.failures.at(-1).reason,/2-round limit/);
@@ -621,6 +621,40 @@ test('MONO-512: a task change sends a reopened P2 scope or risk objection back t
   assert.equal(kept.calls.filter(call=>call.role==='code-review-checker').length,1,'the reopened objection is rechecked');
   assert.deepEqual([again.findings[0][flag],again.outcome],[true,'not-converged'],'a silent reviewer never clears it');
  });
+});
+// MONO-512 merge rules (PR #391 review): one fixture per rule.
+test('MONO-512 A: weight merges to the heaviest (unweighted counts as P1); task origin wins over preexisting',async t=>{
+ const f=fixture(t),std={...f.request,risk:'standard'};
+ const first=await runReviewRound(std,responder({findings:[{...sample,weight:'P2'}]}));assert.deepEqual(first.successorKeys,[key]);
+ const second=await runReviewRound({...std,stageRecord:first},responder({findings:[sample]}));
+ assert.deepEqual([second.findings[0].weight,second.successorKeys,second.outcome],['P1',[],'not-converged'],'an unweighted report counts as P1 and blocks');
+ const old=await runReviewRound(std,responder({findings:[{...sample,weight:'P1',origin:'preexisting'}]}));assert.deepEqual(old.successorKeys,[key]);
+ const again=await runReviewRound({...std,stageRecord:old},responder({findings:[{...sample,weight:'P1'}]}));
+ assert.deepEqual([again.findings[0].reviewerOrigin,again.findings[0].origin,again.successorKeys],['task','introduced',[]],'across rounds the task mark wins');
+ let pass=0;const within=await runReviewRound(f.request,{runRole:async request=>({response:request.role==='code-review'?review([{...sample,weight:'P2',...(pass++===0?{origin:'preexisting'}:{})}]):assert.fail('no checker for P2')})});
+ assert.deepEqual([pass,within.findings[0].reviewerOrigin],[2,'task'],'within a round (risky: two reviewer passes) the task mark wins');
+});
+test('MONO-512 B: the checker never lowers the gating weight, and a routed finding keeps the checker until it closes it',async t=>{
+ const f=fixture(t),first=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({weight:'P3'})]}));
+ assert.deepEqual([first.findings[0].weight,first.findings[0].gateWeight,first.findings[0].needsChecker],['P3','P1',true]);
+ const runner=responder({verdicts:[verdict({weight:'P3'})]}),second=await runReviewRound({...f.request,stageRecord:first},runner);
+ assert.equal(runner.calls.filter(call=>call.role==='code-review-checker').length,1,'reviewer silence alone does not close a routed finding');
+ assert.deepEqual([second.findings[0].status,second.successorKeys,second.outcome],['confirmed',[],'not-converged'],'a P1 the checker called P3 still blocks on the last round');
+});
+test('MONO-512 C: a closed unchecked P0/P1 task finding reported again reopens',async t=>{
+ const f=fixture(t),std={...f.request,risk:'standard'};
+ const first=await runReviewRound(std,responder({findings:[{...sample,weight:'P1'}]}));
+ const closed=await runReviewRound({...std,stageRecord:first},responder());assert.equal(closed.findings[0].status,'closed');
+ const back=await runReviewRound({...std,stageRecord:room(closed)},responder({findings:[{...sample,weight:'P1'}]}));
+ assert.deepEqual([back.findings[0].status,back.outcome],['confirmed','not-converged']);
+});
+test('MONO-512 D: an urgent PR remark counts as P1 even on a finding weighed lower before',async t=>{
+ const f=fixture(t),std={...f.request,risk:'standard'},remark=(extra={})=>({id:'PRRT_9',source:'bot',file:'input.mjs',line:1,title:'Remark',body:'b',urgent:false,head:f.request.base,...extra});
+ const reported={class:'pr-remark',file:'input.mjs',anchor:'bot PRRT_9',line:1,title:'still',trigger:'t',evidence:'e'};
+ const first=await runReviewRound({...std,remarks:[remark()]},responder({findings:[{...reported,weight:'P2'}]}));
+ assert.deepEqual([first.findings[0].weight,first.successorKeys.length],['P2',1]);
+ const urgent=await runReviewRound({...std,stageRecord:first,remarks:[remark({urgent:true})]},responder({findings:[{...reported,weight:'P2'}]}));
+ assert.deepEqual([urgent.findings[0].weight,urgent.successorKeys,urgent.outcome],['P1',[],'not-converged']);
 });
 // MONO-502: a task change, a new attempt (carried record) and main merged into the branch all read only the delta.
 function deltaFixture(t){
@@ -1043,8 +1077,8 @@ test('R5: closing task defects in the last round converges with old non-dangerou
  const f=fixture(t),old={...sample,class:'old-diagnostic',anchor:'old diagnostic',title:'Old diagnostic label'};
  const batch=closed=>[verdict(closed?{outcome:'rejected',closed:true,reason:'The corrected guard fixes the task defect.'}:{}),verdict({id:'F2',origin:'pre-existing',weight:'P3',mergeKey:findingKey(old)})];
  let record=await runReviewRound(f.request,responder({findings:[sample,old],verdicts:batch(false)}));
- // MONO-512: the old P3 finding is not rechecked in round 2; it stays report-only as the reviewer left it.
- record=await runReviewRound({...f.request,stageRecord:record},responder({findings:[old],verdicts:batch(true).slice(0,1)}));
+ // MONO-512 (B): both findings were routed to the checker in round 1, so both are rechecked in round 2.
+ record=await runReviewRound({...f.request,stageRecord:record},responder({verdicts:batch(true)}));
  assert.equal(record.round.number,2);assert.equal(record.outcome,'clean');assert.deepEqual(record.successorKeys,[]);
  assert.equal(record.findings.find(finding=>finding.key===findingKey(old)).status,'confirmed');
  assert.match(formatReviewReport(record),/было раньше/);

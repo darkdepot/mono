@@ -313,6 +313,10 @@ test("MONO-512 lines: the last not-converged round needs a decision with the exi
   assert.throws(() => validatePreflight(receipt({ outcome: 'not-converged', round: 1 }), head, base), { message: /^review not-converged \(round 1 of 2\); fix and request the next round/ });
   assert.throws(() => validatePreflight({ ...receipt({ outcome: 'not-converged', round: 1, limit: 1 }), risk: 'standard' }, head, base),
     error => /^review not-converged \(round 1 of 1\); fix, run the full verification/.test(error.message) && !/extra/.test(error.message));
+  // MONO-512 (G): an older receipt replayed after the upgrade: its attempt already has two rounds, so the line names the exits.
+  assert.throws(() => validatePreflight(receipt({ outcome: 'not-converged', round: 2, limit: 3 }), head, base), error => /^needs-decision: review not-converged after round 2 of 3; /.test(error.message) && error.message.includes(EXITS));
+  assert.throws(() => validatePreflight(receipt({ outcome: 'refused', round: null, reason: 'needs-decision: review round limit reached (3 of 3 on this task attempt); the orchestrator may resume with extraRound for one extra round' }), head, base),
+    error => error.message.startsWith('needs-decision: review round limit reached (2 of 2') && error.message.includes(EXITS) && !/extraRound/.test(error.message));
   // An older receipt of three rounds reads as it was, with the exits instead of an extra round.
   assert.throws(() => validatePreflight(receipt({ outcome: 'not-converged', round: 3, limit: 3 }), head, base), error => /^needs-decision: review not-converged after round 3 of 3; /.test(error.message) && error.message.includes(EXITS));
 });
@@ -348,9 +352,13 @@ test("MONO-491 findings the checker merged count once; distinct ones, old receip
   assert.equal(decide(withFindings(findings.map(finding => ({ ...finding, status: 'closed' })))), 0);
   // Round outcome: one successor line per merged item, listing every member; a blocking member is never carried out by a harmless one.
   const merged = (extra = {}) => reviewed({ mergeKey: 'm', lastCheckedHead: head, ...extra });
-  const pair = roundOutcome({ outcome: 'not-converged', findings: [merged(), merged({ key: 'k2', weight: 'P1' })] }, 3, true);
+  const pair = roundOutcome({ outcome: 'not-converged', findings: [merged({ weight: 'P3' }), merged({ key: 'k2', weight: 'P2' })] }, 3, true);
   assert.equal(pair.outcome, 'clean-with-successors');
-  assert.deepEqual(pair.successors.map(item => [item.line, [...item.keys].sort()]), [['P1 a.mjs:3 Leftover', ['k1', 'k2']]]);
+  assert.deepEqual(pair.successors.map(item => [item.line, [...item.keys].sort()]), [['P2 a.mjs:3 Leftover', ['k1', 'k2']]]);
+  // MONO-512 (E): the last-round harmless exception never admits an open P0/P1 of the task, also by its gating weight.
+  assert.equal(roundOutcome({ outcome: 'not-converged', findings: [merged({ key: 'k2', weight: 'P1' })] }, 3, true).outcome, 'not-converged');
+  assert.equal(roundOutcome({ outcome: 'not-converged', findings: [merged({ key: 'k2', weight: 'P3', gateWeight: 'P1' })] }, 2, true).outcome, 'not-converged');
+  assert.equal(roundOutcome({ outcome: 'not-converged', findings: [merged({ key: 'k2', weight: 'P1', origin: 'pre-existing' })] }, 2).outcome, 'clean-with-successors', 'an older one still leaves');
   assert.equal(roundOutcome({ outcome: 'not-converged', findings: [merged(), merged({ key: 'k2', danger: true })] }, 3, true).outcome, 'not-converged');
   assert.deepEqual(roundOutcome({ outcome: 'not-converged', findings: [reviewed(), reviewed({ key: 'k2' })] }, 3, true).successors.map(item => item.key), ['k1', 'k2'], 'unmerged successors stay separate');
 });
@@ -839,7 +847,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         // The orchestrator restored the network and resumed the worker with reviewRetry: the next collection on the same head runs a round.
         setReview(bin, { failRole: null });
         recordReviewRetry(attempt);
-        receipt = await round(at(offline, 3), 1, /fail: review not-converged \(round 1 of 1\)/);
+        receipt = await round(at(offline, 3), 1, /fail: review not-converged \(round 1 of 2\)/);
         assert.deepEqual([receipt.review.spent, receipt.review.round, receipt.review.contractDigest], [true, 1, contractDigest], 'a review retry keeps the contract');
         assert.ok(receipt.review.host && receipt.review.record && !Object.hasOwn(receipt.review.record, 'host'), 'host facts sit on the review, not in the stage record');
         assert.equal(fs.existsSync(changes), false, 'no task change was recorded');
@@ -847,7 +855,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         // The fast path gets no extra round from a retry: the fixed head passes on the worker's verification, no role runs.
         recordReviewRetry(attempt);
         const fixed = commit('export const fixed = 1;\n'), before = reviewCalls(bin).length;
-        receipt = await round(at(fixed), 0, /pass: review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification/);
+        receipt = await round(at(fixed), 0, /pass: review clean \(round 1 of 2\), fixes after it confirmed by the worker's full verification/);
         assert.deepEqual([reviewCalls(bin).length, receipt.review.spent], [before, false]);
         return;
       }
@@ -893,12 +901,12 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.deepEqual([reviewCalls(bin).length, receipt.review.spent, receipt.consistency.passed, git('status', '--porcelain')], [0, false, true, '']);
         fs.unlinkSync(path.join(scratch, 'verify-probe'));
         // The same head again (a flaky run): the verification reruns, then the round runs.
-        receipt = await round(at(first, 3), 1, /fail: review not-converged \(round 1 of 1\); fix and request the final head; the collection runs the full verification on the host/);
+        receipt = await round(at(first, 3), 1, /fail: review not-converged \(round 1 of 2\); fix and request the final head; the collection runs the full verification on the host/);
         assert.deepEqual([runs().length, receipt.review.spent, receipt.verification.exitCode], [3, true, 0]);
         // Fast path: the fixed head passes on the host verification without a second round.
         const fixed = commit('export const fixed = 1;\n'), calls = reviewCalls(bin).length;
         assert.equal(call(at(fixed)).status, 2, 'the spent round still admits the fixed head for host verification');
-        receipt = await round(at(fixed), 0, /pass: review clean \(round 1 of 1\), fixes after it confirmed by the full verification on the host, and host verification verified on head/);
+        receipt = await round(at(fixed), 0, /pass: review clean \(round 1 of 2\), fixes after it confirmed by the full verification on the host, and host verification verified on head/);
         assert.deepEqual([reviewCalls(bin).length, receipt.review.spent, receipt.review.hostVerified, receipt.workerVerification], [calls, false, true, undefined]);
         // A run that plants a receipt for the next collection and edits an earlier one fails consistency; no review runs,
         // the planted receipt goes to quarantine and the edited one gets its bytes back, so the next request is pending.
@@ -912,7 +920,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         assert.equal(call(at(fixed, 3)).status, 2, 'no planted receipt answers the next collection');
         // A descendant the command leaves behind is stopped with its group before it can write.
         const late = path.join(history, 'late.json'); write(path.join(scratch, 'verify-child'), late);
-        await round(at(fixed, 3), 0, /pass: review clean \(round 1 of 1\)/);
+        await round(at(fixed, 3), 0, /pass: review clean \(round 1 of 2\)/);
         await new Promise(resolve => setTimeout(resolve, 2500));
         assert.equal(fs.existsSync(late), false, 'the descendant was stopped before writing');
         fs.unlinkSync(path.join(scratch, 'verify-child'));
@@ -989,7 +997,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
           fs.unlinkSync(path.join(scratch, 'verify-screen')); fs.unlinkSync(design);
           // The result lives in the host-owned ledger, not in evidenceRoot: nothing a host run is judged on, nothing to quarantine.
           assert.equal(fs.existsSync(path.join(evidence, 'screen-check')), false);
-          receipt = await round(at(first, 3), 0, /pass: review clean \(round 1 of 1\) and host verification verified on head; screen check on the host passed on this head \(report .*#comment-screen-passed\)$/m);
+          receipt = await round(at(first, 3), 0, /pass: review clean \(round 1 of 2\) and host verification verified on head; screen check on the host passed on this head \(report .*#comment-screen-passed\)$/m);
           assert.deepEqual([runs(), reviewers(), receipt.review.spent], [2, 1, true]);
           return;
         }
@@ -1015,16 +1023,16 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         receipt = await round(at(second, 2), 1, /fail: not-reviewed: .*no round spent, request this head once more/);
         setReview(bin, { loggedOut: null });
         // The round's line carries the host's result for this head: the worker cannot read evidenceRoot.
-        receipt = await round(at(second, 3), 1, /fail: review not-converged \(round 1 of 1\).*; screen check on the host passed on this head \(report .*#comment-screen-passed\)$/m);
+        receipt = await round(at(second, 3), 1, /fail: review not-converged \(round 1 of 2\).*; screen check on the host passed on this head \(report .*#comment-screen-passed\)$/m);
         assert.deepEqual([receipt.review.spent, reviewers(), receipt.screenCheck.head], [true, 1, second]);
         // From the first spent round on no screen check is needed: the fixed head passes on the worker's verification.
         const third = commit('export const third = 3;\n');
-        await round(at(third), 0, /pass: review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification/);
+        await round(at(third), 0, /pass: review clean \(round 1 of 2\), fixes after it confirmed by the worker's full verification/);
         // A task change after the spent round gets its round without a screen check either.
         const url = 'https://linear.app/darkdepot/issue/MONO-999/x#comment-7';
         recordTaskChange(path.dirname(pinsFile), url, `Изменение задачи: ${url}\nRound the result.`);
         setReview(bin, { findings: [], verdict: reviewVerdict({ outcome: 'rejected', closed: true }) });
-        await round(at(third, 2), 0, /pass: review clean \(round 1 of 1\) and verification verified on head/);
+        await round(at(third, 2), 0, /pass: review clean \(round 2 of 2\) and verification verified on head/);
         assert.equal(reviewers(), 2);
         return;
       }
@@ -1041,7 +1049,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         };
         setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'First leftover', title: 'First leftover' })] });
         const first = commit('export const one = 1;\n');
-        let receipt = await round(at(first), 1, /fail: review not-converged \(round 1 of 1\); fix, run the full verification on the final head and request it with workerVerification/);
+        let receipt = await round(at(first), 1, /fail: review not-converged \(round 1 of 2\); fix, run the full verification on the final head and request it with workerVerification/);
         assert.deepEqual([receipt.review.spent, receipt.review.limit], [true, 1]);
         const fixed = commit('export const fixed = 1;\n'), calls = reviewCalls(bin).length, spent = /fail: review round spent \(1 of 1 on this task attempt\); fix, run the full verification/;
         for (const workerVerification of [undefined, { head: first, exitCode: 0 }, { head: fixed, exitCode: 1 }]) {
@@ -1049,7 +1057,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         }
         const malformed = call(at(fixed, 1, { workerVerification: { head: fixed, exitCode: 0, note: 'x' } })); assert.equal(malformed.status, 1); assert.match(malformed.stdout, /workerVerification must be/);
         const verified = at(fixed, 1, { workerVerification: { head: fixed, exitCode: 0 } });
-        receipt = await round(verified, 0, /pass: review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification, and verification verified on head/);
+        receipt = await round(verified, 0, /pass: review clean \(round 1 of 2\), fixes after it confirmed by the worker's full verification, and verification verified on head/);
         assert.equal(reviewCalls(bin).length, calls, 'no second round on the fast path');
         assert.deepEqual([receipt.review.spent, receipt.workerVerification, receipt.review.workerVerification], [false, verified.workerVerification, verified.workerVerification]);
         const unbound = call(at(fixed, 1, { workerVerification: undefined })); assert.equal(unbound.status, 1); assert.match(unbound.stdout, /collection request mismatch: admission; expected "the admitted round request for collectionId"/);
@@ -1062,16 +1070,16 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         changeTask(1); setReview(bin, { findings: [], verdict: reviewVerdict({ outcome: 'rejected', closed: true }) });
         const stale = call(verified); assert.equal(stale.status, 1); assert.match(stale.stdout, /the task changed after this review round/);
         let before = reviewers();
-        receipt = await round(at(fixed, 2), 0, /pass: review clean \(round 1 of 1\) and verification verified on head/);
+        receipt = await round(at(fixed, 2), 0, /pass: review clean \(round 2 of 2\) and verification verified on head/);
         assert.equal(reviewers() - before, 1, 'the task change gets one review round on the unchanged head');
         assert.deepEqual([receipt.review.spent, receipt.review.round, receipt.review.record.rounds.length, receipt.review.record.rounds.at(-1).scope, receipt.review.record.rounds.at(-1).reviewedFiles],
-          [true, 1, 2, 'fixes-and-open-findings', ['input.mjs']], 'MONO-502: the round after a task change stays narrow (the stub reviewer lists input.mjs)');
+          [true, 2, 2, 'fixes-and-open-findings', ['input.mjs']], 'MONO-502: the round after a task change stays narrow (the stub reviewer lists input.mjs)');
         assert.equal(receipt.review.contractDigest, digest(`# MONO-999\n\nFixture task contract.\n\n\n## Изменение задачи 1 (https://linear.app/darkdepot/issue/MONO-999/x#comment-1)\nИзменение задачи: https://linear.app/darkdepot/issue/MONO-999/x#comment-1\nRound 1: round the result.`));
         before = reviewers();
-        await round(at(fixed, 3), 0, /pass: review clean \(round 1 of 1\)/);
+        await round(at(fixed, 3), 0, /pass: review clean \(round 2 of 2\)/);
         const afterChange = commit('export const afterChange = 1;\n');
         const spentAgain = call(at(afterChange, 1, { workerVerification: undefined })); assert.equal(spentAgain.status, 1); assert.match(spentAgain.stdout, spent);
-        await round(at(afterChange), 0, /pass: review clean \(round 1 of 1\), fixes after it confirmed by the worker's full verification/);
+        await round(at(afterChange), 0, /pass: review clean \(round 2 of 2\), fixes after it confirmed by the worker's full verification/);
         assert.equal(reviewers(), before, 'no second round without another task change');
         // MONO-512: the stage record holds two rounds; a further task change after them needs a new attempt (the exits).
         changeTask(2); before = reviewers();
@@ -1082,11 +1090,11 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         // the worker-verified head; a P1 stands and blocks the round.
         fresh(); setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'Minor', title: 'Minor', weight: 'P2' })] });
         const minorHead = commit('export const minor = 1;\n'), checkers = () => reviewCalls(bin).filter(role => role === 'checker').length, checked = checkers();
-        await round(at(minorHead), 0, /pass: review clean-with-successors \(round 1 of 1\).*successor candidates: P2 input\.mjs:1 Minor$/m);
+        await round(at(minorHead), 0, /pass: review clean-with-successors \(round 1 of 2\).*successor candidates: P2 input\.mjs:1 Minor$/m);
         const minorFix = commit('export const minorFix = 1;\n');
-        await round(at(minorFix), 0, /pass: review clean-with-successors \(round 1 of 1\), fixes after it confirmed by the worker's full verification.*successor candidates: P2 input\.mjs:1 Minor$/m);
+        await round(at(minorFix), 0, /pass: review clean-with-successors \(round 1 of 2\), fixes after it confirmed by the worker's full verification.*successor candidates: P2 input\.mjs:1 Minor$/m);
         fresh(); setReview(bin, { findings: [reviewFinding('input.mjs', { anchor: 'Serious', title: 'Serious', weight: 'P1' })] });
-        await round(at(commit('export const serious = 1;\n')), 1, /fail: review not-converged \(round 1 of 1\); fix, run the full verification.*1 open: P1 input\.mjs:1 Serious/);
+        await round(at(commit('export const serious = 1;\n')), 1, /fail: review not-converged \(round 1 of 2\); fix, run the full verification.*1 open: P1 input\.mjs:1 Serious/);
         assert.equal(checkers(), checked, 'no checker on the fast path');
         return;
       }

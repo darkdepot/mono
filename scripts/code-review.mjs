@@ -19,6 +19,10 @@ const maximumDanger = (...values) => values.includes(true) ? true : values.some(
 export const ROUND_LIMIT = 2;
 const WEIGHTS = ['P0', 'P1', 'P2', 'P3'];
 const heaviest = (...weights) => weights.filter(weight => WEIGHTS.includes(weight)).sort()[0];
+// MONO-512 merge rules: the weight that gates (checker or not, blocking or not) is the heaviest any report or check gave,
+// an unweighted report counting as P1; the checker never lowers it. A serious finding is P0/P1 by that weight.
+const gateWeightOf = finding => heaviest(finding.gateWeight, finding.weight ?? 'P1');
+const serious = finding => ['P0', 'P1'].includes(gateWeightOf(finding));
 const savedDanger = finding => Object.hasOwn(finding, 'dangerMaximum') ? finding.dangerMaximum : finding.danger ?? null;
 // Size bounds: one role answer, and what a failed attempt may keep in the record.
 export const MAX_ANSWER_BYTES = 2 * 1024 * 1024;
@@ -903,6 +907,8 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
       if (index < 0) record.findings.push(remark);
       else record.findings[index] = { ...record.findings[index], title: remark.title, line: remark.line, trigger: remark.trigger, evidence: remark.evidence,
         status: 'confirmed', outcome: 'confirmed', lastCheckedHead: remark.head,
+        // An urgent remark counts as P1 whatever the finding weighed before.
+        weight: heaviest(record.findings[index].weight, remark.weight), gateWeight: heaviest(gateWeightOf(record.findings[index]), remark.weight),
         dangerMaximum: maximumDanger(savedDanger(record.findings[index]), savedDanger(remark)), danger: maximumDanger(savedDanger(record.findings[index]), savedDanger(remark)) !== false };
     }
     requireValue(git(worktree, ['rev-parse', 'HEAD']).trim() === head && !git(worktree, ['status', '--porcelain=v1', '--untracked-files=all']).trim(), 'review requires the clean pinned HEAD');
@@ -1083,14 +1089,18 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     const lines = git(worktree, ['diff', '--numstat', base, head, '--']).trim().split('\n').reduce((total, row) => total + row.split('\t').slice(0, 2).reduce((sum, part) => sum + (Number(part) || 0), 0), 0);
     if (number === 1 && !narrow && (risk.startsWith('risky') || lines >= 1000)) await runPass({ openFindings: open, pass: 'ordinary', instruction: ORDINARY_INSTRUCTION });
     const merged = new Map(record.findings.map(finding => [finding.key, finding])), byKey = new Map(), reported = new Set(found.map(finding => finding.key));
+    // A reviewer report without an origin mark is the task's; task wins over preexisting within and across rounds.
+    const reports = new Set(found), markOf = item => item?.reviewerOrigin ?? (reports.has(item) ? 'task' : undefined);
     for (const finding of [...open, ...found]) {
       const prior = byKey.get(finding.key), saved = merged.get(finding.key);
       const dangerMaximum = maximumDanger(...[saved, prior].filter(Boolean).map(savedDanger), savedDanger(finding));
       // A PR remark keeps its source when the reviewer reports it again (owner instructions stay blocking).
       const source = finding.source ?? prior?.source ?? saved?.source;
-      // The heaviest weight the reviewer or a check gave stays (an unweighted finding counts as P1 below).
-      const weight = heaviest(saved?.weight, prior?.weight, finding.weight);
-      byKey.set(finding.key, { ...finding, ...(source ? { source } : {}), ...(weight ? { weight } : {}), reviewerDanger: Object.hasOwn(finding, 'reviewerDanger') ? finding.reviewerDanger : finding.danger ?? null,
+      // The heaviest weight the reviewer or a check gave stays; an unweighted report counts as P1.
+      const present = [saved, prior, finding].filter(Boolean), weight = heaviest(...present.map(item => item.weight ?? 'P1'));
+      const gateWeight = heaviest(...present.map(gateWeightOf)), marks = present.map(markOf);
+      const reviewerOrigin = marks.includes('task') ? 'task' : marks.includes('preexisting') ? 'preexisting' : undefined;
+      byKey.set(finding.key, { ...finding, ...(source ? { source } : {}), weight, gateWeight, ...(reviewerOrigin ? { reviewerOrigin } : {}), reviewerDanger: Object.hasOwn(finding, 'reviewerDanger') ? finding.reviewerDanger : finding.danger ?? null,
         dangerMaximum, danger: dangerMaximum !== false });
     }
     const findings = [...byKey.values()];
@@ -1098,7 +1108,9 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     // finding stands as the reviewer reported it (an open one closes when the reviewer stops reporting it), and the
     // unchecked P2 and below leave as successors. A scope or risk objection a task change reopened goes back to the
     // checker whatever its weight: only the checker may raise it again.
-    const toCheck = risk.startsWith('risky') ? findings.filter(finding => !['P2', 'P3'].includes(finding.weight) || rejudge.has(finding.key)) : [];
+    // Once routed to the checker a finding keeps needing it until the checker closes it: reviewer silence alone never does.
+    const routed = finding => { const saved = merged.get(finding.key); return saved?.needsChecker === true && !['closed', 'rejected'].includes(saved.status); };
+    const toCheck = risk.startsWith('risky') ? findings.filter(finding => serious(finding) || routed(finding) || rejudge.has(finding.key)) : [];
     const existsAt = (revision, file, blobOnly = true) => git(worktree, ['ls-tree', '-z', revision, '--', file]).split('\0')
       .some(row => row.slice(row.indexOf('\t') + 1) === file && (!blobOnly || row.includes(' blob ')));
     const evidenceAt = revision => [...new Set(findings.map(finding => finding.file))].map(file => {
@@ -1148,10 +1160,12 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     const verdictOf = new Map(checker.verdicts.map(verdict => [verdict.key, verdict]));
     const asReported = finding => {
       const gone = !reported.has(finding.key), saved = merged.get(finding.key);
+      // A serious task finding reported again reopens even without the checker.
+      const reopen = !gone && serious(finding) && finding.reviewerOrigin !== 'preexisting';
       return { key: finding.key, outcome: gone ? 'rejected' : 'confirmed', weight: finding.weight ?? 'P1', danger: finding.reviewerDanger ?? null, dangerCase: null,
         dangerReason: 'Проверяющий не вызывался: опасность по отметке ревьюера.', mergeKey: finding.key,
         origin: finding.reviewerOrigin === 'preexisting' ? 'pre-existing' : finding.reviewerOrigin === 'task' ? 'introduced' : saved?.origin ?? 'introduced',
-        outOfContract: false, riskRaised: false, closed: gone, newEvidence: false, codeQuote: '', unchecked: true,
+        outOfContract: false, riskRaised: false, closed: gone, newEvidence: reopen, codeQuote: '', unchecked: true,
         reason: gone ? 'Ревьюер больше не сообщает замечание; проверяющий не вызывался.' : 'Замечание ревьюера без перепроверки.' };
     };
     const checked = [...checker.verdicts, ...findings.filter(finding => !verdictOf.has(finding.key)).map(asReported)].map(verdict => {
@@ -1169,7 +1183,9 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
       const retained = (danger || unreviewedFiles.has(finding.file) || finding.class === 'pr-remark') && verdict.outcome === 'rejected' && !agreedFix;
       return { ...verdict, outOfContract: !!saved?.outOfContract || verdict.outOfContract, riskRaised: !!saved?.riskRaised || verdict.riskRaised,
         ...(deletionEvidence ? { deletionEvidence } : {}), checkerDanger: verdict.danger, dangerMaximum, danger,
-        origin: saved && savedDanger(saved) !== false ? saved.origin : verdict.origin,
+        origin: !verdict.unchecked && saved && savedDanger(saved) !== false ? saved.origin : verdict.origin,
+        // The checker may relabel the weight, never lower the one that gates.
+        gateWeight: heaviest(finding.gateWeight, verdict.weight), needsChecker: !verdict.unchecked,
         // A data, security or gate-bypass case, once established, is not downgraded by a later uncertain verdict.
         dangerCase: danger ? (STRICT_DANGER.includes(saved?.dangerCase) ? saved.dangerCase : verdict.dangerCase ?? saved?.dangerCase ?? 'unknown') : null,
         dangerReason: danger && verdict.danger === false ? 'Сохранена ранее отмеченная или неясная опасность. ' + verdict.dangerReason : verdict.dangerReason,
@@ -1193,10 +1209,10 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
     const ownerRemark = finding => finding.class === 'pr-remark' && finding.source === 'owner';
     // Unchecked: P2/P3 of the task, and anything the reviewer marked older code, leave as successors and never block.
     const minorUnchecked = finding => finding.unchecked === true && !ownerRemark(finding) &&
-      ((['P2', 'P3'].includes(finding.weight) && finding.origin !== 'pre-existing') || finding.reviewerOrigin === 'preexisting');
+      ((!serious(finding) && finding.origin !== 'pre-existing') || finding.reviewerOrigin === 'preexisting');
     const blocking = active.filter(finding => !minorUnchecked(finding) && (finding.outcome === 'unresolved' || finding.origin !== 'pre-existing' || ownerRemark(finding)));
     // A round only lists successors; after merge the task's Linear writer files them (references/review-admission.md).
-    const successors = active.filter(finding => minorUnchecked(finding) || (finding.origin === 'pre-existing' && finding.danger) || (number >= ROUND_LIMIT && blocking.includes(finding) && !finding.danger));
+    const successors = active.filter(finding => minorUnchecked(finding) || (finding.origin === 'pre-existing' && finding.danger) || (number >= ROUND_LIMIT && blocking.includes(finding) && !finding.danger && !(serious(finding) && finding.origin !== 'pre-existing')));
     const outcome = unreviewedFiles.size ? 'not-reviewed' : blocking.length || current.some(finding => finding.outOfContract || finding.riskRaised) || successors.length ? 'not-converged' : 'clean';
     const round = { number, head, base, scope: context.scope, checkerMergesSeparated: checker.mergesSeparated, binaryFiles, reviewedFiles: [...covered].filter(file => !unreviewedFiles.has(file)), findingKeys: checked.map(verdict => verdict.key), outcome, costs, ...(reused.length ? { reusedGroups: reused } : {}) };
     return { ...record, schemaVersion: 1, interrupted: false, base, contractDigest, rounds: [...record.rounds, round], findings: current, round, outcome,

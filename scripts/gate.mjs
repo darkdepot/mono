@@ -214,14 +214,17 @@ function carriedRecord(completed, sources, head, base, ancestor) {
 // Everything else open means "fix and ask again", and on the last round stays not-converged.
 export function roundOutcome(record, round, strict = false) {
   const open = leftover(record), settled = finding => finding.outcome !== 'unresolved';
-  const harmful = finding => finding.danger !== false && (finding.weight !== 'P3' || STRICT_DANGER.includes(finding.dangerCase));
+  // MONO-512: rules read the weight that gates (the checker never lowers it); older receipts have only weight.
+  const weight = finding => finding.gateWeight ?? finding.weight, serious = finding => ['P0', 'P1'].includes(weight(finding));
+  const harmful = finding => finding.danger !== false && (weight(finding) !== 'P3' || STRICT_DANGER.includes(finding.dangerCase));
   const older = finding => finding.origin === 'pre-existing' && settled(finding) && !(strict && harmful(finding));
-  const minor = finding => round > 1 && finding.weight === 'P3' && !STRICT_DANGER.includes(finding.dangerCase);
-  const unchecked = finding => finding.unchecked === true && ['P2', 'P3'].includes(finding.weight);
+  const minor = finding => round > 1 && weight(finding) === 'P3' && !STRICT_DANGER.includes(finding.dangerCase);
+  const unchecked = finding => finding.unchecked === true && ['P2', 'P3'].includes(weight(finding));
   // An older dangerous defect is filed after merge, not left to choice, unless it is a minor one outside the strict cases;
   // so is an unchecked one the reviewer did not call harmless.
   const mustFile = finding => (older(finding) || unchecked(finding) || finding.reviewerOrigin === 'preexisting') && harmful(finding);
-  const harmless = finding => round >= ROUND_LIMIT && finding.danger === false && settled(finding);
+  // The last-round exception never admits an open serious finding of the task.
+  const harmless = finding => round >= ROUND_LIMIT && finding.danger === false && settled(finding) && !(serious(finding) && finding.origin !== 'pre-existing');
   // An owner's instruction on the PR is done in the round or asked about; it never becomes a successor.
   const ownerRemark = finding => finding.class === 'pr-remark' && finding.source === 'owner';
   const stands = !open.length || record.findings.some(finding => finding.outOfContract || finding.riskRaised) || open.some(ownerRemark) ||
@@ -233,16 +236,18 @@ export function roundOutcome(record, round, strict = false) {
     line: `${item.members.some(mustFile) ? 'must-file ' : ''}${findingLine(item)}` })) };
 }
 function reviewRefusal(review, host = false, risk = undefined) {
-  if (review.outcome === 'refused') return review.reason;
+  // MONO-512: an older limit refusal replayed after the upgrade names the exits, never the gone extra round.
+  if (review.outcome === 'refused') return /extraRound|extra round/.test(review.reason ?? '') ? `needs-decision: ${ROUND_LIMIT_REACHED}` : review.reason;
   if (review.outcome === 'not-reviewed') return review.repeated
     ? `blocked: ${notReviewedTwice(review.streakCause ?? review.cause, review.causes, review.streakWork ?? receiptWork(review))}: ${review.reason}`
     : `not-reviewed: ${review.reason}; no round spent, request this head once more`;
   // The collector reads the last 64 KiB of gate output: keep the line inside it and say what was left out.
   const limit = review.limit ?? ROUND_LIMIT;
-  const all = openDefects(review.record).map(openLine), round = roundText(review.round, limit), open = [];
+  const all = openDefects(review.record).map(openLine), round = roundText(review.round, review.attemptLimit ?? limit), open = [];
   for (const line of all) { if (open.join('; ').length + line.length > 40000) break; open.push(line); }
   const list = `${all.length} open: ${open.join('; ')}${open.length < all.length ? `; ${all.length - open.length} more in the next round` : ''}`;
-  if (review.round < limit) return `review not-converged (${round}); fix and request the next round; ${list}`;
+  // An older receipt's limit may be 3: the attempt's rounds end at ROUND_LIMIT whatever it says.
+  if (review.round < Math.min(limit, ROUND_LIMIT)) return `review not-converged (${round}); fix and request the next round; ${list}`;
   if (!strictPath(risk, limit)) return `review not-converged (${round}); ${host ? HOST_FAST_FIX : FAST_FIX}; ${list}`;
   return `needs-decision: review not-converged after ${round}; ${list}; ${ORCHESTRATOR_EXITS}`;
 }
@@ -367,7 +372,7 @@ export function validatePreflight(receipt, head, base) {
   const successors = receipt.review.successors ?? [], worker = receipt.review.workerVerification;
   requireThat(!worker || (worker.head === head && worker.exitCode === 0), "worker verification is not on this head");
   const fixes = receipt.review.hostVerified ? ', fixes after it confirmed by the full verification on the host,' : worker ? ', fixes after it confirmed by the worker\'s full verification,' : '';
-  return `review ${receipt.review.outcome} (${roundText(receipt.review.round, receipt.review.limit ?? ROUND_LIMIT)})${fixes} and ${host ? 'host ' : ''}verification verified on head` +
+  return `review ${receipt.review.outcome} (${roundText(receipt.review.round, receipt.review.attemptLimit ?? receipt.review.limit ?? ROUND_LIMIT)})${fixes} and ${host ? 'host ' : ''}verification verified on head` +
     (successors.length ? `; successor candidates: ${successors.map(item => item.line).join('; ')}` : '') + screen + sizeNote(receipt);
 }
 // MONO-505: a task is about SIZE_BUDGET; past 1.5 times it, or after more than two task changes, the collection marks the
@@ -688,7 +693,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     // Older defects the worker need not fix stay listed (must-file ones too) for filing after merge.
     const successors = last?.successors?.length ? last.successors : last?.record
       ? roundOutcome({ outcome: 'clean', findings: leftover(last.record).filter(finding => finding.origin === 'pre-existing') }, last.round).successors : [];
-    return { outcome: successors.length ? 'clean-with-successors' : 'clean', spent: false, round: prior.onContract, successors,
+    return { outcome: successors.length ? 'clean-with-successors' : 'clean', spent: false, round: prior.spent, successors,
       record: last?.record ?? null, ...(hostVerify ? { hostVerified: true } : { workerVerification: workerCheck }) };
   }
   const unchanged = () => {
@@ -769,9 +774,10 @@ async function verifyPreflight(request, live = null, allowPending = false) {
           ...(repeated ? { streakCause: prior.notReviewedCause === 'environment' && cause === 'environment' ? 'environment' : 'review',
             causes: [...new Set([...prior.notReviewedCauses, ...roleCauses])], streakWork: [...new Set([...prior.notReviewedWork, ...work])] } : {}),
           successors: [], record: null, failures: record.failures.slice(-6), costs, ...(host ? { host } : {}) }
-        : { ...roundOutcome(record, roundsUsed(prior) + 1, strict), spent: true, round: roundsUsed(prior) + 1, record: stageRecord, ...(host ? { host } : {}) };
+        : { ...roundOutcome(record, prior.spent + 1, strict), spent: true, round: prior.spent + 1, record: stageRecord, ...(host ? { host } : {}) };
     }
-    review.contractDigest = contractDigest; review.limit = limit;
+    // MONO-512: rounds count per attempt; a task change never resets «round N of 2». limit stays the contract's rule.
+    review.contractDigest = contractDigest; review.limit = limit; review.attemptLimit = ROUND_LIMIT;
     checkConsistency();
     receipt = { producer: REVIEW_PRODUCER, recordedAt, ...binding, runId: crypto.randomUUID(), head, base, review,
       // Without host verification the worker runs the full verification; the collection records the pinned command unrun.
