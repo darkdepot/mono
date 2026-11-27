@@ -804,7 +804,33 @@ function boundedCheckerPrompt({ build, extra, limit, engine, findings, scopedDif
     () => { current = { ...current, ...(current.diff === '' ? {} : { diff: aroundFindings(scoped, 20) }), baseDiff: aroundFindings(full, 20) }; },
   ];
   for (const step of steps) { step(); if (fits()) return prompt; }
-  throw new Error(`code-review-checker input of ${promptSize(prompt)} bytes is over the ${engine} input limit of ${limit} bytes even with evidence cut to the regions of its ${findings.length} findings`);
+  throw Object.assign(new Error(`code-review-checker input of ${promptSize(prompt)} bytes is over the ${engine} input limit of ${limit} bytes even with evidence cut to the regions of its ${findings.length} findings`), { inputLimit: true });
+}
+// MONO-500: the checker answers at most CHECKER_BATCH_FINDINGS findings per call. Measured on 235 production checker
+// calls (Claude, 2026-11): 9-12 findings took median 262 s, p90 385 s, max 500 s; 13-16 median 260 s, p90 382 s,
+// max 477 s; from 17 on p90 passes 500 s and the slowest reach 591 s of the fixed 600 s limit. 16 trades call count
+// (each batch rereads its evidence) against a measured worst case of about 80% of the limit. Up to 16 findings go in
+// one call as before (same prompt, byte for byte); more are packed whole file by file, one directory together, so the
+// same defect reported twice in one file shares a batch (a file with over 16 is cut in line order); a batch over the
+// input limit is halved until it fits.
+export const CHECKER_BATCH_FINDINGS = 16;
+export function checkerBatches(findings, promptFor, limit = CHECKER_BATCH_FINDINGS) {
+  const fit = subset => {
+    try { return [{ findings: subset, prompt: promptFor(subset) }]; } catch (error) {
+      if (error?.inputLimit !== true || subset.length < 2) throw error;
+      const half = Math.ceil(subset.length / 2);
+      return [...fit(subset.slice(0, half)), ...fit(subset.slice(half))];
+    }
+  };
+  if (findings.length <= limit) return fit(findings);
+  const byFile = new Map();
+  for (const finding of findings) byFile.set(finding.file, [...(byFile.get(finding.file) ?? []), finding]);
+  const files = [...byFile].map(([file, items]) => ({ file, items: items.sort((x, y) => x.line - y.line) }));
+  return packCoherent(files, limit, unit => unit.items.length, 'checker batch', Infinity).flatMap(group => {
+    const items = group.flatMap(unit => unit.items);
+    // A file with more findings than one batch holds is cut in line order.
+    return Array.from({ length: Math.ceil(items.length / limit) }, (_, index) => items.slice(index * limit, (index + 1) * limit));
+  }).flatMap(fit);
 }
 // MONO-494: every role call (reviewer, checker, remark check, each group, the boundary probe and the retry) has the same
 // fixed limit, the OpenAI and Anthropic SDK default; it is not configurable. secondMs only scales seconds in tests.
@@ -1022,17 +1048,40 @@ export async function runReviewRound(input, { runRole = executeRole, ensureLogin
       const before = [base, previous].find(revision => revision && existsAt(revision, item.file));
       if (before) item.deletionEvidence = { before, head };
     }
-    const checkerExtra = { findings: findings.map(({ key, ...finding }, index) => ({ ...finding, id: `F${index + 1}` })),
-      history: record.findings.filter(item => findings.some(f => f.key === item.key)).map(({ key, ...item }) => ({ ...item, id: `F${findings.findIndex(f => f.key === key) + 1}` })),
-      // MONO-494: from round 2 on (same contract) the checker reads the fixes since the last round (diff) and the change
-      // only around the findings, not the whole change again; round 1 and a task change's round read the whole change.
-      ...(narrow ? { baseDiff: diffAroundFindings(full, findings, CHECKER_RADIUS, binary), diffScope: 'diff: fixes since the last round; baseDiff, baseEvidence and headEvidence: regions around findings only (read head files directly for more)',
-        headEvidence: evidenceExcerpts(headEvidence, findings, CHECKER_RADIUS, (file, line) => [[line, line]]),
-        baseEvidence: evidenceExcerpts(baseEvidence, findings, CHECKER_RADIUS, (file, line) => { const range = baseRange(full.parts.find(part => part.file === file)?.diff, line); return [[line, line], [range.from, range.to]]; }) }
-        : { baseDiff: diff, baseEvidence, headEvidence }) };
-    const checker = findings.length ? await call('code-review-checker', boundedCheckerPrompt({ build, extra: checkerExtra, limit: limitFor('code-review-checker'),
-      engine: roles['code-review-checker'].engine, findings, scopedDiff: context.diff, full, scoped, binary, narrowBase: narrow, rawEvidence: { headEvidence, baseEvidence } }),
-      (value, attempt) => parseChecker(value, findings, { separateContradictoryMerges: attempt === 2 })) : { verdicts: [], mergesSeparated: false };
+    // MONO-500: each checker batch carries only its findings, their history and their files' evidence; the whole set
+    // (one batch) is the request as before.
+    const evidenceOf = (subset, items) => subset === findings ? items : items.filter(item => subset.some(finding => finding.file === item.file));
+    const checkerExtra = subset => {
+      const headItems = evidenceOf(subset, headEvidence), baseItems = evidenceOf(subset, baseEvidence);
+      return { findings: subset.map(({ key, ...finding }, index) => ({ ...finding, id: `F${index + 1}` })),
+        history: record.findings.filter(item => subset.some(f => f.key === item.key)).map(({ key, ...item }) => ({ ...item, id: `F${subset.findIndex(f => f.key === key) + 1}` })),
+        // MONO-494: from round 2 on (same contract) the checker reads the fixes since the last round (diff) and the change
+        // only around the findings, not the whole change again; round 1 and a task change's round read the whole change.
+        ...(narrow ? { baseDiff: diffAroundFindings(full, subset, CHECKER_RADIUS, binary), diffScope: 'diff: fixes since the last round; baseDiff, baseEvidence and headEvidence: regions around findings only (read head files directly for more)',
+          headEvidence: evidenceExcerpts(headItems, subset, CHECKER_RADIUS, (file, line) => [[line, line]]),
+          baseEvidence: evidenceExcerpts(baseItems, subset, CHECKER_RADIUS, (file, line) => { const range = baseRange(full.parts.find(part => part.file === file)?.diff, line); return [[line, line], [range.from, range.to]]; }) }
+          : { baseDiff: diff, baseEvidence: baseItems, headEvidence: headItems }) };
+    };
+    const checkerPrompt = subset => boundedCheckerPrompt({ build, extra: checkerExtra(subset), limit: limitFor('code-review-checker'),
+      engine: roles['code-review-checker'].engine, findings: subset, scopedDiff: context.diff, full, scoped, binary, narrowBase: narrow,
+      rawEvidence: { headEvidence: evidenceOf(subset, headEvidence), baseEvidence: evidenceOf(subset, baseEvidence) } });
+    const checkWith = subset => (value, attempt) => parseChecker(value, subset, { separateContradictoryMerges: attempt === 2 });
+    const batches = findings.length ? checkerBatches(findings, checkerPrompt) : [];
+    let checker = { verdicts: [], mergesSeparated: false };
+    if (batches.length === 1) checker = await call('code-review-checker', batches[0].prompt, checkWith(findings));
+    else if (batches.length) {
+      // Batches run GROUP_CONCURRENCY at a time, each call with its own retry, like reviewer groups. A failed batch fails
+      // the round after the others settle; nothing is recorded from a round whose batches did not all answer.
+      const settled = await boundedQueue(batches.map((batch, index) => () =>
+        call('code-review-checker', batch.prompt, checkWith(batch.findings), `checker ${index + 1}/${batches.length}`)));
+      const failed = settled.find(result => result && !result.ok);
+      if (failed) throw failed.error;
+      requireValue(settled.every(result => result?.ok), 'checker interrupted before every batch ran');
+      // A merge holds only inside one batch: the batch number joins the merge key, so equal wording from two batches never
+      // merges two findings; one defect whose reports straddle a batch boundary stays two items (the safe side).
+      const verdicts = new Map(settled.flatMap((result, index) => result.value.verdicts.map(verdict => [verdict.key, { ...verdict, mergeKey: `checker ${index + 1}/${batches.length}: ${verdict.mergeKey}` }])));
+      checker = { verdicts: findings.map(finding => verdicts.get(finding.key)), mergesSeparated: settled.some(result => result.value.mergesSeparated) };
+    }
     const checked = checker.verdicts.map(verdict => {
       const finding = byKey.get(verdict.key), saved = merged.get(verdict.key);
       const dangerMaximum = maximumDanger(finding.dangerMaximum, verdict.danger), danger = dangerMaximum !== false;

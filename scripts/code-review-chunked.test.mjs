@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { runReviewRound, runRemarkCheck, stderrReason, findingKey, resolveReviewRoles, formatReviewReport } from './code-review.mjs';
+import { runReviewRound, runRemarkCheck, stderrReason, findingKey, resolveReviewRoles, formatReviewReport, CHECKER_BATCH_FINDINGS, checkerBatches } from './code-review.mjs';
 
 // An oversize change is reviewed in file groups instead of failing (MONO-486).
 const packRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -26,7 +26,7 @@ function fixture(t, files) {
   const git = (...args) => execFileSync('git', args, { cwd: worktree, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }).trim();
   git('init', '-q'); git('config', 'user.email', 'fixture@example.test'); git('config', 'user.name', 'Fixture');
   fs.writeFileSync(path.join(worktree, 'input.mjs'), 'export function value(n) { return 0; }\n'); git('add', '.'); git('commit', '-qm', 'base'); const base = git('rev-parse', 'HEAD');
-  for (const [file, text] of Object.entries(files)) fs.writeFileSync(path.join(worktree, file), text);
+  for (const [file, text] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(worktree, file)), { recursive: true }); fs.writeFileSync(path.join(worktree, file), text); }
   git('add', '.'); git('commit', '-qm', 'head');
   return { worktree, git, request: { worktree, head: git('rev-parse', 'HEAD'), base, contract, packRoot } };
 }
@@ -322,4 +322,63 @@ test('MONO-486 review fix: a JSON cookie value with escaped quotes is redacted t
   assert.equal(reason, '"Cookie":"sid=[redacted]; other=[redacted]"');
   const nested = stderrReason('{"request":"{\\"Cookie\\":\\"sid=\\\\\\"inner-cookie\\\\\\"; other=nested-cookie\\"}"}');
   for (const secret of ['inner-cookie', 'nested-cookie']) assert.ok(!nested.includes(secret), nested);
+});
+
+// MONO-500: a Zeni round sent 121 findings to one checker call and failed on the input limit. 150 findings whose own
+// text alone is over the limit go in batches; their verdicts make one round as if one call had answered.
+const manyFiles = Object.fromEntries(Array.from({ length: 10 }, (_, index) => [`pkg${index % 3}/m${index}.mjs`, body(`m${index}`, 30)]));
+const manyFindings = files => files.flatMap(file => Array.from({ length: 15 }, (_, index) => ({ danger: false, class: 'missing-validation', file,
+  anchor: `anchor ${file} ${index}`, line: index + 1, title: `Invalid input ${index} is accepted`, trigger: 'value is negative', evidence: `${file} row ${index} `.repeat(120) })));
+const manyAnswer = (role, c) => role === 'code-review' ? review(manyFindings(c.focusFiles ?? c.files), c.focusFiles ?? c.files)
+  : { completed: true, verdicts: c.findings.map((item, index) => verdictFor(item, index, { mergeKey: 'same wording' })) };
+
+test('MONO-500: 150 findings over the checker input limit are checked in batches and joined into one round', async t => {
+  const f = fixture(t, manyFiles), limit = 160000;
+  const all = manyFindings(Object.keys(manyFiles));
+  assert.equal(all.length, 150);
+  assert.ok(Buffer.byteLength(JSON.stringify(all)) > limit, 'the findings alone are over the limit: one call could never carry them');
+  const runner = recorder(manyAnswer), record = await runReviewRound(f.request, { ...runner, promptLimits: { claude: limit } });
+  assert.equal(record.outcome, 'not-converged', JSON.stringify(record.failures.at(-1)));
+  const checks = runner.calls.filter(call => call.role === 'code-review-checker');
+  assert.ok(checks.length >= Math.ceil(150 / CHECKER_BATCH_FINDINGS));
+  assert.ok(checks.every(call => call.size <= limit && call.context.findings.length <= CHECKER_BATCH_FINDINGS));
+  assert.equal(checks.reduce((sum, call) => sum + call.context.findings.length, 0), 150, 'every finding is sent to exactly one batch');
+  // Each batch carries only its findings' files.
+  for (const call of checks) assert.ok(call.context.headEvidence.every(item => call.context.findings.some(other => other.file === item.file)));
+  assert.equal(record.findings.length, 150); assert.ok(record.findings.every(item => item.status === 'confirmed'));
+  assert.deepEqual([...record.round.findingKeys].sort(), all.map(findingKey).sort(), 'one verdict for every finding');
+  assert.equal(new Set(record.findings.map(item => item.mergeKey)).size, checks.length, 'equal merge wording merges only inside one batch');
+  const labels = record.costs.filter(cost => cost.role === 'code-review-checker').map(cost => cost.group);
+  assert.ok(labels.every(label => /^checker \d+\/\d+$/.test(label)));
+  // A batch that does not fit even with its evidence cut is halved: 15 findings cut to about 46 KB here, 8 to about 30 KB.
+  const lower = 35000;
+  const halved = recorder(manyAnswer), again = await runReviewRound(f.request, { ...halved, promptLimits: { claude: lower } });
+  assert.equal(again.outcome, 'not-converged', JSON.stringify(again.failures.at(-1)));
+  const smaller = halved.calls.filter(call => call.role === 'code-review-checker');
+  assert.ok(smaller.length > checks.length && smaller.every(call => call.size <= lower));
+  assert.equal(smaller.reduce((sum, call) => sum + call.context.findings.length, 0), 150);
+  assert.equal(again.findings.filter(item => item.status === 'confirmed').length, 150);
+});
+
+test('MONO-500: one failed checker batch fails the round and records no finding', async t => {
+  const f = fixture(t, manyFiles), failing = 'pkg1/m4.mjs';
+  const runner = recorder((role, c) => role === 'code-review-checker' && c.findings.some(item => item.file === failing) ? { completed: false } : manyAnswer(role, c));
+  const record = await runReviewRound(f.request, runner);
+  assert.equal(record.outcome, 'not-reviewed'); assert.equal(record.round, null); assert.deepEqual(record.findings, []);
+  assert.equal(record.rounds.length, 0);
+  const failures = record.failures.filter(item => item.role === 'code-review-checker');
+  // The failing file's findings may span two batches; each failing batch keeps its single retry.
+  const tries = attempt => failures.filter(item => item.attempt === attempt).length;
+  assert.ok(tries(1) >= 1 && tries(1) === tries(2) && failures.length === tries(1) * 2, 'each failing batch keeps its single retry');
+  assert.ok(runner.calls.filter(call => call.role === 'code-review-checker').length > 2, 'the other batches still ran');
+});
+
+test('MONO-500: up to the batch size the checker gets one call with every finding; a batch over the limit is halved', () => {
+  const items = Array.from({ length: 40 }, (_, index) => ({ file: `d${index % 4}/f.mjs`, key: String(index) }));
+  assert.equal(checkerBatches(items.slice(0, CHECKER_BATCH_FINDINGS), subset => subset.length).length, 1);
+  const tooBig = subset => { if (subset.length > 5) throw Object.assign(new Error('over'), { inputLimit: true }); return subset.length; };
+  const batches = checkerBatches(items, tooBig);
+  assert.ok(batches.every(batch => batch.findings.length <= 5));
+  assert.equal(batches.reduce((sum, batch) => sum + batch.findings.length, 0), 40);
+  assert.throws(() => checkerBatches(items.slice(0, 1), () => { throw Object.assign(new Error('one finding over'), { inputLimit: true }); }), /one finding over/);
 });
