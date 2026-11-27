@@ -64,7 +64,7 @@
       },
       "autoreview": {
         "engine": "codex",
-        "model": "gpt-6.2-sol",
+        "model": "gpt-6.1-sol",
         "effortByRisk": {
           "tiny": "low",
           "standard": "medium",
@@ -89,7 +89,7 @@
         },
         "reviewer": {
           "engine": "codex",
-          "model": "gpt-6.2-sol",
+          "model": "gpt-6.1-sol",
           "effortByRisk": {
             "tiny": "low",
             "standard": "medium",
@@ -110,8 +110,8 @@
           "risky",
           "riskyCritical"
         ],
-        "linearDecision": "https://linear.app/darkdepot/issue/MONO-498#comment-e7b41206-5d9e-4ada-9c9d-4594108e7891",
-        "by": "owner",
+        "linearDecision": "https://linear.app/darkdepot/issue/MONO-499#comment-1f3ac152-2bd2-482d-8030-59300e6cd1ee",
+        "by": "orchestrator",
         "date": "2026-11-27"
       },
       {
@@ -128,7 +128,7 @@
         },
         "reviewer": {
           "engine": "codex",
-          "model": "gpt-6.2-sol",
+          "model": "gpt-6.1-sol",
           "effortByRisk": {
             "tiny": "low",
             "standard": "medium",
@@ -149,8 +149,8 @@
           "risky",
           "riskyCritical"
         ],
-        "linearDecision": "https://linear.app/darkdepot/issue/MONO-498#comment-e7b41206-5d9e-4ada-9c9d-4594108e7891",
-        "by": "owner",
+        "linearDecision": "https://linear.app/darkdepot/issue/MONO-499#comment-1f3ac152-2bd2-482d-8030-59300e6cd1ee",
+        "by": "orchestrator",
         "date": "2026-11-27"
       },
       {
@@ -167,7 +167,7 @@
         },
         "reviewer": {
           "engine": "codex",
-          "model": "gpt-6.2-sol",
+          "model": "gpt-6.1-sol",
           "effortByRisk": {
             "tiny": "low",
             "standard": "medium",
@@ -188,8 +188,8 @@
           "risky",
           "riskyCritical"
         ],
-        "linearDecision": "https://linear.app/darkdepot/issue/MONO-498#comment-e7b41206-5d9e-4ada-9c9d-4594108e7891",
-        "by": "owner",
+        "linearDecision": "https://linear.app/darkdepot/issue/MONO-499#comment-1f3ac152-2bd2-482d-8030-59300e6cd1ee",
+        "by": "orchestrator",
         "date": "2026-11-27"
       }
     ]
